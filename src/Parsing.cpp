@@ -53,7 +53,7 @@ enum TokenType
 
 struct Token
 {
-	s32 type;
+	enum TokenType type;
 	union
 	{
 		String string;
@@ -448,7 +448,7 @@ Token ReadTokenAndAdvance(Tokenizer *tokenizer)
 		} break;
 		default:
 		{
-			result.type = *tokenizer->cursor;
+			result.type = (enum TokenType)*tokenizer->cursor;
 		}
 		};
 		++tokenizer->cursor;

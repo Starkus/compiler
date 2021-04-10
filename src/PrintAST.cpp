@@ -54,7 +54,7 @@ void Indent(PrintContext *context)
 void PrintExpression(PrintContext *context, ASTExpression *e)
 {
 	Indent(context);
-	switch (e->type)
+	switch (e->nodeType)
 	{
 	case ASTNODETYPE_VARIABLE_DECLARATION:
 	{
@@ -79,7 +79,7 @@ void PrintExpression(PrintContext *context, ASTExpression *e)
 		for (int i = 0; i < e->procedureDeclaration.parameters.size; ++i)
 		{
 			ASTExpression pexp = {};
-			pexp.type = ASTNODETYPE_VARIABLE_DECLARATION;
+			pexp.nodeType = ASTNODETYPE_VARIABLE_DECLARATION;
 			pexp.variableDeclaration = e->procedureDeclaration.parameters[i];
 			PrintExpression(context, &pexp);
 		}
@@ -185,7 +185,7 @@ void PrintExpression(PrintContext *context, ASTExpression *e)
 		for (int i = 0; i < e->structNode.members.size; ++i)
 		{
 			ASTExpression pexp = {};
-			pexp.type = ASTNODETYPE_VARIABLE_DECLARATION;
+			pexp.nodeType = ASTNODETYPE_VARIABLE_DECLARATION;
 			pexp.variableDeclaration = e->structNode.members[i];
 			PrintExpression(context, &pexp);
 		}

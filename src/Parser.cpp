@@ -11,11 +11,11 @@ ASTType *ParseType(Token **cursor)
 	result->file = token->file;
 	result->line = token->line;
 	result->character = token->character;
-	result->isPointer = false;
+	result->type.pointerLevels = 0;
 
-	if (token->type == TOKEN_OP_MULTIPLY)
+	while (token->type == TOKEN_OP_MULTIPLY)
 	{
-		result->isPointer = true;
+		++result->type.pointerLevels;
 		++token;
 	}
 
@@ -55,7 +55,7 @@ bool TryParseUnaryOperation(Token **cursor, s32 prevPrecedence, ASTUnaryOperatio
 	case TOKEN_OP_DEREFERENCE:
 	case TOKEN_OP_NOT:
 	{
-		s32 op = token->type;
+		enum TokenType op = token->type;
 		result->op = op;
 		++token;
 
@@ -98,7 +98,7 @@ bool TryParseBinaryOperation(Token **cursor, ASTExpression leftHand, s32 prevPre
 		result->leftHand = ALLOC(FrameAlloc, ASTExpression);
 		*result->leftHand = leftHand;
 
-		s32 op = token->type;
+		enum TokenType op = token->type;
 		result->op = op;
 		++token;
 
@@ -305,7 +305,7 @@ ASTExpression ParseExpression(Token **cursor, s32 precedence)
 		if (token->type == '(')
 		{
 			// Procedure call
-			result.type = ASTNODETYPE_PROCEDURE_CALL;
+			result.nodeType = ASTNODETYPE_PROCEDURE_CALL;
 			result.procedureCall.name = identifier;
 			DynamicArrayInit<ASTExpression>(&result.procedureCall.arguments, 4, FrameAlloc);
 
@@ -327,13 +327,13 @@ ASTExpression ParseExpression(Token **cursor, s32 precedence)
 		else
 		{
 			// Variable
-			result.type = ASTNODETYPE_VARIABLE;
+			result.nodeType = ASTNODETYPE_VARIABLE;
 			result.variable.name = identifier;
 		}
 	}
 	else if (token->type == TOKEN_LITERAL_NUMBER)
 	{
-		result.type = ASTNODETYPE_LITERAL;
+		result.nodeType = ASTNODETYPE_LITERAL;
 
 		bool isFloating = false;
 		for (int i = 0; i < token->size; ++i)
@@ -358,7 +358,7 @@ ASTExpression ParseExpression(Token **cursor, s32 precedence)
 	}
 	else if (token->type == TOKEN_LITERAL_STRING)
 	{
-		result.type = ASTNODETYPE_LITERAL;
+		result.nodeType = ASTNODETYPE_LITERAL;
 		result.literal.type = LITERALTYPE_STRING;
 		result.literal.string = token->string;
 		++token;
@@ -374,14 +374,14 @@ ASTExpression ParseExpression(Token **cursor, s32 precedence)
 
 	while (true)
 	{
-		if (result.type == ASTNODETYPE_INVALID)
+		if (result.nodeType == ASTNODETYPE_INVALID)
 		{
 			// If we have no left hand, try unary operation
 			ASTUnaryOperation unaryOp = result.unaryOperation;
 			bool success = TryParseUnaryOperation(&token, precedence, &unaryOp);
 			if (!success)
 				PrintError(token, "Invalid expression!"_s);
-			result.type = ASTNODETYPE_UNARY_OPERATION;
+			result.nodeType = ASTNODETYPE_UNARY_OPERATION;
 			result.unaryOperation = unaryOp;
 		}
 		else
@@ -390,7 +390,7 @@ ASTExpression ParseExpression(Token **cursor, s32 precedence)
 			bool success = TryParseBinaryOperation(&token, result, precedence, &binaryOp);
 			if (!success)
 				break;
-			result.type = ASTNODETYPE_BINARY_OPERATION;
+			result.nodeType = ASTNODETYPE_BINARY_OPERATION;
 			result.binaryOperation = binaryOp;
 		}
 
@@ -415,7 +415,7 @@ ASTExpression ParseStatement(Token **cursor)
 	{
 	case '{':
 	{
-		result.type = ASTNODETYPE_BLOCK;
+		result.nodeType = ASTNODETYPE_BLOCK;
 
 		++token;
 		DynamicArrayInit<ASTExpression>(&result.block.statements, 512, FrameAlloc);
@@ -428,7 +428,7 @@ ASTExpression ParseStatement(Token **cursor)
 	} break;
 	case TOKEN_KEYWORD_IF:
 	{
-		result.type = ASTNODETYPE_IF;
+		result.nodeType = ASTNODETYPE_IF;
 		result.ifNode = ParseIf(&token);
 	} break;
 	case TOKEN_KEYWORD_ELSE:
@@ -437,12 +437,12 @@ ASTExpression ParseStatement(Token **cursor)
 	} break;
 	case TOKEN_KEYWORD_WHILE:
 	{
-		result.type = ASTNODETYPE_WHILE;
+		result.nodeType = ASTNODETYPE_WHILE;
 		result.whileNode = ParseWhile(&token);
 	} break;
 	case TOKEN_KEYWORD_BREAK:
 	{
-		result.type = ASTNODETYPE_BREAK;
+		result.nodeType = ASTNODETYPE_BREAK;
 		++token;
 
 		AssertToken(token, ';');
@@ -452,7 +452,7 @@ ASTExpression ParseStatement(Token **cursor)
 	{
 		++token;
 
-		result.type = ASTNODETYPE_RETURN;
+		result.nodeType = ASTNODETYPE_RETURN;
 		result.returnNode.expression = ALLOC(FrameAlloc, ASTExpression);
 		*result.returnNode.expression = ParseExpression(&token, -1);
 
@@ -465,12 +465,12 @@ ASTExpression ParseStatement(Token **cursor)
 		{
 			if ((token + 2)->type == '(')
 			{
-				result.type = ASTNODETYPE_PROCEDURE_DECLARATION;
+				result.nodeType = ASTNODETYPE_PROCEDURE_DECLARATION;
 				result.procedureDeclaration = ParseProcedureDeclaration(&token);
 			}
 			else if ((token + 2)->type == TOKEN_KEYWORD_STRUCT)
 			{
-				result.type = ASTNODETYPE_STRUCT_DECLARATION;
+				result.nodeType = ASTNODETYPE_STRUCT_DECLARATION;
 				result.structNode = ParseStruct(&token);
 			}
 			else
@@ -481,7 +481,7 @@ ASTExpression ParseStatement(Token **cursor)
 		}
 		else if ((token + 1)->type == TOKEN_OP_VARIABLE_DECLARATION)
 		{
-			result.type = ASTNODETYPE_VARIABLE_DECLARATION;
+			result.nodeType = ASTNODETYPE_VARIABLE_DECLARATION;
 			result.variableDeclaration = ParseVariableDeclaration(&token);
 
 			AssertToken(token, ';');

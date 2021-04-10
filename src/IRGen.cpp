@@ -114,7 +114,7 @@ struct IRInstruction
 struct IRVariable
 {
 	String name;
-	s64 typeTableIdx;
+	Type type;
 	IRValue value;
 };
 
@@ -158,6 +158,19 @@ void PopScope(IRContext *context)
 	--context->stack.size;
 }
 
+s64 CalculateTypeSize(IRContext *context, Type type)
+{
+	ASSERT(type.typeTableIdx >= 0);
+
+	if (type.pointerLevels != 0)
+		return 8;
+
+	// @Todo: arrays
+
+	TypeInfo *typeInfo  = &context->root->typeTable[type.typeTableIdx];
+	return typeInfo->size;
+}
+
 IRValue FindVariable(IRContext *context, String name)
 {
 	IRValue result = { IRVALUETYPE_INVALID };
@@ -192,7 +205,7 @@ IRValue IRGenFromExpression(IRContext *context, ASTExpression *expression)
 	IRValue result;
 	result.type = IRVALUETYPE_INVALID;
 
-	switch (expression->type)
+	switch (expression->nodeType)
 	{
 	case ASTNODETYPE_BLOCK:
 	{
@@ -209,12 +222,12 @@ IRValue IRGenFromExpression(IRContext *context, ASTExpression *expression)
 		IRVariable *newVar = DynamicArrayAdd<IRVariable>(&stackTop->variables, realloc);
 
 		newVar->name = expression->variableDeclaration.name;
-		newVar->typeTableIdx = expression->variableDeclaration.type->typeTableIdx;
+		newVar->type = expression->variableDeclaration.type->type;
 		newVar->value.type = IRVALUETYPE_STACKOFFSET;
 		newVar->value.offset = stackTop->stackSize;
 
-		ASSERT(newVar->typeTableIdx >= 0);
-		TypeInfo *typeInfo  = &context->root->typeTable[newVar->typeTableIdx];
+		ASSERT(newVar->type.typeTableIdx >= 0);
+		TypeInfo *typeInfo  = &context->root->typeTable[newVar->type.typeTableIdx];
 		stackTop->stackSize += typeInfo->size;
 
 		// Initial value
@@ -246,13 +259,11 @@ IRValue IRGenFromExpression(IRContext *context, ASTExpression *expression)
 			IRVariable *newVar = DynamicArrayAdd<IRVariable>(&stackTop->variables, realloc);
 
 			newVar->name = param.name;
-			newVar->typeTableIdx = param.type->typeTableIdx;
+			newVar->type = param.type->type;
 			newVar->value.type = IRVALUETYPE_STACKOFFSET;
 			newVar->value.offset = stackTop->stackSize;
 
-			ASSERT(newVar->typeTableIdx >= 0);
-			TypeInfo *typeInfo  = &context->root->typeTable[newVar->typeTableIdx];
-			stackTop->stackSize += typeInfo->size;
+			stackTop->stackSize += CalculateTypeSize(context, newVar->type);
 
 			IRInstruction getParamInst;
 			getParamInst.type = IRINSTRUCTIONTYPE_GETPARAMETER;
@@ -336,12 +347,12 @@ IRValue IRGenFromExpression(IRContext *context, ASTExpression *expression)
 			result = IRGenFromExpression(context, expression->binaryOperation.leftHand);
 
 			ASTExpression *rightHand = expression->binaryOperation.rightHand;
-			ASSERT(rightHand->type == ASTNODETYPE_VARIABLE);
+			ASSERT(rightHand->nodeType == ASTNODETYPE_VARIABLE);
 			String memberName = rightHand->variable.name;
 
-			s64 typeTableIdx = leftHand->typeTableIdx;
-			ASSERT(typeTableIdx >= 0);
-			TypeInfo *typeInfo  = &context->root->typeTable[typeTableIdx];
+			Type type = leftHand->type;
+			ASSERT(type.typeTableIdx >= 0);
+			TypeInfo *typeInfo  = &context->root->typeTable[type.typeTableIdx];
 			ASSERT(typeInfo->typeCategory == TYPECATEGORY_STRUCT);
 
 			// @Improve: cache member somehow during type checking instead of looking up twice?
@@ -489,6 +500,12 @@ void PrintIRInstructionOperator(IRInstruction inst)
 		break;
 	case IRINSTRUCTIONTYPE_EQUALS:
 		Log("==");
+		break;
+	case IRINSTRUCTIONTYPE_ADDRESSOF:
+		Log("&");
+		break;
+	case IRINSTRUCTIONTYPE_DEREFERENCE:
+		Log("*");
 		break;
 	case IRINSTRUCTIONTYPE_NOT:
 		Log("!");

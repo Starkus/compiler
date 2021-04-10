@@ -26,13 +26,13 @@ struct ASTLiteral : ASTBase
 
 struct ASTUnaryOperation : ASTBase
 {
-	s32 op;
+	enum TokenType op;
 	ASTExpression *expression;
 };
 
 struct ASTBinaryOperation : ASTBase
 {
-	s32 op;
+	enum TokenType op;
 	ASTExpression *leftHand;
 	ASTExpression *rightHand;
 };
@@ -48,12 +48,18 @@ struct ASTBlock : ASTBase
 	DynamicArray<ASTExpression> statements;
 };
 
+struct Type
+{
+	s64 typeTableIdx;
+	s32 pointerLevels;
+	u64 arrayCount;
+};
+
 struct ASTType : ASTBase
 {
 	String name;
-	bool isPointer;
 
-	s64 typeTableIdx = -1;
+	Type type;
 };
 
 struct ASTVariableDeclaration : ASTBase
@@ -128,7 +134,7 @@ enum ASTNodeType
 };
 struct ASTExpression
 {
-	ASTNodeType type;
+	ASTNodeType nodeType;
 	union
 	{
 		ASTBase any;
@@ -147,5 +153,5 @@ struct ASTExpression
 	};
 
 	// Filled in during type checking
-	s64 typeTableIdx = -1;
+	Type type;
 };
