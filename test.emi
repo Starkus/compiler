@@ -1,0 +1,128 @@
+foo : u64;
+
+AStruct :: struct
+{
+	member1 : s32;
+	member2 : s64;
+}
+
+doThings :: (arg : f32) -> s64
+{
+	awesomeVariable : f32 = 25.2;
+	{
+		awesomeVariable : s32 = 2;
+	}
+	// Reference non existing variable
+	//awesomeVariable = nonExistant;
+}
+
+operatorPrecedence :: (arg1 : u32, arg2 : u64 = 4) -> s32
+{
+	bar : u64 = arg2;
+	baz : u32 = arg1;
+	emi : u32 = 7;
+	foo = 2 + 4 * 5;
+	bar = 2 * 4 + 5;
+	baz = 2 * (4 + 5); // Parenthesis
+	emi = baz;
+
+	// Same precedence
+	emi = 2 + 4 - 5;
+	emi = 2 - 4 + 5;
+
+	// Unary
+	bar = !foo;
+	bar = !foo + 5;
+
+	// Boolean
+	flag : bool = bar == foo;
+	flag = !foo;
+	//notAFlag : f32 = bar == foo;
+}
+
+flowControl :: () -> s32
+{
+	if 1 == 2
+	{
+		return 3;
+	}
+	else
+	{
+		return 254;
+	}
+
+	// No brackets
+	if 1 == 2 return 3;
+	else if 1 == 3 return 25;
+	else return 8;
+
+	// Orphan else
+	//else return 8;
+
+	// With parenthesis
+	if (!1) return 4;
+
+	while 1 == 2
+	{
+		//printf("Hello sailor");
+		break;
+	}
+}
+
+outerProc :: ()
+{
+	outerVar : s64 = 25;
+	innerProc :: ()
+	{
+		innerVar : s64 = outerVar;
+	}
+
+	innerProc();
+}
+
+dataStructures :: (foo : AStruct)
+{
+	//innerProc();
+
+	bar : s32 = foo.member1;
+	baz : s64 = foo.member2;
+
+	AnotherStruct :: struct
+	{
+		id : u64;
+		age : s32;
+	}
+
+	dude : AnotherStruct;
+	dude.id = 12345678;
+	dude.age = 8;
+
+	Nested :: struct
+	{
+		employee : AnotherStruct;
+	}
+	nested : Nested;
+	nested.employee.age = 3;
+	//foo.employee.age = 3;
+}
+
+scopes :: ()
+{
+	foo : s32 = 1;
+	{
+		bar : s32 = foo;
+		{
+			baz : s32 = foo;
+			baz = bar;
+		}
+	}
+}
+
+main :: () -> s64
+{
+	//asd : AnotherStruct;
+	var : u32 = 7;
+
+	doThings(25.5);
+	operatorPrecedence(var, 5);
+}

@@ -1,0 +1,19 @@
+Person :: struct
+{
+	id : u64;
+	age : s32;
+	height : f32;
+}
+
+main :: ()
+{
+	a : Person;
+	b : Person;
+	
+	a.id = 123456789;
+	a.age = 25;
+	a.height = 170;
+
+	// Copy
+	b = a;
+}

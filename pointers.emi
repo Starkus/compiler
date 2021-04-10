@@ -1,0 +1,9 @@
+main :: ()
+{
+	foo : s32;
+	bar : s32;
+	baz : *s32;
+
+	baz = &foo;
+	bar = *baz;
+}
