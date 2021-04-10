@@ -35,7 +35,7 @@ enum TokenType
 	TOKEN_OP_MULTIPLY,
 	TOKEN_OP_DIVIDE,
 	TOKEN_OP_ARROW,
-	TOKEN_OP_ADDRESSOF,
+	TOKEN_OP_POINTERTO,
 	TOKEN_OP_DEREFERENCE,
 	TOKEN_OP_VARIABLE_DECLARATION,
 	TOKEN_OP_STATIC_DEF,
@@ -163,7 +163,7 @@ s32 GetOperatorPrecedence(s32 op)
 			return 5;
 		case TOKEN_OP_MEMBER_ACCESS:
 			return 6;
-		case TOKEN_OP_ADDRESSOF:
+		case TOKEN_OP_POINTERTO:
 		case TOKEN_OP_DEREFERENCE:
 			return 7;
 	}
@@ -433,6 +433,10 @@ Token ReadTokenAndAdvance(Tokenizer *tokenizer)
 			}
 			else
 				result.type = TOKEN_OP_BITWISE_OR;
+		} break;
+		case '^':
+		{
+			result.type = TOKEN_OP_POINTERTO;
 		} break;
 		case '!':
 		{

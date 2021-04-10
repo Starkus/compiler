@@ -13,7 +13,7 @@ ASTType *ParseType(Token **cursor)
 	result->character = token->character;
 	result->type.pointerLevels = 0;
 
-	while (token->type == TOKEN_OP_MULTIPLY)
+	while (token->type == TOKEN_OP_POINTERTO)
 	{
 		++result->type.pointerLevels;
 		++token;
@@ -43,15 +43,11 @@ bool TryParseUnaryOperation(Token **cursor, s32 prevPrecedence, ASTUnaryOperatio
 	{
 		token->type = TOKEN_OP_DEREFERENCE;
 	} break;
-	case TOKEN_OP_BITWISE_AND:
-	{
-		token->type = TOKEN_OP_ADDRESSOF;
-	} break;
 	}
 
 	switch (token->type)
 	{
-	case TOKEN_OP_ADDRESSOF:
+	case TOKEN_OP_POINTERTO:
 	case TOKEN_OP_DEREFERENCE:
 	case TOKEN_OP_NOT:
 	{
@@ -279,10 +275,6 @@ ASTExpression ParseExpression(Token **cursor, s32 precedence)
 
 	ASTExpression result = {};
 
-	result.any.file = token->file;
-	result.any.line = token->line;
-	result.any.character = token->character;
-
 	// Parenthesis
 	if (token->type == '(')
 	{
@@ -397,6 +389,10 @@ ASTExpression ParseExpression(Token **cursor, s32 precedence)
 		// @Check: update precedence in every loop? Don't think so...
 	}
 
+	result.any.file = token->file;
+	result.any.line = token->line;
+	result.any.character = token->character;
+
 	*cursor = token;
 	return result;
 }
@@ -406,10 +402,6 @@ ASTExpression ParseStatement(Token **cursor)
 	Token *token = *cursor;
 
 	ASTExpression result = {};
-
-	result.any.file = token->file;
-	result.any.line = token->line;
-	result.any.character = token->character;
 
 	switch (token->type)
 	{
@@ -495,6 +487,10 @@ ASTExpression ParseStatement(Token **cursor)
 		}
 	} break;
 	}
+
+	result.any.file = token->file;
+	result.any.line = token->line;
+	result.any.character = token->character;
 
 	*cursor = token;
 	return result;

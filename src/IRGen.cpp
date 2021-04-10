@@ -2,8 +2,10 @@ enum IRValueType
 {
 	IRVALUETYPE_INVALID = -1,
 	IRVALUETYPE_REGISTER,
-	IRVALUETYPE_MEMORY,
+	IRVALUETYPE_DATAOFFSET,
 	IRVALUETYPE_STACKOFFSET,
+	IRVALUETYPE_STACKBASE,
+	IRVALUETYPE_DATABASE,
 	IRVALUETYPE_IMMEDIATE
 };
 struct IRValue
@@ -12,10 +14,10 @@ struct IRValue
 	union
 	{
 		s64 registerIdx;
-		s64 address;
 		s64 offset;
 		s64 immediate;
 	};
+	bool asPointer;
 };
 
 struct IRJump
@@ -81,8 +83,6 @@ enum IRInstructionType
 
 	IRINSTRUCTIONTYPE_UNARY_BEGIN,
 	IRINSTRUCTIONTYPE_NOT = IRINSTRUCTIONTYPE_UNARY_BEGIN,
-	IRINSTRUCTIONTYPE_ADDRESSOF,
-	IRINSTRUCTIONTYPE_DEREFERENCE,
 	IRINSTRUCTIONTYPE_UNARY_END,
 
 	IRINSTRUCTIONTYPE_BINARY_BEGIN,
@@ -135,7 +135,7 @@ struct IRContext
 
 IRValue NewVirtualRegister(IRContext *context)
 {
-	IRValue result;
+	IRValue result = {};
 	result.type = IRVALUETYPE_REGISTER;
 	result.registerIdx = context->currentRegisterId++;
 	return result;
@@ -185,8 +185,8 @@ IRValue FindVariable(IRContext *context, String name)
 				result = scope->variables[varIdx].value;
 				if (stackIdx == 0)
 				{
-					result.type = IRVALUETYPE_MEMORY;
-					result.address = result.offset;
+					result.type = IRVALUETYPE_DATAOFFSET;
+					result.offset = result.offset;
 				}
 				else
 				{
@@ -202,7 +202,7 @@ IRValue FindVariable(IRContext *context, String name)
 
 IRValue IRGenFromExpression(IRContext *context, ASTExpression *expression)
 {
-	IRValue result;
+	IRValue result = {};
 	result.type = IRVALUETYPE_INVALID;
 
 	switch (expression->nodeType)
@@ -220,6 +220,7 @@ IRValue IRGenFromExpression(IRContext *context, ASTExpression *expression)
 	{
 		IRScope *stackTop = &context->stack[context->stack.size - 1];
 		IRVariable *newVar = DynamicArrayAdd<IRVariable>(&stackTop->variables, realloc);
+		*newVar = {};
 
 		newVar->name = expression->variableDeclaration.name;
 		newVar->type = expression->variableDeclaration.type->type;
@@ -233,7 +234,7 @@ IRValue IRGenFromExpression(IRContext *context, ASTExpression *expression)
 		// Initial value
 		if (expression->variableDeclaration.value)
 		{
-			IRInstruction inst;
+			IRInstruction inst = {};
 			inst.type = IRINSTRUCTIONTYPE_ASSIGNMENT;
 			inst.assignment.src = IRGenFromExpression(context, expression->variableDeclaration.value);
 			inst.assignment.dst = newVar->value;
@@ -243,7 +244,7 @@ IRValue IRGenFromExpression(IRContext *context, ASTExpression *expression)
 	} break;
 	case ASTNODETYPE_PROCEDURE_DECLARATION:
 	{
-		IRInstruction inst;
+		IRInstruction inst = {};
 		inst.type = IRINSTRUCTIONTYPE_LABEL;
 		inst.label = expression->variableDeclaration.name;
 		*DynamicArrayAdd<IRInstruction>(&context->instructions, realloc) = inst;
@@ -257,6 +258,7 @@ IRValue IRGenFromExpression(IRContext *context, ASTExpression *expression)
 
 			IRScope *stackTop = &context->stack[context->stack.size - 1];
 			IRVariable *newVar = DynamicArrayAdd<IRVariable>(&stackTop->variables, realloc);
+			*newVar = {};
 
 			newVar->name = param.name;
 			newVar->type = param.type->type;
@@ -296,45 +298,73 @@ IRValue IRGenFromExpression(IRContext *context, ASTExpression *expression)
 
 		String label = expression->procedureCall.name; // @Improve: oh my god...
 
-		IRInstruction inst;
+		IRInstruction inst = {};
 		inst.type = IRINSTRUCTIONTYPE_CALL;
 		inst.call.label = label;
 		*DynamicArrayAdd<IRInstruction>(&context->instructions, realloc) = inst;
 	} break;
 	case ASTNODETYPE_UNARY_OPERATION:
 	{
-		IRInstruction inst;
-		inst.unaryOperation.in  = IRGenFromExpression(context, expression->unaryOperation.expression);
-		inst.unaryOperation.out = NewVirtualRegister(context);
+		if (expression->unaryOperation.op == TOKEN_OP_POINTERTO)
+		{
+			result = IRGenFromExpression(context, expression->unaryOperation.expression);
 
-		switch (expression->unaryOperation.op)
-		{
-		case TOKEN_OP_ADDRESSOF:
-		{
-			inst.type = IRINSTRUCTIONTYPE_ADDRESSOF;
-		} break;
-		case TOKEN_OP_DEREFERENCE:
-		{
-			inst.type = IRINSTRUCTIONTYPE_DEREFERENCE;
-		} break;
-		case TOKEN_OP_NOT:
-		{
-			inst.type = IRINSTRUCTIONTYPE_NOT;
-		} break;
-		default:
-		{
-			inst.type = IRINSTRUCTIONTYPE_INVALID;
-		} break;
+			ASSERT(result.type == IRVALUETYPE_STACKOFFSET || result.type == IRVALUETYPE_DATAOFFSET);
+
+			// Add intermediate instruction to compute address
+			IRInstruction inst = {};
+			inst.type = IRINSTRUCTIONTYPE_ADD;
+			inst.binaryOperation.left = { IRVALUETYPE_STACKBASE };
+			inst.binaryOperation.right = { IRVALUETYPE_IMMEDIATE, result.offset };
+			inst.binaryOperation.out = NewVirtualRegister(context);
+			*DynamicArrayAdd<IRInstruction>(&context->instructions, realloc) = inst;
+
+			result = inst.binaryOperation.out;
 		}
+		else if (expression->unaryOperation.op == TOKEN_OP_DEREFERENCE)
+		{
+			result = IRGenFromExpression(context, expression->unaryOperation.expression);
 
-		*DynamicArrayAdd<IRInstruction>(&context->instructions, realloc) = inst;
-		result = inst.unaryOperation.out;
+			if (result.asPointer)
+			{
+				// If already a pointer, add intermediate assignment
+				IRInstruction inst = {};
+				inst.type = IRINSTRUCTIONTYPE_ASSIGNMENT;
+				inst.assignment.src = result;
+				inst.assignment.dst = NewVirtualRegister(context);
+				*DynamicArrayAdd<IRInstruction>(&context->instructions, realloc) = inst;
+
+				result = inst.assignment.dst;
+			}
+			result.asPointer = true;
+		}
+		else
+		{
+			IRInstruction inst = {};
+			inst.unaryOperation.in  = IRGenFromExpression(context, expression->unaryOperation.expression);
+			inst.unaryOperation.out = NewVirtualRegister(context);
+
+			switch (expression->unaryOperation.op)
+			{
+			case TOKEN_OP_NOT:
+			{
+				inst.type = IRINSTRUCTIONTYPE_NOT;
+			} break;
+			default:
+			{
+				inst.type = IRINSTRUCTIONTYPE_INVALID;
+			} break;
+			}
+
+			*DynamicArrayAdd<IRInstruction>(&context->instructions, realloc) = inst;
+			result = inst.unaryOperation.out;
+		}
 	} break;
 	case ASTNODETYPE_BINARY_OPERATION:
 	{
 		if (expression->binaryOperation.op == TOKEN_OP_ASSIGNMENT)
 		{
-			IRInstruction inst;
+			IRInstruction inst = {};
 			inst.type = IRINSTRUCTIONTYPE_ASSIGNMENT;
 			inst.assignment.src = IRGenFromExpression(context, expression->binaryOperation.rightHand);
 			inst.assignment.dst = IRGenFromExpression(context, expression->binaryOperation.leftHand);
@@ -470,16 +500,26 @@ IRValue IRGenFromExpression(IRContext *context, ASTExpression *expression)
 
 void PrintIRValue(IRValue value)
 {
+	if (value.asPointer)
+		Log("[");
+
 	if (value.type == IRVALUETYPE_REGISTER)
 		Log("r%d", value.registerIdx);
-	else if (value.type == IRVALUETYPE_MEMORY)
-		Log("data[0x%x]", value.address);
+	else if (value.type == IRVALUETYPE_DATAOFFSET)
+		Log("dataSection[0x%x]", value.offset);
 	else if (value.type == IRVALUETYPE_STACKOFFSET)
-		Log("stack[%d]", value.offset);
+		Log("stackBase[0x%x]", value.offset);
 	else if (value.type == IRVALUETYPE_IMMEDIATE)
 		Log("0x%x", value.immediate);
+	else if (value.type == IRVALUETYPE_STACKBASE)
+		Log("stackBase");
+	else if (value.type == IRVALUETYPE_DATABASE)
+		Log("dataBase");
 	else
 		Log("???");
+
+	if (value.asPointer)
+		Log("]");
 }
 
 void PrintIRInstructionOperator(IRInstruction inst)
@@ -500,12 +540,6 @@ void PrintIRInstructionOperator(IRInstruction inst)
 		break;
 	case IRINSTRUCTIONTYPE_EQUALS:
 		Log("==");
-		break;
-	case IRINSTRUCTIONTYPE_ADDRESSOF:
-		Log("&");
-		break;
-	case IRINSTRUCTIONTYPE_DEREFERENCE:
-		Log("*");
 		break;
 	case IRINSTRUCTIONTYPE_NOT:
 		Log("!");

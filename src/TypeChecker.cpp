@@ -248,6 +248,16 @@ void TypeCheckType(TCContext *context, ASTType *astType)
 	PrintError(astType, TPrintF("Type \"%.*s\" not in scope!", astType->name.size, astType->name.data));
 }
 
+bool IsTemporalValue(ASTExpression *expression)
+{
+	switch (expression->nodeType)
+	{
+		case ASTNODETYPE_VARIABLE:
+			return false;
+	}
+	return true;
+}
+
 void TypeCheckExpression(TCContext *context, ASTExpression *expression)
 {
 	switch (expression->nodeType)
@@ -467,7 +477,11 @@ void TypeCheckExpression(TCContext *context, ASTExpression *expression)
 				PrintError(&expression->any, "Expression can't be cast to boolean"_s);
 			expression->type = { TYPETABLEIDX_BOOL };
 			break;
-		case TOKEN_OP_ADDRESSOF:
+		case TOKEN_OP_POINTERTO:
+			// Forbid pointer to temporal values
+			if (IsTemporalValue(expression->unaryOperation.expression))
+				PrintError(&expression->any, "Trying to get pointer to temporal value"_s);
+
 			expression->type = expressionType;
 			++expression->type.pointerLevels;
 			break;
