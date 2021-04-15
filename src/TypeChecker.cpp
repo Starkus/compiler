@@ -102,47 +102,49 @@ void PopScope(TCContext *context)
 	--context->stack.size;
 }
 
-void FindTypeInTable(TCContext *context, ASTType *astType)
+void FindTypeInTable(TCContext *context, String typeName, Type *type)
 {
-	astType->type.typeTableIdx = -1;
+	type->typeTableIdx = -1;
 
 	DynamicArray<TypeInfo> &typeTable = context->root->typeTable;
 
-	if (StringEquals(astType->name, "s8"_s))
-		astType->type.typeTableIdx = TYPETABLEIDX_S8;
-	else if (StringEquals(astType->name, "s16"_s))
-		astType->type.typeTableIdx = TYPETABLEIDX_S16;
-	else if (StringEquals(astType->name, "s32"_s))
-		astType->type.typeTableIdx = TYPETABLEIDX_S32;
-	else if (StringEquals(astType->name, "s64"_s))
-		astType->type.typeTableIdx = TYPETABLEIDX_S64;
-	else if (StringEquals(astType->name, "u8"_s))
-		astType->type.typeTableIdx = TYPETABLEIDX_U8;
-	else if (StringEquals(astType->name, "u16"_s))
-		astType->type.typeTableIdx = TYPETABLEIDX_U16;
-	else if (StringEquals(astType->name, "u32"_s))
-		astType->type.typeTableIdx = TYPETABLEIDX_U32;
-	else if (StringEquals(astType->name, "u64"_s))
-		astType->type.typeTableIdx = TYPETABLEIDX_U64;
-	else if (StringEquals(astType->name, "f32"_s))
-		astType->type.typeTableIdx = TYPETABLEIDX_F32;
-	else if (StringEquals(astType->name, "f64"_s))
-		astType->type.typeTableIdx = TYPETABLEIDX_F64;
-	else if (StringEquals(astType->name, "bool"_s))
-		astType->type.typeTableIdx = TYPETABLEIDX_BOOL;
+	if (StringEquals(typeName, "s8"_s))
+		type->typeTableIdx = TYPETABLEIDX_S8;
+	else if (StringEquals(typeName, "s16"_s))
+		type->typeTableIdx = TYPETABLEIDX_S16;
+	else if (StringEquals(typeName, "s32"_s))
+		type->typeTableIdx = TYPETABLEIDX_S32;
+	else if (StringEquals(typeName, "s64"_s))
+		type->typeTableIdx = TYPETABLEIDX_S64;
+	else if (StringEquals(typeName, "u8"_s))
+		type->typeTableIdx = TYPETABLEIDX_U8;
+	else if (StringEquals(typeName, "u16"_s))
+		type->typeTableIdx = TYPETABLEIDX_U16;
+	else if (StringEquals(typeName, "u32"_s))
+		type->typeTableIdx = TYPETABLEIDX_U32;
+	else if (StringEquals(typeName, "u64"_s))
+		type->typeTableIdx = TYPETABLEIDX_U64;
+	else if (StringEquals(typeName, "f32"_s))
+		type->typeTableIdx = TYPETABLEIDX_F32;
+	else if (StringEquals(typeName, "f64"_s))
+		type->typeTableIdx = TYPETABLEIDX_F64;
+	else if (StringEquals(typeName, "bool"_s))
+		type->typeTableIdx = TYPETABLEIDX_BOOL;
 	else
 	{
 		for (int i = TYPETABLEIDX_COUNT; i < typeTable.size; ++i)
 		{
 			TypeInfo *t = &typeTable[i];
 			if (t->typeCategory == TYPECATEGORY_STRUCT &&
-					StringEquals(astType->name, t->structInfo.name))
-				astType->type.typeTableIdx = i;
+					StringEquals(typeName, t->structInfo.name))
+				type->typeTableIdx = i;
 		}
 	}
 
-	if (astType->type.typeTableIdx < 0)
-		PrintError(astType, TPrintF("Type \"%.*s\" not found!", astType->name.size, astType->name.data));
+	// @Fix
+	if (type->typeTableIdx < 0)
+		//PrintError(astType, TPrintF("Type \"%.*s\" not found!", typeName.size, typeName.data));
+		CRASH;
 }
 
 bool CheckTypesMatch(TCContext *context, Type left, Type right)
@@ -229,9 +231,9 @@ bool CheckTypesMatch(TCContext *context, Type left, Type right)
 	return false;
 }
 
-void TypeCheckType(TCContext *context, ASTType *astType)
+void TypeCheckType(TCContext *context, String typeName, Type *type)
 {
-	FindTypeInTable(context, astType);
+	FindTypeInTable(context, typeName, type);
 
 	// Check type is in the scope stack!
 	// Search backwards so we find types higher in the stack first.
@@ -240,12 +242,14 @@ void TypeCheckType(TCContext *context, ASTType *astType)
 		TCScope *currentScope = &context->stack[stackIdx];
 		for (int i = 0; i < currentScope->typeIndices.size; ++i)
 		{
-			if (astType->type.typeTableIdx == currentScope->typeIndices[i])
+			if (type->typeTableIdx == currentScope->typeIndices[i])
 				return;
 		}
 	}
 
-	PrintError(astType, TPrintF("Type \"%.*s\" not in scope!", astType->name.size, astType->name.data));
+	// @Fix
+	//PrintError(astType, TPrintF("Type \"%.*s\" not in scope!", astType->name.size, astType->name.data));
+	CRASH;
 }
 
 bool IsTemporalValue(ASTExpression *expression)
@@ -256,6 +260,22 @@ bool IsTemporalValue(ASTExpression *expression)
 			return false;
 	}
 	return true;
+}
+
+Type InferType(Type fromType)
+{
+	Type result = fromType;
+
+	if (fromType.typeTableIdx == TYPETABLEIDX_NUMBER)
+	{
+		result.typeTableIdx = TYPETABLEIDX_S64;
+	}
+	else if (fromType.typeTableIdx == TYPETABLEIDX_FLOATING)
+	{
+		result.typeTableIdx = TYPETABLEIDX_F32;
+	}
+
+	return result;
 }
 
 void TypeCheckExpression(TCContext *context, ASTExpression *expression)
@@ -288,22 +308,34 @@ void TypeCheckExpression(TCContext *context, ASTExpression *expression)
 			}
 		}
 
-		TypeCheckType(context, expression->variableDeclaration.type);
+		if (expression->variableDeclaration.typeName)
+		{
+			TypeCheckType(context, expression->variableDeclaration.typeName,
+					&expression->variableDeclaration.type);
+		}
 
 		TCVariable variable;
 		variable.name = varName;
-		variable.type = expression->variableDeclaration.type->type;
-		*DynamicArrayAdd<TCVariable>(&stackTop->variables, realloc) = variable;
+		variable.type = expression->variableDeclaration.type;
 
 		if (expression->variableDeclaration.value)
 		{
 			TypeCheckExpression(context, expression->variableDeclaration.value);
 			Type valueType = expression->variableDeclaration.value->type;
-			if (!CheckTypesMatch(context, variable.type, valueType))
+			if (expression->variableDeclaration.typeName)
 			{
-				PrintError(&expression->any, "Variable declaration type and initial type don't match"_s);
+				if (!CheckTypesMatch(context, variable.type, valueType))
+				{
+					PrintError(&expression->any, "Variable declaration type and initial type don't match"_s);
+				}
+			}
+			else
+			{
+				variable.type = InferType(valueType);
+				expression->variableDeclaration.type = variable.type;
 			}
 		}
+		*DynamicArrayAdd<TCVariable>(&stackTop->variables, realloc) = variable;
 
 		expression->type = variable.type;
 		return;
@@ -322,8 +354,8 @@ void TypeCheckExpression(TCContext *context, ASTExpression *expression)
 
 			StructMember *member = DynamicArrayAdd<StructMember>(&t.structInfo.members, realloc);
 			member->name = astMember->name;
-			TypeCheckType(context, astMember->type);
-			member->type = astMember->type->type;
+			TypeCheckType(context, astMember->typeName, &astMember->type);
+			member->type = astMember->type;
 			// @Todo: alignment.
 			member->offset = t.size;
 			t.size += context->root->typeTable[member->type.typeTableIdx].size;
@@ -370,15 +402,16 @@ void TypeCheckExpression(TCContext *context, ASTExpression *expression)
 
 			TCVariable *tcParam = DynamicArrayAdd(&procedure.parameters, realloc);
 			tcParam->name = astParam->name;
-			tcParam->type = astParam->type->type;
+			tcParam->type = astParam->type;
 		}
 
 		Type returnType = {};
 		returnType.typeTableIdx = -1;
-		if (expression->procedureDeclaration.returnType)
+		if (expression->procedureDeclaration.returnTypeName)
 		{
-			TypeCheckType(context, expression->procedureDeclaration.returnType);
-			returnType = expression->procedureDeclaration.returnType->type;
+			TypeCheckType(context, expression->procedureDeclaration.returnTypeName,
+					&expression->procedureDeclaration.returnType);
+			returnType = expression->procedureDeclaration.returnType;
 		}
 
 		Type oldReturnType = context->currentReturnType;

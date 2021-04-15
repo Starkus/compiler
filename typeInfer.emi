@@ -1,0 +1,32 @@
+anS32 : s32 = 10;
+anS64 : s64 = 11;
+anS8  : s8  = 12;
+anF32 : f32 = 2.32;
+
+Struct :: struct
+{
+	m1 : s32;
+	m2 : s32;
+	m3 : s32;
+}
+
+makeStruct :: () -> Struct
+{
+	result : Struct;
+	result.m1 = 1;
+	result.m2 = 2;
+	result.m3 = 3;
+	return result;
+}
+
+main :: ()
+{
+	foo := 5;
+	bar := anS64;
+	foo = bar;
+
+	baz := anS8;
+	//baz = foo;
+
+	asd := makeStruct();
+}

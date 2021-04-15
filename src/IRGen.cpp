@@ -223,7 +223,7 @@ IRValue IRGenFromExpression(IRContext *context, ASTExpression *expression)
 		*newVar = {};
 
 		newVar->name = expression->variableDeclaration.name;
-		newVar->type = expression->variableDeclaration.type->type;
+		newVar->type = expression->variableDeclaration.type;
 		newVar->value.type = IRVALUETYPE_STACKOFFSET;
 		newVar->value.offset = stackTop->stackSize;
 
@@ -261,7 +261,7 @@ IRValue IRGenFromExpression(IRContext *context, ASTExpression *expression)
 			*newVar = {};
 
 			newVar->name = param.name;
-			newVar->type = param.type->type;
+			newVar->type = param.type;
 			newVar->value.type = IRVALUETYPE_STACKOFFSET;
 			newVar->value.offset = stackTop->stackSize;
 

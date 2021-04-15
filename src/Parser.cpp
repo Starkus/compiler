@@ -2,26 +2,22 @@ ASTExpression ParseExpression(Token **cursor, s32 precedence);
 ASTExpression ParseStatement(Token **cursor);
 ASTVariableDeclaration ParseVariableDeclaration(Token **cursor);
 
-ASTType *ParseType(Token **cursor)
+Type ParseType(Token **cursor, String *outTypeName)
 {
 	Token *token = *cursor;
 
-	ASTType *result = ALLOC(FrameAlloc, ASTType);
-	result->name = {};
-	result->file = token->file;
-	result->line = token->line;
-	result->character = token->character;
-	result->type.pointerLevels = 0;
+	*outTypeName = {};
+	Type result = {};
 
 	while (token->type == TOKEN_OP_POINTERTO)
 	{
-		++result->type.pointerLevels;
+		++result.pointerLevels;
 		++token;
 	}
 
 	Token *nameToken = token;
 	AssertToken(nameToken, TOKEN_IDENTIFIER);
-	result->name = nameToken->string;
+	*outTypeName = nameToken->string;
 	++token;
 
 	*cursor = token;
@@ -204,8 +200,11 @@ ASTVariableDeclaration ParseVariableDeclaration(Token **cursor)
 	AssertToken(token, TOKEN_OP_VARIABLE_DECLARATION);
 	++token;
 
-	ASTType *type = ParseType(&token);
-	varDecl.type = type;
+	if (token->type != TOKEN_OP_ASSIGNMENT)
+	{
+		Type type = ParseType(&token, &varDecl.typeName);
+		varDecl.type = type;
+	}
 
 	if (token->type == TOKEN_OP_ASSIGNMENT)
 	{
@@ -254,12 +253,12 @@ ASTProcedureDeclaration ParseProcedureDeclaration(Token **cursor)
 	{
 		++token;
 
-		ASTType *type = ParseType(&token);
+		Type type = ParseType(&token, &procDecl.returnTypeName);
 		procDecl.returnType = type;
 	}
 	else
 	{
-		procDecl.returnType = nullptr;
+		procDecl.returnTypeName = {};
 	}
 
 	procDecl.body = ALLOC(FrameAlloc, ASTExpression);

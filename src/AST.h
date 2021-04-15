@@ -55,18 +55,13 @@ struct Type
 	u64 arrayCount;
 };
 
-struct ASTType : ASTBase
-{
-	String name;
-
-	Type type;
-};
-
 struct ASTVariableDeclaration : ASTBase
 {
 	String name;
-	ASTType *type;
+	String typeName;
 	ASTExpression *value;
+
+	Type type;
 };
 
 struct ASTProcedureCall : ASTBase
@@ -78,9 +73,11 @@ struct ASTProcedureCall : ASTBase
 struct ASTProcedureDeclaration : ASTBase
 {
 	String name;
-	ASTType *returnType;
+	String returnTypeName;
 	DynamicArray<ASTVariableDeclaration> parameters;
 	ASTExpression *body;
+
+	Type returnType;
 };
 
 struct ASTIf : ASTBase

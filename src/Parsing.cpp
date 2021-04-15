@@ -86,9 +86,9 @@ const String TokenTypeToString(s32 type)
 		return "<Literal string>"_s;
 
 	case TOKEN_OP_ASSIGNMENT:
-		return "< == >"_s;
-	case TOKEN_OP_EQUALS:
 		return "< = >"_s;
+	case TOKEN_OP_EQUALS:
+		return "< == >"_s;
 	case TOKEN_OP_PLUS:
 		return "< + >"_s;
 	case TOKEN_OP_MINUS:

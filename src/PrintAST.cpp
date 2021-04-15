@@ -59,8 +59,8 @@ void PrintExpression(PrintContext *context, ASTExpression *e)
 	case ASTNODETYPE_VARIABLE_DECLARATION:
 	{
 		Log("Variable declaration \"%.*s\" of type \"%.*s\"\n", e->variableDeclaration.name.size,
-				e->variableDeclaration.name.data, e->variableDeclaration.type->name.size,
-				e->variableDeclaration.type->name.data);
+				e->variableDeclaration.name.data, e->variableDeclaration.typeName.size,
+				e->variableDeclaration.typeName.data);
 		if (e->variableDeclaration.value)
 		{
 			++context->indentLevels;
