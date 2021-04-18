@@ -1,86 +1,72 @@
-ASTExpression ParseExpression(Token **cursor, s32 precedence);
-ASTExpression ParseStatement(Token **cursor);
-ASTVariableDeclaration ParseVariableDeclaration(Token **cursor);
+ASTExpression ParseExpression(Context *context, s32 precedence);
+ASTExpression ParseStatement(Context *context);
+ASTVariableDeclaration ParseVariableDeclaration(Context *context);
 
-Type ParseType(Token **cursor, String *outTypeName)
+Type ParseType(Context *context, String *outTypeName)
 {
-	Token *token = *cursor;
-
 	*outTypeName = {};
 	Type result = {};
 
-	while (token->type == TOKEN_OP_POINTERTO)
+	while (context->token->type == TOKEN_OP_POINTERTO)
 	{
 		++result.pointerLevels;
-		++token;
+		++context->token;
 	}
 
-	Token *nameToken = token;
-	AssertToken(nameToken, TOKEN_IDENTIFIER);
+	Token *nameToken = context->token;
+	AssertToken(context, nameToken, TOKEN_IDENTIFIER);
 	*outTypeName = nameToken->string;
-	++token;
+	++context->token;
 
-	*cursor = token;
 	return result;
 }
 
-bool TryParseUnaryOperation(Token **cursor, s32 prevPrecedence, ASTUnaryOperation *result)
+bool TryParseUnaryOperation(Context *context, s32 prevPrecedence, ASTUnaryOperation *result)
 {
-	Token *token = *cursor;
-
-	if (!IsTokenOperator(token))
-	{
+	if (!IsTokenOperator(context->token))
 		return false;
-	}
 
-	switch (token->type)
-	{
-	case TOKEN_OP_MULTIPLY:
-	{
-		token->type = TOKEN_OP_DEREFERENCE;
-	} break;
-	}
+	Token *oldToken = context->token;
 
-	switch (token->type)
+	switch (context->token->type)
 	{
 	case TOKEN_OP_POINTERTO:
 	case TOKEN_OP_DEREFERENCE:
 	case TOKEN_OP_NOT:
 	{
-		enum TokenType op = token->type;
+		enum TokenType op = context->token->type;
 		result->op = op;
-		++token;
+		++context->token;
 
 		s32 precedence = GetOperatorPrecedence(op);
-		if (precedence < prevPrecedence)
-			return false;
+		//if (precedence > prevPrecedence) // @Check: ??
+		{
+			result->expression = ALLOC(FrameAlloc, ASTExpression);
+			*result->expression = ParseExpression(context, precedence);
 
-		result->expression = ALLOC(FrameAlloc, ASTExpression);
-		*result->expression = ParseExpression(&token, precedence);
-
-		*cursor = token;
-		return true;
+			return true;
+		}
 	} break;
 	}
 
-	*cursor = token;
+	context->token = oldToken;
 	return false;
 }
 
-bool TryParseBinaryOperation(Token **cursor, ASTExpression leftHand, s32 prevPrecedence,
+bool TryParseBinaryOperation(Context *context, ASTExpression leftHand, s32 prevPrecedence,
 		ASTBinaryOperation *result)
 {
-	Token *token = *cursor;
-
-	if (!IsTokenOperator(token))
-	{
+	if (!IsTokenOperator(context->token))
 		return false;
-	}
 
-	switch (token->type)
+	Token *oldToken = context->token;
+
+	switch (context->token->type)
 	{
 	case TOKEN_OP_ASSIGNMENT:
 	case TOKEN_OP_EQUALS:
+	case TOKEN_OP_LESSTHAN:
+	case TOKEN_OP_GREATERTHAN:
 	case TOKEN_OP_PLUS:
 	case TOKEN_OP_MINUS:
 	case TOKEN_OP_MULTIPLY:
@@ -90,170 +76,154 @@ bool TryParseBinaryOperation(Token **cursor, ASTExpression leftHand, s32 prevPre
 		result->leftHand = ALLOC(FrameAlloc, ASTExpression);
 		*result->leftHand = leftHand;
 
-		enum TokenType op = token->type;
+		enum TokenType op = context->token->type;
 		result->op = op;
-		++token;
+		++context->token;
 
 		s32 precedence = GetOperatorPrecedence(op);
 
-		if (precedence <= prevPrecedence)
-			return false;
+		if (precedence > prevPrecedence)
+		{
+			result->rightHand = ALLOC(FrameAlloc, ASTExpression);
+			*result->rightHand = ParseExpression(context, precedence);
 
-		result->rightHand = ALLOC(FrameAlloc, ASTExpression);
-		*result->rightHand = ParseExpression(&token, precedence);
-
-		*cursor = token;
-		return true;
+			return true;
+		}
 	} break;
 	}
 
-	*cursor = token;
+	context->token = oldToken;
 	return false;
 }
 
-ASTIf ParseIf(Token **cursor)
+ASTIf ParseIf(Context *context)
 {
-	Token *token = *cursor;
-
-	ASSERT(token->type == TOKEN_KEYWORD_IF);
-	++token;
+	ASSERT(context->token->type == TOKEN_KEYWORD_IF);
+	++context->token;
 
 	ASTIf ifNode = {};
 
 	ifNode.condition = ALLOC(FrameAlloc, ASTExpression);
-	*ifNode.condition = ParseExpression(&token, -1);
+	*ifNode.condition = ParseExpression(context, -1);
 
 	ifNode.body = ALLOC(FrameAlloc, ASTExpression);
-	*ifNode.body = ParseStatement(&token);
+	*ifNode.body = ParseStatement(context);
 
-	if (token->type == TOKEN_KEYWORD_ELSE)
+	if (context->token->type == TOKEN_KEYWORD_ELSE)
 	{
-		++token;
+		++context->token;
 		ifNode.elseNode = ALLOC(FrameAlloc, ASTExpression);
-		*ifNode.elseNode = ParseStatement(&token);
+		*ifNode.elseNode = ParseStatement(context);
 	}
-
-	*cursor = token;
 	return ifNode;
 }
 
-ASTWhile ParseWhile(Token **cursor)
+ASTWhile ParseWhile(Context *context)
 {
-	Token *token = *cursor;
-
-	ASSERT(token->type == TOKEN_KEYWORD_WHILE);
-	++token;
+	ASSERT(context->token->type == TOKEN_KEYWORD_WHILE);
+	++context->token;
 
 	ASTWhile whileNode = {};
 	whileNode.condition = ALLOC(FrameAlloc, ASTExpression);
-	*whileNode.condition = ParseExpression(&token, -1);
+	*whileNode.condition = ParseExpression(context, -1);
 	whileNode.body = ALLOC(FrameAlloc, ASTExpression);
-	*whileNode.body = ParseStatement(&token);
+	*whileNode.body = ParseStatement(context);
 
-	*cursor = token;
 	return whileNode;
 }
 
-ASTStruct ParseStruct(Token **cursor)
+ASTStruct ParseStruct(Context *context)
 {
-	Token *token = *cursor;
+	AssertToken(context, context->token, TOKEN_IDENTIFIER);
+	String name = context->token->string;
+	++context->token;
 
-	AssertToken(token, TOKEN_IDENTIFIER);
-	String name = token->string;
-	++token;
+	AssertToken(context, context->token, TOKEN_OP_STATIC_DEF);
+	++context->token;
 
-	AssertToken(token, TOKEN_OP_STATIC_DEF);
-	++token;
-
-	AssertToken(token, TOKEN_KEYWORD_STRUCT);
-	++token;
+	AssertToken(context, context->token, TOKEN_KEYWORD_STRUCT);
+	++context->token;
 
 	ASTStruct structNode = {};
 	structNode.name = name;
-	DynamicArrayInit<ASTVariableDeclaration>(&structNode.members, 16, FrameAlloc);
+	DynamicArrayInit(&structNode.members, 16, FrameAlloc);
 
-	AssertToken(token, '{');
-	++token;
-	while (token->type != '}')
+	AssertToken(context, context->token, '{');
+	++context->token;
+	while (context->token->type != '}')
 	{
-		ASTVariableDeclaration member = ParseVariableDeclaration(&token);
-		*DynamicArrayAdd<ASTVariableDeclaration>(&structNode.members, FrameRealloc) = member;
-		AssertToken(token, ';');
-		++token;
+		ASTVariableDeclaration member = ParseVariableDeclaration(context);
+		*DynamicArrayAdd(&structNode.members, FrameRealloc) = member;
+		AssertToken(context, context->token, ';');
+		++context->token;
 	}
-	++token;
+	++context->token;
 
-	*cursor = token;
 	return structNode;
 }
 
-ASTVariableDeclaration ParseVariableDeclaration(Token **cursor)
+ASTVariableDeclaration ParseVariableDeclaration(Context *context)
 {
-	Token *token = *cursor;
-
 	ASTVariableDeclaration varDecl = {};
 
-	AssertToken(token, TOKEN_IDENTIFIER);
-	varDecl.name = token->string;
-	++token;
+	AssertToken(context, context->token, TOKEN_IDENTIFIER);
+	varDecl.name = context->token->string;
+	++context->token;
 
-	AssertToken(token, TOKEN_OP_VARIABLE_DECLARATION);
-	++token;
+	AssertToken(context, context->token, TOKEN_OP_VARIABLE_DECLARATION);
+	++context->token;
 
-	if (token->type != TOKEN_OP_ASSIGNMENT)
+	if (context->token->type != TOKEN_OP_ASSIGNMENT)
 	{
-		Type type = ParseType(&token, &varDecl.typeName);
+		Type type = ParseType(context, &varDecl.typeName);
 		varDecl.type = type;
 	}
 
-	if (token->type == TOKEN_OP_ASSIGNMENT)
+	if (context->token->type == TOKEN_OP_ASSIGNMENT)
 	{
-		++token;
+		++context->token;
 		varDecl.value = ALLOC(FrameAlloc, ASTExpression);
-		*varDecl.value = ParseExpression(&token, -1);
+		*varDecl.value = ParseExpression(context, -1);
 	}
 
-	*cursor = token;
 	return varDecl;
 }
 
-ASTProcedureDeclaration ParseProcedureDeclaration(Token **cursor)
+ASTProcedureDeclaration ParseProcedureDeclaration(Context *context)
 {
-	Token *token = *cursor;
+	AssertToken(context, context->token, TOKEN_IDENTIFIER);
+	String name = context->token->string;
+	++context->token;
 
-	AssertToken(token, TOKEN_IDENTIFIER);
-	String name = token->string;
-	++token;
-
-	AssertToken(token, TOKEN_OP_STATIC_DEF);
-	++token;
+	AssertToken(context, context->token, TOKEN_OP_STATIC_DEF);
+	++context->token;
 
 	ASTProcedureDeclaration procDecl = {};
 	procDecl.name = name;
 
-	DynamicArrayInit<ASTVariableDeclaration>(&procDecl.parameters, 4, FrameAlloc);
+	DynamicArrayInit(&procDecl.parameters, 4, FrameAlloc);
 
-	AssertToken(token, '(');
-	++token;
-	while (token->type != ')')
+	AssertToken(context, context->token, '(');
+	++context->token;
+	while (context->token->type != ')')
 	{
 		// @Improve: separate node type for procedure parameter?
-		ASTVariableDeclaration parameter = ParseVariableDeclaration(&token);
-		*DynamicArrayAdd<ASTVariableDeclaration>(&procDecl.parameters, FrameRealloc) = parameter;
+		ASTVariableDeclaration parameter = ParseVariableDeclaration(context);
+		*DynamicArrayAdd(&procDecl.parameters, FrameRealloc) = parameter;
 
-		if (token->type != ')')
+		if (context->token->type != ')')
 		{
-			AssertToken(token, ',');
-			++token;
+			AssertToken(context, context->token, ',');
+			++context->token;
 		}
 	}
-	++token;
+	++context->token;
 
-	if (token->type == TOKEN_OP_ARROW)
+	if (context->token->type == TOKEN_OP_ARROW)
 	{
-		++token;
+		++context->token;
 
-		Type type = ParseType(&token, &procDecl.returnTypeName);
+		Type type = ParseType(context, &procDecl.returnTypeName);
 		procDecl.returnType = type;
 	}
 	else
@@ -262,58 +232,54 @@ ASTProcedureDeclaration ParseProcedureDeclaration(Token **cursor)
 	}
 
 	procDecl.body = ALLOC(FrameAlloc, ASTExpression);
-	*procDecl.body = ParseStatement(&token);
+	*procDecl.body = ParseStatement(context);
 
-	*cursor = token;
 	return procDecl;
 }
 
-ASTExpression ParseExpression(Token **cursor, s32 precedence)
+ASTExpression ParseExpression(Context *context, s32 precedence)
 {
-	Token *token = *cursor;
-
 	ASTExpression result = {};
 
 	// Parenthesis
-	if (token->type == '(')
+	if (context->token->type == '(')
 	{
-		++token;
+		++context->token;
 
-		ASTExpression innerExp = ParseExpression(&token, -1);
+		ASTExpression innerExp = ParseExpression(context, -1);
 
-		AssertToken(token, ')');
-		++token;
+		AssertToken(context, context->token, ')');
+		++context->token;
 
-		*cursor = token;
 		return innerExp;
 	}
 
-	if (token->type == TOKEN_IDENTIFIER)
+	if (context->token->type == TOKEN_IDENTIFIER)
 	{
-		String identifier = token->string;
-		++token;
+		String identifier = context->token->string;
+		++context->token;
 
-		if (token->type == '(')
+		if (context->token->type == '(')
 		{
 			// Procedure call
 			result.nodeType = ASTNODETYPE_PROCEDURE_CALL;
 			result.procedureCall.name = identifier;
-			DynamicArrayInit<ASTExpression>(&result.procedureCall.arguments, 4, FrameAlloc);
+			DynamicArrayInit(&result.procedureCall.arguments, 4, FrameAlloc);
 
 			// Parse arguments
-			++token;
-			while (token->type != ')')
+			++context->token;
+			while (context->token->type != ')')
 			{
-				ASTExpression arg = ParseExpression(&token, -1);
-				*DynamicArrayAdd<ASTExpression>(&result.procedureCall.arguments, FrameRealloc) = arg;
+				ASTExpression arg = ParseExpression(context, -1);
+				*DynamicArrayAdd(&result.procedureCall.arguments, FrameRealloc) = arg;
 
-				if (token->type != ')')
+				if (context->token->type != ')')
 				{
-					AssertToken(token, ',');
-					++token;
+					AssertToken(context, context->token, ',');
+					++context->token;
 				}
 			}
-			++token;
+			++context->token;
 		}
 		else
 		{
@@ -322,14 +288,14 @@ ASTExpression ParseExpression(Token **cursor, s32 precedence)
 			result.variable.name = identifier;
 		}
 	}
-	else if (token->type == TOKEN_LITERAL_NUMBER)
+	else if (context->token->type == TOKEN_LITERAL_NUMBER)
 	{
 		result.nodeType = ASTNODETYPE_LITERAL;
 
 		bool isFloating = false;
-		for (int i = 0; i < token->size; ++i)
+		for (int i = 0; i < context->token->size; ++i)
 		{
-			if (token->begin[i] == '.')
+			if (context->token->begin[i] == '.')
 			{
 				isFloating = true;
 				break;
@@ -338,29 +304,29 @@ ASTExpression ParseExpression(Token **cursor, s32 precedence)
 		if (!isFloating)
 		{
 			result.literal.type = LITERALTYPE_INTEGER;
-			result.literal.integer = atoi(token->string.data);
+			result.literal.integer = atoi(context->token->string.data);
 		}
 		else
 		{
 			result.literal.type = LITERALTYPE_FLOATING;
-			result.literal.floating = atof(token->string.data);
+			result.literal.floating = atof(context->token->string.data);
 		}
-		++token;
+		++context->token;
 	}
-	else if (token->type == TOKEN_LITERAL_STRING)
+	else if (context->token->type == TOKEN_LITERAL_STRING)
 	{
 		result.nodeType = ASTNODETYPE_LITERAL;
 		result.literal.type = LITERALTYPE_STRING;
-		result.literal.string = token->string;
-		++token;
+		result.literal.string = context->token->string;
+		++context->token;
 	}
-	else if (IsTokenOperator(token))
+	else if (IsTokenOperator(context->token))
 	{
 		// Page intentionally left blank!
 	}
 	else
 	{
-		UnexpectedTokenError(token);
+		UnexpectedTokenError(context, context->token);
 	}
 
 	while (true)
@@ -369,141 +335,132 @@ ASTExpression ParseExpression(Token **cursor, s32 precedence)
 		{
 			// If we have no left hand, try unary operation
 			ASTUnaryOperation unaryOp = result.unaryOperation;
-			bool success = TryParseUnaryOperation(&token, precedence, &unaryOp);
+			bool success = TryParseUnaryOperation(context, precedence, &unaryOp);
 			if (!success)
-				PrintError(token, "Invalid expression!"_s);
+				PrintError(context, context->token->loc, "Invalid expression!"_s);
 			result.nodeType = ASTNODETYPE_UNARY_OPERATION;
 			result.unaryOperation = unaryOp;
 		}
 		else
 		{
 			ASTBinaryOperation binaryOp = result.binaryOperation;
-			bool success = TryParseBinaryOperation(&token, result, precedence, &binaryOp);
+			bool success = TryParseBinaryOperation(context, result, precedence, &binaryOp);
 			if (!success)
 				break;
 			result.nodeType = ASTNODETYPE_BINARY_OPERATION;
 			result.binaryOperation = binaryOp;
 		}
-
-		// @Check: update precedence in every loop? Don't think so...
 	}
 
-	result.any.file = token->file;
-	result.any.line = token->line;
-	result.any.character = token->character;
+	result.any.loc = context->token->loc;
 
-	*cursor = token;
 	return result;
 }
 
-ASTExpression ParseStatement(Token **cursor)
+ASTExpression ParseStatement(Context *context)
 {
-	Token *token = *cursor;
-
 	ASTExpression result = {};
 
-	switch (token->type)
+	switch (context->token->type)
 	{
 	case '{':
 	{
 		result.nodeType = ASTNODETYPE_BLOCK;
 
-		++token;
-		DynamicArrayInit<ASTExpression>(&result.block.statements, 512, FrameAlloc);
-		while (token->type != '}')
+		++context->token;
+		DynamicArrayInit(&result.block.statements, 512, FrameAlloc);
+		while (context->token->type != '}')
 		{
-			ASTExpression statement = ParseStatement(&token);
-			*DynamicArrayAdd<ASTExpression>(&result.block.statements, FrameRealloc) = statement;
+			ASTExpression statement = ParseStatement(context);
+			*DynamicArrayAdd(&result.block.statements, FrameRealloc) = statement;
 		}
-		++token;
+		++context->token;
 	} break;
 	case TOKEN_KEYWORD_IF:
 	{
 		result.nodeType = ASTNODETYPE_IF;
-		result.ifNode = ParseIf(&token);
+		result.ifNode = ParseIf(context);
 	} break;
 	case TOKEN_KEYWORD_ELSE:
 	{
-		PrintError(token, "Invalid 'else' without matching 'if'"_s);
+		PrintError(context, context->token->loc, "Invalid 'else' without matching 'if'"_s);
 	} break;
 	case TOKEN_KEYWORD_WHILE:
 	{
 		result.nodeType = ASTNODETYPE_WHILE;
-		result.whileNode = ParseWhile(&token);
+		result.whileNode = ParseWhile(context);
 	} break;
 	case TOKEN_KEYWORD_BREAK:
 	{
 		result.nodeType = ASTNODETYPE_BREAK;
-		++token;
+		++context->token;
 
-		AssertToken(token, ';');
-		++token;
+		AssertToken(context, context->token, ';');
+		++context->token;
 	} break;
 	case TOKEN_KEYWORD_RETURN:
 	{
-		++token;
+		++context->token;
 
 		result.nodeType = ASTNODETYPE_RETURN;
 		result.returnNode.expression = ALLOC(FrameAlloc, ASTExpression);
-		*result.returnNode.expression = ParseExpression(&token, -1);
+		*result.returnNode.expression = ParseExpression(context, -1);
 
-		AssertToken(token, ';');
-		++token;
+		AssertToken(context, context->token, ';');
+		++context->token;
 	} break;
 	default:
 	{
-		if ((token + 1)->type == TOKEN_OP_STATIC_DEF)
+		if ((context->token + 1)->type == TOKEN_OP_STATIC_DEF)
 		{
-			if ((token + 2)->type == '(')
+			if ((context->token + 2)->type == '(')
 			{
 				result.nodeType = ASTNODETYPE_PROCEDURE_DECLARATION;
-				result.procedureDeclaration = ParseProcedureDeclaration(&token);
+				result.procedureDeclaration = ParseProcedureDeclaration(context);
 			}
-			else if ((token + 2)->type == TOKEN_KEYWORD_STRUCT)
+			else if ((context->token + 2)->type == TOKEN_KEYWORD_STRUCT)
 			{
 				result.nodeType = ASTNODETYPE_STRUCT_DECLARATION;
-				result.structNode = ParseStruct(&token);
+				result.structNode = ParseStruct(context);
 			}
 			else
 			{
 				// @Todo: static constants
-				PrintError(token, "Unsupported!"_s);
+				PrintError(context, context->token->loc, "Unsupported!"_s);
 			}
 		}
-		else if ((token + 1)->type == TOKEN_OP_VARIABLE_DECLARATION)
+		else if ((context->token + 1)->type == TOKEN_OP_VARIABLE_DECLARATION)
 		{
 			result.nodeType = ASTNODETYPE_VARIABLE_DECLARATION;
-			result.variableDeclaration = ParseVariableDeclaration(&token);
+			result.variableDeclaration = ParseVariableDeclaration(context);
 
-			AssertToken(token, ';');
-			++token;
+			AssertToken(context, context->token, ';');
+			++context->token;
 		}
 		else
 		{
-			result = ParseExpression(&token, -1);
-			AssertToken(token, ';');
-			++token;
+			result = ParseExpression(context, -1);
+			AssertToken(context, context->token, ';');
+			++context->token;
 		}
 	} break;
 	}
 
-	result.any.file = token->file;
-	result.any.line = token->line;
-	result.any.character = token->character;
+	result.any.loc = context->token->loc;
 
-	*cursor = token;
 	return result;
 }
 
-ASTRoot *GenerateSyntaxTree(DynamicArray<Token> *tokens)
+ASTRoot *GenerateSyntaxTree(Context *context)
 {
 	ASTRoot *root = (ASTRoot *)FrameAlloc(sizeof(ASTRoot));
-	DynamicArrayInit<ASTExpression>(&root->block.statements, 4096, FrameAlloc);
+	context->astRoot = root;
+	DynamicArrayInit(&root->block.statements, 4096, FrameAlloc);
 
-	Token *token = tokens->data;
-	while (token->type != TOKEN_END_OF_FILE)
+	context->token = context->tokens.data;
+	while (context->token->type != TOKEN_END_OF_FILE)
 	{
-		*DynamicArrayAdd<ASTExpression>(&root->block.statements, FrameRealloc) = ParseStatement(&token);
+		*DynamicArrayAdd(&root->block.statements, FrameRealloc) = ParseStatement(context);
 	}
 	return root;
 }

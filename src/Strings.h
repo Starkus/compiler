@@ -17,6 +17,11 @@ const char *StringToCStr(String *str, void *(*allocFunc)(u64))
 	return buffer;
 }
 
+String CStrToString(const char *cstr)
+{
+	return { (s64)strlen(cstr), cstr };
+}
+
 inline void ChangeExtension(char *buffer, const char *newExtension)
 {
 	char *lastDot = 0;

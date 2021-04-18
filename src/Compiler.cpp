@@ -47,27 +47,72 @@ const String TPrintF(const char *format, ...)
 }
 
 #include "MemoryAlloc.cpp"
-#include "Parsing.cpp"
+#include "Parser.h"
 #include "AST.h"
 
-inline void PrintError(Token *token, const String errorStr)
+struct Token;
+struct ASTRoot;
+struct TypeInfo;
+struct TCScope;
+struct IRInstruction;
+struct IRScope;
+struct Context
 {
-	Log("ERROR! %s %d:%d\n... %.*s\n", token->file, token->line, token->character, errorStr.size,
-			errorStr.data);
+	String filename;
+	u8 *fileBuffer;
+	u64 fileSize;
+
+	// Parsing
+	DynamicArray<Token> tokens;
+	Token *token;
+	ASTRoot *astRoot;
+
+	// Type check
+	DynamicArray<TypeInfo> typeTable;
+	DynamicArray<TCScope> tcStack;
+	Type currentReturnType;
+
+	// IR
+	DynamicArray<IRInstruction> instructions;
+	DynamicArray<IRScope> irStack;
+	u64 currentRegisterId;
+	u64 currentLabelId;
+	String currentBreakLabel;
+};
+
+#include "Parsing.cpp"
+
+inline void PrintError(Context *context, SourceLocation loc, const String errorStr)
+{
+	Log("ERROR! %.*s %d:%d\n... %.*s\n", loc.file.size, loc.file.data, loc.line, loc.character,
+			errorStr.size, errorStr.data);
 
 	// Print line
-	const char *beginningOfLine = token->begin - token->character;
+	const char *beginningOfLine = nullptr;
 	int size = 0;
-	for (const char *scan = beginningOfLine; ; ++scan)
 	{
-		if (!*scan || *scan == '\n')
-			break;
-		++size;
+		int l = 1;
+		for (const char *scan = (const char *)context->fileBuffer; *scan; ++scan)
+		{
+			if (l == loc.line)
+			{
+				beginningOfLine = scan;
+				break;
+			}
+			if (*scan == '\n')
+				++l;
+		}
+		for (const char *scan = beginningOfLine; ; ++scan)
+		{
+			if (!*scan || *scan == '\n')
+				break;
+			++size;
+		}
 	}
 	Log("... %.*s\n... ", size, beginningOfLine);
 
 	int shift = 0;
-	for (int i = 0; i < token->character; ++i)
+	for (int i = 0; i < loc.character; ++i)
 	{
 		if (beginningOfLine[i] == '\t')
 			shift += 4;
@@ -77,27 +122,17 @@ inline void PrintError(Token *token, const String errorStr)
 
 	for (int i = 0; i < shift; ++i)
 		Log(" ");
-	for (int i = 0; i < token->size; ++i)
-		Log("^");
-	Log("\n");
+	Log("^\n");
 
 	CRASH;
 }
 
-inline void PrintError(ASTBase *astNode, const String errorStr)
+inline void PrintWarning(SourceLocation loc, const String errorStr)
 {
-	Log("ERROR! %s %d:%d\n... %.*s\n", astNode->file, astNode->line, astNode->character, errorStr.size,
-			errorStr.data);
-
-	CRASH;
+	Log("WARNING! %s:%d\n... %.*s\n", loc.file, loc.line, errorStr.size, errorStr.data);
 }
 
-inline void PrintWarning(Token *token, const String errorStr)
-{
-	Log("WARNING! %s:%d\n... %.*s\n", token->file, token->line, errorStr.size, errorStr.data);
-}
-
-void AssertToken(Token *token, int type)
+void AssertToken(Context *context, Token *token, int type)
 {
 	if (token->type != type)
 	{
@@ -105,22 +140,21 @@ void AssertToken(Token *token, int type)
 		const String tokenTypeExp = TokenTypeToString(type);
 		const String errorStr = TPrintF("Expected token of type %.*s but got %.*s",
 				tokenTypeExp.size, tokenTypeExp.data, tokenTypeGot.size, tokenTypeGot.data);
-		PrintError(token, errorStr);
+		PrintError(context, token->loc, errorStr);
 	}
 }
 
-void UnexpectedTokenError(Token *token)
+void UnexpectedTokenError(Context *context, Token *token)
 {
 	const String tokenType = TokenTypeToString(token->type);
 	const String errorStr = TPrintF("Unexpected token of type %.*s",
 			tokenType.size, tokenType.data);
-	PrintError(token, errorStr);
+	PrintError(context, token->loc, errorStr);
 }
 
 #include "Parser.cpp"
 #include "TypeChecker.cpp"
 #include "IRGen.cpp"
-//#include "WriteToC.cpp"
 #include "PrintAST.cpp"
 
 inline bool Win32GetLastWriteTime(const char *filename, FILETIME *lastWriteTime)
@@ -211,19 +245,19 @@ int main(int argc, char **argv)
 	memory.frameMem = VirtualAlloc(0, Memory::frameSize, MEM_COMMIT, PAGE_READWRITE);
 	MemoryInit(&memory);
 
-	u8 *fileBuffer;
-	u64 fileSize;
-	Win32ReadEntireFile(filename, &fileBuffer, &fileSize, FrameAlloc);
+	Context context = {};
+	context.filename = CStrToString(filename);
+	DynamicArrayInit(&context.tokens, 8192, FrameAlloc);
 
-	DynamicArray<Token> tokens;
-	DynamicArrayInit<Token>(&tokens, 8192, FrameAlloc);
-	TokenizeFile(fileBuffer, fileSize, tokens, filename, FrameRealloc);
+	Win32ReadEntireFile(filename, &context.fileBuffer, &context.fileSize, FrameAlloc);
 
-	ASTRoot *root = GenerateSyntaxTree(&tokens);
+	TokenizeFile(&context, FrameRealloc);
 
-	TypeCheckMain(root);
+	GenerateSyntaxTree(&context);
 
-	IRGenMain(root);
+	TypeCheckMain(&context);
+
+	IRGenMain(&context);
 
 	Log("Compilation success\n");
 	return 0;

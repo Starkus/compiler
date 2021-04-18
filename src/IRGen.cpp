@@ -2,10 +2,7 @@ enum IRValueType
 {
 	IRVALUETYPE_INVALID = -1,
 	IRVALUETYPE_REGISTER,
-	IRVALUETYPE_DATAOFFSET,
-	IRVALUETYPE_STACKOFFSET,
-	IRVALUETYPE_STACKBASE,
-	IRVALUETYPE_DATABASE,
+	IRVALUETYPE_VARIABLE,
 	IRVALUETYPE_IMMEDIATE
 };
 struct IRValue
@@ -14,9 +11,10 @@ struct IRValue
 	union
 	{
 		s64 registerIdx;
-		s64 offset;
+		String variable;
 		s64 immediate;
 	};
+	bool pointerOf;
 	bool asPointer;
 };
 
@@ -40,6 +38,14 @@ struct IRAssignment
 {
 	IRValue src;
 	IRValue dst;
+};
+
+struct IRMemberAddress
+{
+	IRValue in;
+	IRValue out;
+	String structName;
+	String memberName;
 };
 
 struct IRUnaryOperation
@@ -67,6 +73,12 @@ struct IRSetParameter
 	s64 parameterIdx;
 };
 
+struct IRVariableDeclaration
+{
+	String name;
+	s64 size;
+};
+
 enum IRInstructionType
 {
 	IRINSTRUCTIONTYPE_INVALID = -1,
@@ -76,10 +88,12 @@ enum IRInstructionType
 	IRINSTRUCTIONTYPE_JUMP_IF_ZERO,
 	IRINSTRUCTIONTYPE_RETURN,
 	IRINSTRUCTIONTYPE_CALL,
-	IRINSTRUCTIONTYPE_SETPARAMETER,
-	IRINSTRUCTIONTYPE_GETPARAMETER,
+	IRINSTRUCTIONTYPE_SET_PARAMETER,
+	IRINSTRUCTIONTYPE_GET_PARAMETER,
 
+	IRINSTRUCTIONTYPE_VARIABLE_DECLARATION,
 	IRINSTRUCTIONTYPE_ASSIGNMENT,
+	IRINSTRUCTIONTYPE_MEMBER_ADDRESS,
 
 	IRINSTRUCTIONTYPE_UNARY_BEGIN,
 	IRINSTRUCTIONTYPE_NOT = IRINSTRUCTIONTYPE_UNARY_BEGIN,
@@ -91,6 +105,8 @@ enum IRInstructionType
 	IRINSTRUCTIONTYPE_MULTIPLY,
 	IRINSTRUCTIONTYPE_DIVIDE,
 	IRINSTRUCTIONTYPE_EQUALS,
+	IRINSTRUCTIONTYPE_LESS_THAN,
+	IRINSTRUCTIONTYPE_GREATER_THAN,
 	IRINSTRUCTIONTYPE_BINARY_END
 };
 struct IRInstruction
@@ -105,7 +121,9 @@ struct IRInstruction
 		IRValue returnValue;
 		IRGetParameter getParameter;
 		IRSetParameter setParameter;
+		IRVariableDeclaration variableDeclaration;
 		IRAssignment assignment;
+		IRMemberAddress memberAddress;
 		IRUnaryOperation unaryOperation;
 		IRBinaryOperation binaryOperation;
 	};
@@ -115,25 +133,14 @@ struct IRVariable
 {
 	String name;
 	Type type;
-	IRValue value;
 };
 
 struct IRScope
 {
 	DynamicArray<IRVariable> variables;
-	s64 stackSize;
 };
 
-struct IRContext
-{
-	ASTRoot *root;
-	DynamicArray<IRInstruction> instructions;
-	DynamicArray<IRScope> stack;
-	u64 currentRegisterId;
-	u64 currentLabelId;
-};
-
-IRValue NewVirtualRegister(IRContext *context)
+IRValue NewVirtualRegister(Context *context)
 {
 	IRValue result = {};
 	result.type = IRVALUETYPE_REGISTER;
@@ -141,24 +148,23 @@ IRValue NewVirtualRegister(IRContext *context)
 	return result;
 }
 
-String NewLabel(IRContext *context)
+String NewLabel(Context *context, String prefix)
 {
-	return TPrintF("labelNo%d", context->currentLabelId++);
+	return TPrintF("%.*s%d", prefix.size, prefix.data, context->currentLabelId++);
 }
 
-void PushScope(IRContext *context)
+void PushIRScope(Context *context)
 {
-	IRScope *newScope = DynamicArrayAdd<IRScope>(&context->stack, realloc);
-	DynamicArrayInit<IRVariable>(&newScope->variables, 64, malloc);
-	newScope->stackSize = 0;
+	IRScope *newScope = DynamicArrayAdd(&context->irStack, realloc);
+	DynamicArrayInit(&newScope->variables, 64, malloc);
 }
 
-void PopScope(IRContext *context)
+void PopIRScope(Context *context)
 {
-	--context->stack.size;
+	--context->irStack.size;
 }
 
-s64 CalculateTypeSize(IRContext *context, Type type)
+s64 CalculateTypeSize(Context *context, Type type)
 {
 	ASSERT(type.typeTableIdx >= 0);
 
@@ -167,40 +173,11 @@ s64 CalculateTypeSize(IRContext *context, Type type)
 
 	// @Todo: arrays
 
-	TypeInfo *typeInfo  = &context->root->typeTable[type.typeTableIdx];
+	TypeInfo *typeInfo  = &context->typeTable[type.typeTableIdx];
 	return typeInfo->size;
 }
 
-IRValue FindVariable(IRContext *context, String name)
-{
-	IRValue result = { IRVALUETYPE_INVALID };
-	s64 offset = 0;
-	for (s64 stackIdx = context->stack.size - 1; stackIdx >= 0; --stackIdx)
-	{
-		IRScope *scope = &context->stack[stackIdx];
-		for (int varIdx = 0; varIdx < scope->variables.size; ++varIdx)
-		{
-			if (StringEquals(name, scope->variables[varIdx].name))
-			{
-				result = scope->variables[varIdx].value;
-				if (stackIdx == 0)
-				{
-					result.type = IRVALUETYPE_DATAOFFSET;
-					result.offset = result.offset;
-				}
-				else
-				{
-					result.offset += offset;
-				}
-				return result;
-			}
-		}
-		offset -= scope->stackSize;
-	}
-	return result;
-}
-
-IRValue IRGenFromExpression(IRContext *context, ASTExpression *expression)
+IRValue IRGenFromExpression(Context *context, ASTExpression *expression)
 {
 	IRValue result = {};
 	result.type = IRVALUETYPE_INVALID;
@@ -209,37 +186,39 @@ IRValue IRGenFromExpression(IRContext *context, ASTExpression *expression)
 	{
 	case ASTNODETYPE_BLOCK:
 	{
-		//PushScope(context);
 		for (int i = 0; i < expression->block.statements.size; ++i)
 		{
 			IRGenFromExpression(context, &expression->block.statements[i]);
 		}
-		//PopScope(context);
 	} break;
 	case ASTNODETYPE_VARIABLE_DECLARATION:
 	{
-		IRScope *stackTop = &context->stack[context->stack.size - 1];
-		IRVariable *newVar = DynamicArrayAdd<IRVariable>(&stackTop->variables, realloc);
+		ASTVariableDeclaration varDecl = expression->variableDeclaration;
+		TypeInfo *typeInfo = &context->typeTable[varDecl.type.typeTableIdx];
+
+		IRInstruction inst = {};
+		inst.type = IRINSTRUCTIONTYPE_VARIABLE_DECLARATION;
+		inst.variableDeclaration.name = varDecl.name;
+		inst.variableDeclaration.size = typeInfo->size;
+		*DynamicArrayAdd(&context->instructions, realloc) = inst;
+
+		IRScope *stackTop = &context->irStack[context->irStack.size - 1];
+		IRVariable *newVar = DynamicArrayAdd(&stackTop->variables, realloc);
 		*newVar = {};
 
-		newVar->name = expression->variableDeclaration.name;
-		newVar->type = expression->variableDeclaration.type;
-		newVar->value.type = IRVALUETYPE_STACKOFFSET;
-		newVar->value.offset = stackTop->stackSize;
-
-		ASSERT(newVar->type.typeTableIdx >= 0);
-		TypeInfo *typeInfo  = &context->root->typeTable[newVar->type.typeTableIdx];
-		stackTop->stackSize += typeInfo->size;
+		newVar->name = varDecl.name;
+		newVar->type = varDecl.type;
 
 		// Initial value
 		if (expression->variableDeclaration.value)
 		{
-			IRInstruction inst = {};
-			inst.type = IRINSTRUCTIONTYPE_ASSIGNMENT;
-			inst.assignment.src = IRGenFromExpression(context, expression->variableDeclaration.value);
-			inst.assignment.dst = newVar->value;
+			IRInstruction initialValueInst = {};
+			initialValueInst.type = IRINSTRUCTIONTYPE_ASSIGNMENT;
+			initialValueInst.assignment.src = IRGenFromExpression(context, varDecl.value);
+			initialValueInst.assignment.dst.type = IRVALUETYPE_VARIABLE;
+			initialValueInst.assignment.dst.variable = newVar->name;
 
-			*DynamicArrayAdd<IRInstruction>(&context->instructions, realloc) = inst;
+			*DynamicArrayAdd(&context->instructions, realloc) = initialValueInst;
 		}
 	} break;
 	case ASTNODETYPE_PROCEDURE_DECLARATION:
@@ -247,40 +226,38 @@ IRValue IRGenFromExpression(IRContext *context, ASTExpression *expression)
 		IRInstruction inst = {};
 		inst.type = IRINSTRUCTIONTYPE_LABEL;
 		inst.label = expression->variableDeclaration.name;
-		*DynamicArrayAdd<IRInstruction>(&context->instructions, realloc) = inst;
+		*DynamicArrayAdd(&context->instructions, realloc) = inst;
 
-		PushScope(context);
+		PushIRScope(context);
 
 		for (int paramIdx = 0; paramIdx < expression->procedureDeclaration.parameters.size;
 				++paramIdx)
 		{
 			ASTVariableDeclaration param = expression->procedureDeclaration.parameters[paramIdx];
 
-			IRScope *stackTop = &context->stack[context->stack.size - 1];
-			IRVariable *newVar = DynamicArrayAdd<IRVariable>(&stackTop->variables, realloc);
+			IRScope *stackTop = &context->irStack[context->irStack.size - 1];
+			IRVariable *newVar = DynamicArrayAdd(&stackTop->variables, realloc);
 			*newVar = {};
 
 			newVar->name = param.name;
 			newVar->type = param.type;
-			newVar->value.type = IRVALUETYPE_STACKOFFSET;
-			newVar->value.offset = stackTop->stackSize;
-
-			stackTop->stackSize += CalculateTypeSize(context, newVar->type);
 
 			IRInstruction getParamInst;
-			getParamInst.type = IRINSTRUCTIONTYPE_GETPARAMETER;
+			getParamInst.type = IRINSTRUCTIONTYPE_GET_PARAMETER;
 			getParamInst.getParameter.parameterIdx = paramIdx;
-			getParamInst.getParameter.out = newVar->value;
-			*DynamicArrayAdd<IRInstruction>(&context->instructions, realloc) = getParamInst;
+			getParamInst.getParameter.out.type = IRVALUETYPE_VARIABLE;
+			getParamInst.getParameter.out.variable = newVar->name;
+			*DynamicArrayAdd(&context->instructions, realloc) = getParamInst;
 		}
 
 		IRGenFromExpression(context, expression->procedureDeclaration.body);
 
-		PopScope(context);
+		PopIRScope(context);
 	} break;
 	case ASTNODETYPE_VARIABLE:
 	{
-		result = FindVariable(context, expression->variable.name);
+		result.type = IRVALUETYPE_VARIABLE;
+		result.variable = expression->variable.name;
 	} break;
 	case ASTNODETYPE_PROCEDURE_CALL:
 	{
@@ -290,10 +267,10 @@ IRValue IRGenFromExpression(IRContext *context, ASTExpression *expression)
 			ASTExpression *arg = &expression->procedureCall.arguments[argIdx];
 
 			IRInstruction setParamInst;
-			setParamInst.type = IRINSTRUCTIONTYPE_SETPARAMETER;
+			setParamInst.type = IRINSTRUCTIONTYPE_SET_PARAMETER;
 			setParamInst.setParameter.parameterIdx = argIdx;
 			setParamInst.setParameter.in = IRGenFromExpression(context, arg);
-			*DynamicArrayAdd<IRInstruction>(&context->instructions, realloc) = setParamInst;
+			*DynamicArrayAdd(&context->instructions, realloc) = setParamInst;
 		}
 
 		String label = expression->procedureCall.name; // @Improve: oh my god...
@@ -301,7 +278,7 @@ IRValue IRGenFromExpression(IRContext *context, ASTExpression *expression)
 		IRInstruction inst = {};
 		inst.type = IRINSTRUCTIONTYPE_CALL;
 		inst.call.label = label;
-		*DynamicArrayAdd<IRInstruction>(&context->instructions, realloc) = inst;
+		*DynamicArrayAdd(&context->instructions, realloc) = inst;
 	} break;
 	case ASTNODETYPE_UNARY_OPERATION:
 	{
@@ -309,17 +286,9 @@ IRValue IRGenFromExpression(IRContext *context, ASTExpression *expression)
 		{
 			result = IRGenFromExpression(context, expression->unaryOperation.expression);
 
-			ASSERT(result.type == IRVALUETYPE_STACKOFFSET || result.type == IRVALUETYPE_DATAOFFSET);
+			ASSERT(result.type == IRVALUETYPE_VARIABLE);
 
-			// Add intermediate instruction to compute address
-			IRInstruction inst = {};
-			inst.type = IRINSTRUCTIONTYPE_ADD;
-			inst.binaryOperation.left = { IRVALUETYPE_STACKBASE };
-			inst.binaryOperation.right = { IRVALUETYPE_IMMEDIATE, result.offset };
-			inst.binaryOperation.out = NewVirtualRegister(context);
-			*DynamicArrayAdd<IRInstruction>(&context->instructions, realloc) = inst;
-
-			result = inst.binaryOperation.out;
+			result.pointerOf = true;
 		}
 		else if (expression->unaryOperation.op == TOKEN_OP_DEREFERENCE)
 		{
@@ -332,7 +301,7 @@ IRValue IRGenFromExpression(IRContext *context, ASTExpression *expression)
 				inst.type = IRINSTRUCTIONTYPE_ASSIGNMENT;
 				inst.assignment.src = result;
 				inst.assignment.dst = NewVirtualRegister(context);
-				*DynamicArrayAdd<IRInstruction>(&context->instructions, realloc) = inst;
+				*DynamicArrayAdd(&context->instructions, realloc) = inst;
 
 				result = inst.assignment.dst;
 			}
@@ -356,7 +325,7 @@ IRValue IRGenFromExpression(IRContext *context, ASTExpression *expression)
 			} break;
 			}
 
-			*DynamicArrayAdd<IRInstruction>(&context->instructions, realloc) = inst;
+			*DynamicArrayAdd(&context->instructions, realloc) = inst;
 			result = inst.unaryOperation.out;
 		}
 	} break;
@@ -369,12 +338,12 @@ IRValue IRGenFromExpression(IRContext *context, ASTExpression *expression)
 			inst.assignment.src = IRGenFromExpression(context, expression->binaryOperation.rightHand);
 			inst.assignment.dst = IRGenFromExpression(context, expression->binaryOperation.leftHand);
 
-			*DynamicArrayAdd<IRInstruction>(&context->instructions, realloc) = inst;
+			*DynamicArrayAdd(&context->instructions, realloc) = inst;
 		}
 		else if (expression->binaryOperation.op == TOKEN_OP_MEMBER_ACCESS)
 		{
 			ASTExpression *leftHand = expression->binaryOperation.leftHand;
-			result = IRGenFromExpression(context, expression->binaryOperation.leftHand);
+			IRValue left = IRGenFromExpression(context, expression->binaryOperation.leftHand);
 
 			ASTExpression *rightHand = expression->binaryOperation.rightHand;
 			ASSERT(rightHand->nodeType == ASTNODETYPE_VARIABLE);
@@ -382,19 +351,19 @@ IRValue IRGenFromExpression(IRContext *context, ASTExpression *expression)
 
 			Type type = leftHand->type;
 			ASSERT(type.typeTableIdx >= 0);
-			TypeInfo *typeInfo  = &context->root->typeTable[type.typeTableIdx];
+			TypeInfo *typeInfo  = &context->typeTable[type.typeTableIdx];
 			ASSERT(typeInfo->typeCategory == TYPECATEGORY_STRUCT);
 
-			// @Improve: cache member somehow during type checking instead of looking up twice?
-			for (int memberIdx = 0; memberIdx < typeInfo->structInfo.members.size; ++memberIdx)
-			{
-				StructMember member = typeInfo->structInfo.members[memberIdx];
-				if (StringEquals(memberName, member.name))
-				{
-					result.offset += member.offset;
-					break;
-				}
-			}
+			IRInstruction inst;
+			inst.type = IRINSTRUCTIONTYPE_MEMBER_ADDRESS;
+			inst.memberAddress.in = left;
+			inst.memberAddress.out = NewVirtualRegister(context);
+			inst.memberAddress.structName = typeInfo->structInfo.name;
+			inst.memberAddress.memberName = memberName;
+			*DynamicArrayAdd(&context->instructions, realloc) = inst;
+
+			result = inst.memberAddress.out;
+			result.asPointer = true;
 		}
 		else
 		{
@@ -425,13 +394,21 @@ IRValue IRGenFromExpression(IRContext *context, ASTExpression *expression)
 			{
 				inst.type = IRINSTRUCTIONTYPE_EQUALS;
 			} break;
+			case TOKEN_OP_LESSTHAN:
+			{
+				inst.type = IRINSTRUCTIONTYPE_LESS_THAN;
+			} break;
+			case TOKEN_OP_GREATERTHAN:
+			{
+				inst.type = IRINSTRUCTIONTYPE_GREATER_THAN;
+			} break;
 			default:
 			{
 				inst.type = IRINSTRUCTIONTYPE_INVALID;
 			} break;
 			}
 
-			*DynamicArrayAdd<IRInstruction>(&context->instructions, realloc) = inst;
+			*DynamicArrayAdd(&context->instructions, realloc) = inst;
 			result = inst.binaryOperation.out;
 		}
 	} break;
@@ -456,43 +433,87 @@ IRValue IRGenFromExpression(IRContext *context, ASTExpression *expression)
 	} break;
 	case ASTNODETYPE_IF:
 	{
-		IRValue condition = IRGenFromExpression(context, expression->ifNode.condition);
+		IRInstruction *jump = DynamicArrayAdd(&context->instructions, realloc);
 
-		IRInstruction *jump = DynamicArrayAdd<IRInstruction>(&context->instructions, realloc);
+		// Body!
 		IRGenFromExpression(context, expression->ifNode.body);
-		IRInstruction *jumpAfterElse = DynamicArrayAdd<IRInstruction>(&context->instructions, realloc);
-		IRInstruction *skipLabel = DynamicArrayAdd<IRInstruction>(&context->instructions, realloc);
 
-		String label = NewLabel(context);
-		String afterElse = NewLabel(context);
+		IRInstruction *jumpAfterElse = nullptr;
+		if (expression->ifNode.elseNode)
+			// If we have an else, add a jump instruction here.
+			jumpAfterElse = DynamicArrayAdd(&context->instructions, realloc);
+
+		IRInstruction *skipLabelInst = DynamicArrayAdd(&context->instructions, realloc);
+
+		String skipLabel = NewLabel(context, "skipIf"_s);
+		String afterElseLabel = NewLabel(context, "afterElse"_s);
 
 		jump->type = IRINSTRUCTIONTYPE_JUMP_IF_ZERO;
-		jump->conditionalJump.label = label;
-		jump->conditionalJump.condition = condition;
+		jump->conditionalJump.label = skipLabel;
+		jump->conditionalJump.condition = IRGenFromExpression(context, expression->ifNode.condition);
 
-		jumpAfterElse->type = IRINSTRUCTIONTYPE_JUMP;
-		jumpAfterElse->jump.label = afterElse;
-
-		skipLabel->type = IRINSTRUCTIONTYPE_LABEL;
-		skipLabel->label = label;
+		skipLabelInst->type = IRINSTRUCTIONTYPE_LABEL;
+		skipLabelInst->label = skipLabel;
 
 		if (expression->ifNode.elseNode)
 		{
+			jumpAfterElse->type = IRINSTRUCTIONTYPE_JUMP;
+			jumpAfterElse->jump.label = afterElseLabel;
+
 			IRGenFromExpression(context, expression->ifNode.elseNode);
 		}
-		IRInstruction *afterElseLabel = DynamicArrayAdd<IRInstruction>(&context->instructions, realloc);
-		afterElseLabel->type = IRINSTRUCTIONTYPE_LABEL;
-		afterElseLabel->label = afterElse;
+		IRInstruction *afterElseLabelInst = DynamicArrayAdd(&context->instructions, realloc);
+		afterElseLabelInst->type = IRINSTRUCTIONTYPE_LABEL;
+		afterElseLabelInst->label = afterElseLabel;
 
+	} break;
+	case ASTNODETYPE_WHILE:
+	{
+		IRInstruction *loopLabelInst = DynamicArrayAdd(&context->instructions, realloc);
+
+		IRValue condition = IRGenFromExpression(context, expression->whileNode.condition);
+
+		String breakLabel = NewLabel(context, "break"_s);
+
+		String oldBreakLabel = context->currentBreakLabel;
+		context->currentBreakLabel = breakLabel;
+
+		IRInstruction *jump = DynamicArrayAdd(&context->instructions, realloc);
+		IRGenFromExpression(context, expression->whileNode.body);
+		IRInstruction *loopJump = DynamicArrayAdd(&context->instructions, realloc);
+		IRInstruction *breakLabelInst = DynamicArrayAdd(&context->instructions, realloc);
+
+		context->currentBreakLabel = oldBreakLabel;
+
+		String loopLabel = NewLabel(context, "loop"_s);
+		loopLabelInst->type = IRINSTRUCTIONTYPE_LABEL;
+		loopLabelInst->label = loopLabel;
+
+		jump->type = IRINSTRUCTIONTYPE_JUMP_IF_ZERO;
+		jump->conditionalJump.label = breakLabel;
+		jump->conditionalJump.condition = condition;
+
+		loopJump->type = IRINSTRUCTIONTYPE_JUMP;
+		loopJump->jump.label = loopLabel;
+
+		breakLabelInst->type = IRINSTRUCTIONTYPE_LABEL;
+		breakLabelInst->label = breakLabel;
+	} break;
+	case ASTNODETYPE_BREAK:
+	{
+		IRInstruction inst;
+		inst.type = IRINSTRUCTIONTYPE_JUMP;
+		inst.jump.label = context->currentBreakLabel;
+		*DynamicArrayAdd(&context->instructions, realloc) = inst;
 	} break;
 	case ASTNODETYPE_RETURN:
 	{
-		IRValue returnValue = IRGenFromExpression(context, expression->ifNode.condition);
+		IRValue returnValue = IRGenFromExpression(context, expression->returnNode.expression);
 
 		IRInstruction inst;
 		inst.type = IRINSTRUCTIONTYPE_RETURN;
 		inst.returnValue = returnValue;
-		*DynamicArrayAdd<IRInstruction>(&context->instructions, realloc) = inst;
+		*DynamicArrayAdd(&context->instructions, realloc) = inst;
 	} break;
 	}
 	return result;
@@ -503,20 +524,20 @@ void PrintIRValue(IRValue value)
 	if (value.asPointer)
 		Log("[");
 
+	if (value.pointerOf)
+		Log("address(");
+
 	if (value.type == IRVALUETYPE_REGISTER)
-		Log("r%d", value.registerIdx);
-	else if (value.type == IRVALUETYPE_DATAOFFSET)
-		Log("dataSection[0x%x]", value.offset);
-	else if (value.type == IRVALUETYPE_STACKOFFSET)
-		Log("stackBase[0x%x]", value.offset);
+		Log("$r%d", value.registerIdx);
+	else if (value.type == IRVALUETYPE_VARIABLE)
+		Log("%.*s", value.variable.size, value.variable.data);
 	else if (value.type == IRVALUETYPE_IMMEDIATE)
 		Log("0x%x", value.immediate);
-	else if (value.type == IRVALUETYPE_STACKBASE)
-		Log("stackBase");
-	else if (value.type == IRVALUETYPE_DATABASE)
-		Log("dataBase");
 	else
 		Log("???");
+
+	if (value.pointerOf)
+		Log(")");
 
 	if (value.asPointer)
 		Log("]");
@@ -541,6 +562,12 @@ void PrintIRInstructionOperator(IRInstruction inst)
 	case IRINSTRUCTIONTYPE_EQUALS:
 		Log("==");
 		break;
+	case IRINSTRUCTIONTYPE_LESS_THAN:
+		Log("<");
+		break;
+	case IRINSTRUCTIONTYPE_GREATER_THAN:
+		Log(">");
+		break;
 	case IRINSTRUCTIONTYPE_NOT:
 		Log("!");
 		break;
@@ -549,37 +576,39 @@ void PrintIRInstructionOperator(IRInstruction inst)
 	}
 }
 
-void IRGenMain(ASTRoot *root)
+void IRGenMain(Context *context)
 {
-	IRContext context;
-	context.root = root;
-	DynamicArrayInit<IRInstruction>(&context.instructions, 4096, malloc);
-	DynamicArrayInit<IRScope>(&context.stack, 64, malloc);
-	context.currentRegisterId = 1;
-	context.currentLabelId = 1;
+	DynamicArrayInit(&context->instructions, 4096, malloc);
+	DynamicArrayInit(&context->irStack, 64, malloc);
+	context->currentRegisterId = 1;
+	context->currentLabelId = 1;
 
-	PushScope(&context);
+	PushIRScope(context);
 
-	for (int statementIdx = 0; statementIdx < root->block.statements.size; ++statementIdx)
+	for (int statementIdx = 0; statementIdx < context->astRoot->block.statements.size; ++statementIdx)
 	{
-		ASTExpression *statement = &root->block.statements[statementIdx];
-		IRGenFromExpression(&context, statement);
+		ASTExpression *statement = &context->astRoot->block.statements[statementIdx];
+		IRGenFromExpression(context, statement);
 	}
 
 	const int padding = 20;
-	for (int instructionIdx = 0; instructionIdx < context.instructions.size; ++instructionIdx)
+	for (int instructionIdx = 0; instructionIdx < context->instructions.size; ++instructionIdx)
 	{
-		IRInstruction inst = context.instructions[instructionIdx];
+		IRInstruction inst = context->instructions[instructionIdx];
 		if (inst.type == IRINSTRUCTIONTYPE_LABEL)
 		{
 			Log("%.*s: ", inst.label.size, inst.label.data);
 			for (s64 i = inst.label.size + 2; i < padding; ++i)
 				Log(" ");
 
-			++instructionIdx;
-			if (instructionIdx >= context.instructions.size)
-				break;
-			inst = context.instructions[instructionIdx];
+			IRInstruction nextInst = context->instructions[instructionIdx + 1];
+			if (nextInst.type != IRINSTRUCTIONTYPE_LABEL)
+			{
+				++instructionIdx;
+				if (instructionIdx >= context->instructions.size)
+					break;
+				inst = context->instructions[instructionIdx];
+			}
 		}
 		else
 		{
@@ -595,32 +624,46 @@ void IRGenMain(ASTRoot *root)
 		{
 			Log("if !");
 			PrintIRValue(inst.conditionalJump.condition);
-			Log(" jump \"%.*s\"", inst.conditionalJump.label.size, inst.conditionalJump.label.data);
+			Log(" jump %.*s", inst.conditionalJump.label.size, inst.conditionalJump.label.data);
 		}
 		else if (inst.type == IRINSTRUCTIONTYPE_CALL)
 		{
-			Log("call \"%.*s\"", inst.call.label.size, inst.call.label.data);
+			Log("call %.*s", inst.call.label.size, inst.call.label.data);
 		}
 		else if (inst.type == IRINSTRUCTIONTYPE_RETURN)
 		{
 			Log("return ");
 			PrintIRValue(inst.returnValue);
 		}
-		else if (inst.type == IRINSTRUCTIONTYPE_GETPARAMETER)
+		else if (inst.type == IRINSTRUCTIONTYPE_GET_PARAMETER)
 		{
 			PrintIRValue(inst.getParameter.out);
 			Log(" := parameters[%d]", inst.getParameter.parameterIdx);
 		}
-		else if (inst.type == IRINSTRUCTIONTYPE_SETPARAMETER)
+		else if (inst.type == IRINSTRUCTIONTYPE_SET_PARAMETER)
 		{
 			Log("parameters[%d] := ", inst.setParameter.parameterIdx);
 			PrintIRValue(inst.setParameter.in);
+		}
+		else if (inst.type == IRINSTRUCTIONTYPE_VARIABLE_DECLARATION)
+		{
+			Log("%.*s : %d bytes", inst.variableDeclaration.name.size, inst.variableDeclaration.name.data,
+					inst.variableDeclaration.size);
 		}
 		else if (inst.type == IRINSTRUCTIONTYPE_ASSIGNMENT)
 		{
 			PrintIRValue(inst.assignment.dst);
 			Log(" = ");
 			PrintIRValue(inst.assignment.src);
+		}
+		else if (inst.type == IRINSTRUCTIONTYPE_MEMBER_ADDRESS)
+		{
+			PrintIRValue(inst.memberAddress.out);
+			Log(" = ");
+			PrintIRValue(inst.memberAddress.in);
+			Log(" -> offset(%.*s::%.*s)",
+					inst.memberAddress.structName.size, inst.memberAddress.structName.data,
+					inst.memberAddress.memberName.size, inst.memberAddress.memberName.data);
 		}
 		else if (inst.type >= IRINSTRUCTIONTYPE_UNARY_BEGIN && inst.type < IRINSTRUCTIONTYPE_UNARY_END)
 		{

@@ -1,74 +1,3 @@
-struct Tokenizer
-{
-	const char *cursor;
-	const char *end;
-	s64 line;
-	const char *beginningOfLine;
-};
-
-enum TokenType
-{
-	TOKEN_INVALID,
-	TOKEN_IDENTIFIER,
-
-	TOKEN_LITERAL_NUMBER,
-	TOKEN_LITERAL_STRING,
-	TOKEN_LITERAL_CHAR,
-
-	TOKEN_KEYWORD_BEGIN,
-	TOKEN_KEYWORD_IF = TOKEN_KEYWORD_BEGIN,
-	TOKEN_KEYWORD_ELSE,
-	TOKEN_KEYWORD_RETURN,
-	TOKEN_KEYWORD_WHILE,
-	TOKEN_KEYWORD_BREAK,
-	TOKEN_KEYWORD_STRUCT,
-	TOKEN_KEYWORD_END,
-
-	TOKEN_ASCII_BEGIN = '!', // 33
-	TOKEN_ASCII_END = '~' + 1, // 127
-
-	TOKEN_OP_BEGIN,
-	TOKEN_OP_ASSIGNMENT = TOKEN_OP_BEGIN,
-	TOKEN_OP_EQUALS,
-	TOKEN_OP_PLUS,
-	TOKEN_OP_MINUS,
-	TOKEN_OP_MULTIPLY,
-	TOKEN_OP_DIVIDE,
-	TOKEN_OP_ARROW,
-	TOKEN_OP_POINTERTO,
-	TOKEN_OP_DEREFERENCE,
-	TOKEN_OP_VARIABLE_DECLARATION,
-	TOKEN_OP_STATIC_DEF,
-	TOKEN_OP_AND,
-	TOKEN_OP_OR,
-	TOKEN_OP_NOT,
-	TOKEN_OP_BITWISE_AND,
-	TOKEN_OP_BITWISE_OR,
-	TOKEN_OP_BITWISE_NOT,
-	TOKEN_OP_MEMBER_ACCESS,
-	TOKEN_OP_END,
-
-	TOKEN_END_OF_FILE
-};
-
-struct Token
-{
-	enum TokenType type;
-	union
-	{
-		String string;
-		struct
-		{
-			s64 size;
-			const char *begin;
-		};
-	};
-
-	const char *file;
-	s64 line;
-	s64 character;
-};
-
 const String TokenTypeToString(s32 type)
 {
 	switch (type)
@@ -97,8 +26,10 @@ const String TokenTypeToString(s32 type)
 		return "< * >"_s;
 	case TOKEN_OP_DIVIDE:
 		return "< / >"_s;
+	case TOKEN_OP_POINTERTO:
+		return "< ^ >"_s;
 	case TOKEN_OP_DEREFERENCE:
-		return "< & >"_s;
+		return "< @ >"_s;
 	case TOKEN_OP_ARROW:
 		return "< -> >"_s;
 	case TOKEN_OP_VARIABLE_DECLARATION:
@@ -146,6 +77,8 @@ s32 GetOperatorPrecedence(s32 op)
 		case TOKEN_OP_ASSIGNMENT:
 			return 0;
 		case TOKEN_OP_EQUALS:
+		case TOKEN_OP_LESSTHAN:
+		case TOKEN_OP_GREATERTHAN:
 			return 1;
 		case TOKEN_OP_PLUS:
 		case TOKEN_OP_MINUS:
@@ -271,8 +204,8 @@ Token ReadTokenAndAdvance(Tokenizer *tokenizer)
 	}
 
 	result.begin = tokenizer->cursor;
-	result.line = tokenizer->line;
-	result.character = tokenizer->cursor - tokenizer->beginningOfLine;
+	result.loc.line = tokenizer->line;
+	result.loc.character = tokenizer->cursor - tokenizer->beginningOfLine;
 
 	if (!*tokenizer->cursor || tokenizer->cursor >= tokenizer->end)
 	{
@@ -382,6 +315,14 @@ Token ReadTokenAndAdvance(Tokenizer *tokenizer)
 			else
 				result.type = TOKEN_OP_ASSIGNMENT;
 		} break;
+		case '<':
+		{
+			result.type = TOKEN_OP_LESSTHAN;
+		} break;
+		case '>':
+		{
+			result.type = TOKEN_OP_GREATERTHAN;
+		} break;
 		case ':':
 		{
 			if (next == ':')
@@ -438,6 +379,10 @@ Token ReadTokenAndAdvance(Tokenizer *tokenizer)
 		{
 			result.type = TOKEN_OP_POINTERTO;
 		} break;
+		case '@':
+		{
+			result.type = TOKEN_OP_DEREFERENCE;
+		} break;
 		case '!':
 		{
 			result.type = TOKEN_OP_NOT;
@@ -469,20 +414,19 @@ Token ReadTokenAndAdvance(Tokenizer *tokenizer)
 	return result;
 }
 
-void TokenizeFile(const u8 *fileBuffer, u64 fileSize, DynamicArray<Token> &tokens,
-		const char *filename, void *(*reallocFunc)(void *, u64))
+void TokenizeFile(Context *context, void *(*reallocFunc)(void *, u64))
 {
 	Tokenizer tokenizer = {};
-	tokenizer.cursor = (char *)fileBuffer;
-	tokenizer.beginningOfLine = (char *)fileBuffer;
-	tokenizer.end = (char *)(fileBuffer + fileSize);
+	tokenizer.cursor = (char *)context->fileBuffer;
+	tokenizer.beginningOfLine = (char *)context->fileBuffer;
+	tokenizer.end = (char *)(context->fileBuffer + context->fileSize);
 	tokenizer.line = 1; // Line numbers start at 1 not 0.
 	while (true)
 	{
 		Token newToken = ReadTokenAndAdvance(&tokenizer);
 
-		newToken.file = filename;
-		*DynamicArrayAdd<Token>(&tokens, reallocFunc) = newToken;
+		newToken.loc.file = context->filename;
+		*DynamicArrayAdd(&context->tokens, reallocFunc) = newToken;
 
 		if (newToken.type == TOKEN_END_OF_FILE)
 			break;

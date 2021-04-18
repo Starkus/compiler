@@ -2,9 +2,7 @@ struct ASTExpression;
 
 struct ASTBase
 {
-	const char *file;
-	s64 line;
-	s64 character;
+	SourceLocation loc;
 };
 
 enum LiteralType
@@ -108,7 +106,6 @@ struct TypeInfo;
 struct ASTRoot : ASTBase
 {
 	ASTBlock block;
-	DynamicArray<TypeInfo> typeTable;
 };
 
 enum ASTNodeType

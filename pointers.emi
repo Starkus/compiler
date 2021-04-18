@@ -1,6 +1,6 @@
 argByPointer :: (n : ^s32)
 {
-	*n = *n * *n;
+	@n = @n * @n;
 }
 
 main :: ()
@@ -10,16 +10,16 @@ main :: ()
 	baz : ^s32;
 
 	baz = ^foo;
-	bar = *baz;
+	bar = @baz;
 
 	a : ^^s32 = ^baz;
-	c : s32 = **a;
+	c : s32 = @@a;
 
 	// Pointer to temporal value
 	//b : ^^s32 = ^^bar;
 
 	// Diferent types
-	//d : s8 = *baz;
+	//d : s8 = @baz;
 	//e : ^s8 = ^foo;
 
 	argByPointer(^foo);

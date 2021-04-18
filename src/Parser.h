@@ -1,0 +1,77 @@
+struct Tokenizer
+{
+	const char *cursor;
+	const char *end;
+	s64 line;
+	const char *beginningOfLine;
+};
+
+enum TokenType
+{
+	TOKEN_INVALID,
+	TOKEN_IDENTIFIER,
+
+	TOKEN_LITERAL_NUMBER,
+	TOKEN_LITERAL_STRING,
+	TOKEN_LITERAL_CHAR,
+
+	TOKEN_KEYWORD_BEGIN,
+	TOKEN_KEYWORD_IF = TOKEN_KEYWORD_BEGIN,
+	TOKEN_KEYWORD_ELSE,
+	TOKEN_KEYWORD_RETURN,
+	TOKEN_KEYWORD_WHILE,
+	TOKEN_KEYWORD_BREAK,
+	TOKEN_KEYWORD_STRUCT,
+	TOKEN_KEYWORD_END,
+
+	TOKEN_ASCII_BEGIN = '!', // 33
+	TOKEN_ASCII_END = '~' + 1, // 127
+
+	TOKEN_OP_BEGIN,
+	TOKEN_OP_ASSIGNMENT = TOKEN_OP_BEGIN,
+	TOKEN_OP_EQUALS,
+	TOKEN_OP_LESSTHAN,
+	TOKEN_OP_GREATERTHAN,
+	TOKEN_OP_PLUS,
+	TOKEN_OP_MINUS,
+	TOKEN_OP_MULTIPLY,
+	TOKEN_OP_DIVIDE,
+	TOKEN_OP_ARROW,
+	TOKEN_OP_POINTERTO,
+	TOKEN_OP_DEREFERENCE,
+	TOKEN_OP_VARIABLE_DECLARATION,
+	TOKEN_OP_STATIC_DEF,
+	TOKEN_OP_AND,
+	TOKEN_OP_OR,
+	TOKEN_OP_NOT,
+	TOKEN_OP_BITWISE_AND,
+	TOKEN_OP_BITWISE_OR,
+	TOKEN_OP_BITWISE_NOT,
+	TOKEN_OP_MEMBER_ACCESS,
+	TOKEN_OP_END,
+
+	TOKEN_END_OF_FILE
+};
+
+struct SourceLocation
+{
+	String file;
+	s64 line;
+	s64 character;
+};
+
+struct Token
+{
+	enum TokenType type;
+	union
+	{
+		String string;
+		struct
+		{
+			s64 size;
+			const char *begin;
+		};
+	};
+
+	SourceLocation loc;
+};
