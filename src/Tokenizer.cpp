@@ -335,11 +335,22 @@ Token ReadTokenAndAdvance(Tokenizer *tokenizer)
 		} break;
 		case '+':
 		{
-			result.type = TOKEN_OP_PLUS;
+			if (next == '=')
+			{
+				result.type = TOKEN_OP_PLUS_EQUALS;
+				++tokenizer->cursor;
+			}
+			else
+				result.type = TOKEN_OP_PLUS;
 		} break;
 		case '-':
 		{
-			if (next == '>')
+			if (next == '=')
+			{
+				result.type = TOKEN_OP_MINUS_EQUALS;
+				++tokenizer->cursor;
+			}
+			else if (next == '>')
 			{
 				result.type = TOKEN_OP_ARROW;
 				++tokenizer->cursor;
@@ -349,11 +360,23 @@ Token ReadTokenAndAdvance(Tokenizer *tokenizer)
 		} break;
 		case '*':
 		{
-			result.type = TOKEN_OP_MULTIPLY;
+			if (next == '=')
+			{
+				result.type = TOKEN_OP_MULTIPLY_EQUALS;
+				++tokenizer->cursor;
+			}
+			else
+				result.type = TOKEN_OP_MULTIPLY;
 		} break;
 		case '/':
 		{
-			result.type = TOKEN_OP_DIVIDE;
+			if (next == '=')
+			{
+				result.type = TOKEN_OP_DIVIDE_EQUALS;
+				++tokenizer->cursor;
+			}
+			else
+				result.type = TOKEN_OP_DIVIDE;
 		} break;
 		case '&':
 		{
@@ -414,7 +437,7 @@ Token ReadTokenAndAdvance(Tokenizer *tokenizer)
 	return result;
 }
 
-void TokenizeFile(Context *context, void *(*reallocFunc)(void *, u64))
+void TokenizeFile(Context *context)
 {
 	Tokenizer tokenizer = {};
 	tokenizer.cursor = (char *)context->fileBuffer;
@@ -426,7 +449,7 @@ void TokenizeFile(Context *context, void *(*reallocFunc)(void *, u64))
 		Token newToken = ReadTokenAndAdvance(&tokenizer);
 
 		newToken.loc.file = context->filename;
-		*DynamicArrayAdd(&context->tokens, reallocFunc) = newToken;
+		*BucketArrayAdd(&context->tokens) = newToken;
 
 		if (newToken.type == TOKEN_END_OF_FILE)
 			break;

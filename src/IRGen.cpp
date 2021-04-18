@@ -137,7 +137,7 @@ struct IRVariable
 
 struct IRScope
 {
-	DynamicArray<IRVariable> variables;
+	DynamicArray<IRVariable, malloc, realloc> variables;
 };
 
 IRValue NewVirtualRegister(Context *context)
@@ -155,8 +155,8 @@ String NewLabel(Context *context, String prefix)
 
 void PushIRScope(Context *context)
 {
-	IRScope *newScope = DynamicArrayAdd(&context->irStack, realloc);
-	DynamicArrayInit(&newScope->variables, 64, malloc);
+	IRScope *newScope = DynamicArrayAdd(&context->irStack);
+	DynamicArrayInit(&newScope->variables, 64);
 }
 
 void PopIRScope(Context *context)
@@ -200,10 +200,10 @@ IRValue IRGenFromExpression(Context *context, ASTExpression *expression)
 		inst.type = IRINSTRUCTIONTYPE_VARIABLE_DECLARATION;
 		inst.variableDeclaration.name = varDecl.name;
 		inst.variableDeclaration.size = typeInfo->size;
-		*DynamicArrayAdd(&context->instructions, realloc) = inst;
+		*BucketArrayAdd(&context->instructions) = inst;
 
 		IRScope *stackTop = &context->irStack[context->irStack.size - 1];
-		IRVariable *newVar = DynamicArrayAdd(&stackTop->variables, realloc);
+		IRVariable *newVar = DynamicArrayAdd(&stackTop->variables);
 		*newVar = {};
 
 		newVar->name = varDecl.name;
@@ -218,7 +218,7 @@ IRValue IRGenFromExpression(Context *context, ASTExpression *expression)
 			initialValueInst.assignment.dst.type = IRVALUETYPE_VARIABLE;
 			initialValueInst.assignment.dst.variable = newVar->name;
 
-			*DynamicArrayAdd(&context->instructions, realloc) = initialValueInst;
+			*BucketArrayAdd(&context->instructions) = initialValueInst;
 		}
 	} break;
 	case ASTNODETYPE_PROCEDURE_DECLARATION:
@@ -226,7 +226,7 @@ IRValue IRGenFromExpression(Context *context, ASTExpression *expression)
 		IRInstruction inst = {};
 		inst.type = IRINSTRUCTIONTYPE_LABEL;
 		inst.label = expression->variableDeclaration.name;
-		*DynamicArrayAdd(&context->instructions, realloc) = inst;
+		*BucketArrayAdd(&context->instructions) = inst;
 
 		PushIRScope(context);
 
@@ -236,7 +236,7 @@ IRValue IRGenFromExpression(Context *context, ASTExpression *expression)
 			ASTVariableDeclaration param = expression->procedureDeclaration.parameters[paramIdx];
 
 			IRScope *stackTop = &context->irStack[context->irStack.size - 1];
-			IRVariable *newVar = DynamicArrayAdd(&stackTop->variables, realloc);
+			IRVariable *newVar = DynamicArrayAdd(&stackTop->variables);
 			*newVar = {};
 
 			newVar->name = param.name;
@@ -247,7 +247,7 @@ IRValue IRGenFromExpression(Context *context, ASTExpression *expression)
 			getParamInst.getParameter.parameterIdx = paramIdx;
 			getParamInst.getParameter.out.type = IRVALUETYPE_VARIABLE;
 			getParamInst.getParameter.out.variable = newVar->name;
-			*DynamicArrayAdd(&context->instructions, realloc) = getParamInst;
+			*BucketArrayAdd(&context->instructions) = getParamInst;
 		}
 
 		IRGenFromExpression(context, expression->procedureDeclaration.body);
@@ -270,7 +270,7 @@ IRValue IRGenFromExpression(Context *context, ASTExpression *expression)
 			setParamInst.type = IRINSTRUCTIONTYPE_SET_PARAMETER;
 			setParamInst.setParameter.parameterIdx = argIdx;
 			setParamInst.setParameter.in = IRGenFromExpression(context, arg);
-			*DynamicArrayAdd(&context->instructions, realloc) = setParamInst;
+			*BucketArrayAdd(&context->instructions) = setParamInst;
 		}
 
 		String label = expression->procedureCall.name; // @Improve: oh my god...
@@ -278,7 +278,7 @@ IRValue IRGenFromExpression(Context *context, ASTExpression *expression)
 		IRInstruction inst = {};
 		inst.type = IRINSTRUCTIONTYPE_CALL;
 		inst.call.label = label;
-		*DynamicArrayAdd(&context->instructions, realloc) = inst;
+		*BucketArrayAdd(&context->instructions) = inst;
 	} break;
 	case ASTNODETYPE_UNARY_OPERATION:
 	{
@@ -301,7 +301,7 @@ IRValue IRGenFromExpression(Context *context, ASTExpression *expression)
 				inst.type = IRINSTRUCTIONTYPE_ASSIGNMENT;
 				inst.assignment.src = result;
 				inst.assignment.dst = NewVirtualRegister(context);
-				*DynamicArrayAdd(&context->instructions, realloc) = inst;
+				*BucketArrayAdd(&context->instructions) = inst;
 
 				result = inst.assignment.dst;
 			}
@@ -325,7 +325,7 @@ IRValue IRGenFromExpression(Context *context, ASTExpression *expression)
 			} break;
 			}
 
-			*DynamicArrayAdd(&context->instructions, realloc) = inst;
+			*BucketArrayAdd(&context->instructions) = inst;
 			result = inst.unaryOperation.out;
 		}
 	} break;
@@ -338,7 +338,7 @@ IRValue IRGenFromExpression(Context *context, ASTExpression *expression)
 			inst.assignment.src = IRGenFromExpression(context, expression->binaryOperation.rightHand);
 			inst.assignment.dst = IRGenFromExpression(context, expression->binaryOperation.leftHand);
 
-			*DynamicArrayAdd(&context->instructions, realloc) = inst;
+			*BucketArrayAdd(&context->instructions) = inst;
 		}
 		else if (expression->binaryOperation.op == TOKEN_OP_MEMBER_ACCESS)
 		{
@@ -360,7 +360,7 @@ IRValue IRGenFromExpression(Context *context, ASTExpression *expression)
 			inst.memberAddress.out = NewVirtualRegister(context);
 			inst.memberAddress.structName = typeInfo->structInfo.name;
 			inst.memberAddress.memberName = memberName;
-			*DynamicArrayAdd(&context->instructions, realloc) = inst;
+			*BucketArrayAdd(&context->instructions) = inst;
 
 			result = inst.memberAddress.out;
 			result.asPointer = true;
@@ -408,7 +408,7 @@ IRValue IRGenFromExpression(Context *context, ASTExpression *expression)
 			} break;
 			}
 
-			*DynamicArrayAdd(&context->instructions, realloc) = inst;
+			*BucketArrayAdd(&context->instructions) = inst;
 			result = inst.binaryOperation.out;
 		}
 	} break;
@@ -433,7 +433,7 @@ IRValue IRGenFromExpression(Context *context, ASTExpression *expression)
 	} break;
 	case ASTNODETYPE_IF:
 	{
-		IRInstruction *jump = DynamicArrayAdd(&context->instructions, realloc);
+		IRInstruction *jump = BucketArrayAdd(&context->instructions);
 
 		// Body!
 		IRGenFromExpression(context, expression->ifNode.body);
@@ -441,9 +441,9 @@ IRValue IRGenFromExpression(Context *context, ASTExpression *expression)
 		IRInstruction *jumpAfterElse = nullptr;
 		if (expression->ifNode.elseNode)
 			// If we have an else, add a jump instruction here.
-			jumpAfterElse = DynamicArrayAdd(&context->instructions, realloc);
+			jumpAfterElse = BucketArrayAdd(&context->instructions);
 
-		IRInstruction *skipLabelInst = DynamicArrayAdd(&context->instructions, realloc);
+		IRInstruction *skipLabelInst = BucketArrayAdd(&context->instructions);
 
 		String skipLabel = NewLabel(context, "skipIf"_s);
 		String afterElseLabel = NewLabel(context, "afterElse"_s);
@@ -462,14 +462,14 @@ IRValue IRGenFromExpression(Context *context, ASTExpression *expression)
 
 			IRGenFromExpression(context, expression->ifNode.elseNode);
 		}
-		IRInstruction *afterElseLabelInst = DynamicArrayAdd(&context->instructions, realloc);
+		IRInstruction *afterElseLabelInst = BucketArrayAdd(&context->instructions);
 		afterElseLabelInst->type = IRINSTRUCTIONTYPE_LABEL;
 		afterElseLabelInst->label = afterElseLabel;
 
 	} break;
 	case ASTNODETYPE_WHILE:
 	{
-		IRInstruction *loopLabelInst = DynamicArrayAdd(&context->instructions, realloc);
+		IRInstruction *loopLabelInst = BucketArrayAdd(&context->instructions);
 
 		IRValue condition = IRGenFromExpression(context, expression->whileNode.condition);
 
@@ -478,10 +478,10 @@ IRValue IRGenFromExpression(Context *context, ASTExpression *expression)
 		String oldBreakLabel = context->currentBreakLabel;
 		context->currentBreakLabel = breakLabel;
 
-		IRInstruction *jump = DynamicArrayAdd(&context->instructions, realloc);
+		IRInstruction *jump = BucketArrayAdd(&context->instructions);
 		IRGenFromExpression(context, expression->whileNode.body);
-		IRInstruction *loopJump = DynamicArrayAdd(&context->instructions, realloc);
-		IRInstruction *breakLabelInst = DynamicArrayAdd(&context->instructions, realloc);
+		IRInstruction *loopJump = BucketArrayAdd(&context->instructions);
+		IRInstruction *breakLabelInst = BucketArrayAdd(&context->instructions);
 
 		context->currentBreakLabel = oldBreakLabel;
 
@@ -504,7 +504,7 @@ IRValue IRGenFromExpression(Context *context, ASTExpression *expression)
 		IRInstruction inst;
 		inst.type = IRINSTRUCTIONTYPE_JUMP;
 		inst.jump.label = context->currentBreakLabel;
-		*DynamicArrayAdd(&context->instructions, realloc) = inst;
+		*BucketArrayAdd(&context->instructions) = inst;
 	} break;
 	case ASTNODETYPE_RETURN:
 	{
@@ -513,7 +513,7 @@ IRValue IRGenFromExpression(Context *context, ASTExpression *expression)
 		IRInstruction inst;
 		inst.type = IRINSTRUCTIONTYPE_RETURN;
 		inst.returnValue = returnValue;
-		*DynamicArrayAdd(&context->instructions, realloc) = inst;
+		*BucketArrayAdd(&context->instructions) = inst;
 	} break;
 	}
 	return result;
@@ -578,8 +578,8 @@ void PrintIRInstructionOperator(IRInstruction inst)
 
 void IRGenMain(Context *context)
 {
-	DynamicArrayInit(&context->instructions, 4096, malloc);
-	DynamicArrayInit(&context->irStack, 64, malloc);
+	BucketArrayInit(&context->instructions);
+	DynamicArrayInit(&context->irStack, 64);
 	context->currentRegisterId = 1;
 	context->currentLabelId = 1;
 
@@ -592,7 +592,8 @@ void IRGenMain(Context *context)
 	}
 
 	const int padding = 20;
-	for (int instructionIdx = 0; instructionIdx < context->instructions.size; ++instructionIdx)
+	const u64 instructionCount = BucketArrayCount(&context->instructions);
+	for (int instructionIdx = 0; instructionIdx < instructionCount; ++instructionIdx)
 	{
 		IRInstruction inst = context->instructions[instructionIdx];
 		if (inst.type == IRINSTRUCTIONTYPE_LABEL)
@@ -605,7 +606,7 @@ void IRGenMain(Context *context)
 			if (nextInst.type != IRINSTRUCTIONTYPE_LABEL)
 			{
 				++instructionIdx;
-				if (instructionIdx >= context->instructions.size)
+				if (instructionIdx >= instructionCount)
 					break;
 				inst = context->instructions[instructionIdx];
 			}

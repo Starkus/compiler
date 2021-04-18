@@ -2,6 +2,15 @@ ASTExpression ParseExpression(Context *context, s32 precedence);
 ASTExpression ParseStatement(Context *context);
 ASTVariableDeclaration ParseVariableDeclaration(Context *context);
 
+void Advance(Context *context)
+{
+	ASSERT(context->token == &context->tokens[context->currentTokenIdx]);
+
+	++context->currentTokenIdx;
+	ASSERT(context->currentTokenIdx < BucketArrayCount(&context->tokens));
+	context->token = &context->tokens[context->currentTokenIdx];
+}
+
 Type ParseType(Context *context, String *outTypeName)
 {
 	*outTypeName = {};
@@ -10,13 +19,13 @@ Type ParseType(Context *context, String *outTypeName)
 	while (context->token->type == TOKEN_OP_POINTERTO)
 	{
 		++result.pointerLevels;
-		++context->token;
+		Advance(context);
 	}
 
 	Token *nameToken = context->token;
 	AssertToken(context, nameToken, TOKEN_IDENTIFIER);
 	*outTypeName = nameToken->string;
-	++context->token;
+	Advance(context);
 
 	return result;
 }
@@ -27,6 +36,7 @@ bool TryParseUnaryOperation(Context *context, s32 prevPrecedence, ASTUnaryOperat
 		return false;
 
 	Token *oldToken = context->token;
+	s64 oldTokenIdx = context->currentTokenIdx;
 
 	switch (context->token->type)
 	{
@@ -36,7 +46,7 @@ bool TryParseUnaryOperation(Context *context, s32 prevPrecedence, ASTUnaryOperat
 	{
 		enum TokenType op = context->token->type;
 		result->op = op;
-		++context->token;
+		Advance(context);
 
 		s32 precedence = GetOperatorPrecedence(op);
 		//if (precedence > prevPrecedence) // @Check: ??
@@ -50,6 +60,7 @@ bool TryParseUnaryOperation(Context *context, s32 prevPrecedence, ASTUnaryOperat
 	}
 
 	context->token = oldToken;
+	context->currentTokenIdx = oldTokenIdx;
 	return false;
 }
 
@@ -60,9 +71,55 @@ bool TryParseBinaryOperation(Context *context, ASTExpression leftHand, s32 prevP
 		return false;
 
 	Token *oldToken = context->token;
+	s64 oldTokenIdx = context->currentTokenIdx;
 
 	switch (context->token->type)
 	{
+	case TOKEN_OP_PLUS_EQUALS:
+	case TOKEN_OP_MINUS_EQUALS:
+	case TOKEN_OP_MULTIPLY_EQUALS:
+	case TOKEN_OP_DIVIDE_EQUALS:
+	{
+		// Replace directly for x = x + y
+		enum TokenType op;
+		switch (context->token->type)
+		{
+		case TOKEN_OP_PLUS_EQUALS:
+			op = TOKEN_OP_PLUS; break;
+		case TOKEN_OP_MINUS_EQUALS:
+			op = TOKEN_OP_MINUS; break;
+		case TOKEN_OP_MULTIPLY_EQUALS:
+			op = TOKEN_OP_MULTIPLY; break;
+		case TOKEN_OP_DIVIDE_EQUALS:
+			op = TOKEN_OP_DIVIDE; break;
+		default:
+			CRASH;
+		}
+		Advance(context);
+
+		result->op = TOKEN_OP_ASSIGNMENT;
+		s32 precedence = GetOperatorPrecedence(TOKEN_OP_ASSIGNMENT);
+		if (precedence > prevPrecedence)
+		{
+			result->leftHand = ALLOC(FrameAlloc, ASTExpression);
+			*result->leftHand = leftHand;
+
+			result->rightHand = ALLOC(FrameAlloc, ASTExpression);
+			result->rightHand->nodeType = ASTNODETYPE_BINARY_OPERATION;
+
+			// NOTE! Tree branch referenced twice here! The tree is now a graph D:
+			// Consider copying if there's a problem with this.
+			result->rightHand->binaryOperation.leftHand = ALLOC(FrameAlloc, ASTExpression);
+			*result->rightHand->binaryOperation.leftHand = leftHand;
+
+			result->rightHand->binaryOperation.rightHand = ALLOC(FrameAlloc, ASTExpression);
+			*result->rightHand->binaryOperation.rightHand = ParseExpression(context, precedence);
+
+			result->rightHand->binaryOperation.op = op;
+
+			return true;
+		}
+	} break;
 	case TOKEN_OP_ASSIGNMENT:
 	case TOKEN_OP_EQUALS:
 	case TOKEN_OP_LESSTHAN:
@@ -78,7 +135,7 @@ bool TryParseBinaryOperation(Context *context, ASTExpression leftHand, s32 prevP
 
 		enum TokenType op = context->token->type;
 		result->op = op;
-		++context->token;
+		Advance(context);
 
 		s32 precedence = GetOperatorPrecedence(op);
 
@@ -93,13 +150,14 @@ bool TryParseBinaryOperation(Context *context, ASTExpression leftHand, s32 prevP
 	}
 
 	context->token = oldToken;
+	context->currentTokenIdx = oldTokenIdx;
 	return false;
 }
 
 ASTIf ParseIf(Context *context)
 {
 	ASSERT(context->token->type == TOKEN_KEYWORD_IF);
-	++context->token;
+	Advance(context);
 
 	ASTIf ifNode = {};
 
@@ -111,7 +169,7 @@ ASTIf ParseIf(Context *context)
 
 	if (context->token->type == TOKEN_KEYWORD_ELSE)
 	{
-		++context->token;
+		Advance(context);
 		ifNode.elseNode = ALLOC(FrameAlloc, ASTExpression);
 		*ifNode.elseNode = ParseStatement(context);
 	}
@@ -121,7 +179,7 @@ ASTIf ParseIf(Context *context)
 ASTWhile ParseWhile(Context *context)
 {
 	ASSERT(context->token->type == TOKEN_KEYWORD_WHILE);
-	++context->token;
+	Advance(context);
 
 	ASTWhile whileNode = {};
 	whileNode.condition = ALLOC(FrameAlloc, ASTExpression);
@@ -136,28 +194,28 @@ ASTStruct ParseStruct(Context *context)
 {
 	AssertToken(context, context->token, TOKEN_IDENTIFIER);
 	String name = context->token->string;
-	++context->token;
+	Advance(context);
 
 	AssertToken(context, context->token, TOKEN_OP_STATIC_DEF);
-	++context->token;
+	Advance(context);
 
 	AssertToken(context, context->token, TOKEN_KEYWORD_STRUCT);
-	++context->token;
+	Advance(context);
 
 	ASTStruct structNode = {};
 	structNode.name = name;
-	DynamicArrayInit(&structNode.members, 16, FrameAlloc);
+	DynamicArrayInit(&structNode.members, 16);
 
 	AssertToken(context, context->token, '{');
-	++context->token;
+	Advance(context);
 	while (context->token->type != '}')
 	{
 		ASTVariableDeclaration member = ParseVariableDeclaration(context);
-		*DynamicArrayAdd(&structNode.members, FrameRealloc) = member;
+		*DynamicArrayAdd(&structNode.members) = member;
 		AssertToken(context, context->token, ';');
-		++context->token;
+		Advance(context);
 	}
-	++context->token;
+	Advance(context);
 
 	return structNode;
 }
@@ -168,10 +226,10 @@ ASTVariableDeclaration ParseVariableDeclaration(Context *context)
 
 	AssertToken(context, context->token, TOKEN_IDENTIFIER);
 	varDecl.name = context->token->string;
-	++context->token;
+	Advance(context);
 
 	AssertToken(context, context->token, TOKEN_OP_VARIABLE_DECLARATION);
-	++context->token;
+	Advance(context);
 
 	if (context->token->type != TOKEN_OP_ASSIGNMENT)
 	{
@@ -181,7 +239,7 @@ ASTVariableDeclaration ParseVariableDeclaration(Context *context)
 
 	if (context->token->type == TOKEN_OP_ASSIGNMENT)
 	{
-		++context->token;
+		Advance(context);
 		varDecl.value = ALLOC(FrameAlloc, ASTExpression);
 		*varDecl.value = ParseExpression(context, -1);
 	}
@@ -193,35 +251,35 @@ ASTProcedureDeclaration ParseProcedureDeclaration(Context *context)
 {
 	AssertToken(context, context->token, TOKEN_IDENTIFIER);
 	String name = context->token->string;
-	++context->token;
+	Advance(context);
 
 	AssertToken(context, context->token, TOKEN_OP_STATIC_DEF);
-	++context->token;
+	Advance(context);
 
 	ASTProcedureDeclaration procDecl = {};
 	procDecl.name = name;
 
-	DynamicArrayInit(&procDecl.parameters, 4, FrameAlloc);
+	DynamicArrayInit(&procDecl.parameters, 4);
 
 	AssertToken(context, context->token, '(');
-	++context->token;
+	Advance(context);
 	while (context->token->type != ')')
 	{
 		// @Improve: separate node type for procedure parameter?
 		ASTVariableDeclaration parameter = ParseVariableDeclaration(context);
-		*DynamicArrayAdd(&procDecl.parameters, FrameRealloc) = parameter;
+		*DynamicArrayAdd(&procDecl.parameters) = parameter;
 
 		if (context->token->type != ')')
 		{
 			AssertToken(context, context->token, ',');
-			++context->token;
+			Advance(context);
 		}
 	}
-	++context->token;
+	Advance(context);
 
 	if (context->token->type == TOKEN_OP_ARROW)
 	{
-		++context->token;
+		Advance(context);
 
 		Type type = ParseType(context, &procDecl.returnTypeName);
 		procDecl.returnType = type;
@@ -244,12 +302,12 @@ ASTExpression ParseExpression(Context *context, s32 precedence)
 	// Parenthesis
 	if (context->token->type == '(')
 	{
-		++context->token;
+		Advance(context);
 
 		ASTExpression innerExp = ParseExpression(context, -1);
 
 		AssertToken(context, context->token, ')');
-		++context->token;
+		Advance(context);
 
 		return innerExp;
 	}
@@ -257,29 +315,29 @@ ASTExpression ParseExpression(Context *context, s32 precedence)
 	if (context->token->type == TOKEN_IDENTIFIER)
 	{
 		String identifier = context->token->string;
-		++context->token;
+		Advance(context);
 
 		if (context->token->type == '(')
 		{
 			// Procedure call
 			result.nodeType = ASTNODETYPE_PROCEDURE_CALL;
 			result.procedureCall.name = identifier;
-			DynamicArrayInit(&result.procedureCall.arguments, 4, FrameAlloc);
+			DynamicArrayInit(&result.procedureCall.arguments, 4);
 
 			// Parse arguments
-			++context->token;
+			Advance(context);
 			while (context->token->type != ')')
 			{
 				ASTExpression arg = ParseExpression(context, -1);
-				*DynamicArrayAdd(&result.procedureCall.arguments, FrameRealloc) = arg;
+				*DynamicArrayAdd(&result.procedureCall.arguments) = arg;
 
 				if (context->token->type != ')')
 				{
 					AssertToken(context, context->token, ',');
-					++context->token;
+					Advance(context);
 				}
 			}
-			++context->token;
+			Advance(context);
 		}
 		else
 		{
@@ -311,14 +369,14 @@ ASTExpression ParseExpression(Context *context, s32 precedence)
 			result.literal.type = LITERALTYPE_FLOATING;
 			result.literal.floating = atof(context->token->string.data);
 		}
-		++context->token;
+		Advance(context);
 	}
 	else if (context->token->type == TOKEN_LITERAL_STRING)
 	{
 		result.nodeType = ASTNODETYPE_LITERAL;
 		result.literal.type = LITERALTYPE_STRING;
 		result.literal.string = context->token->string;
-		++context->token;
+		Advance(context);
 	}
 	else if (IsTokenOperator(context->token))
 	{
@@ -367,14 +425,14 @@ ASTExpression ParseStatement(Context *context)
 	{
 		result.nodeType = ASTNODETYPE_BLOCK;
 
-		++context->token;
-		DynamicArrayInit(&result.block.statements, 512, FrameAlloc);
+		Advance(context);
+		DynamicArrayInit(&result.block.statements, 512);
 		while (context->token->type != '}')
 		{
 			ASTExpression statement = ParseStatement(context);
-			*DynamicArrayAdd(&result.block.statements, FrameRealloc) = statement;
+			*DynamicArrayAdd(&result.block.statements) = statement;
 		}
-		++context->token;
+		Advance(context);
 	} break;
 	case TOKEN_KEYWORD_IF:
 	{
@@ -393,21 +451,21 @@ ASTExpression ParseStatement(Context *context)
 	case TOKEN_KEYWORD_BREAK:
 	{
 		result.nodeType = ASTNODETYPE_BREAK;
-		++context->token;
+		Advance(context);
 
 		AssertToken(context, context->token, ';');
-		++context->token;
+		Advance(context);
 	} break;
 	case TOKEN_KEYWORD_RETURN:
 	{
-		++context->token;
+		Advance(context);
 
 		result.nodeType = ASTNODETYPE_RETURN;
 		result.returnNode.expression = ALLOC(FrameAlloc, ASTExpression);
 		*result.returnNode.expression = ParseExpression(context, -1);
 
 		AssertToken(context, context->token, ';');
-		++context->token;
+		Advance(context);
 	} break;
 	default:
 	{
@@ -435,13 +493,13 @@ ASTExpression ParseStatement(Context *context)
 			result.variableDeclaration = ParseVariableDeclaration(context);
 
 			AssertToken(context, context->token, ';');
-			++context->token;
+			Advance(context);
 		}
 		else
 		{
 			result = ParseExpression(context, -1);
 			AssertToken(context, context->token, ';');
-			++context->token;
+			Advance(context);
 		}
 	} break;
 	}
@@ -455,12 +513,13 @@ ASTRoot *GenerateSyntaxTree(Context *context)
 {
 	ASTRoot *root = (ASTRoot *)FrameAlloc(sizeof(ASTRoot));
 	context->astRoot = root;
-	DynamicArrayInit(&root->block.statements, 4096, FrameAlloc);
+	DynamicArrayInit(&root->block.statements, 4096);
 
-	context->token = context->tokens.data;
+	context->currentTokenIdx = 0;
+	context->token = &context->tokens[0];
 	while (context->token->type != TOKEN_END_OF_FILE)
 	{
-		*DynamicArrayAdd(&root->block.statements, FrameRealloc) = ParseStatement(context);
+		*DynamicArrayAdd(&root->block.statements) = ParseStatement(context);
 	}
 	return root;
 }

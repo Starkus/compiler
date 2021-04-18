@@ -39,7 +39,7 @@ struct StructMember
 struct TypeInfoStruct
 {
 	String name;
-	DynamicArray<StructMember> members;
+	DynamicArray<StructMember, malloc, realloc> members;
 };
 
 struct TypeInfoPointer
@@ -68,24 +68,24 @@ struct TCVariable
 struct TCProcedure
 {
 	String name;
-	DynamicArray<TCVariable> parameters;
+	DynamicArray<TCVariable, malloc, realloc> parameters;
 	Type returnType;
 };
 
 struct TCScope
 {
-	DynamicArray<TCVariable> variables;
-	DynamicArray<TCProcedure> procedures;
-	DynamicArray<s64> typeIndices;
+	DynamicArray<TCVariable, malloc, realloc> variables;
+	DynamicArray<TCProcedure, malloc, realloc> procedures;
+	DynamicArray<s64, malloc, realloc> typeIndices;
 };
 
 void PushTCScope(Context *context)
 {
-	TCScope *newScope = DynamicArrayAdd(&context->tcStack, realloc);
+	TCScope *newScope = DynamicArrayAdd(&context->tcStack);
 
-	DynamicArrayInit(&newScope->variables, 128, malloc);
-	DynamicArrayInit(&newScope->procedures, 128, malloc);
-	DynamicArrayInit(&newScope->typeIndices, 128, malloc);
+	DynamicArrayInit(&newScope->variables, 128);
+	DynamicArrayInit(&newScope->procedures, 128);
+	DynamicArrayInit(&newScope->typeIndices, 128);
 }
 
 void PopTCScope(Context *context)
@@ -97,7 +97,7 @@ void FindTypeInTable(Context *context, SourceLocation loc, String typeName, Type
 {
 	type->typeTableIdx = -1;
 
-	DynamicArray<TypeInfo> &typeTable = context->typeTable;
+	DynamicArray<TypeInfo, malloc, realloc> &typeTable = context->typeTable;
 
 	if (StringEquals(typeName, "s8"_s))
 		type->typeTableIdx = TYPETABLEIDX_S8;
@@ -266,6 +266,54 @@ Type InferType(Type fromType)
 	return result;
 }
 
+void TypeCheckExpression(Context *context, ASTExpression *expression);
+
+Type TypeCheckVariableDeclaration(Context *context, ASTVariableDeclaration *varDecl)
+{
+	String varName = varDecl->name;
+	// Check if already exists
+	TCScope *stackTop = &context->tcStack[context->tcStack.size - 1];
+	for (s64 i = 0; i < (s64)stackTop->variables.size; ++i)
+	{
+		TCVariable currentVar = stackTop->variables[i];
+		if (StringEquals(varName, currentVar.name))
+		{
+			PrintError(context, varDecl->loc, TPrintF("Duplicate variable \"%.*s\"", varName.size,
+						varName.data));
+		}
+	}
+
+	if (varDecl->typeName)
+	{
+		TypeCheckType(context, varDecl->loc, varDecl->typeName, &varDecl->type);
+	}
+
+	TCVariable variable;
+	variable.name = varName;
+	variable.type = varDecl->type;
+
+	if (varDecl->value)
+	{
+		TypeCheckExpression(context, varDecl->value);
+		Type valueType = varDecl->value->type;
+		if (varDecl->typeName)
+		{
+			if (!CheckTypesMatch(context, variable.type, valueType))
+			{
+				PrintError(context, varDecl->loc, "Variable declaration type and initial type don't match"_s);
+			}
+		}
+		else
+		{
+			variable.type = InferType(valueType);
+			varDecl->type = variable.type;
+		}
+	}
+	*DynamicArrayAdd(&stackTop->variables) = variable;
+
+	return variable.type;
+}
+
 void TypeCheckExpression(Context *context, ASTExpression *expression)
 {
 	switch (expression->nodeType)
@@ -284,49 +332,8 @@ void TypeCheckExpression(Context *context, ASTExpression *expression)
 	case ASTNODETYPE_VARIABLE_DECLARATION:
 	{
 		ASTVariableDeclaration *varDecl = &expression->variableDeclaration;
-		String varName = varDecl->name;
-		// Check if already exists
-		TCScope *stackTop = &context->tcStack[context->tcStack.size - 1];
-		for (s64 i = 0; i < (s64)stackTop->variables.size; ++i)
-		{
-			TCVariable currentVar = stackTop->variables[i];
-			if (StringEquals(varName, currentVar.name))
-			{
-				PrintError(context, expression->any.loc, TPrintF("Duplicate variable \"%.*s\"", varName.size,
-							varName.data));
-			}
-		}
-
-		if (varDecl->typeName)
-		{
-			TypeCheckType(context, expression->any.loc, varDecl->typeName, &varDecl->type);
-		}
-
-		TCVariable variable;
-		variable.name = varName;
-		variable.type = varDecl->type;
-
-		if (varDecl->value)
-		{
-			TypeCheckExpression(context, varDecl->value);
-			Type valueType = varDecl->value->type;
-			if (varDecl->typeName)
-			{
-				if (!CheckTypesMatch(context, variable.type, valueType))
-				{
-					PrintError(context, expression->any.loc, "Variable declaration type and initial type don't match"_s);
-				}
-			}
-			else
-			{
-				variable.type = InferType(valueType);
-				varDecl->type = variable.type;
-			}
-		}
-		*DynamicArrayAdd(&stackTop->variables, realloc) = variable;
-
-		expression->type = variable.type;
-		return;
+		Type variableType = TypeCheckVariableDeclaration(context, varDecl);
+		expression->type = variableType;
 	} break;
 	case ASTNODETYPE_STRUCT_DECLARATION:
 	{
@@ -334,13 +341,13 @@ void TypeCheckExpression(Context *context, ASTExpression *expression)
 		t.typeCategory = TYPECATEGORY_STRUCT;
 		t.structInfo.name = expression->structNode.name;
 		t.size = 0;
-		DynamicArrayInit(&t.structInfo.members, 16, malloc);
+		DynamicArrayInit(&t.structInfo.members, 16);
 
 		for (int memberIdx = 0; memberIdx < expression->structNode.members.size; ++memberIdx)
 		{
 			ASTVariableDeclaration *astMember = &expression->structNode.members[memberIdx];
 
-			StructMember *member = DynamicArrayAdd(&t.structInfo.members, realloc);
+			StructMember *member = DynamicArrayAdd(&t.structInfo.members);
 			member->name = astMember->name;
 			TypeCheckType(context, astMember->loc, astMember->typeName, &astMember->type);
 			member->type = astMember->type;
@@ -350,9 +357,9 @@ void TypeCheckExpression(Context *context, ASTExpression *expression)
 		}
 
 		s64 typeTableIdx = context->typeTable.size;
-		*DynamicArrayAdd(&context->typeTable, realloc) = t;
+		*DynamicArrayAdd(&context->typeTable) = t;
 
-		*DynamicArrayAdd(&context->tcStack[context->tcStack.size - 1].typeIndices, realloc) = typeTableIdx;
+		*DynamicArrayAdd(&context->tcStack[context->tcStack.size - 1].typeIndices) = typeTableIdx;
 
 		expression->type = {};
 		expression->type.typeTableIdx = typeTableIdx;
@@ -380,16 +387,13 @@ void TypeCheckExpression(Context *context, ASTExpression *expression)
 		PushTCScope(context);
 
 		// Parameters
-		DynamicArrayInit(&procedure.parameters, 8, malloc);
+		DynamicArrayInit(&procedure.parameters, 8);
 		for (int i = 0; i < procDecl->parameters.size; ++i)
 		{
 			ASTVariableDeclaration *astParam = &procDecl->parameters[i];
-			ASTExpression ex = {};
-			ex.nodeType = ASTNODETYPE_VARIABLE_DECLARATION;
-			ex.variableDeclaration = *astParam;
-			TypeCheckExpression(context, &ex);
+			TypeCheckVariableDeclaration(context, astParam);
 
-			TCVariable *tcParam = DynamicArrayAdd(&procedure.parameters, realloc);
+			TCVariable *tcParam = DynamicArrayAdd(&procedure.parameters);
 			tcParam->name = astParam->name;
 			tcParam->type = astParam->type;
 		}
@@ -412,7 +416,7 @@ void TypeCheckExpression(Context *context, ASTExpression *expression)
 		PopTCScope(context);
 
 		procedure.returnType = returnType;
-		*DynamicArrayAdd(&stackTop->procedures, realloc) = procedure;
+		*DynamicArrayAdd(&stackTop->procedures) = procedure;
 
 		expression->type = returnType;
 		return;
@@ -614,12 +618,12 @@ void TypeCheckMain(Context *context)
 	context->currentReturnType = {};
 	context->currentReturnType.typeTableIdx = -1;
 
-	DynamicArrayInit(&context->tcStack, 128, malloc);
+	DynamicArrayInit(&context->tcStack, 128);
 
 	PushTCScope(context);
 
-	DynamicArrayInit(&context->typeTable, 2048, malloc);
-	DynamicArrayAddMany<TypeInfo>(&context->typeTable, TYPETABLEIDX_COUNT, realloc);
+	DynamicArrayInit(&context->typeTable, 2048);
+	DynamicArrayAddMany(&context->typeTable, TYPETABLEIDX_COUNT);
 	{
 		TypeInfo t;
 		t.typeCategory = TYPECATEGORY_INTEGER;
@@ -652,7 +656,7 @@ void TypeCheckMain(Context *context)
 		context->typeTable[TYPETABLEIDX_F64] = t;
 	}
 	for (int i = 0; i < TYPETABLEIDX_COUNT; ++i)
-		*DynamicArrayAdd(&context->tcStack[0].typeIndices, realloc) = i;
+		*DynamicArrayAdd(&context->tcStack[0].typeIndices) = i;
 
 	for (int statementIdx = 0; statementIdx < context->astRoot->block.statements.size; ++statementIdx)
 	{

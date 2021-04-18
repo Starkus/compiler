@@ -63,24 +63,25 @@ struct Context
 	u64 fileSize;
 
 	// Parsing
-	DynamicArray<Token> tokens;
+	BucketArray<Token, 1024, malloc, realloc> tokens;
+	u64 currentTokenIdx;
 	Token *token;
 	ASTRoot *astRoot;
 
 	// Type check
-	DynamicArray<TypeInfo> typeTable;
-	DynamicArray<TCScope> tcStack;
+	DynamicArray<TypeInfo, malloc, realloc> typeTable;
+	DynamicArray<TCScope, malloc, realloc> tcStack;
 	Type currentReturnType;
 
 	// IR
-	DynamicArray<IRInstruction> instructions;
-	DynamicArray<IRScope> irStack;
+	BucketArray<IRInstruction, 1024, malloc, realloc> instructions;
+	DynamicArray<IRScope, malloc, realloc> irStack;
 	u64 currentRegisterId;
 	u64 currentLabelId;
 	String currentBreakLabel;
 };
 
-#include "Parsing.cpp"
+#include "Tokenizer.cpp"
 
 inline void PrintError(Context *context, SourceLocation loc, const String errorStr)
 {
@@ -247,11 +248,11 @@ int main(int argc, char **argv)
 
 	Context context = {};
 	context.filename = CStrToString(filename);
-	DynamicArrayInit(&context.tokens, 8192, FrameAlloc);
+	BucketArrayInit(&context.tokens);
 
 	Win32ReadEntireFile(filename, &context.fileBuffer, &context.fileSize, FrameAlloc);
 
-	TokenizeFile(&context, FrameRealloc);
+	TokenizeFile(&context);
 
 	GenerateSyntaxTree(&context);
 

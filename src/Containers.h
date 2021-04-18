@@ -36,7 +36,7 @@ T *ArrayAdd(Array<T> *array)
 	return &array->data[array->size++];
 }
 
-template <typename T>
+template <typename T, void *(*allocFunc)(u64), void *(*reallocFunc)(void *, u64)>
 struct DynamicArray
 {
 	T *data;
@@ -56,16 +56,16 @@ struct DynamicArray
 	}
 };
 
-template <typename T>
-void DynamicArrayInit(DynamicArray<T> *array, u64 initialCapacity, void *(*allocFunc)(u64))
+template <typename T, void *(*allocFunc)(u64), void *(*reallocFunc)(void *, u64)>
+void DynamicArrayInit(DynamicArray<T, allocFunc, reallocFunc> *array, u64 initialCapacity)
 {
 	array->data = (T*)allocFunc(sizeof(T) * initialCapacity);
 	array->size = 0;
 	array->capacity = initialCapacity;
 }
 
-template <typename T>
-T *DynamicArrayAdd(DynamicArray<T> *array, void *(*reallocFunc)(void *, u64))
+template <typename T, void *(*allocFunc)(u64), void *(*reallocFunc)(void *, u64)>
+T *DynamicArrayAdd(DynamicArray<T, allocFunc, reallocFunc> *array)
 {
 	if (array->size >= array->capacity)
 	{
@@ -75,8 +75,8 @@ T *DynamicArrayAdd(DynamicArray<T> *array, void *(*reallocFunc)(void *, u64))
 	return &array->data[array->size++];
 }
 
-template <typename T>
-T *DynamicArrayAddMany(DynamicArray<T> *array, s64 count, void *(*reallocFunc)(void *, u64))
+template <typename T, void *(*allocFunc)(u64), void *(*reallocFunc)(void *, u64)>
+T *DynamicArrayAddMany(DynamicArray<T, allocFunc, reallocFunc> *array, s64 count)
 {
 	bool reallocate = false;
 	u64 newSize = array->size + count;
@@ -90,4 +90,52 @@ T *DynamicArrayAddMany(DynamicArray<T> *array, s64 count, void *(*reallocFunc)(v
 	T *first = &array->data[array->size];
 	array->size = newSize;
 	return first;
+}
+
+template <typename T, u64 bucketSize, void *(*allocFunc)(u64), void *(*reallocFunc)(void *, u64)>
+struct BucketArray
+{
+	DynamicArray<Array<T>, allocFunc, reallocFunc> buckets;
+
+	T &operator[](s64 idx)
+	{
+		s64 bucketIdx = idx / bucketSize;
+		ASSERT((u64)bucketIdx < buckets.size);
+
+		return buckets[bucketIdx][idx % bucketSize];
+	}
+};
+
+template <typename T, u64 bucketSize, void *(*allocFunc)(u64), void *(*reallocFunc)(void *, u64)>
+void BucketArrayInit(BucketArray<T, bucketSize, allocFunc, reallocFunc> *bucketArray)
+{
+	DynamicArrayInit(&bucketArray->buckets, 4);
+
+	// Start with one bucket
+	Array<T> *firstBucket = DynamicArrayAdd(&bucketArray->buckets);
+	ArrayInit(firstBucket, bucketSize, allocFunc);
+}
+
+template <typename T, u64 bucketSize, void *(*allocFunc)(u64), void *(*reallocFunc)(void *, u64)>
+T *BucketArrayAdd(BucketArray<T, bucketSize, allocFunc, reallocFunc> *bucketArray)
+{
+	ASSERT(bucketArray->buckets.size > 0);
+	Array<T> *lastBucket = &bucketArray->buckets[bucketArray->buckets.size - 1];
+
+	if (lastBucket->size >= bucketSize)
+	{
+		Array<T> *newBucket = DynamicArrayAdd(&bucketArray->buckets);
+		ArrayInit(newBucket, bucketSize, allocFunc);
+		lastBucket = newBucket;
+	}
+
+	return ArrayAdd(lastBucket);
+}
+
+template <typename T, u64 bucketSize, void *(*allocFunc)(u64), void *(*reallocFunc)(void *, u64)>
+u64 BucketArrayCount(BucketArray<T, bucketSize, allocFunc, reallocFunc> *bucketArray)
+{
+	u64 count = (bucketArray->buckets.size - 1) * bucketSize;
+	count += bucketArray->buckets[bucketArray->buckets.size - 1].size;
+	return count;
 }

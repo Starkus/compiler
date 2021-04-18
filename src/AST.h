@@ -43,7 +43,7 @@ struct ASTVariable : ASTBase
 struct TCVariable;
 struct ASTBlock : ASTBase
 {
-	DynamicArray<ASTExpression> statements;
+	DynamicArray<ASTExpression, malloc, realloc> statements;
 };
 
 struct Type
@@ -65,14 +65,14 @@ struct ASTVariableDeclaration : ASTBase
 struct ASTProcedureCall : ASTBase
 {
 	String name;
-	DynamicArray<ASTExpression> arguments;
+	DynamicArray<ASTExpression, malloc, realloc> arguments;
 };
 
 struct ASTProcedureDeclaration : ASTBase
 {
 	String name;
 	String returnTypeName;
-	DynamicArray<ASTVariableDeclaration> parameters;
+	DynamicArray<ASTVariableDeclaration, malloc, realloc> parameters;
 	ASTExpression *body;
 
 	Type returnType;
@@ -99,7 +99,7 @@ struct ASTReturn : ASTBase
 struct ASTStruct : ASTBase
 {
 	String name;
-	DynamicArray<ASTVariableDeclaration> members;
+	DynamicArray<ASTVariableDeclaration, malloc, realloc> members;
 };
 
 struct TypeInfo;
