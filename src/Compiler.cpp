@@ -52,6 +52,7 @@ const String TPrintF(const char *format, ...)
 
 struct Token;
 struct ASTRoot;
+struct ASTExpression;
 struct TypeInfo;
 struct TCScope;
 struct IRInstruction;
@@ -67,6 +68,7 @@ struct Context
 	u64 currentTokenIdx;
 	Token *token;
 	ASTRoot *astRoot;
+	BucketArray<ASTExpression, 1024, malloc, realloc> treeNodes;
 
 	// Type check
 	DynamicArray<TypeInfo, malloc, realloc> typeTable;

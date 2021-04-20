@@ -11,6 +11,11 @@ void Advance(Context *context)
 	context->token = &context->tokens[context->currentTokenIdx];
 }
 
+ASTExpression *NewTreeNode(Context *context)
+{
+	return BucketArrayAdd(&context->treeNodes);
+}
+
 Type ParseType(Context *context, String *outTypeName)
 {
 	*outTypeName = {};
@@ -51,7 +56,7 @@ bool TryParseUnaryOperation(Context *context, s32 prevPrecedence, ASTUnaryOperat
 		s32 precedence = GetOperatorPrecedence(op);
 		//if (precedence > prevPrecedence) // @Check: ??
 		{
-			result->expression = ALLOC(FrameAlloc, ASTExpression);
+			result->expression = NewTreeNode(context);
 			*result->expression = ParseExpression(context, precedence);
 
 			return true;
@@ -93,6 +98,7 @@ bool TryParseBinaryOperation(Context *context, ASTExpression leftHand, s32 prevP
 		case TOKEN_OP_DIVIDE_EQUALS:
 			op = TOKEN_OP_DIVIDE; break;
 		default:
+			op = TOKEN_END_OF_FILE;
 			CRASH;
 		}
 		Advance(context);
@@ -101,18 +107,18 @@ bool TryParseBinaryOperation(Context *context, ASTExpression leftHand, s32 prevP
 		s32 precedence = GetOperatorPrecedence(TOKEN_OP_ASSIGNMENT);
 		if (precedence > prevPrecedence)
 		{
-			result->leftHand = ALLOC(FrameAlloc, ASTExpression);
+			result->leftHand = NewTreeNode(context);
 			*result->leftHand = leftHand;
 
-			result->rightHand = ALLOC(FrameAlloc, ASTExpression);
+			result->rightHand = NewTreeNode(context);
 			result->rightHand->nodeType = ASTNODETYPE_BINARY_OPERATION;
 
 			// NOTE! Tree branch referenced twice here! The tree is now a graph D:
 			// Consider copying if there's a problem with this.
-			result->rightHand->binaryOperation.leftHand = ALLOC(FrameAlloc, ASTExpression);
+			result->rightHand->binaryOperation.leftHand = NewTreeNode(context);
 			*result->rightHand->binaryOperation.leftHand = leftHand;
 
-			result->rightHand->binaryOperation.rightHand = ALLOC(FrameAlloc, ASTExpression);
+			result->rightHand->binaryOperation.rightHand = NewTreeNode(context);
 			*result->rightHand->binaryOperation.rightHand = ParseExpression(context, precedence);
 
 			result->rightHand->binaryOperation.op = op;
@@ -130,7 +136,7 @@ bool TryParseBinaryOperation(Context *context, ASTExpression leftHand, s32 prevP
 	case TOKEN_OP_DIVIDE:
 	case TOKEN_OP_MEMBER_ACCESS:
 	{
-		result->leftHand = ALLOC(FrameAlloc, ASTExpression);
+		result->leftHand = NewTreeNode(context);
 		*result->leftHand = leftHand;
 
 		enum TokenType op = context->token->type;
@@ -141,7 +147,7 @@ bool TryParseBinaryOperation(Context *context, ASTExpression leftHand, s32 prevP
 
 		if (precedence > prevPrecedence)
 		{
-			result->rightHand = ALLOC(FrameAlloc, ASTExpression);
+			result->rightHand = NewTreeNode(context);
 			*result->rightHand = ParseExpression(context, precedence);
 
 			return true;
@@ -161,16 +167,16 @@ ASTIf ParseIf(Context *context)
 
 	ASTIf ifNode = {};
 
-	ifNode.condition = ALLOC(FrameAlloc, ASTExpression);
+	ifNode.condition = NewTreeNode(context);
 	*ifNode.condition = ParseExpression(context, -1);
 
-	ifNode.body = ALLOC(FrameAlloc, ASTExpression);
+	ifNode.body = NewTreeNode(context);
 	*ifNode.body = ParseStatement(context);
 
 	if (context->token->type == TOKEN_KEYWORD_ELSE)
 	{
 		Advance(context);
-		ifNode.elseNode = ALLOC(FrameAlloc, ASTExpression);
+		ifNode.elseNode = NewTreeNode(context);
 		*ifNode.elseNode = ParseStatement(context);
 	}
 	return ifNode;
@@ -182,9 +188,9 @@ ASTWhile ParseWhile(Context *context)
 	Advance(context);
 
 	ASTWhile whileNode = {};
-	whileNode.condition = ALLOC(FrameAlloc, ASTExpression);
+	whileNode.condition = NewTreeNode(context);
 	*whileNode.condition = ParseExpression(context, -1);
-	whileNode.body = ALLOC(FrameAlloc, ASTExpression);
+	whileNode.body = NewTreeNode(context);
 	*whileNode.body = ParseStatement(context);
 
 	return whileNode;
@@ -240,7 +246,7 @@ ASTVariableDeclaration ParseVariableDeclaration(Context *context)
 	if (context->token->type == TOKEN_OP_ASSIGNMENT)
 	{
 		Advance(context);
-		varDecl.value = ALLOC(FrameAlloc, ASTExpression);
+		varDecl.value = NewTreeNode(context);
 		*varDecl.value = ParseExpression(context, -1);
 	}
 
@@ -289,7 +295,7 @@ ASTProcedureDeclaration ParseProcedureDeclaration(Context *context)
 		procDecl.returnTypeName = {};
 	}
 
-	procDecl.body = ALLOC(FrameAlloc, ASTExpression);
+	procDecl.body = NewTreeNode(context);
 	*procDecl.body = ParseStatement(context);
 
 	return procDecl;
@@ -461,7 +467,7 @@ ASTExpression ParseStatement(Context *context)
 		Advance(context);
 
 		result.nodeType = ASTNODETYPE_RETURN;
-		result.returnNode.expression = ALLOC(FrameAlloc, ASTExpression);
+		result.returnNode.expression = NewTreeNode(context);
 		*result.returnNode.expression = ParseExpression(context, -1);
 
 		AssertToken(context, context->token, ';');
@@ -511,9 +517,10 @@ ASTExpression ParseStatement(Context *context)
 
 ASTRoot *GenerateSyntaxTree(Context *context)
 {
-	ASTRoot *root = (ASTRoot *)FrameAlloc(sizeof(ASTRoot));
+	ASTRoot *root = ALLOC(FrameAlloc, ASTRoot);
 	context->astRoot = root;
 	DynamicArrayInit(&root->block.statements, 4096);
+	BucketArrayInit(&context->treeNodes);
 
 	context->currentTokenIdx = 0;
 	context->token = &context->tokens[0];

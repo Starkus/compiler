@@ -155,6 +155,16 @@ bool CheckTypesMatch(Context *context, Type left, Type right)
 	{
 		return left.typeTableIdx == right.typeTableIdx;
 	}
+	else if (left.typeTableIdx == TYPETABLEIDX_BOOL)
+	{
+		if (right.typeTableIdx == TYPETABLEIDX_BOOL || right.typeTableIdx == TYPETABLEIDX_NUMBER ||
+			right.typeTableIdx == TYPETABLEIDX_FLOATING)
+			return true;
+		if (rightTypeInfo->typeCategory == TYPECATEGORY_INTEGER ||
+			rightTypeInfo->typeCategory == TYPECATEGORY_FLOATING)
+			return true;
+		return false;
+	}
 	else if (leftTypeInfo->typeCategory == TYPECATEGORY_INTEGER)
 	{
 		if (right.typeTableIdx == TYPETABLEIDX_NUMBER || right.typeTableIdx == TYPETABLEIDX_BOOL)
@@ -205,14 +215,6 @@ bool CheckTypesMatch(Context *context, Type left, Type right)
 
 		if (rightTypeInfo->typeCategory == TYPECATEGORY_FLOATING ||
 			rightTypeInfo->typeCategory == TYPECATEGORY_INTEGER)
-			return true;
-		return false;
-	}
-	else if (left.typeTableIdx == TYPETABLEIDX_BOOL)
-	{
-		if (right.typeTableIdx == TYPETABLEIDX_BOOL || right.typeTableIdx == TYPETABLEIDX_NUMBER)
-			return true;
-		if (rightTypeInfo->typeCategory == TYPECATEGORY_INTEGER)
 			return true;
 		return false;
 	}
@@ -627,7 +629,7 @@ void TypeCheckMain(Context *context)
 	{
 		TypeInfo t;
 		t.typeCategory = TYPECATEGORY_INTEGER;
-		t.integerInfo.isSigned = false;
+		t.integerInfo.isSigned = true;
 
 		t.size = 1;
 		context->typeTable[TYPETABLEIDX_S8]  = t;
@@ -638,10 +640,11 @@ void TypeCheckMain(Context *context)
 		t.size = 8;
 		context->typeTable[TYPETABLEIDX_S64] = t;
 
-		t.integerInfo.isSigned = true;
+		t.integerInfo.isSigned = false;
 
 		t.size = 1;
 		context->typeTable[TYPETABLEIDX_U8]  = t;
+		context->typeTable[TYPETABLEIDX_BOOL]  = t;
 		t.size = 2;
 		context->typeTable[TYPETABLEIDX_U16] = t;
 		t.size = 4;
