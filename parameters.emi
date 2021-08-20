@@ -1,0 +1,11 @@
+doThings :: (eight : u8, sixteen : u16, thirtytwo : u32)
+{
+	foo := eight + eight;
+	bar := sixteen * 4;
+	baz := thirtytwo - 2;
+}
+
+main :: () -> s64
+{
+	doThings(8, 16, 32);
+}

@@ -1,4 +1,4 @@
-foo : u64;
+//foo : u64;
 
 AStruct :: struct
 {
@@ -18,6 +18,8 @@ doThings :: (arg : f32) -> s64
 
 operatorPrecedence :: (arg1 : u32, arg2 : u64 = 4) -> s32
 {
+	foo : u64; // Temp fix for global variables not working.
+
 	bar : u64 = arg2;
 	baz : u32 = arg1;
 	emi : u32 = 7;

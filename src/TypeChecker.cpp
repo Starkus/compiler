@@ -13,11 +13,13 @@ enum TypeTableIndexes
 	TYPETABLEIDX_BOOL,
 	TYPETABLEIDX_NUMBER,
 	TYPETABLEIDX_FLOATING,
+	TYPETABLEIDX_VOID,
 	TYPETABLEIDX_COUNT,
 };
 
 enum TypeCategory
 {
+	TYPECATEGORY_INVALID,
 	TYPECATEGORY_INTEGER,
 	TYPECATEGORY_FLOATING,
 	TYPECATEGORY_STRUCT
@@ -121,6 +123,8 @@ void FindTypeInTable(Context *context, SourceLocation loc, String typeName, Type
 		type->typeTableIdx = TYPETABLEIDX_F64;
 	else if (StringEquals(typeName, "bool"_s))
 		type->typeTableIdx = TYPETABLEIDX_BOOL;
+	else if (StringEquals(typeName, "void"_s))
+		type->typeTableIdx = TYPETABLEIDX_VOID;
 	else
 	{
 		for (int i = TYPETABLEIDX_COUNT; i < typeTable.size; ++i)
@@ -401,7 +405,7 @@ void TypeCheckExpression(Context *context, ASTExpression *expression)
 		}
 
 		Type returnType = {};
-		returnType.typeTableIdx = -1;
+		returnType.typeTableIdx = TYPETABLEIDX_VOID;
 		if (procDecl->returnTypeName)
 		{
 			TypeCheckType(context, expression->any.loc, procDecl->returnTypeName,
@@ -657,6 +661,10 @@ void TypeCheckMain(Context *context)
 		context->typeTable[TYPETABLEIDX_F32] = t;
 		t.size = 8;
 		context->typeTable[TYPETABLEIDX_F64] = t;
+
+		t.typeCategory = TYPECATEGORY_INVALID;
+		t.size = 0;
+		context->typeTable[TYPETABLEIDX_VOID] = t;
 	}
 	for (int i = 0; i < TYPETABLEIDX_COUNT; ++i)
 		*DynamicArrayAdd(&context->tcStack[0].typeIndices) = i;

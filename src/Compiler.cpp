@@ -55,7 +55,7 @@ struct ASTRoot;
 struct ASTExpression;
 struct TypeInfo;
 struct TCScope;
-struct IRInstruction;
+struct IRProcedure;
 struct IRScope;
 struct Context
 {
@@ -76,8 +76,9 @@ struct Context
 	Type currentReturnType;
 
 	// IR
-	BucketArray<IRInstruction, 1024, malloc, realloc> instructions;
+	DynamicArray<IRProcedure, malloc, realloc> irProcedures;
 	DynamicArray<IRScope, malloc, realloc> irStack;
+	u64 currentProcedureIdx;
 	u64 currentRegisterId;
 	u64 currentLabelId;
 	String currentBreakLabel;
@@ -159,31 +160,7 @@ void UnexpectedTokenError(Context *context, Token *token)
 #include "TypeChecker.cpp"
 #include "IRGen.cpp"
 #include "PrintAST.cpp"
-
-inline bool Win32GetLastWriteTime(const char *filename, FILETIME *lastWriteTime)
-{
-	WIN32_FILE_ATTRIBUTE_DATA data;
-	const bool success = GetFileAttributesEx(filename, GetFileExInfoStandard, &data);
-	if (success)
-	{
-		*lastWriteTime = data.ftLastWriteTime;
-	}
-
-	return success;
-}
-
-inline FILETIME Win32GetLastWriteTime(const char *filename)
-{
-	FILETIME lastWriteTime = {};
-
-	WIN32_FILE_ATTRIBUTE_DATA data;
-	if (GetFileAttributesEx(filename, GetFileExInfoStandard, &data))
-	{
-		lastWriteTime = data.ftLastWriteTime;
-	}
-
-	return lastWriteTime;
-}
+#include "WriteToC.cpp"
 
 bool Win32ReadEntireFile(const char *filename, u8 **fileBuffer, u64 *fileSize, void *(*allocFunc)(u64))
 {
@@ -261,6 +238,8 @@ int main(int argc, char **argv)
 	TypeCheckMain(&context);
 
 	IRGenMain(&context);
+
+	WriteToC(&context);
 
 	Log("Compilation success\n");
 	return 0;
