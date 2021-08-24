@@ -5,7 +5,7 @@ argByPointer :: (n : ^s32)
 
 main :: ()
 {
-	foo : s32;
+	foo : s32 = 5;
 	bar : s32;
 	baz : ^s32;
 

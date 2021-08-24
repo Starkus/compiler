@@ -32,7 +32,11 @@ String IRValueToStr(VariableStack *variableStack, IRValue value)
 				}
 				else
 				{
-					String cast = value.typeInfo.isPointer ? "ptr"_s : typeStr;
+					String cast;
+					if (value.typeInfo.isPointer)
+						cast = "ptr"_s;
+					else
+						cast = typeStr;
 					result = TPrintF("*((%.*s*)&stackBase[%d])", cast.size, cast.data, offset);
 				}
 				break;
@@ -42,6 +46,10 @@ String IRValueToStr(VariableStack *variableStack, IRValue value)
 	else if (value.valueType == IRVALUETYPE_IMMEDIATE)
 	{
 		result = TPrintF("0x%x", value.immediate);
+	}
+	else if (value.valueType == IRVALUETYPE_IMMEDIATE_FLOAT)
+	{
+		result = TPrintF("%f", value.immediateFloat);
 	}
 
 	if (printTypeMemberAccess)
@@ -166,7 +174,7 @@ void WriteToC(Context *context)
 
 		// Declare registers
 		PrintOut(outputFile, "Register r1");
-		for (int regIdx = 2; regIdx < context->currentRegisterId; ++regIdx)
+		for (int regIdx = 2; regIdx < proc.registerCount; ++regIdx)
 		{
 			PrintOut(outputFile, ", r%d", regIdx);
 		}
@@ -219,7 +227,7 @@ void WriteToC(Context *context)
 				PrintOut(outputFile, "%.*s = *(%.*s*)%.*s;\n", dst.size, dst.data, type.size,
 						type.data, src.size, src.data);
 			}
-			else if (inst.type == IRINSTRUCTIONTYPE_MEMBER_ADDRESS)
+			else if (inst.type == IRINSTRUCTIONTYPE_MEMBER_ACCESS)
 			{
 				// Compute struct offset
 				TypeInfo *typeInfo  = nullptr;
@@ -249,7 +257,7 @@ void WriteToC(Context *context)
 
 				String out = IRValueToStr(&variableStack, inst.memberAddress.out);
 				String base = IRValueToStr(&variableStack, inst.memberAddress.in);
-				PrintOut(outputFile, "%.*s = ((ptr)&(%.*s)) + %d;\n", out.size, out.data, base.size, base.data, offset);
+				PrintOut(outputFile, "%.*s = ((u8*)&(%.*s)) + %d;\n", out.size, out.data, base.size, base.data, offset);
 			}
 			else if (inst.type == IRINSTRUCTIONTYPE_CALL)
 			{

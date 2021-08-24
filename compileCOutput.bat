@@ -3,7 +3,7 @@
 cls
 
 set SourceFiles=..\out.c
-set CommonCompilerFlags=-MTd -nologo -Gm- -GR- -Od -Oi -EHa- -W4 -wd4201 -wd4100 -wd4996 -wd4063 -FC -Z7 -I ..\external\
+set CommonCompilerFlags=-MTd -nologo -Gm- -GR- -Od -Oi -EHa- -W4 -wd4201 -wd4100 -wd4996 -wd4063 -wd4305 -FC -Z7 -I ..\external\
 set CommonLinkerFlags=-opt:ref -incremental:no
 set Libraries=user32.lib Gdi32.lib winmm.lib
 

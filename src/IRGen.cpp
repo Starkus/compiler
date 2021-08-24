@@ -3,7 +3,8 @@ enum IRValueType
 	IRVALUETYPE_INVALID = -1,
 	IRVALUETYPE_REGISTER,
 	IRVALUETYPE_VARIABLE,
-	IRVALUETYPE_IMMEDIATE
+	IRVALUETYPE_IMMEDIATE,
+	IRVALUETYPE_IMMEDIATE_FLOAT
 };
 enum IRType
 {
@@ -40,6 +41,7 @@ struct IRValue
 		s64 registerIdx;
 		String variable;
 		s64 immediate;
+		f64 immediateFloat;
 	};
 	IRTypeInfo typeInfo;
 	IRPointerType pointerType;
@@ -120,7 +122,7 @@ enum IRInstructionType
 	IRINSTRUCTIONTYPE_VARIABLE_DECLARATION,
 	IRINSTRUCTIONTYPE_ASSIGNMENT,
 	IRINSTRUCTIONTYPE_DEREFERENCE,
-	IRINSTRUCTIONTYPE_MEMBER_ADDRESS,
+	IRINSTRUCTIONTYPE_MEMBER_ACCESS,
 
 	IRINSTRUCTIONTYPE_UNARY_BEGIN,
 	IRINSTRUCTIONTYPE_NOT = IRINSTRUCTIONTYPE_UNARY_BEGIN,
@@ -176,6 +178,7 @@ struct IRProcedure
 	Array<IRVariable> parameters;
 	BucketArray<IRInstruction, 256, malloc, realloc> instructions;
 	IRTypeInfo returnTypeInfo;
+	u64 registerCount;
 };
 
 IRValue NewVirtualRegister(Context *context)
@@ -279,16 +282,19 @@ IRValue IRGenFromExpression(Context *context, ASTExpression *expression)
 	{
 	case ASTNODETYPE_PROCEDURE_DECLARATION:
 	{
-		IRProcedure procedure = {};
-		procedure.name = expression->procedureDeclaration.name;
+		context->currentProcedureIdx = context->irProcedures.size;
+		IRProcedure *procedure = DynamicArrayAdd(&context->irProcedures);
 
-		procedure.returnTypeInfo = ASTTypeToIRTypeInfo(context, expression->type);
+		*procedure = {};
+		procedure->name = expression->procedureDeclaration.name;
+
+		procedure->returnTypeInfo = ASTTypeToIRTypeInfo(context, expression->type);
 
 		u64 paramCount = expression->procedureDeclaration.parameters.size;
-		ArrayInit(&procedure.parameters, paramCount, malloc);
-		procedure.parameters.size = paramCount;
+		ArrayInit(&procedure->parameters, paramCount, malloc);
+		procedure->parameters.size = paramCount;
 
-		BucketArrayInit(&procedure.instructions);
+		BucketArrayInit(&procedure->instructions);
 
 		PushIRScope(context);
 
@@ -303,13 +309,12 @@ IRValue IRGenFromExpression(Context *context, ASTExpression *expression)
 			newVar->name = param.name;
 			newVar->type = param.type;
 
-			procedure.parameters[paramIdx] = { param.name, param.type };
+			procedure->parameters[paramIdx] = { param.name, param.type };
 		}
 
-		context->currentProcedureIdx = context->irProcedures.size;
-		*DynamicArrayAdd(&context->irProcedures) = procedure;
-
+		context->currentRegisterId = 1;
 		IRGenFromExpression(context, expression->procedureDeclaration.body);
+		procedure->registerCount = context->currentRegisterId;
 
 		PopIRScope(context);
 	} break;
@@ -469,14 +474,18 @@ IRValue IRGenFromExpression(Context *context, ASTExpression *expression)
 			ASSERT(typeInfo->typeCategory == TYPECATEGORY_STRUCT);
 
 			IRInstruction inst;
-			inst.type = IRINSTRUCTIONTYPE_MEMBER_ADDRESS;
+			inst.type = IRINSTRUCTIONTYPE_MEMBER_ACCESS;
 			inst.memberAddress.in = left;
 			inst.memberAddress.out = NewVirtualRegister(context);
+			inst.memberAddress.out.typeInfo = { IRTYPE_PTR, false };
 			inst.memberAddress.structName = typeInfo->structInfo.name;
 			inst.memberAddress.memberName = memberName;
 			*AddInstruction(context) = inst;
 
 			result = inst.memberAddress.out;
+			result.typeInfo = ASTTypeToIRTypeInfo(context, expression->type);
+			result.typeInfo.isPointer = true;
+			result.pointerType = IRPOINTERTYPE_DEREFERENCE;
 		}
 		else
 		{
@@ -536,7 +545,6 @@ IRValue IRGenFromExpression(Context *context, ASTExpression *expression)
 	} break;
 	case ASTNODETYPE_LITERAL:
 	{
-		result.valueType = IRVALUETYPE_IMMEDIATE;
 		union
 		{
 			s64 asInt;
@@ -546,9 +554,13 @@ IRValue IRGenFromExpression(Context *context, ASTExpression *expression)
 		switch (expression->literal.type)
 		{
 		case LITERALTYPE_FLOATING:
+			result.valueType = IRVALUETYPE_IMMEDIATE_FLOAT;
 			asFloat = expression->literal.floating;
+			break;
 		case LITERALTYPE_INTEGER:
+			result.valueType = IRVALUETYPE_IMMEDIATE;
 			asInt = expression->literal.integer;
+			break;
 		}
 
 		result.immediate = asInt;
@@ -734,7 +746,7 @@ String IRTypeToStr(IRType type)
 	case IRTYPE_F64:
 		return "f64"_s;
 	}
-	return "???"_s;
+	return "u8"_s; // Default to u8 for things like structs
 }
 
 String IRTypeInfoToStr(IRTypeInfo typeInfo)
@@ -818,18 +830,6 @@ void IRGenMain(Context *context)
 				Log("return ");
 				PrintIRValue(inst.returnValue);
 			}
-#if 0
-			else if (inst.type == IRINSTRUCTIONTYPE_GET_PARAMETER)
-			{
-				PrintIRValue(inst.getParameter.out);
-				Log(" := parameters[%d]", inst.getParameter.parameterIdx);
-			}
-			else if (inst.type == IRINSTRUCTIONTYPE_SET_PARAMETER)
-			{
-				Log("parameters[%d] := ", inst.setParameter.parameterIdx);
-				PrintIRValue(inst.setParameter.in);
-			}
-#endif
 			else if (inst.type == IRINSTRUCTIONTYPE_VARIABLE_DECLARATION)
 			{
 				Log("%.*s : %d bytes", inst.variableDeclaration.name.size, inst.variableDeclaration.name.data,
@@ -841,7 +841,7 @@ void IRGenMain(Context *context)
 				Log(" = ");
 				PrintIRValue(inst.assignment.src);
 			}
-			else if (inst.type == IRINSTRUCTIONTYPE_MEMBER_ADDRESS)
+			else if (inst.type == IRINSTRUCTIONTYPE_MEMBER_ACCESS)
 			{
 				PrintIRValue(inst.memberAddress.out);
 				Log(" = ");
