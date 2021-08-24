@@ -5,10 +5,12 @@ struct VariableStack
 	u64 cursor;
 };
 
-String IRValueToStr(VariableStack *variableStack, IRValue value, bool asPointer)
+String IRValueToStr(VariableStack *variableStack, IRValue value)
 {
 	String result = "???"_s;
 	bool printTypeMemberAccess = false;
+
+	String typeStr = IRTypeToStr(value.typeInfo.type);
 
 	if (value.valueType == IRVALUETYPE_REGISTER)
 	{
@@ -30,77 +32,45 @@ String IRValueToStr(VariableStack *variableStack, IRValue value, bool asPointer)
 				}
 				else
 				{
-					String typeStr;
-					switch (value.type)
-					{
-					case IRTYPE_U8:
-						typeStr = "u8"_s;
-						break;
-					case IRTYPE_U16:
-						typeStr = "u16"_s;
-						break;
-					case IRTYPE_U32:
-						typeStr = "u32"_s;
-						break;
-					case IRTYPE_U64:
-						typeStr = "u64"_s;
-						break;
-					case IRTYPE_S8:
-						typeStr = "s8"_s;
-						break;
-					case IRTYPE_S16:
-						typeStr = "s16"_s;
-						break;
-					case IRTYPE_S32:
-						typeStr = "s32"_s;
-						break;
-					case IRTYPE_S64:
-						typeStr = "s64"_s;
-						break;
-					default:
-						typeStr = "???"_s;
-						break;
-					}
-					result = TPrintF("*((%.*s*)&stackBase[%d])", typeStr.size, typeStr.data, offset);
+					String cast = value.typeInfo.isPointer ? "ptr"_s : typeStr;
+					result = TPrintF("*((%.*s*)&stackBase[%d])", cast.size, cast.data, offset);
 				}
 				break;
 			}
 		}
 	}
 	else if (value.valueType == IRVALUETYPE_IMMEDIATE)
+	{
 		result = TPrintF("0x%x", value.immediate);
-
-	if (asPointer)
-	{
-		if (!value.asPointer)
-			result = TPrintF("&%.*s", result.size, result.data);
-	}
-	else
-	{
-		if (value.asPointer)
-			result = TPrintF("*%.*s", result.size, result.data);
 	}
 
 	if (printTypeMemberAccess)
 	{
-		switch (value.type)
-		{
-		case IRTYPE_U8:
-			result = TPrintF("%.*s.u8_", result.size, result.data);
-			break;
-		case IRTYPE_U16:
-			result = TPrintF("%.*s.u16_", result.size, result.data);
-			break;
-		case IRTYPE_U32:
-			result = TPrintF("%.*s.u32_", result.size, result.data);
-			break;
-		case IRTYPE_U64:
-			result = TPrintF("%.*s.u64_", result.size, result.data);
-			break;
-		}
+		String member = value.typeInfo.isPointer ? "ptr"_s : typeStr;
+		result = TPrintF("%.*s.%.*s_", result.size, result.data, member.size, member.data);
 	}
 
+	if (value.pointerType == IRPOINTERTYPE_POINTERTO)
+		result = TPrintF("&(%.*s)", result.size, result.data);
+	else if (value.pointerType == IRPOINTERTYPE_DEREFERENCE)
+		result = TPrintF("*(%.*s*)%.*s", typeStr.size, typeStr.data, result.size, result.data);
+
 	return result;
+}
+
+String IRValueToStrAsRegister(VariableStack *variableStack, IRValue value)
+{
+	if (value.valueType == IRVALUETYPE_REGISTER)
+		return TPrintF("r%d", value.registerIdx);
+	else
+	{
+		String result = IRValueToStr(variableStack, value);
+
+		if (value.valueType == IRVALUETYPE_IMMEDIATE)
+			result = TPrintF("FromU64(%.*s)", result.size, result.data);
+
+		return result;
+	}
 }
 
 String OperatorToStr(IRInstruction inst)
@@ -117,10 +87,14 @@ String OperatorToStr(IRInstruction inst)
 		return "/"_s;
 	case IRINSTRUCTIONTYPE_EQUALS:
 		return "=="_s;
-	case IRINSTRUCTIONTYPE_LESS_THAN:
-		return "<"_s;
 	case IRINSTRUCTIONTYPE_GREATER_THAN:
 		return ">"_s;
+	case IRINSTRUCTIONTYPE_GREATER_THAN_OR_EQUALS:
+		return ">="_s;
+	case IRINSTRUCTIONTYPE_LESS_THAN:
+		return "<"_s;
+	case IRINSTRUCTIONTYPE_LESS_THAN_OR_EQUALS:
+		return "<="_s;
 	case IRINSTRUCTIONTYPE_NOT:
 		return "!"_s;
 	default:
@@ -172,7 +146,7 @@ void WriteToC(Context *context)
 		IRProcedure proc = context->irProcedures[procedureIdx];
 
 		{
-			String returnTypeStr = IRTypeToStr(proc.returnType);
+			String returnTypeStr = IRTypeInfoToStr(proc.returnTypeInfo);
 
 			// @Hack: write 'main' return type as 'int' for compatibility
 			if (StringEquals(proc.name, "main"_s))
@@ -224,18 +198,26 @@ void WriteToC(Context *context)
 			}
 			else if (inst.type >= IRINSTRUCTIONTYPE_BINARY_BEGIN && inst.type < IRINSTRUCTIONTYPE_BINARY_END)
 			{
-				String out = IRValueToStr(&variableStack, inst.binaryOperation.out, false);
-				String left = IRValueToStr(&variableStack, inst.binaryOperation.left, false);
+				String out = IRValueToStr(&variableStack, inst.binaryOperation.out);
+				String left = IRValueToStr(&variableStack, inst.binaryOperation.left);
 				String op = OperatorToStr(inst);
-				String right = IRValueToStr(&variableStack, inst.binaryOperation.right, false);
+				String right = IRValueToStr(&variableStack, inst.binaryOperation.right);
 				PrintOut(outputFile, "%.*s = %.*s %.*s %.*s;\n", out.size, out.data, left.size, left.data, op.size,
 						op.data, right.size, right.data);
 			}
 			else if (inst.type == IRINSTRUCTIONTYPE_ASSIGNMENT)
 			{
-				String src = IRValueToStr(&variableStack, inst.assignment.src, false);
-				String dst = IRValueToStr(&variableStack, inst.assignment.dst, false);
+				String src = IRValueToStr(&variableStack, inst.assignment.src);
+				String dst = IRValueToStr(&variableStack, inst.assignment.dst);
 				PrintOut(outputFile, "%.*s = %.*s;\n", dst.size, dst.data, src.size, src.data);
+			}
+			else if (inst.type == IRINSTRUCTIONTYPE_DEREFERENCE)
+			{
+				String src = IRValueToStr(&variableStack, inst.assignment.src);
+				String dst = IRValueToStr(&variableStack, inst.assignment.dst);
+				String type = IRTypeInfoToStr(inst.assignment.dst.typeInfo);
+				PrintOut(outputFile, "%.*s = *(%.*s*)%.*s;\n", dst.size, dst.data, type.size,
+						type.data, src.size, src.data);
 			}
 			else if (inst.type == IRINSTRUCTIONTYPE_MEMBER_ADDRESS)
 			{
@@ -265,20 +247,42 @@ void WriteToC(Context *context)
 				}
 				ASSERT(offset != U64_MAX);
 
-				String out = IRValueToStr(&variableStack, inst.memberAddress.out, false);
-				String base = IRValueToStr(&variableStack, inst.memberAddress.in, true);
-				PrintOut(outputFile, "%.*s = %.*s + %d;\n", out.size, out.data, base.size, base.data, offset);
+				String out = IRValueToStr(&variableStack, inst.memberAddress.out);
+				String base = IRValueToStr(&variableStack, inst.memberAddress.in);
+				PrintOut(outputFile, "%.*s = ((ptr)&(%.*s)) + %d;\n", out.size, out.data, base.size, base.data, offset);
 			}
 			else if (inst.type == IRINSTRUCTIONTYPE_CALL)
 			{
 				PrintOut(outputFile, "%.*s(", inst.call.label.size, inst.call.label.data);
 				for (int i = 0; i < inst.call.parameters.size; ++i)
 				{
-					String param = IRValueToStr(&variableStack, inst.call.parameters[i], false);
+					String param = IRValueToStrAsRegister(&variableStack, inst.call.parameters[i]);
 					if (i > 0) PrintOut(outputFile, ", ");
 					PrintOut(outputFile, "%.*s", param.size, param.data);
 				}
 				PrintOut(outputFile, ");\n");
+			}
+			else if (inst.type == IRINSTRUCTIONTYPE_RETURN)
+			{
+				String returnStr = IRValueToStr(&variableStack, inst.returnValue);
+				PrintOut(outputFile, "return %.*s;\n", returnStr.size, returnStr.data);
+			}
+			else if (inst.type == IRINSTRUCTIONTYPE_LABEL)
+			{
+				String label = inst.label;
+				PrintOut(outputFile, "%.*s:\n", label.size, label.data);
+			}
+			else if (inst.type == IRINSTRUCTIONTYPE_JUMP)
+			{
+				String label = inst.conditionalJump.label;
+				PrintOut(outputFile, "goto %.*s;\n", label.size, label.data);
+			}
+			else if (inst.type == IRINSTRUCTIONTYPE_JUMP_IF_ZERO)
+			{
+				String label = inst.conditionalJump.label;
+				String condition = IRValueToStr(&variableStack, inst.conditionalJump.condition);
+				PrintOut(outputFile, "if (!%.*s) goto %.*s;\n", condition.size, condition.data,
+						label.size, label.data);
 			}
 		}
 		PrintOut(outputFile, "}\n");

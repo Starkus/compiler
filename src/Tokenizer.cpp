@@ -18,6 +18,14 @@ const String TokenTypeToString(s32 type)
 		return "< = >"_s;
 	case TOKEN_OP_EQUALS:
 		return "< == >"_s;
+	case TOKEN_OP_GREATER_THAN:
+		return "< > >"_s;
+	case TOKEN_OP_GREATER_THAN_OR_EQUAL:
+		return "< >= >"_s;
+	case TOKEN_OP_LESS_THAN:
+		return "< < >"_s;
+	case TOKEN_OP_LESS_THAN_OR_EQUAL:
+		return "< <= >"_s;
 	case TOKEN_OP_PLUS:
 		return "< + >"_s;
 	case TOKEN_OP_MINUS:
@@ -26,7 +34,7 @@ const String TokenTypeToString(s32 type)
 		return "< * >"_s;
 	case TOKEN_OP_DIVIDE:
 		return "< / >"_s;
-	case TOKEN_OP_POINTERTO:
+	case TOKEN_OP_POINTER_TO:
 		return "< ^ >"_s;
 	case TOKEN_OP_DEREFERENCE:
 		return "< @ >"_s;
@@ -77,8 +85,10 @@ s32 GetOperatorPrecedence(s32 op)
 		case TOKEN_OP_ASSIGNMENT:
 			return 0;
 		case TOKEN_OP_EQUALS:
-		case TOKEN_OP_LESSTHAN:
-		case TOKEN_OP_GREATERTHAN:
+		case TOKEN_OP_GREATER_THAN:
+		case TOKEN_OP_GREATER_THAN_OR_EQUAL:
+		case TOKEN_OP_LESS_THAN:
+		case TOKEN_OP_LESS_THAN_OR_EQUAL:
 			return 1;
 		case TOKEN_OP_PLUS:
 		case TOKEN_OP_MINUS:
@@ -96,7 +106,7 @@ s32 GetOperatorPrecedence(s32 op)
 			return 5;
 		case TOKEN_OP_MEMBER_ACCESS:
 			return 6;
-		case TOKEN_OP_POINTERTO:
+		case TOKEN_OP_POINTER_TO:
 		case TOKEN_OP_DEREFERENCE:
 			return 7;
 	}
@@ -317,11 +327,23 @@ Token ReadTokenAndAdvance(Tokenizer *tokenizer)
 		} break;
 		case '<':
 		{
-			result.type = TOKEN_OP_LESSTHAN;
+			if (next == '=')
+			{
+				result.type = TOKEN_OP_LESS_THAN_OR_EQUAL;
+				++tokenizer->cursor;
+			}
+			else
+				result.type = TOKEN_OP_LESS_THAN;
 		} break;
 		case '>':
 		{
-			result.type = TOKEN_OP_GREATERTHAN;
+			if (next == '=')
+			{
+				result.type = TOKEN_OP_GREATER_THAN_OR_EQUAL;
+				++tokenizer->cursor;
+			}
+			else
+				result.type = TOKEN_OP_GREATER_THAN;
 		} break;
 		case ':':
 		{
@@ -400,7 +422,7 @@ Token ReadTokenAndAdvance(Tokenizer *tokenizer)
 		} break;
 		case '^':
 		{
-			result.type = TOKEN_OP_POINTERTO;
+			result.type = TOKEN_OP_POINTER_TO;
 		} break;
 		case '@':
 		{

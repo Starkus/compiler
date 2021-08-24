@@ -21,7 +21,7 @@ Type ParseType(Context *context, String *outTypeName)
 	*outTypeName = {};
 	Type result = {};
 
-	while (context->token->type == TOKEN_OP_POINTERTO)
+	while (context->token->type == TOKEN_OP_POINTER_TO)
 	{
 		++result.pointerLevels;
 		Advance(context);
@@ -45,7 +45,7 @@ bool TryParseUnaryOperation(Context *context, s32 prevPrecedence, ASTUnaryOperat
 
 	switch (context->token->type)
 	{
-	case TOKEN_OP_POINTERTO:
+	case TOKEN_OP_POINTER_TO:
 	case TOKEN_OP_DEREFERENCE:
 	case TOKEN_OP_NOT:
 	{
@@ -128,8 +128,10 @@ bool TryParseBinaryOperation(Context *context, ASTExpression leftHand, s32 prevP
 	} break;
 	case TOKEN_OP_ASSIGNMENT:
 	case TOKEN_OP_EQUALS:
-	case TOKEN_OP_LESSTHAN:
-	case TOKEN_OP_GREATERTHAN:
+	case TOKEN_OP_GREATER_THAN:
+	case TOKEN_OP_GREATER_THAN_OR_EQUAL:
+	case TOKEN_OP_LESS_THAN:
+	case TOKEN_OP_LESS_THAN_OR_EQUAL:
 	case TOKEN_OP_PLUS:
 	case TOKEN_OP_MINUS:
 	case TOKEN_OP_MULTIPLY:

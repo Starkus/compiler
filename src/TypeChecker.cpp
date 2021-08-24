@@ -509,7 +509,7 @@ void TypeCheckExpression(Context *context, ASTExpression *expression)
 				PrintError(context, expression->any.loc, "Expression can't be cast to boolean"_s);
 			expression->type = { TYPETABLEIDX_BOOL };
 			break;
-		case TOKEN_OP_POINTERTO:
+		case TOKEN_OP_POINTER_TO:
 			// Forbid pointer to temporal values
 			if (IsTemporalValue(expression->unaryOperation.expression))
 				PrintError(context, expression->any.loc, "Trying to get pointer to temporal value"_s);

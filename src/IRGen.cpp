@@ -9,6 +9,7 @@ enum IRType
 {
 	IRTYPE_INVALID = -1,
 	IRTYPE_VOID,
+	IRTYPE_PTR,
 	IRTYPE_U8,
 	IRTYPE_U16,
 	IRTYPE_U32,
@@ -18,7 +19,18 @@ enum IRType
 	IRTYPE_S32,
 	IRTYPE_S64,
 	IRTYPE_F32,
-	IRTYPE_F64
+	IRTYPE_F64,
+};
+struct IRTypeInfo
+{
+	IRType type;
+	bool isPointer;
+};
+enum IRPointerType
+{
+	IRPOINTERTYPE_NONE,
+	IRPOINTERTYPE_POINTERTO,
+	IRPOINTERTYPE_DEREFERENCE,
 };
 struct IRValue
 {
@@ -29,9 +41,8 @@ struct IRValue
 		String variable;
 		s64 immediate;
 	};
-	IRType type;
-	bool pointerOf;
-	bool asPointer;
+	IRTypeInfo typeInfo;
+	IRPointerType pointerType;
 };
 
 struct IRJump
@@ -108,6 +119,7 @@ enum IRInstructionType
 
 	IRINSTRUCTIONTYPE_VARIABLE_DECLARATION,
 	IRINSTRUCTIONTYPE_ASSIGNMENT,
+	IRINSTRUCTIONTYPE_DEREFERENCE,
 	IRINSTRUCTIONTYPE_MEMBER_ADDRESS,
 
 	IRINSTRUCTIONTYPE_UNARY_BEGIN,
@@ -120,8 +132,10 @@ enum IRInstructionType
 	IRINSTRUCTIONTYPE_MULTIPLY,
 	IRINSTRUCTIONTYPE_DIVIDE,
 	IRINSTRUCTIONTYPE_EQUALS,
-	IRINSTRUCTIONTYPE_LESS_THAN,
 	IRINSTRUCTIONTYPE_GREATER_THAN,
+	IRINSTRUCTIONTYPE_GREATER_THAN_OR_EQUALS,
+	IRINSTRUCTIONTYPE_LESS_THAN,
+	IRINSTRUCTIONTYPE_LESS_THAN_OR_EQUALS,
 	IRINSTRUCTIONTYPE_BINARY_END
 };
 struct IRInstruction
@@ -138,6 +152,7 @@ struct IRInstruction
 		IRSetParameter setParameter;
 		IRVariableDeclaration variableDeclaration;
 		IRAssignment assignment;
+		IRAssignment dereference;
 		IRMemberAddress memberAddress;
 		IRUnaryOperation unaryOperation;
 		IRBinaryOperation binaryOperation;
@@ -160,7 +175,7 @@ struct IRProcedure
 	String name;
 	Array<IRVariable> parameters;
 	BucketArray<IRInstruction, 256, malloc, realloc> instructions;
-	IRType returnType;
+	IRTypeInfo returnTypeInfo;
 };
 
 IRValue NewVirtualRegister(Context *context)
@@ -205,38 +220,54 @@ inline IRInstruction *AddInstruction(Context *context)
 	return BucketArrayAdd(&context->irProcedures[context->currentProcedureIdx].instructions);
 }
 
-IRType ASTTypeToIRType(Context *context, Type astType)
+IRTypeInfo ASTTypeToIRTypeInfo(Context *context, Type astType)
 {
-	//TypeInfo *typeInfo = &context->typeTable[astType.typeTableIdx];
-	switch (astType.typeTableIdx)
+	IRTypeInfo result;
+	result.type = IRTYPE_INVALID;
+	result.isPointer = astType.pointerLevels > 0;
+
+	if (astType.pointerLevels > 1)
+		result.type = IRTYPE_PTR;
+	else switch (astType.typeTableIdx)
 	{
-		case TYPETABLEIDX_U8:
-		case TYPETABLEIDX_BOOL:
-			return IRTYPE_U8;
-		case TYPETABLEIDX_U16:
-			return IRTYPE_U16;
-		case TYPETABLEIDX_U32:
-			return IRTYPE_U32;
-		case TYPETABLEIDX_U64:
-			return IRTYPE_U64;
-		case TYPETABLEIDX_S8:
-			return IRTYPE_S8;
-		case TYPETABLEIDX_S16:
-			return IRTYPE_S16;
-		case TYPETABLEIDX_S32:
-			return IRTYPE_S32;
-		case TYPETABLEIDX_S64:
-		case TYPETABLEIDX_NUMBER:
-			return IRTYPE_S64;
-		case TYPETABLEIDX_F32:
-		case TYPETABLEIDX_FLOATING:
-			return IRTYPE_F32;
-		case TYPETABLEIDX_F64:
-			return IRTYPE_F64;
-		case TYPETABLEIDX_VOID:
-			return IRTYPE_VOID;
+	case TYPETABLEIDX_U8:
+	case TYPETABLEIDX_BOOL:
+		result.type = IRTYPE_U8;
+		break;
+	case TYPETABLEIDX_U16:
+		result.type = IRTYPE_U16;
+		break;
+	case TYPETABLEIDX_U32:
+		result.type = IRTYPE_U32;
+		break;
+	case TYPETABLEIDX_U64:
+		result.type = IRTYPE_U64;
+		break;
+	case TYPETABLEIDX_S8:
+		result.type = IRTYPE_S8;
+		break;
+	case TYPETABLEIDX_S16:
+		result.type = IRTYPE_S16;
+		break;
+	case TYPETABLEIDX_S32:
+		result.type = IRTYPE_S32;
+		break;
+	case TYPETABLEIDX_S64:
+	case TYPETABLEIDX_NUMBER:
+		result.type = IRTYPE_S64;
+		break;
+	case TYPETABLEIDX_F32:
+	case TYPETABLEIDX_FLOATING:
+		result.type = IRTYPE_F32;
+		break;
+	case TYPETABLEIDX_F64:
+		result.type = IRTYPE_F64;
+		break;
+	case TYPETABLEIDX_VOID:
+		result.type = IRTYPE_VOID;
+		break;
 	}
-	return IRTYPE_INVALID;
+	return result;
 }
 
 IRValue IRGenFromExpression(Context *context, ASTExpression *expression)
@@ -251,7 +282,7 @@ IRValue IRGenFromExpression(Context *context, ASTExpression *expression)
 		IRProcedure procedure = {};
 		procedure.name = expression->procedureDeclaration.name;
 
-		procedure.returnType = ASTTypeToIRType(context, expression->type);
+		procedure.returnTypeInfo = ASTTypeToIRTypeInfo(context, expression->type);
 
 		u64 paramCount = expression->procedureDeclaration.parameters.size;
 		ArrayInit(&procedure.parameters, paramCount, malloc);
@@ -273,15 +304,6 @@ IRValue IRGenFromExpression(Context *context, ASTExpression *expression)
 			newVar->type = param.type;
 
 			procedure.parameters[paramIdx] = { param.name, param.type };
-
-#if 0
-			IRInstruction getParamInst;
-			getParamInst.type = IRINSTRUCTIONTYPE_GET_PARAMETER;
-			getParamInst.getParameter.parameterIdx = paramIdx;
-			getParamInst.getParameter.out.type = IRVALUETYPE_VARIABLE;
-			getParamInst.getParameter.out.variable = newVar->name;
-			*AddInstruction(context) = getParamInst;
-#endif
 		}
 
 		context->currentProcedureIdx = context->irProcedures.size;
@@ -301,12 +323,11 @@ IRValue IRGenFromExpression(Context *context, ASTExpression *expression)
 	case ASTNODETYPE_VARIABLE_DECLARATION:
 	{
 		ASTVariableDeclaration varDecl = expression->variableDeclaration;
-		TypeInfo *typeInfo = &context->typeTable[varDecl.type.typeTableIdx];
 
 		IRInstruction inst = {};
 		inst.type = IRINSTRUCTIONTYPE_VARIABLE_DECLARATION;
 		inst.variableDeclaration.name = varDecl.name;
-		inst.variableDeclaration.size = typeInfo->size;
+		inst.variableDeclaration.size = CalculateTypeSize(context, varDecl.type);
 		*AddInstruction(context) = inst;
 
 		IRScope *stackTop = &context->irStack[context->irStack.size - 1];
@@ -324,7 +345,8 @@ IRValue IRGenFromExpression(Context *context, ASTExpression *expression)
 			initialValueInst.assignment.src = IRGenFromExpression(context, varDecl.value);
 			initialValueInst.assignment.dst.valueType = IRVALUETYPE_VARIABLE;
 			initialValueInst.assignment.dst.variable = newVar->name;
-			initialValueInst.assignment.dst.type = ASTTypeToIRType(context, varDecl.type);
+			initialValueInst.assignment.dst.typeInfo = ASTTypeToIRTypeInfo(context, varDecl.type);
+			initialValueInst.assignment.dst.pointerType = IRPOINTERTYPE_NONE;
 
 			*AddInstruction(context) = initialValueInst;
 		}
@@ -333,7 +355,8 @@ IRValue IRGenFromExpression(Context *context, ASTExpression *expression)
 	{
 		result.valueType = IRVALUETYPE_VARIABLE;
 		result.variable = expression->variable.name;
-		result.type = ASTTypeToIRType(context, expression->type);
+		result.typeInfo = ASTTypeToIRTypeInfo(context, expression->type);
+		result.pointerType = IRPOINTERTYPE_NONE;
 	} break;
 	case ASTNODETYPE_PROCEDURE_CALL:
 	{
@@ -350,36 +373,53 @@ IRValue IRGenFromExpression(Context *context, ASTExpression *expression)
 			ASTExpression *arg = &expression->procedureCall.arguments[argIdx];
 
 			IRValue param = IRGenFromExpression(context, arg);
-			*ArrayAdd(&inst.call.parameters) = param;
+			IRValue paramReg = NewVirtualRegister(context);
+			if (param.pointerType == IRPOINTERTYPE_NONE)
+				paramReg.typeInfo = param.typeInfo;
+			else
+				paramReg.typeInfo = { IRTYPE_PTR, false };
+			paramReg.pointerType = IRPOINTERTYPE_NONE;
+
+			IRInstruction paramIntermediateInst = {};
+			paramIntermediateInst.type = IRINSTRUCTIONTYPE_ASSIGNMENT;
+			paramIntermediateInst.assignment.src = param;
+			paramIntermediateInst.assignment.dst = paramReg;
+			*AddInstruction(context) = paramIntermediateInst;
+
+			*ArrayAdd(&inst.call.parameters) = paramReg;
 		}
 		*AddInstruction(context) = inst;
 	} break;
 	case ASTNODETYPE_UNARY_OPERATION:
 	{
-		if (expression->unaryOperation.op == TOKEN_OP_POINTERTO)
+		if (expression->unaryOperation.op == TOKEN_OP_POINTER_TO)
 		{
 			result = IRGenFromExpression(context, expression->unaryOperation.expression);
 
 			ASSERT(result.valueType == IRVALUETYPE_VARIABLE);
 
-			result.pointerOf = true;
+			result.pointerType = IRPOINTERTYPE_POINTERTO;
 		}
 		else if (expression->unaryOperation.op == TOKEN_OP_DEREFERENCE)
 		{
 			result = IRGenFromExpression(context, expression->unaryOperation.expression);
 
-			if (result.asPointer)
+			if (result.pointerType == IRPOINTERTYPE_DEREFERENCE)
 			{
-				// If already a pointer, add intermediate assignment
 				IRInstruction inst = {};
-				inst.type = IRINSTRUCTIONTYPE_ASSIGNMENT;
-				inst.assignment.src = result;
-				inst.assignment.dst = NewVirtualRegister(context);
+				inst.type = IRINSTRUCTIONTYPE_DEREFERENCE;
+				inst.dereference.src = result;
+				inst.dereference.dst = NewVirtualRegister(context);
+				inst.dereference.dst.typeInfo = ASTTypeToIRTypeInfo(context, expression->type);
+				inst.dereference.dst.pointerType = IRPOINTERTYPE_NONE;
 				*AddInstruction(context) = inst;
 
 				result = inst.assignment.dst;
 			}
-			result.asPointer = true;
+			else
+			{
+				result.pointerType = IRPOINTERTYPE_DEREFERENCE;
+			}
 		}
 		else
 		{
@@ -437,7 +477,6 @@ IRValue IRGenFromExpression(Context *context, ASTExpression *expression)
 			*AddInstruction(context) = inst;
 
 			result = inst.memberAddress.out;
-			result.asPointer = true;
 		}
 		else
 		{
@@ -445,7 +484,7 @@ IRValue IRGenFromExpression(Context *context, ASTExpression *expression)
 			inst.binaryOperation.left  = IRGenFromExpression(context, expression->binaryOperation.leftHand);
 			inst.binaryOperation.right = IRGenFromExpression(context, expression->binaryOperation.rightHand);
 			inst.binaryOperation.out = NewVirtualRegister(context);
-			inst.binaryOperation.out.type = ASTTypeToIRType(context, expression->type);
+			inst.binaryOperation.out.typeInfo = ASTTypeToIRTypeInfo(context, expression->type);
 
 			switch (expression->binaryOperation.op)
 			{
@@ -469,13 +508,21 @@ IRValue IRGenFromExpression(Context *context, ASTExpression *expression)
 			{
 				inst.type = IRINSTRUCTIONTYPE_EQUALS;
 			} break;
-			case TOKEN_OP_LESSTHAN:
+			case TOKEN_OP_GREATER_THAN:
+			{
+				inst.type = IRINSTRUCTIONTYPE_GREATER_THAN;
+			} break;
+			case TOKEN_OP_GREATER_THAN_OR_EQUAL:
+			{
+				inst.type = IRINSTRUCTIONTYPE_GREATER_THAN_OR_EQUALS;
+			} break;
+			case TOKEN_OP_LESS_THAN:
 			{
 				inst.type = IRINSTRUCTIONTYPE_LESS_THAN;
 			} break;
-			case TOKEN_OP_GREATERTHAN:
+			case TOKEN_OP_LESS_THAN_OR_EQUAL:
 			{
-				inst.type = IRINSTRUCTIONTYPE_GREATER_THAN;
+				inst.type = IRINSTRUCTIONTYPE_LESS_THAN_OR_EQUALS;
 			} break;
 			default:
 			{
@@ -505,6 +552,7 @@ IRValue IRGenFromExpression(Context *context, ASTExpression *expression)
 		}
 
 		result.immediate = asInt;
+		result.typeInfo = { IRTYPE_S64, false };
 	} break;
 	case ASTNODETYPE_IF:
 	{
@@ -596,10 +644,10 @@ IRValue IRGenFromExpression(Context *context, ASTExpression *expression)
 
 void PrintIRValue(IRValue value)
 {
-	if (value.asPointer)
+	if (value.pointerType == IRPOINTERTYPE_DEREFERENCE)
 		Log("[");
 
-	if (value.pointerOf)
+	if (value.pointerType == IRPOINTERTYPE_POINTERTO)
 		Log("address(");
 
 	if (value.valueType == IRVALUETYPE_REGISTER)
@@ -611,10 +659,10 @@ void PrintIRValue(IRValue value)
 	else
 		Log("???");
 
-	if (value.pointerOf)
+	if (value.pointerType == IRPOINTERTYPE_POINTERTO)
 		Log(")");
 
-	if (value.asPointer)
+	if (value.pointerType == IRPOINTERTYPE_DEREFERENCE)
 		Log("]");
 }
 
@@ -637,11 +685,17 @@ void PrintIRInstructionOperator(IRInstruction inst)
 	case IRINSTRUCTIONTYPE_EQUALS:
 		Log("==");
 		break;
+	case IRINSTRUCTIONTYPE_GREATER_THAN:
+		Log(">");
+		break;
+	case IRINSTRUCTIONTYPE_GREATER_THAN_OR_EQUALS:
+		Log(">=");
+		break;
 	case IRINSTRUCTIONTYPE_LESS_THAN:
 		Log("<");
 		break;
-	case IRINSTRUCTIONTYPE_GREATER_THAN:
-		Log(">");
+	case IRINSTRUCTIONTYPE_LESS_THAN_OR_EQUALS:
+		Log("<=");
 		break;
 	case IRINSTRUCTIONTYPE_NOT:
 		Log("!");
@@ -657,6 +711,8 @@ String IRTypeToStr(IRType type)
 	{
 	case IRTYPE_VOID:
 		return "void"_s;
+	case IRTYPE_PTR:
+		return "ptr"_s;
 	case IRTYPE_U8:
 		return "u8"_s;
 	case IRTYPE_U16:
@@ -673,8 +729,20 @@ String IRTypeToStr(IRType type)
 		return "s32"_s;
 	case IRTYPE_S64:
 		return "s64"_s;
+	case IRTYPE_F32:
+		return "f32"_s;
+	case IRTYPE_F64:
+		return "f64"_s;
 	}
 	return "???"_s;
+}
+
+String IRTypeInfoToStr(IRTypeInfo typeInfo)
+{
+	String result = IRTypeToStr(typeInfo.type);
+	if (typeInfo.isPointer)
+		result = TPrintF("%.*s", result.size, result.data);
+	return result;
 }
 
 void IRGenMain(Context *context)
@@ -698,11 +766,11 @@ void IRGenMain(Context *context)
 	for (int procedureIdx = 0; procedureIdx < procedureCount; ++procedureIdx)
 	{
 		IRProcedure proc = context->irProcedures[procedureIdx];
-		String returnTypeStr = IRTypeToStr(proc.returnType);
+		String returnTypeStr = IRTypeInfoToStr(proc.returnTypeInfo);
 
 		Log("proc %.*s(", proc.name.size, proc.name.data);
 		Log(")");
-		if (proc.returnType != IRTYPE_VOID)
+		if (proc.returnTypeInfo.type != IRTYPE_VOID)
 			Log(" -> %.*s", returnTypeStr.size, returnTypeStr.data);
 		Log("\n");
 

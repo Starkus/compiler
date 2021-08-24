@@ -13,6 +13,8 @@ typedef uint64_t u64;
 typedef float f32;
 typedef double f64;
 
+typedef void* ptr;
+
 typedef union Register
 {
 	u8  u8_;
@@ -28,5 +30,19 @@ typedef union Register
 	f32 f32_;
 	f64 f64_;
 
-	void *ptr;
+	ptr ptr_;
 } Register;
+
+inline Register FromU64(u64 value)
+{
+	Register r;
+	r.u64_ = value;
+	return r;
+}
+
+inline Register FromS64(s64 value)
+{
+	Register r;
+	r.s64_ = value;
+	return r;
+}
