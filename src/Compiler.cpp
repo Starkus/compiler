@@ -47,6 +47,7 @@ const String TPrintF(const char *format, ...)
 }
 
 #include "MemoryAlloc.cpp"
+#include "Strings.cpp"
 #include "Parser.h"
 #include "AST.h"
 
@@ -56,6 +57,7 @@ struct ASTExpression;
 struct TypeInfo;
 struct TCScope;
 struct IRProcedure;
+struct IRStaticVariable;
 struct IRScope;
 struct Context
 {
@@ -77,6 +79,7 @@ struct Context
 
 	// IR
 	DynamicArray<IRProcedure, malloc, realloc> irProcedures;
+	DynamicArray<IRStaticVariable, malloc, realloc> irStaticVariables;
 	DynamicArray<IRScope, malloc, realloc> irStack;
 	u64 currentProcedureIdx;
 	u64 currentRegisterId;

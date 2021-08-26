@@ -1,4 +1,4 @@
-//foo : u64;
+foo : u64;
 
 AStruct :: struct
 {
@@ -14,37 +14,6 @@ doThings :: (arg : f32) -> s64
 	}
 	// Reference non existing variable
 	//awesomeVariable = nonExistant;
-}
-
-operatorPrecedence :: (arg1 : u32, arg2 : u64 = 4) -> s32
-{
-	foo : u64; // Temp fix for global variables not working.
-
-	bar : u64 = arg2;
-	baz : u32 = arg1;
-	emi : u32 = 7;
-	foo = 2 + 4 * 5;
-	bar = 2 * 4 + 5;
-	baz = 2 * (4 + 5); // Parenthesis
-	emi = baz;
-
-	// Same precedence
-	emi = 2 + 4 - 5;
-	emi = 2 - 4 + 5;
-
-	// Unary
-	bar = !foo;
-	bar = !foo + 5;
-
-	// Boolean
-	flag : bool = bar == foo;
-	flag = !foo;
-	//notAFlag : f32 = bar == foo;
-
-	baz += 16;
-	baz -= 16;
-	baz *= 16;
-	baz /= 16;
 }
 
 outerProc :: ()
@@ -76,5 +45,4 @@ main :: () -> s64
 	var : u32 = 7;
 
 	doThings(25.5);
-	operatorPrecedence(var, 5);
 }

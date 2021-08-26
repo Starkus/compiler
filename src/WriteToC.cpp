@@ -5,7 +5,7 @@ struct VariableStack
 	u64 cursor;
 };
 
-String IRValueToStr(VariableStack *variableStack, IRValue value)
+String IRValueToStr(Context *context, VariableStack *variableStack, IRValue value)
 {
 	String result = "???"_s;
 	bool printTypeMemberAccess = false;
@@ -19,6 +19,8 @@ String IRValueToStr(VariableStack *variableStack, IRValue value)
 	}
 	else if (value.valueType == IRVALUETYPE_VARIABLE)
 	{
+		bool found = false;
+		// Search stack variables
 		for (int i = 0; i < variableStack->names.size; ++i)
 		{
 			String varName = variableStack->names[i];
@@ -37,9 +39,24 @@ String IRValueToStr(VariableStack *variableStack, IRValue value)
 						cast = "ptr"_s;
 					else
 						cast = typeStr;
-					result = TPrintF("*((%.*s*)&stackBase[%d])", cast.size, cast.data, offset);
+					result = TPrintF("/* %.*s */ *(%.*s*)(stack + 0x%x)", varName.size,
+							varName.data, cast.size, cast.data, offset);
 				}
+				found = true;
 				break;
+			}
+		}
+		if (!found)
+		{
+			// Search static variables
+			const u64 staticVariableCount = context->irStaticVariables.size;
+			for (int staticVariableIdx = 0; staticVariableIdx < staticVariableCount; ++staticVariableIdx)
+			{
+				String staticVarName = context->irStaticVariables[staticVariableIdx].name;
+				if (StringEquals(staticVarName, value.variable))
+				{
+					result = TPrintF("%.*s", staticVarName.size, staticVarName.data);
+				}
 			}
 		}
 	}
@@ -66,13 +83,13 @@ String IRValueToStr(VariableStack *variableStack, IRValue value)
 	return result;
 }
 
-String IRValueToStrAsRegister(VariableStack *variableStack, IRValue value)
+String IRValueToStrAsRegister(Context *context, VariableStack *variableStack, IRValue value)
 {
 	if (value.valueType == IRVALUETYPE_REGISTER)
 		return TPrintF("r%d", value.registerIdx);
 	else
 	{
-		String result = IRValueToStr(variableStack, value);
+		String result = IRValueToStr(context, variableStack, value);
 
 		if (value.valueType == IRVALUETYPE_IMMEDIATE)
 			result = TPrintF("FromU64(%.*s)", result.size, result.data);
@@ -110,6 +127,26 @@ String OperatorToStr(IRInstruction inst)
 	}
 }
 
+String GetProcedureSignature(IRProcedure proc)
+{
+	String result;
+
+	String returnTypeStr = IRTypeInfoToStr(proc.returnTypeInfo);
+	// @Hack: write 'main' return type as 'int' for compatibility
+	if (StringEquals(proc.name, "main"_s))
+		returnTypeStr = "int"_s;
+
+	result = TPrintF("%.*s %.*s(", returnTypeStr.size, returnTypeStr.data, proc.name.size, proc.name.data);
+	for (int i = 0; i < proc.parameters.size; ++i)
+	{
+		if (i) result = StringConcat(result, ", "_s);
+		result = TPrintF("%.*sRegister %.*s", result.size, result.data, proc.parameters[i].name.size,
+				proc.parameters[i].name.data);
+	}
+	result = StringConcat(result, ")"_s);
+	return result;
+}
+
 void PrintOut(HANDLE outputFile, const char *format, ...)
 {
 	char *buffer = (char *)g_memory->framePtr;
@@ -131,10 +168,12 @@ void PrintOut(HANDLE outputFile, const char *format, ...)
 
 void WriteToC(Context *context)
 {
+	const u32 stackSize = 256; // @Improve
+
 	VariableStack variableStack;
 	DynamicArrayInit(&variableStack.names, 128);
 	DynamicArrayInit(&variableStack.offsets, 128);
-	variableStack.cursor = 0;
+	variableStack.cursor = stackSize;
 
 	HANDLE outputFile = CreateFileA(
 			"out.c",
@@ -148,37 +187,67 @@ void WriteToC(Context *context)
 
 	PrintOut(outputFile, "#include \"emi.c\"\n\n");
 
+	const u64 staticVariableCount = context->irStaticVariables.size;
+	for (int staticVariableIdx = 0; staticVariableIdx < staticVariableCount; ++staticVariableIdx)
+	{
+		IRStaticVariable staticVar = context->irStaticVariables[staticVariableIdx];
+
+		String varType = IRTypeInfoToStr(staticVar.typeInfo);
+
+		PrintOut(outputFile, "%.*s %.*s", varType.size, varType.data, staticVar.name.size,
+				staticVar.name.data);
+		if (staticVar.initialValue.valueType != IRVALUETYPE_INVALID)
+		{
+			if (staticVar.initialValue.valueType == IRVALUETYPE_IMMEDIATE)
+			{
+				PrintOut(outputFile, " = 0x%x", staticVar.initialValue.immediate);
+			}
+			else if (staticVar.initialValue.valueType == IRVALUETYPE_IMMEDIATE_FLOAT)
+			{
+				PrintOut(outputFile, " = %f", staticVar.initialValue.immediateFloat);
+			}
+			else
+			{
+				CRASH; // Non literal values not supported here.
+			}
+		}
+		PrintOut(outputFile, ";\n");
+	}
+
+	PrintOut(outputFile, "\n");
+
+	PrintOut(outputFile, "// Forward declaration of procedures\n");
 	const u64 procedureCount = context->irProcedures.size;
 	for (int procedureIdx = 0; procedureIdx < procedureCount; ++procedureIdx)
 	{
 		IRProcedure proc = context->irProcedures[procedureIdx];
+		String signature = GetProcedureSignature(proc);
+		PrintOut(outputFile, "%.*s;\n", signature.size, signature.data);
+	}
 
-		{
-			String returnTypeStr = IRTypeInfoToStr(proc.returnTypeInfo);
+	PrintOut(outputFile, "\n");
 
-			// @Hack: write 'main' return type as 'int' for compatibility
-			if (StringEquals(proc.name, "main"_s))
-				returnTypeStr = "int"_s;
+	for (int procedureIdx = 0; procedureIdx < procedureCount; ++procedureIdx)
+	{
+		IRProcedure proc = context->irProcedures[procedureIdx];
 
-			PrintOut(outputFile, "%.*s %.*s(", returnTypeStr.size, returnTypeStr.data, proc.name.size, proc.name.data);
-			for (int i = 0; i < proc.parameters.size; ++i)
-			{
-				if (i) PrintOut(outputFile, ", ");
-				PrintOut(outputFile, "Register %.*s", proc.parameters[i].name.size,
-						proc.parameters[i].name.data);
-			}
-			PrintOut(outputFile, ") {\n");
-		}
+		String signature = GetProcedureSignature(proc);
+		PrintOut(outputFile, "%.*s {\n", signature.size, signature.data);
 
-		PrintOut(outputFile, "u8 stackBase[%d];\n", 256);
+		PrintOut(outputFile, "u8 stack[%d];\n", stackSize);
 
 		// Declare registers
-		PrintOut(outputFile, "Register r1");
-		for (int regIdx = 2; regIdx < proc.registerCount; ++regIdx)
+		if (proc.registerCount)
 		{
-			PrintOut(outputFile, ", r%d", regIdx);
+			PrintOut(outputFile, "Register r0");
+			for (int regIdx = 1; regIdx < proc.registerCount; ++regIdx)
+			{
+				PrintOut(outputFile, ", r%d", regIdx);
+			}
+			PrintOut(outputFile, ";\n");
 		}
-		PrintOut(outputFile, ";\n");
+
+		PrintOut(outputFile, "\n");
 
 		// Add parameters to variable stack
 		for (int paramIdx = 0; paramIdx < proc.parameters.size; ++paramIdx)
@@ -195,37 +264,37 @@ void WriteToC(Context *context)
 
 			if (inst.type == IRINSTRUCTIONTYPE_VARIABLE_DECLARATION)
 			{
+				variableStack.cursor -= inst.variableDeclaration.size;
 				u64 offset = variableStack.cursor;
 				*DynamicArrayAdd(&variableStack.names) = inst.variableDeclaration.name;
 				*DynamicArrayAdd(&variableStack.offsets) = offset;
-				variableStack.cursor += inst.variableDeclaration.size;
 
-				PrintOut(outputFile, "/* Declare variable '%.*s' at stackBase[%d] (size %d) */\n",
+				PrintOut(outputFile, "/* Declare variable '%.*s' at stack + 0x%x (size %d) */\n",
 						inst.variableDeclaration.name.size, inst.variableDeclaration.name.data, offset,
 						inst.variableDeclaration.size);
 			}
+			else if (inst.type >= IRINSTRUCTIONTYPE_UNARY_BEGIN && inst.type < IRINSTRUCTIONTYPE_UNARY_END)
+			{
+				String out = IRValueToStr(context, &variableStack, inst.unaryOperation.out);
+				String in = IRValueToStr(context, &variableStack, inst.unaryOperation.in);
+				String op = OperatorToStr(inst);
+				PrintOut(outputFile, "%.*s = %.*s%.*s;\n", out.size, out.data, op.size, op.data, in.size,
+						in.data);
+			}
 			else if (inst.type >= IRINSTRUCTIONTYPE_BINARY_BEGIN && inst.type < IRINSTRUCTIONTYPE_BINARY_END)
 			{
-				String out = IRValueToStr(&variableStack, inst.binaryOperation.out);
-				String left = IRValueToStr(&variableStack, inst.binaryOperation.left);
+				String out = IRValueToStr(context, &variableStack, inst.binaryOperation.out);
+				String left = IRValueToStr(context, &variableStack, inst.binaryOperation.left);
 				String op = OperatorToStr(inst);
-				String right = IRValueToStr(&variableStack, inst.binaryOperation.right);
+				String right = IRValueToStr(context, &variableStack, inst.binaryOperation.right);
 				PrintOut(outputFile, "%.*s = %.*s %.*s %.*s;\n", out.size, out.data, left.size, left.data, op.size,
 						op.data, right.size, right.data);
 			}
 			else if (inst.type == IRINSTRUCTIONTYPE_ASSIGNMENT)
 			{
-				String src = IRValueToStr(&variableStack, inst.assignment.src);
-				String dst = IRValueToStr(&variableStack, inst.assignment.dst);
+				String src = IRValueToStr(context, &variableStack, inst.assignment.src);
+				String dst = IRValueToStr(context, &variableStack, inst.assignment.dst);
 				PrintOut(outputFile, "%.*s = %.*s;\n", dst.size, dst.data, src.size, src.data);
-			}
-			else if (inst.type == IRINSTRUCTIONTYPE_DEREFERENCE)
-			{
-				String src = IRValueToStr(&variableStack, inst.assignment.src);
-				String dst = IRValueToStr(&variableStack, inst.assignment.dst);
-				String type = IRTypeInfoToStr(inst.assignment.dst.typeInfo);
-				PrintOut(outputFile, "%.*s = *(%.*s*)%.*s;\n", dst.size, dst.data, type.size,
-						type.data, src.size, src.data);
 			}
 			else if (inst.type == IRINSTRUCTIONTYPE_MEMBER_ACCESS)
 			{
@@ -255,8 +324,8 @@ void WriteToC(Context *context)
 				}
 				ASSERT(offset != U64_MAX);
 
-				String out = IRValueToStr(&variableStack, inst.memberAddress.out);
-				String base = IRValueToStr(&variableStack, inst.memberAddress.in);
+				String out = IRValueToStr(context, &variableStack, inst.memberAddress.out);
+				String base = IRValueToStr(context, &variableStack, inst.memberAddress.in);
 				PrintOut(outputFile, "%.*s = ((u8*)&(%.*s)) + %d;\n", out.size, out.data, base.size, base.data, offset);
 			}
 			else if (inst.type == IRINSTRUCTIONTYPE_CALL)
@@ -264,7 +333,7 @@ void WriteToC(Context *context)
 				PrintOut(outputFile, "%.*s(", inst.call.label.size, inst.call.label.data);
 				for (int i = 0; i < inst.call.parameters.size; ++i)
 				{
-					String param = IRValueToStrAsRegister(&variableStack, inst.call.parameters[i]);
+					String param = IRValueToStrAsRegister(context, &variableStack, inst.call.parameters[i]);
 					if (i > 0) PrintOut(outputFile, ", ");
 					PrintOut(outputFile, "%.*s", param.size, param.data);
 				}
@@ -272,7 +341,7 @@ void WriteToC(Context *context)
 			}
 			else if (inst.type == IRINSTRUCTIONTYPE_RETURN)
 			{
-				String returnStr = IRValueToStr(&variableStack, inst.returnValue);
+				String returnStr = IRValueToStr(context, &variableStack, inst.returnValue);
 				PrintOut(outputFile, "return %.*s;\n", returnStr.size, returnStr.data);
 			}
 			else if (inst.type == IRINSTRUCTIONTYPE_LABEL)
@@ -288,12 +357,12 @@ void WriteToC(Context *context)
 			else if (inst.type == IRINSTRUCTIONTYPE_JUMP_IF_ZERO)
 			{
 				String label = inst.conditionalJump.label;
-				String condition = IRValueToStr(&variableStack, inst.conditionalJump.condition);
+				String condition = IRValueToStr(context, &variableStack, inst.conditionalJump.condition);
 				PrintOut(outputFile, "if (!%.*s) goto %.*s;\n", condition.size, condition.data,
 						label.size, label.data);
 			}
 		}
-		PrintOut(outputFile, "}\n");
+		PrintOut(outputFile, "}\n\n");
 	}
 
 	CloseHandle(outputFile);
