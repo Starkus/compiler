@@ -46,6 +46,7 @@ enum TokenType
 	TOKEN_OP_POINTER_TO,
 	TOKEN_OP_DEREFERENCE,
 	TOKEN_OP_VARIABLE_DECLARATION,
+	TOKEN_OP_VARIABLE_DECLARATION_STATIC,
 	TOKEN_OP_STATIC_DEF,
 	TOKEN_OP_AND,
 	TOKEN_OP_OR,
@@ -64,6 +65,7 @@ struct SourceLocation
 	String file;
 	s64 line;
 	s64 character;
+	s64 size;
 };
 
 struct Token

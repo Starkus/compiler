@@ -1,6 +1,12 @@
+#define PRINT_TOKEN_SOURCE_LOCATION 0
+
 struct PrintContext
 {
 	int indentLevels;
+
+	String filename;
+	u8 *fileBuffer;
+	u64 fileSize;
 };
 
 String OperatorToString(s32 op)
@@ -11,6 +17,14 @@ String OperatorToString(s32 op)
 			return "="_s;
 		case TOKEN_OP_EQUALS:
 			return "=="_s;
+		case TOKEN_OP_GREATER_THAN:
+			return ">"_s;
+		case TOKEN_OP_GREATER_THAN_OR_EQUAL:
+			return ">="_s;
+		case TOKEN_OP_LESS_THAN:
+			return "<"_s;
+		case TOKEN_OP_LESS_THAN_OR_EQUAL:
+			return "<="_s;
 		case TOKEN_OP_PLUS:
 			return "+"_s;
 		case TOKEN_OP_MINUS:
@@ -40,7 +54,7 @@ String OperatorToString(s32 op)
 		case TOKEN_OP_MEMBER_ACCESS:
 			return "."_s;
 	}
-	return {};
+	return "???OP"_s;
 }
 
 void Indent(PrintContext *context)
@@ -51,6 +65,55 @@ void Indent(PrintContext *context)
 		Log("+-");
 }
 
+#if PRINT_TOKEN_SOURCE_LOCATION
+void PrintSourceLocation(PrintContext *context, SourceLocation loc)
+{
+	const char *colorCode = "\u001b[36m";
+	const char *clearCode = "\u001b[0m";
+
+	const char *beginningOfLine = nullptr;
+	int size = 0;
+	int l = 1;
+	for (const char *scan = (const char *)context->fileBuffer; *scan; ++scan)
+	{
+		if (l == loc.line)
+		{
+			beginningOfLine = scan;
+			break;
+		}
+		if (*scan == '\n')
+			++l;
+	}
+	s64 shiftedChar = loc.character;
+	for (const char *scan = beginningOfLine; *scan; ++scan)
+	{
+		if (!IsWhitespace(*scan))
+		{
+			beginningOfLine = scan;
+			break;
+		}
+		--shiftedChar;
+	}
+	if (beginningOfLine)
+	{
+		for (const char *scan = beginningOfLine; ; ++scan)
+		{
+			if (!*scan || *scan == '\n')
+				break;
+			++size;
+		}
+
+		Log("   -- src ---> ");
+
+		Log("%.*s%s%.*s%s%.*s", shiftedChar, beginningOfLine, colorCode,
+				loc.size, beginningOfLine + shiftedChar, clearCode,
+				size - shiftedChar - loc.size, beginningOfLine + shiftedChar + loc.size);
+	}
+}
+#else
+#define PrintSourceLocation(...)
+#endif
+
 void PrintExpression(PrintContext *context, ASTExpression *e)
 {
 	Indent(context);
@@ -58,9 +121,17 @@ void PrintExpression(PrintContext *context, ASTExpression *e)
 	{
 	case ASTNODETYPE_VARIABLE_DECLARATION:
 	{
-		Log("Variable declaration \"%.*s\" of type \"%.*s\"\n", e->variableDeclaration.name.size,
+		if (e->variableDeclaration.isStatic)
+			Log("Static variable declaration ");
+		else
+			Log("Variable declaration ");
+		Log("\"%.*s\" of type \"%.*s\"", e->variableDeclaration.name.size,
 				e->variableDeclaration.name.data, e->variableDeclaration.typeName.size,
 				e->variableDeclaration.typeName.data);
+
+		PrintSourceLocation(context, e->any.loc);
+		Log("\n");
+
 		if (e->variableDeclaration.value)
 		{
 			++context->indentLevels;
@@ -70,9 +141,12 @@ void PrintExpression(PrintContext *context, ASTExpression *e)
 	} break;
 	case ASTNODETYPE_PROCEDURE_DECLARATION:
 	{
-		Log("Procedure declaration \"%.*s\"\n", e->procedureDeclaration.name.size,
+		Log("Procedure declaration \"%.*s\"", e->procedureDeclaration.name.size,
 				e->procedureDeclaration.name.data);
 		++context->indentLevels;
+
+		PrintSourceLocation(context, e->any.loc);
+		Log("\n");
 
 		Indent(context);
 		Log("Parameters:\n");
@@ -100,11 +174,18 @@ void PrintExpression(PrintContext *context, ASTExpression *e)
 	} break;
 	case ASTNODETYPE_VARIABLE:
 	{
-		Log("Variable \"%.*s\"\n", e->variable.name.size, e->variable.name.data);
+		Log("Variable \"%.*s\"", e->variable.name.size, e->variable.name.data);
+
+		PrintSourceLocation(context, e->any.loc);
+		Log("\n");
 	} break;
 	case ASTNODETYPE_PROCEDURE_CALL:
 	{
-		Log("Procedure call \"%.*s\"\n", e->procedureCall.name.size, e->procedureCall.name.data);
+		Log("Procedure call \"%.*s\"", e->procedureCall.name.size, e->procedureCall.name.data);
+
+		PrintSourceLocation(context, e->any.loc);
+		Log("\n");
+
 		++context->indentLevels;
 		for (int i = 0; i < e->procedureCall.arguments.size; ++i)
 		{
@@ -118,18 +199,29 @@ void PrintExpression(PrintContext *context, ASTExpression *e)
 		{
 		case LITERALTYPE_INTEGER:
 		{
-			Log("Literal %d\n", e->literal.integer);
+			Log("Literal %d", e->literal.integer);
+		} break;
+		case LITERALTYPE_FLOATING:
+		{
+			Log("Literal %f", e->literal.integer);
 		} break;
 		case LITERALTYPE_STRING:
 		{
-			Log("Constant \"%.*s\"\n", e->literal.string.size, e->literal.string.data);
+			Log("Constant \"%.*s\"", e->literal.string.size, e->literal.string.data);
 		} break;
 		}
+
+		PrintSourceLocation(context, e->any.loc);
+		Log("\n");
 	} break;
 	case ASTNODETYPE_UNARY_OPERATION:
 	{
 		String operatorStr = OperatorToString(e->unaryOperation.op);
-		Log("Unary operation (%.*s)\n", operatorStr.size, operatorStr.data);
+		Log("Unary operation (%.*s)", operatorStr.size, operatorStr.data);
+
+		PrintSourceLocation(context, e->any.loc);
+		Log("\n");
+
 		++context->indentLevels;
 		PrintExpression(context, e->unaryOperation.expression);
 		--context->indentLevels;
@@ -137,7 +229,11 @@ void PrintExpression(PrintContext *context, ASTExpression *e)
 	case ASTNODETYPE_BINARY_OPERATION:
 	{
 		String operatorStr = OperatorToString(e->binaryOperation.op);
-		Log("Binary operation (%.*s)\n", operatorStr.size, operatorStr.data);
+		Log("Binary operation (%.*s)", operatorStr.size, operatorStr.data);
+
+		PrintSourceLocation(context, e->any.loc);
+		Log("\n");
+
 		++context->indentLevels;
 		PrintExpression(context, e->binaryOperation.leftHand);
 		PrintExpression(context, e->binaryOperation.rightHand);
@@ -145,14 +241,22 @@ void PrintExpression(PrintContext *context, ASTExpression *e)
 	} break;
 	case ASTNODETYPE_IF:
 	{
-		Log("If\n");
+		Log("If");
+
+		PrintSourceLocation(context, e->any.loc);
+		Log("\n");
+
 		++context->indentLevels;
 		PrintExpression(context, e->ifNode.condition);
 		PrintExpression(context, e->ifNode.body);
 		if (e->ifNode.elseNode)
 		{
 			Indent(context);
-			Log("Else:\n");
+			Log("Else:");
+
+			PrintSourceLocation(context, e->ifNode.elseLoc);
+			Log("\n");
+
 			++context->indentLevels;
 			PrintExpression(context, e->ifNode.elseNode);
 			--context->indentLevels;
@@ -199,13 +303,16 @@ void PrintExpression(PrintContext *context, ASTExpression *e)
 	}
 }
 
-void PrintAST(ASTRoot *root)
+void PrintAST(Context *context)
 {
-	PrintContext context = {};
+	PrintContext printContext = {};
+	printContext.filename = context->filename;
+	printContext.fileBuffer = context->fileBuffer;
+	printContext.fileSize = context->fileSize;
 
-	for (int i = 0; i < root->block.statements.size; ++i)
+	for (int i = 0; i < context->astRoot->block.statements.size; ++i)
 	{
-		ASTExpression *statement = &root->block.statements[i];
-		PrintExpression(&context, statement);
+		ASTExpression *statement = &context->astRoot->block.statements[i];
+		PrintExpression(&printContext, statement);
 	}
 }

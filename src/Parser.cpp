@@ -78,6 +78,8 @@ bool TryParseBinaryOperation(Context *context, ASTExpression leftHand, s32 prevP
 	Token *oldToken = context->token;
 	s64 oldTokenIdx = context->currentTokenIdx;
 
+	result->loc = context->token->loc;
+
 	switch (context->token->type)
 	{
 	case TOKEN_OP_PLUS_EQUALS:
@@ -168,6 +170,7 @@ ASTIf ParseIf(Context *context)
 	Advance(context);
 
 	ASTIf ifNode = {};
+	ifNode.loc = context->token->loc;
 
 	ifNode.condition = NewTreeNode(context);
 	*ifNode.condition = ParseExpression(context, -1);
@@ -177,6 +180,7 @@ ASTIf ParseIf(Context *context)
 
 	if (context->token->type == TOKEN_KEYWORD_ELSE)
 	{
+		ifNode.elseLoc = context->token->loc;
 		Advance(context);
 		ifNode.elseNode = NewTreeNode(context);
 		*ifNode.elseNode = ParseStatement(context);
@@ -231,12 +235,21 @@ ASTStruct ParseStruct(Context *context)
 ASTVariableDeclaration ParseVariableDeclaration(Context *context)
 {
 	ASTVariableDeclaration varDecl = {};
+	varDecl.loc = context->token->loc;
 
 	AssertToken(context, context->token, TOKEN_IDENTIFIER);
 	varDecl.name = context->token->string;
 	Advance(context);
 
-	AssertToken(context, context->token, TOKEN_OP_VARIABLE_DECLARATION);
+	if (context->token->type != TOKEN_OP_VARIABLE_DECLARATION && context->token->type !=
+			TOKEN_OP_VARIABLE_DECLARATION_STATIC)
+		UnexpectedTokenError(context, context->token);
+
+	if (context->token->type == TOKEN_OP_VARIABLE_DECLARATION_STATIC)
+	{
+		varDecl.isStatic = true;
+	}
+
 	Advance(context);
 
 	if (context->token->type != TOKEN_OP_ASSIGNMENT)
@@ -257,15 +270,15 @@ ASTVariableDeclaration ParseVariableDeclaration(Context *context)
 
 ASTProcedureDeclaration ParseProcedureDeclaration(Context *context)
 {
+	ASTProcedureDeclaration procDecl = {};
+	procDecl.loc = context->token->loc;
+
 	AssertToken(context, context->token, TOKEN_IDENTIFIER);
-	String name = context->token->string;
+	procDecl.name = context->token->string;
 	Advance(context);
 
 	AssertToken(context, context->token, TOKEN_OP_STATIC_DEF);
 	Advance(context);
-
-	ASTProcedureDeclaration procDecl = {};
-	procDecl.name = name;
 
 	DynamicArrayInit(&procDecl.parameters, 4);
 
@@ -275,6 +288,10 @@ ASTProcedureDeclaration ParseProcedureDeclaration(Context *context)
 	{
 		// @Improve: separate node type for procedure parameter?
 		ASTVariableDeclaration parameter = ParseVariableDeclaration(context);
+
+		if (parameter.isStatic)
+			PrintError(context, context->token->loc, "Procedure parameters can't be static"_s);
+
 		*DynamicArrayAdd(&procDecl.parameters) = parameter;
 
 		if (context->token->type != ')')
@@ -322,6 +339,7 @@ ASTExpression ParseExpression(Context *context, s32 precedence)
 
 	if (context->token->type == TOKEN_IDENTIFIER)
 	{
+		result.any.loc = context->token->loc;
 		String identifier = context->token->string;
 		Advance(context);
 
@@ -356,6 +374,7 @@ ASTExpression ParseExpression(Context *context, s32 precedence)
 	}
 	else if (context->token->type == TOKEN_LITERAL_NUMBER)
 	{
+		result.any.loc = context->token->loc;
 		result.nodeType = ASTNODETYPE_LITERAL;
 
 		bool isFloating = false;
@@ -381,6 +400,7 @@ ASTExpression ParseExpression(Context *context, s32 precedence)
 	}
 	else if (context->token->type == TOKEN_LITERAL_STRING)
 	{
+		result.any.loc = context->token->loc;
 		result.nodeType = ASTNODETYPE_LITERAL;
 		result.literal.type = LITERALTYPE_STRING;
 		result.literal.string = context->token->string;
@@ -418,8 +438,6 @@ ASTExpression ParseExpression(Context *context, s32 precedence)
 		}
 	}
 
-	result.any.loc = context->token->loc;
-
 	return result;
 }
 
@@ -453,6 +471,7 @@ ASTExpression ParseStatement(Context *context)
 	} break;
 	case TOKEN_KEYWORD_WHILE:
 	{
+		result.any.loc = context->token->loc;
 		result.nodeType = ASTNODETYPE_WHILE;
 		result.whileNode = ParseWhile(context);
 	} break;
@@ -495,7 +514,8 @@ ASTExpression ParseStatement(Context *context)
 				PrintError(context, context->token->loc, "Unsupported!"_s);
 			}
 		}
-		else if ((context->token + 1)->type == TOKEN_OP_VARIABLE_DECLARATION)
+		else if ((context->token + 1)->type == TOKEN_OP_VARIABLE_DECLARATION ||
+				(context->token + 1)->type == TOKEN_OP_VARIABLE_DECLARATION_STATIC)
 		{
 			result.nodeType = ASTNODETYPE_VARIABLE_DECLARATION;
 			result.variableDeclaration = ParseVariableDeclaration(context);
@@ -511,8 +531,6 @@ ASTExpression ParseStatement(Context *context)
 		}
 	} break;
 	}
-
-	result.any.loc = context->token->loc;
 
 	return result;
 }
@@ -530,5 +548,8 @@ ASTRoot *GenerateSyntaxTree(Context *context)
 	{
 		*DynamicArrayAdd(&root->block.statements) = ParseStatement(context);
 	}
+
+	PrintAST(context);
+
 	return root;
 }

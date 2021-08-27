@@ -1,3 +1,5 @@
+#define LOG_C_OUTPUT 0
+
 struct VariableStack
 {
 	DynamicArray<String, malloc, realloc> names;
@@ -155,12 +157,12 @@ void PrintOut(HANDLE outputFile, const char *format, ...)
 	va_start(args, format);
 
 	stbsp_vsprintf(buffer, format, args);
-	OutputDebugStringA(buffer);
 
-	// Stdout
 	DWORD bytesWritten;
-	WriteFile(g_hStdout, buffer, (DWORD)strlen(buffer), &bytesWritten, nullptr);
-
+#if LOG_C_OUTPUT
+	OutputDebugStringA(buffer);
+	WriteFile(g_hStdout, buffer, (DWORD)strlen(buffer), &bytesWritten, nullptr); // Stdout
+#endif
 	WriteFile(outputFile, buffer, (DWORD)strlen(buffer), &bytesWritten, nullptr);
 
 	va_end(args);

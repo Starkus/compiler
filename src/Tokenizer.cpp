@@ -42,6 +42,8 @@ const String TokenTypeToString(s32 type)
 		return "< -> >"_s;
 	case TOKEN_OP_VARIABLE_DECLARATION:
 		return "< : >"_s;
+	case TOKEN_OP_VARIABLE_DECLARATION_STATIC:
+		return "< :s >"_s;
 	case TOKEN_OP_STATIC_DEF:
 		return "< :: >"_s;
 
@@ -352,6 +354,11 @@ Token ReadTokenAndAdvance(Tokenizer *tokenizer)
 				result.type = TOKEN_OP_STATIC_DEF;
 				++tokenizer->cursor;
 			}
+			else if (next == 's')
+			{
+				result.type = TOKEN_OP_VARIABLE_DECLARATION_STATIC;
+				++tokenizer->cursor;
+			}
 			else
 				result.type = TOKEN_OP_VARIABLE_DECLARATION;
 		} break;
@@ -471,6 +478,7 @@ void TokenizeFile(Context *context)
 		Token newToken = ReadTokenAndAdvance(&tokenizer);
 
 		newToken.loc.file = context->filename;
+		newToken.loc.size = newToken.size;
 		*BucketArrayAdd(&context->tokens) = newToken;
 
 		if (newToken.type == TOKEN_END_OF_FILE)

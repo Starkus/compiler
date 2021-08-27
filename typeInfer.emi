@@ -1,7 +1,7 @@
-anS32 : s32 = 10;
-anS64 : s64 = 11;
-anS8  : s8  = 12;
-anF32 : f32 = 2.32;
+anS32 :s s32 = 10;
+anS64 :s s64 = 11;
+anS8  :s s8  = 12;
+anF32 :s f32 = 2.32;
 
 Struct :: struct
 {

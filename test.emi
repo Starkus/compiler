@@ -1,4 +1,4 @@
-foo : u64;
+foo :s u64;
 
 AStruct :: struct
 {

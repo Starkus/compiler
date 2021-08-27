@@ -417,8 +417,11 @@ IRValue IRGenFromExpression(Context *context, ASTExpression *expression)
 	{
 		ASTVariableDeclaration varDecl = expression->variableDeclaration;
 
-		bool onGlobalScope = context->currentProcedureIdx == U64_MAX;
-		if (onGlobalScope)
+		bool isGlobalScope = context->currentProcedureIdx == U64_MAX;
+		if (isGlobalScope && !varDecl.isStatic)
+			PrintError(context, expression->any.loc, "Global variables have to be constant"_s);
+
+		if (varDecl.isStatic)
 		{
 			IRStaticVariable newStaticVar = {};
 			newStaticVar.name = varDecl.name;
@@ -963,5 +966,5 @@ void IRGenMain(Context *context)
 		IRGenFromExpression(context, statement);
 	}
 
-	PrintIRInstructions(context);
+	//PrintIRInstructions(context);
 }

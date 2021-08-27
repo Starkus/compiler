@@ -129,7 +129,9 @@ inline void PrintError(Context *context, SourceLocation loc, const String errorS
 
 	for (int i = 0; i < shift; ++i)
 		Log(" ");
-	Log("^\n");
+	for (int i = 0; i < loc.size; ++i)
+		Log("^");
+	Log("\n");
 
 	CRASH;
 }
@@ -159,10 +161,10 @@ void UnexpectedTokenError(Context *context, Token *token)
 	PrintError(context, token->loc, errorStr);
 }
 
+#include "PrintAST.cpp"
 #include "Parser.cpp"
 #include "TypeChecker.cpp"
 #include "IRGen.cpp"
-#include "PrintAST.cpp"
 #include "WriteToC.cpp"
 
 bool Win32ReadEntireFile(const char *filename, u8 **fileBuffer, u64 *fileSize, void *(*allocFunc)(u64))

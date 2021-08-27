@@ -58,6 +58,7 @@ struct ASTVariableDeclaration : ASTBase
 	String name;
 	String typeName;
 	ASTExpression *value;
+	bool isStatic;
 
 	Type type;
 };
@@ -83,6 +84,7 @@ struct ASTIf : ASTBase
 	ASTExpression *condition;
 	ASTExpression *body;
 	ASTExpression *elseNode;
+	SourceLocation elseLoc;
 };
 
 struct ASTWhile : ASTBase
