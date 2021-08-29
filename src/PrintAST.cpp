@@ -1,5 +1,4 @@
-#define PRINT_TOKEN_SOURCE_LOCATION 0
-
+#if PRINT_AST_TREE
 struct PrintContext
 {
 	int indentLevels;
@@ -265,7 +264,11 @@ void PrintExpression(PrintContext *context, ASTExpression *e)
 	} break;
 	case ASTNODETYPE_WHILE:
 	{
-		Log("While\n");
+		Log("While");
+
+		PrintSourceLocation(context, e->any.loc);
+		Log("\n");
+
 		++context->indentLevels;
 		PrintExpression(context, e->whileNode.condition);
 		PrintExpression(context, e->whileNode.body);
@@ -273,7 +276,11 @@ void PrintExpression(PrintContext *context, ASTExpression *e)
 	} break;
 	case ASTNODETYPE_RETURN:
 	{
-		Log("Return\n");
+		Log("Return");
+
+		PrintSourceLocation(context, e->any.loc);
+		Log("\n");
+
 		++context->indentLevels;
 		PrintExpression(context, e->returnNode.expression);
 		--context->indentLevels;
@@ -316,3 +323,4 @@ void PrintAST(Context *context)
 		PrintExpression(&printContext, statement);
 	}
 }
+#endif

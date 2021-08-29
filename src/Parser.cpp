@@ -191,9 +191,11 @@ ASTIf ParseIf(Context *context)
 ASTWhile ParseWhile(Context *context)
 {
 	ASSERT(context->token->type == TOKEN_KEYWORD_WHILE);
-	Advance(context);
 
 	ASTWhile whileNode = {};
+	whileNode.loc = context->token->loc;
+	Advance(context);
+
 	whileNode.condition = NewTreeNode(context);
 	*whileNode.condition = ParseExpression(context, -1);
 	whileNode.body = NewTreeNode(context);
@@ -471,7 +473,6 @@ ASTExpression ParseStatement(Context *context)
 	} break;
 	case TOKEN_KEYWORD_WHILE:
 	{
-		result.any.loc = context->token->loc;
 		result.nodeType = ASTNODETYPE_WHILE;
 		result.whileNode = ParseWhile(context);
 	} break;
@@ -487,6 +488,7 @@ ASTExpression ParseStatement(Context *context)
 	{
 		Advance(context);
 
+		result.any.loc = context->token->loc;
 		result.nodeType = ASTNODETYPE_RETURN;
 		result.returnNode.expression = NewTreeNode(context);
 		*result.returnNode.expression = ParseExpression(context, -1);
@@ -548,8 +550,6 @@ ASTRoot *GenerateSyntaxTree(Context *context)
 	{
 		*DynamicArrayAdd(&root->block.statements) = ParseStatement(context);
 	}
-
-	PrintAST(context);
 
 	return root;
 }

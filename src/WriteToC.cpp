@@ -1,5 +1,3 @@
-#define LOG_C_OUTPUT 0
-
 struct VariableStack
 {
 	DynamicArray<String, malloc, realloc> names;
@@ -58,6 +56,7 @@ String IRValueToStr(Context *context, VariableStack *variableStack, IRValue valu
 				if (StringEquals(staticVarName, value.variable))
 				{
 					result = TPrintF("%.*s", staticVarName.size, staticVarName.data);
+					break;
 				}
 			}
 		}
@@ -159,7 +158,7 @@ void PrintOut(HANDLE outputFile, const char *format, ...)
 	stbsp_vsprintf(buffer, format, args);
 
 	DWORD bytesWritten;
-#if LOG_C_OUTPUT
+#if PRINT_C_OUTPUT
 	OutputDebugStringA(buffer);
 	WriteFile(g_hStdout, buffer, (DWORD)strlen(buffer), &bytesWritten, nullptr); // Stdout
 #endif
@@ -330,12 +329,18 @@ void WriteToC(Context *context)
 				String base = IRValueToStr(context, &variableStack, inst.memberAddress.in);
 				PrintOut(outputFile, "%.*s = ((u8*)&(%.*s)) + %d;\n", out.size, out.data, base.size, base.data, offset);
 			}
-			else if (inst.type == IRINSTRUCTIONTYPE_CALL)
+			else if (inst.type == IRINSTRUCTIONTYPE_PROCEDURE_CALL)
 			{
-				PrintOut(outputFile, "%.*s(", inst.call.label.size, inst.call.label.data);
-				for (int i = 0; i < inst.call.parameters.size; ++i)
+				if (inst.procedureCall.out.valueType != IRVALUETYPE_INVALID)
 				{
-					String param = IRValueToStrAsRegister(context, &variableStack, inst.call.parameters[i]);
+					String out = IRValueToStr(context, &variableStack, inst.procedureCall.out);
+					PrintOut(outputFile, "%.*s = ", out.size, out.data);
+				}
+				PrintOut(outputFile, "%.*s(", inst.procedureCall.label.size, inst.procedureCall.label.data);
+				for (int i = 0; i < inst.procedureCall.parameters.size; ++i)
+				{
+					String param = IRValueToStrAsRegister(context, &variableStack,
+							inst.procedureCall.parameters[i]);
 					if (i > 0) PrintOut(outputFile, ", ");
 					PrintOut(outputFile, "%.*s", param.size, param.data);
 				}

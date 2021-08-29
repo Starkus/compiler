@@ -1,0 +1,35 @@
+GiveS32 :: () -> s32
+{
+	return 5;
+}
+
+/*
+NeverReturns :: () -> u64
+{
+	foo : u64 = 4;
+}
+*/
+
+/*
+SometimesReturns :: () -> u64
+{
+	n : u64 = 5;
+	if n
+		return n;
+}
+*/
+
+AlwaysReturns :: () -> u64
+{
+	if 1
+		return 56;
+	else
+		while 1
+			return 65;
+}
+
+main :: () -> s64
+{
+	anS32 := GiveS32();
+	return 0;
+}

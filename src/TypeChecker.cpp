@@ -292,6 +292,9 @@ Type TypeCheckVariableDeclaration(Context *context, ASTVariableDeclaration *varD
 	if (varDecl->typeName)
 	{
 		TypeCheckType(context, varDecl->loc, varDecl->typeName, &varDecl->type);
+
+		if (varDecl->type.typeTableIdx == TYPETABLEIDX_VOID)
+			PrintError(context, varDecl->loc, "Variable can't be of type void!"_s);
 	}
 
 	TCVariable variable;
@@ -302,15 +305,17 @@ Type TypeCheckVariableDeclaration(Context *context, ASTVariableDeclaration *varD
 	{
 		TypeCheckExpression(context, varDecl->value);
 		Type valueType = varDecl->value->type;
+
 		if (varDecl->typeName)
 		{
 			if (!CheckTypesMatch(context, variable.type, valueType))
-			{
 				PrintError(context, varDecl->loc, "Variable declaration type and initial type don't match"_s);
-			}
 		}
 		else
 		{
+			if (valueType.typeTableIdx == TYPETABLEIDX_VOID)
+				PrintError(context, varDecl->loc, "Variable can't be of type void!"_s);
+
 			variable.type = InferType(valueType);
 			varDecl->type = variable.type;
 		}
@@ -318,6 +323,56 @@ Type TypeCheckVariableDeclaration(Context *context, ASTVariableDeclaration *varD
 	*DynamicArrayAdd(&stackTop->variables) = variable;
 
 	return variable.type;
+}
+
+enum ReturnCheckResult
+{
+	RETURNCHECKRESULT_NEVER,
+	RETURNCHECKRESULT_SOMETIMES,
+	RETURNCHECKRESULT_ALWAYS
+};
+ReturnCheckResult CheckIfReturnsValue(Context *context, ASTExpression *expression)
+{
+	switch (expression->nodeType)
+	{
+	case ASTNODETYPE_RETURN:
+	{
+		return RETURNCHECKRESULT_ALWAYS;
+	}
+	case ASTNODETYPE_BLOCK:
+	{
+		ReturnCheckResult result = RETURNCHECKRESULT_NEVER;
+		for (int i = 0; i < expression->block.statements.size; ++i)
+		{
+			ReturnCheckResult statementResult = CheckIfReturnsValue(context, &expression->block.statements[i]);
+			if (statementResult > result)
+			{
+				result = statementResult;
+				break;
+			}
+		}
+		return result;
+	}
+	case ASTNODETYPE_IF:
+	{
+		ReturnCheckResult ifStatement = CheckIfReturnsValue(context, expression->ifNode.body);
+		ReturnCheckResult elseStatement = RETURNCHECKRESULT_NEVER;
+		if (expression->ifNode.elseNode)
+			elseStatement = CheckIfReturnsValue(context, expression->ifNode.elseNode);
+
+		if (ifStatement == RETURNCHECKRESULT_ALWAYS && elseStatement == RETURNCHECKRESULT_ALWAYS)
+			return RETURNCHECKRESULT_ALWAYS;
+
+		if (ifStatement != RETURNCHECKRESULT_NEVER || elseStatement != RETURNCHECKRESULT_NEVER)
+			return RETURNCHECKRESULT_SOMETIMES;
+	}
+	case ASTNODETYPE_WHILE:
+	{
+		return CheckIfReturnsValue(context, expression->whileNode.body);
+	}
+	// @Todo: Add For loops here once they exist!
+	}
+	return RETURNCHECKRESULT_NEVER;
 }
 
 void TypeCheckExpression(Context *context, ASTExpression *expression)
@@ -425,7 +480,16 @@ void TypeCheckExpression(Context *context, ASTExpression *expression)
 		*DynamicArrayAdd(&stackTop->procedures) = procedure;
 
 		expression->type = returnType;
-		return;
+
+		// Check all paths return
+		if (returnType.typeTableIdx != TYPETABLEIDX_VOID)
+		{
+			ReturnCheckResult result = CheckIfReturnsValue(context, procDecl->body);
+			if (result == RETURNCHECKRESULT_SOMETIMES)
+				PrintError(context, expression->any.loc, "Procedure doesn't always return a value"_s);
+			else if (result == RETURNCHECKRESULT_NEVER)
+				PrintError(context, expression->any.loc, "Procedure has to return a value"_s);
+		}
 	} break;
 	case ASTNODETYPE_RETURN:
 	{
@@ -526,7 +590,6 @@ void TypeCheckExpression(Context *context, ASTExpression *expression)
 		default:
 			expression->type = expressionType;
 		};
-		return;
 	} break;
 	case ASTNODETYPE_BINARY_OPERATION:
 	{
@@ -587,8 +650,9 @@ void TypeCheckExpression(Context *context, ASTExpression *expression)
 		case LITERALTYPE_FLOATING:
 			expression->type = { TYPETABLEIDX_FLOATING };
 			break;
+		default:
+			CRASH;
 		}
-		return;
 	} break;
 	case ASTNODETYPE_IF:
 	{

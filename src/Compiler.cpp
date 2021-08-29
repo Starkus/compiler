@@ -6,6 +6,7 @@
 
 void Log(const char *format, ...);
 
+#include "Config.h"
 #include "General.h"
 #include "Maths.h"
 #include "MemoryAlloc.h"
@@ -161,10 +162,11 @@ void UnexpectedTokenError(Context *context, Token *token)
 	PrintError(context, token->loc, errorStr);
 }
 
-#include "PrintAST.cpp"
 #include "Parser.cpp"
+#include "PrintAST.cpp"
 #include "TypeChecker.cpp"
 #include "IRGen.cpp"
+#include "PrintIR.cpp"
 #include "WriteToC.cpp"
 
 bool Win32ReadEntireFile(const char *filename, u8 **fileBuffer, u64 *fileSize, void *(*allocFunc)(u64))
@@ -239,10 +241,16 @@ int main(int argc, char **argv)
 	TokenizeFile(&context);
 
 	GenerateSyntaxTree(&context);
+#if PRINT_AST_TREE
+	PrintAST(&context);
+#endif
 
 	TypeCheckMain(&context);
 
 	IRGenMain(&context);
+#if PRINT_IR
+	PrintIRInstructions(&context);
+#endif
 
 	WriteToC(&context);
 

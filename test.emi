@@ -6,7 +6,7 @@ AStruct :: struct
 	member2 : s64;
 }
 
-doThings :: (arg : f32) -> s64
+doThings :: (arg : f32)
 {
 	awesomeVariable : f32 = 25.2;
 	{
@@ -45,4 +45,6 @@ main :: () -> s64
 	var : u32 = 7;
 
 	doThings(25.5);
+
+	return 0;
 }

@@ -169,7 +169,15 @@ void ProcessCComment(Tokenizer *tokenizer)
 		if (!*tokenizer->cursor)
 			break;
 
-		if (*tokenizer->cursor == '*' && *(tokenizer->cursor + 1) == '/')
+		if (*tokenizer->cursor == '\\')
+		{
+		}
+		else if (*tokenizer->cursor == '\n')
+		{
+			++tokenizer->line;
+			tokenizer->beginningOfLine = tokenizer->cursor;
+		}
+		else if (*tokenizer->cursor == '*' && *(tokenizer->cursor + 1) == '/')
 		{
 			tokenizer->cursor += 2;
 			break;
