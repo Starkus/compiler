@@ -71,12 +71,12 @@ void PrintIRInstructions(Context *context)
 			}
 			else if (inst.type == IRINSTRUCTIONTYPE_MEMBER_ACCESS)
 			{
-				PrintIRValue(inst.memberAddress.out);
+				PrintIRValue(inst.memberAccess.out);
 				Log(" = ");
-				PrintIRValue(inst.memberAddress.in);
+				PrintIRValue(inst.memberAccess.in);
 				Log(" -> offset(%.*s::%.*s)",
-						inst.memberAddress.structName.size, inst.memberAddress.structName.data,
-						inst.memberAddress.memberName.size, inst.memberAddress.memberName.data);
+						inst.memberAccess.structName.size, inst.memberAccess.structName.data,
+						inst.memberAccess.memberName.size, inst.memberAccess.memberName.data);
 			}
 			else if (inst.type >= IRINSTRUCTIONTYPE_UNARY_BEGIN && inst.type < IRINSTRUCTIONTYPE_UNARY_END)
 			{

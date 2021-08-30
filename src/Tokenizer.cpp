@@ -38,6 +38,8 @@ const String TokenTypeToString(s32 type)
 		return "< ^ >"_s;
 	case TOKEN_OP_DEREFERENCE:
 		return "< @ >"_s;
+	case TOKEN_OP_ARRAY_ACCESS:
+		return "< [] >"_s;
 	case TOKEN_OP_ARROW:
 		return "< -> >"_s;
 	case TOKEN_OP_VARIABLE_DECLARATION:
@@ -110,6 +112,7 @@ s32 GetOperatorPrecedence(s32 op)
 			return 6;
 		case TOKEN_OP_POINTER_TO:
 		case TOKEN_OP_DEREFERENCE:
+		case TOKEN_OP_ARRAY_ACCESS:
 			return 7;
 	}
 	return -1;
@@ -285,6 +288,8 @@ Token ReadTokenAndAdvance(Tokenizer *tokenizer)
 			result.type = TOKEN_KEYWORD_BREAK;
 		else if (TokenIsStr(&result, "struct"))
 			result.type = TOKEN_KEYWORD_STRUCT;
+		else if (TokenIsStr(&result, "external"))
+			result.type = TOKEN_KEYWORD_EXTERNAL;
 	}
 	else if (IsNumeric(*tokenizer->cursor))
 	{
@@ -442,6 +447,10 @@ Token ReadTokenAndAdvance(Tokenizer *tokenizer)
 		case '@':
 		{
 			result.type = TOKEN_OP_DEREFERENCE;
+		} break;
+		case '[':
+		{
+			result.type = TOKEN_OP_ARRAY_ACCESS;
 		} break;
 		case '!':
 		{

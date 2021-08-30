@@ -1,0 +1,10 @@
+main :: () -> s64
+{
+	arrayA : 20 u8;
+	arrayB : 32 s32;
+
+	foo : u8 = arrayA[2];
+	bar := arrayB[16];
+
+	return 0;
+}

@@ -39,6 +39,7 @@ String IRValueToStr(Context *context, VariableStack *variableStack, IRValue valu
 						cast = "ptr"_s;
 					else
 						cast = typeStr;
+
 					result = TPrintF("/* %.*s */ *(%.*s*)(stack + 0x%x)", varName.size,
 							varName.data, cast.size, cast.data, offset);
 				}
@@ -171,12 +172,9 @@ void PrintOut(HANDLE outputFile, const char *format, ...)
 
 void WriteToC(Context *context)
 {
-	const u32 stackSize = 256; // @Improve
-
 	VariableStack variableStack;
 	DynamicArrayInit(&variableStack.names, 128);
 	DynamicArrayInit(&variableStack.offsets, 128);
-	variableStack.cursor = stackSize;
 
 	HANDLE outputFile = CreateFileA(
 			"out.c",
@@ -234,6 +232,11 @@ void WriteToC(Context *context)
 	for (int procedureIdx = 0; procedureIdx < procedureCount; ++procedureIdx)
 	{
 		IRProcedure proc = context->irProcedures[procedureIdx];
+
+		// @Speed: separate array of external procedures to avoid branching
+		if (proc.isExternal)
+			continue;
+
 		String signature = GetProcedureSignature(proc);
 		PrintOut(outputFile, "%.*s;\n", signature.size, signature.data);
 	}
@@ -244,8 +247,25 @@ void WriteToC(Context *context)
 	{
 		IRProcedure proc = context->irProcedures[procedureIdx];
 
+		// @Speed: separate array of external procedures to avoid branching
+		if (proc.isExternal)
+			continue;
+
 		String signature = GetProcedureSignature(proc);
 		PrintOut(outputFile, "%.*s {\n", signature.size, signature.data);
+
+		u64 stackSize = 0;
+		// Dry run to know stack size
+		const u64 instructionCount = BucketArrayCount(&proc.instructions);
+		for (int instructionIdx = 0; instructionIdx < instructionCount; ++instructionIdx)
+		{
+			IRInstruction inst = proc.instructions[instructionIdx];
+			if (inst.type == IRINSTRUCTIONTYPE_VARIABLE_DECLARATION)
+			{
+				stackSize += inst.variableDeclaration.size;
+			}
+		}
+		variableStack.cursor = stackSize;
 
 		PrintOut(outputFile, "u8 stack[%d];\n", stackSize);
 
@@ -270,7 +290,6 @@ void WriteToC(Context *context)
 			*DynamicArrayAdd(&variableStack.offsets) = U64_MAX; // FFFFFFFF offset means parameter @Cleanup
 		}
 
-		const u64 instructionCount = BucketArrayCount(&proc.instructions);
 		for (int instructionIdx = 0; instructionIdx < instructionCount; ++instructionIdx)
 		{
 			IRInstruction inst = proc.instructions[instructionIdx];
@@ -318,7 +337,7 @@ void WriteToC(Context *context)
 					TypeInfo *currentTypeInfo  = &context->typeTable[i];
 					if (currentTypeInfo->typeCategory == TYPECATEGORY_STRUCT &&
 							StringEquals(currentTypeInfo->structInfo.name,
-								inst.memberAddress.structName))
+								inst.memberAccess.structName))
 					{
 						typeInfo = currentTypeInfo;
 						break;
@@ -330,16 +349,24 @@ void WriteToC(Context *context)
 				for (int i = 0; i < typeInfo->structInfo.members.size; ++i)
 				{
 					StructMember *currentMember = &typeInfo->structInfo.members[i];
-					if (StringEquals(currentMember->name, inst.memberAddress.memberName))
+					if (StringEquals(currentMember->name, inst.memberAccess.memberName))
 					{
 						offset = currentMember->offset;
 					}
 				}
 				ASSERT(offset != U64_MAX);
 
-				String out = IRValueToStr(context, &variableStack, inst.memberAddress.out);
-				String base = IRValueToStr(context, &variableStack, inst.memberAddress.in);
+				String out = IRValueToStr(context, &variableStack, inst.memberAccess.out);
+				String base = IRValueToStr(context, &variableStack, inst.memberAccess.in);
 				PrintOut(outputFile, "%.*s = ((u8*)&(%.*s)) + %d;\n", out.size, out.data, base.size, base.data, offset);
+			}
+			else if (inst.type == IRINSTRUCTIONTYPE_ARRAY_ACCESS)
+			{
+				String out = IRValueToStr(context, &variableStack, inst.arrayAccess.out);
+				String array = IRValueToStr(context, &variableStack, inst.arrayAccess.left);
+				String index = IRValueToStr(context, &variableStack, inst.arrayAccess.right);
+				PrintOut(outputFile, "%.*s = ((u8*)&(%.*s)) + %.*s * %llu;\n", out.size, out.data, array.size,
+						array.data, index.size, index.data, inst.arrayAccess.elementSize);
 			}
 			else if (inst.type == IRINSTRUCTIONTYPE_PROCEDURE_CALL)
 			{
@@ -351,8 +378,12 @@ void WriteToC(Context *context)
 				PrintOut(outputFile, "%.*s(", inst.procedureCall.label.size, inst.procedureCall.label.data);
 				for (int i = 0; i < inst.procedureCall.parameters.size; ++i)
 				{
-					String param = IRValueToStrAsRegister(context, &variableStack,
-							inst.procedureCall.parameters[i]);
+					String param;
+					if (inst.procedureCall.isExternal)
+						param = IRValueToStr(context, &variableStack, inst.procedureCall.parameters[i]);
+					else
+						param = IRValueToStrAsRegister(context, &variableStack,
+								inst.procedureCall.parameters[i]);
 					if (i > 0) PrintOut(outputFile, ", ");
 					PrintOut(outputFile, "%.*s", param.size, param.data);
 				}

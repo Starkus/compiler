@@ -61,6 +61,20 @@ inline bool IsWhitespace(char c)
 		c == '\r';
 }
 
+s64 IntFromString(String string)
+{
+	s64 result = 0;
+	for (int i = 0; i < string.size; ++i)
+	{
+		char c = string.data[i];
+		ASSERT(IsNumeric(c));
+		s64 digit = c - '0';
+		result *= 10;
+		result += digit;
+	}
+	return result;
+}
+
 inline String operator""_s(const char *str, u64 size)
 {
 	return { (s64)size, str };

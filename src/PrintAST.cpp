@@ -157,7 +157,8 @@ void PrintExpression(PrintContext *context, ASTExpression *e)
 			PrintExpression(context, &pexp);
 		}
 
-		PrintExpression(context, e->procedureDeclaration.body);
+		if (e->procedureDeclaration.body)
+			PrintExpression(context, e->procedureDeclaration.body);
 		--context->indentLevels;
 	} break;
 	case ASTNODETYPE_BLOCK:

@@ -74,6 +74,7 @@ struct TCVariable
 struct TCProcedure
 {
 	String name;
+	bool isExternal;
 	DynamicArray<TCVariable, malloc, realloc> parameters;
 	Type returnType;
 };
@@ -146,6 +147,11 @@ void FindTypeInTable(Context *context, SourceLocation loc, String typeName, Type
 
 bool CheckTypesMatch(Context *context, Type left, Type right)
 {
+	// Cast any pointer to void pointer
+	if (left.pointerLevels != 0 && left.typeTableIdx == TYPETABLEIDX_VOID &&
+			right.pointerLevels > 0)
+		return true;
+
 	if (left.typeTableIdx < 0 || right.typeTableIdx < 0)
 		return false;
 
@@ -297,7 +303,7 @@ Type TypeCheckVariableDeclaration(Context *context, ASTVariableDeclaration *varD
 	{
 		TypeCheckType(context, varDecl->loc, varDecl->typeName, &varDecl->type);
 
-		if (varDecl->type.typeTableIdx == TYPETABLEIDX_VOID)
+		if (varDecl->type.typeTableIdx == TYPETABLEIDX_VOID && varDecl->type.pointerLevels == 0)
 			PrintError(context, varDecl->loc, "Variable can't be of type void!"_s);
 	}
 
@@ -317,7 +323,7 @@ Type TypeCheckVariableDeclaration(Context *context, ASTVariableDeclaration *varD
 		}
 		else
 		{
-			if (valueType.typeTableIdx == TYPETABLEIDX_VOID)
+			if (valueType.typeTableIdx == TYPETABLEIDX_VOID && valueType.pointerLevels == 0)
 				PrintError(context, varDecl->loc, "Variable can't be of type void!"_s);
 
 			variable.type = InferType(valueType);
@@ -448,6 +454,7 @@ void TypeCheckExpression(Context *context, ASTExpression *expression)
 
 		TCProcedure procedure;
 		procedure.name = procName;
+		procedure.isExternal = procDecl->isExternal;
 
 		PushTCScope(context);
 
@@ -475,7 +482,8 @@ void TypeCheckExpression(Context *context, ASTExpression *expression)
 		Type oldReturnType = context->currentReturnType;
 		context->currentReturnType = returnType;
 
-		TypeCheckExpression(context, procDecl->body);
+		if (procDecl->body)
+			TypeCheckExpression(context, procDecl->body);
 
 		context->currentReturnType = oldReturnType;
 		PopTCScope(context);
@@ -538,6 +546,7 @@ void TypeCheckExpression(Context *context, ASTExpression *expression)
 				if (StringEquals(procName, currentProc->name))
 				{
 					procedure = currentProc;
+					break;
 				}
 			}
 		}
@@ -546,6 +555,7 @@ void TypeCheckExpression(Context *context, ASTExpression *expression)
 			PrintError(context, expression->any.loc, TPrintF("Invalid procedure \"%.*s\" called", procName.size,
 						procName.data));
 
+		expression->procedureCall.isExternal = procedure->isExternal;
 		expression->type = procedure->returnType;
 
 		// Type check arguments
@@ -561,7 +571,7 @@ void TypeCheckExpression(Context *context, ASTExpression *expression)
 			TypeCheckExpression(context, arg);
 
 			TCVariable param = procedure->parameters[argIdx];
-			if (!CheckTypesMatch(context, arg->type, param.type))
+			if (!CheckTypesMatch(context, param.type, arg->type))
 				PrintError(context, arg->any.loc, TPrintF("When calling procedure \"%.*s\": type of parameter #%d didn't match",
 							procName.size, procName.data, argIdx));
 		}
@@ -622,6 +632,15 @@ void TypeCheckExpression(Context *context, ASTExpression *expression)
 			PrintError(context, expression->any.loc, TPrintF("\"%.*s\" is not a member of \"%.*s\"",
 						memberName.size, memberName.data, structTypeInfo->structInfo.name.size,
 						structTypeInfo->structInfo.name.data));
+		}
+		else if (expression->binaryOperation.op == TOKEN_OP_ARRAY_ACCESS)
+		{
+			TypeCheckExpression(context, expression->binaryOperation.leftHand);
+			Type leftSideType  = expression->binaryOperation.leftHand->type;
+			if (leftSideType.arrayCount == 0)
+				PrintError(context, expression->any.loc, "Expression does not evaluate to an array"_s);
+			expression->type = leftSideType;
+			expression->type.arrayCount = 0;
 		}
 		else
 		{

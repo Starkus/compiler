@@ -66,6 +66,7 @@ struct ASTVariableDeclaration : ASTBase
 struct ASTProcedureCall : ASTBase
 {
 	String name;
+	bool isExternal;
 	DynamicArray<ASTExpression, malloc, realloc> arguments;
 };
 
@@ -73,6 +74,7 @@ struct ASTProcedureDeclaration : ASTBase
 {
 	String name;
 	String returnTypeName;
+	bool isExternal;
 	DynamicArray<ASTVariableDeclaration, malloc, realloc> parameters;
 	ASTExpression *body;
 

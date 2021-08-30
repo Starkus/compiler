@@ -65,6 +65,7 @@ struct IRConditionalJump
 struct IRProcedureCall
 {
 	String label;
+	bool isExternal;
 	Array<IRValue> parameters;
 	IRValue out;
 };
@@ -75,12 +76,20 @@ struct IRAssignment
 	IRValue dst;
 };
 
-struct IRMemberAddress
+struct IRMemberAccess
 {
 	IRValue in;
 	IRValue out;
 	String structName;
 	String memberName;
+};
+
+struct IRArrayAccess
+{
+	IRValue left;
+	IRValue right;
+	IRValue out;
+	u64 elementSize;
 };
 
 struct IRUnaryOperation
@@ -134,6 +143,7 @@ enum IRInstructionType
 	IRINSTRUCTIONTYPE_VARIABLE_DECLARATION,
 	IRINSTRUCTIONTYPE_ASSIGNMENT,
 	IRINSTRUCTIONTYPE_MEMBER_ACCESS,
+	IRINSTRUCTIONTYPE_ARRAY_ACCESS,
 
 	IRINSTRUCTIONTYPE_UNARY_BEGIN,
 	IRINSTRUCTIONTYPE_NOT = IRINSTRUCTIONTYPE_UNARY_BEGIN,
@@ -167,7 +177,8 @@ struct IRInstruction
 		IRSetParameter setParameter;
 		IRVariableDeclaration variableDeclaration;
 		IRAssignment assignment;
-		IRMemberAddress memberAddress;
+		IRMemberAccess memberAccess;
+		IRArrayAccess arrayAccess;
 		IRUnaryOperation unaryOperation;
 		IRBinaryOperation binaryOperation;
 
@@ -189,6 +200,7 @@ struct IRScope
 struct IRProcedure
 {
 	String name;
+	bool isExternal;
 	Array<IRVariable> parameters;
 	BucketArray<IRInstruction, 256, malloc, realloc> instructions;
 	IRTypeInfo returnTypeInfo;
@@ -233,9 +245,9 @@ s64 CalculateTypeSize(Context *context, Type type)
 	if (type.pointerLevels != 0)
 		return 8;
 
-	// @Todo: arrays
-
 	TypeInfo *typeInfo  = &context->typeTable[type.typeTableIdx];
+	if (type.arrayCount)
+		return typeInfo->size * type.arrayCount;
 	return typeInfo->size;
 }
 
@@ -318,9 +330,20 @@ IRInstruction IRInstructionFromBinaryOperation(Context *context, ASTExpression *
 		ASSERT(typeInfo->typeCategory == TYPECATEGORY_STRUCT);
 
 		inst.type = IRINSTRUCTIONTYPE_MEMBER_ACCESS;
-		inst.memberAddress.in = left;
-		inst.memberAddress.structName = typeInfo->structInfo.name;
-		inst.memberAddress.memberName = memberName;
+		inst.memberAccess.in = left;
+		inst.memberAccess.structName = typeInfo->structInfo.name;
+		inst.memberAccess.memberName = memberName;
+	}
+	else if (expression->binaryOperation.op == TOKEN_OP_ARRAY_ACCESS)
+	{
+		Type type = leftHand->type;
+		ASSERT(type.typeTableIdx >= 0);
+		TypeInfo *typeInfo  = &context->typeTable[type.typeTableIdx];
+
+		inst.type = IRINSTRUCTIONTYPE_ARRAY_ACCESS;
+		inst.arrayAccess.left  = IRGenFromExpression(context, leftHand);
+		inst.arrayAccess.right = IRGenFromExpression(context, rightHand);
+		inst.arrayAccess.elementSize = typeInfo->size;
 	}
 	else
 	{
@@ -431,6 +454,7 @@ IRValue IRGenFromExpression(Context *context, ASTExpression *expression)
 
 		*procedure = {};
 		procedure->name = expression->procedureDeclaration.name;
+		procedure->isExternal = expression->procedureDeclaration.isExternal;
 
 		procedure->returnTypeInfo = ASTTypeToIRTypeInfo(context, expression->type);
 
@@ -456,9 +480,12 @@ IRValue IRGenFromExpression(Context *context, ASTExpression *expression)
 			procedure->parameters[paramIdx] = { param.name, param.type };
 		}
 
-		context->currentRegisterId = 0;
-		IRGenFromExpression(context, expression->procedureDeclaration.body);
-		procedure->registerCount = context->currentRegisterId;
+		if (expression->procedureDeclaration.body)
+		{
+			context->currentRegisterId = 0;
+			IRGenFromExpression(context, expression->procedureDeclaration.body);
+			procedure->registerCount = context->currentRegisterId;
+		}
 
 		PopIRScope(context);
 		context->currentProcedureIdx = prevProcedureIdx;
@@ -540,6 +567,7 @@ IRValue IRGenFromExpression(Context *context, ASTExpression *expression)
 		IRInstruction inst = {};
 		inst.type = IRINSTRUCTIONTYPE_PROCEDURE_CALL;
 		inst.procedureCall.label = label;
+		inst.procedureCall.isExternal = expression->procedureCall.isExternal;
 		ArrayInit(&inst.procedureCall.parameters, expression->procedureCall.arguments.size, malloc);
 
 		// Set up parameters
@@ -564,6 +592,7 @@ IRValue IRGenFromExpression(Context *context, ASTExpression *expression)
 			*ArrayAdd(&inst.procedureCall.parameters) = paramReg;
 		}
 
+		inst.procedureCall.out.valueType = IRVALUETYPE_INVALID;
 		if (expression->type.typeTableIdx != TYPETABLEIDX_VOID)
 		{
 			inst.procedureCall.out = NewVirtualRegister(context);
@@ -653,13 +682,20 @@ IRValue IRGenFromExpression(Context *context, ASTExpression *expression)
 
 			if (expression->binaryOperation.op == TOKEN_OP_MEMBER_ACCESS)
 			{
-				inst.memberAddress.out = NewVirtualRegister(context);
-				inst.memberAddress.out.typeInfo = { IRTYPE_PTR, false };
+				inst.memberAccess.out = NewVirtualRegister(context);
+				inst.memberAccess.out.typeInfo = { IRTYPE_PTR, false };
 
-				result = inst.memberAddress.out;
+				result = inst.memberAccess.out;
 				result.typeInfo = ASTTypeToIRTypeInfo(context, expression->type);
 				result.typeInfo.isPointer = true;
 				result.pointerType = IRPOINTERTYPE_DEREFERENCE;
+			}
+			else if (expression->binaryOperation.op == TOKEN_OP_ARRAY_ACCESS)
+			{
+				inst.arrayAccess.out = NewVirtualRegister(context);
+				inst.arrayAccess.out.typeInfo = ASTTypeToIRTypeInfo(context, expression->type);
+
+				result = inst.arrayAccess.out;
 			}
 			else
 			{

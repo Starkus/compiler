@@ -1,0 +1,9 @@
+memset :: external (dst : ^void, src : ^void, num : u64);
+
+main :: () -> s64
+{
+	arrayA : 20 u8;
+	arrayB : 20 u8;
+	memset(arrayB, arrayA, 20);
+	return 0;
+}

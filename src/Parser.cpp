@@ -21,6 +21,12 @@ Type ParseType(Context *context, String *outTypeName)
 	*outTypeName = {};
 	Type result = {};
 
+	if (context->token->type == TOKEN_LITERAL_NUMBER)
+	{
+		result.arrayCount = IntFromString(context->token->string);
+		Advance(context);
+	}
+
 	while (context->token->type == TOKEN_OP_POINTER_TO)
 	{
 		++result.pointerLevels;
@@ -28,6 +34,7 @@ Type ParseType(Context *context, String *outTypeName)
 	}
 
 	Token *nameToken = context->token;
+
 	AssertToken(context, nameToken, TOKEN_IDENTIFIER);
 	*outTypeName = nameToken->string;
 	Advance(context);
@@ -141,6 +148,7 @@ bool TryParseBinaryOperation(Context *context, ASTExpression leftHand, s32 prevP
 	case TOKEN_OP_MULTIPLY:
 	case TOKEN_OP_DIVIDE:
 	case TOKEN_OP_MEMBER_ACCESS:
+	case TOKEN_OP_ARRAY_ACCESS:
 	{
 		result->leftHand = NewTreeNode(context);
 		*result->leftHand = leftHand;
@@ -156,8 +164,20 @@ bool TryParseBinaryOperation(Context *context, ASTExpression leftHand, s32 prevP
 			result->rightHand = NewTreeNode(context);
 			*result->rightHand = ParseExpression(context, precedence);
 
+			if (op == TOKEN_OP_ARRAY_ACCESS)
+			{
+				AssertToken(context, context->token, ']');
+				Advance(context);
+			}
+
 			return true;
 		}
+	} break;
+	default:
+	{
+		String opStr = TokenTypeToString(context->token->type);
+		PrintError(context, context->token->loc, TPrintF("Unexpected operator %.*s", opStr.size,
+					opStr.data));
 	} break;
 	}
 
@@ -284,6 +304,12 @@ ASTProcedureDeclaration ParseProcedureDeclaration(Context *context)
 	AssertToken(context, context->token, TOKEN_OP_STATIC_DEF);
 	Advance(context);
 
+	if (context->token->type == TOKEN_KEYWORD_EXTERNAL)
+	{
+		procDecl.isExternal = true;
+		Advance(context);
+	}
+
 	DynamicArrayInit(&procDecl.parameters, 4);
 
 	AssertToken(context, context->token, '(');
@@ -318,8 +344,13 @@ ASTProcedureDeclaration ParseProcedureDeclaration(Context *context)
 		procDecl.returnTypeName = {};
 	}
 
-	procDecl.body = NewTreeNode(context);
-	*procDecl.body = ParseStatement(context);
+	if (context->token->type == ';')
+		Advance(context);
+	else
+	{
+		procDecl.body = NewTreeNode(context);
+		*procDecl.body = ParseStatement(context);
+	}
 
 	return procDecl;
 }
@@ -393,12 +424,12 @@ ASTExpression ParseExpression(Context *context, s32 precedence)
 		if (!isFloating)
 		{
 			result.literal.type = LITERALTYPE_INTEGER;
-			result.literal.integer = atoi(context->token->string.data);
+			result.literal.integer = IntFromString(context->token->string);
 		}
 		else
 		{
 			result.literal.type = LITERALTYPE_FLOATING;
-			result.literal.floating = atof(context->token->string.data);
+			result.literal.floating = atof(context->token->string.data); // @Todo: replace atof
 		}
 		Advance(context);
 	}
@@ -502,7 +533,7 @@ ASTExpression ParseStatement(Context *context)
 	{
 		if ((context->token + 1)->type == TOKEN_OP_STATIC_DEF)
 		{
-			if ((context->token + 2)->type == '(')
+			if ((context->token + 2)->type == '(' || (context->token + 2)->type == TOKEN_KEYWORD_EXTERNAL)
 			{
 				result.nodeType = ASTNODETYPE_PROCEDURE_DECLARATION;
 				result.procedureDeclaration = ParseProcedureDeclaration(context);
