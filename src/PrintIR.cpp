@@ -49,9 +49,9 @@ void PrintIRInstructions(Context *context)
 				PrintIRValue(inst.conditionalJump.condition);
 				Log(" jump %.*s", inst.conditionalJump.label.size, inst.conditionalJump.label.data);
 			}
-			else if (inst.type == IRINSTRUCTIONTYPE_CALL)
+			else if (inst.type == IRINSTRUCTIONTYPE_PROCEDURE_CALL)
 			{
-				Log("call %.*s", inst.call.label.size, inst.call.label.data);
+				Log("call %.*s", inst.procedureCall.label.size, inst.procedureCall.label.data);
 			}
 			else if (inst.type == IRINSTRUCTIONTYPE_RETURN)
 			{

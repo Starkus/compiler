@@ -94,6 +94,8 @@ String IRValueToStrAsRegister(Context *context, VariableStack *variableStack, IR
 
 		if (value.valueType == IRVALUETYPE_IMMEDIATE)
 			result = TPrintF("FromU64(%.*s)", result.size, result.data);
+		else if (value.valueType == IRVALUETYPE_IMMEDIATE_FLOAT)
+			result = TPrintF("FromF64(%.*s)", result.size, result.data);
 
 		return result;
 	}
@@ -193,7 +195,11 @@ void WriteToC(Context *context)
 	{
 		IRStaticVariable staticVar = context->irStaticVariables[staticVariableIdx];
 
-		String varType = IRTypeInfoToStr(staticVar.typeInfo);
+		String varType;
+		if (staticVar.initialValue.valueType == IRVALUETYPE_IMMEDIATE_STRING)
+			varType = "String"_s;
+		else
+			varType = IRTypeInfoToStr(staticVar.typeInfo);
 
 		PrintOut(outputFile, "%.*s %.*s", varType.size, varType.data, staticVar.name.size,
 				staticVar.name.data);
@@ -206,6 +212,12 @@ void WriteToC(Context *context)
 			else if (staticVar.initialValue.valueType == IRVALUETYPE_IMMEDIATE_FLOAT)
 			{
 				PrintOut(outputFile, " = %f", staticVar.initialValue.immediateFloat);
+			}
+			else if (staticVar.initialValue.valueType == IRVALUETYPE_IMMEDIATE_STRING)
+			{
+				PrintOut(outputFile, " = { %llu, (u8 *)\"%.*s\" }", staticVar.initialValue.immediateString.size,
+						staticVar.initialValue.immediateString.size,
+						staticVar.initialValue.immediateString.data);
 			}
 			else
 			{
@@ -367,6 +379,13 @@ void WriteToC(Context *context)
 				String condition = IRValueToStr(context, &variableStack, inst.conditionalJump.condition);
 				PrintOut(outputFile, "if (!%.*s) goto %.*s;\n", condition.size, condition.data,
 						label.size, label.data);
+			}
+			else if (inst.type == IRINSTRUCTIONTYPE_INTRINSIC_MEMCPY)
+			{
+				String src = IRValueToStrAsRegister(context, &variableStack, inst.memcpy.src);
+				String dst = IRValueToStrAsRegister(context, &variableStack, inst.memcpy.dst);
+				PrintOut(outputFile, "memcpy(%.*s, %.*s, %llu);\n", dst.size, dst.data, src.size,
+						src.data, inst.memcpy.size);
 			}
 		}
 		PrintOut(outputFile, "}\n\n");

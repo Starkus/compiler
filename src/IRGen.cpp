@@ -4,7 +4,8 @@ enum IRValueType
 	IRVALUETYPE_REGISTER,
 	IRVALUETYPE_VARIABLE,
 	IRVALUETYPE_IMMEDIATE,
-	IRVALUETYPE_IMMEDIATE_FLOAT
+	IRVALUETYPE_IMMEDIATE_FLOAT,
+	IRVALUETYPE_IMMEDIATE_STRING
 };
 enum IRType
 {
@@ -21,6 +22,8 @@ enum IRType
 	IRTYPE_S64,
 	IRTYPE_F32,
 	IRTYPE_F64,
+	IRTYPE_STRUCT,
+	IRTYPE_STRING
 };
 struct IRTypeInfo
 {
@@ -42,6 +45,7 @@ struct IRValue
 		String variable;
 		s64 immediate;
 		f64 immediateFloat;
+		String immediateString;
 	};
 	IRTypeInfo typeInfo;
 	IRPointerType pointerType;
@@ -110,6 +114,13 @@ struct IRVariableDeclaration
 	s64 size;
 };
 
+struct IRIntrinsicMemcpy
+{
+	IRValue src;
+	IRValue dst;
+	u64 size;
+};
+
 enum IRInstructionType
 {
 	IRINSTRUCTIONTYPE_INVALID = -1,
@@ -138,7 +149,9 @@ enum IRInstructionType
 	IRINSTRUCTIONTYPE_GREATER_THAN_OR_EQUALS,
 	IRINSTRUCTIONTYPE_LESS_THAN,
 	IRINSTRUCTIONTYPE_LESS_THAN_OR_EQUALS,
-	IRINSTRUCTIONTYPE_BINARY_END
+	IRINSTRUCTIONTYPE_BINARY_END,
+
+	IRINSTRUCTIONTYPE_INTRINSIC_MEMCPY
 };
 struct IRInstruction
 {
@@ -154,10 +167,11 @@ struct IRInstruction
 		IRSetParameter setParameter;
 		IRVariableDeclaration variableDeclaration;
 		IRAssignment assignment;
-		IRAssignment dereference;
 		IRMemberAddress memberAddress;
 		IRUnaryOperation unaryOperation;
 		IRBinaryOperation binaryOperation;
+
+		IRIntrinsicMemcpy memcpy;
 	};
 };
 
@@ -238,6 +252,8 @@ IRTypeInfo ASTTypeToIRTypeInfo(Context *context, Type astType)
 
 	if (astType.pointerLevels > 1)
 		result.type = IRTYPE_PTR;
+	else if (astType.typeTableIdx >= TYPETABLEIDX_STRUCT_BEGIN)
+		result.type = IRTYPE_STRUCT;
 	else switch (astType.typeTableIdx)
 	{
 	case TYPETABLEIDX_U8:
@@ -359,6 +375,46 @@ IRInstruction IRInstructionFromBinaryOperation(Context *context, ASTExpression *
 	return inst;
 }
 
+IRInstruction IRInstructionFromAssignment(Context *context, IRValue *leftValue, ASTExpression *rightHand)
+{
+	if (rightHand->type.typeTableIdx >= TYPETABLEIDX_STRUCT_BEGIN &&
+			rightHand->type.pointerLevels == 0 && rightHand->type.arrayCount == 0)
+	{
+		TypeInfo *structTypeInfo = &context->typeTable[rightHand->type.typeTableIdx];
+		ASSERT(structTypeInfo);
+
+		IRInstruction inst = {};
+		inst.type = IRINSTRUCTIONTYPE_INTRINSIC_MEMCPY;
+		inst.memcpy.src = IRGenFromExpression(context, rightHand);
+		inst.memcpy.dst = *leftValue;
+		inst.memcpy.size = structTypeInfo->size;
+
+		// @Cleanup: is this the best way?
+		inst.memcpy.src.pointerType = IRPOINTERTYPE_POINTERTO;
+		inst.memcpy.dst.pointerType = IRPOINTERTYPE_POINTERTO;
+
+		return inst;
+	}
+	else if (rightHand->nodeType == ASTNODETYPE_BINARY_OPERATION &&
+		rightHand->binaryOperation.op != TOKEN_OP_ASSIGNMENT)
+	{
+		// This is to save a useless intermediate value, we use the assignment of the
+		// right-hand binary operation instead of making a new one.
+		IRInstruction inst = IRInstructionFromBinaryOperation(context, rightHand);
+		inst.binaryOperation.out = *leftValue;
+		return inst;
+	}
+	else
+	{
+		IRInstruction inst = {};
+		inst.type = IRINSTRUCTIONTYPE_ASSIGNMENT;
+		inst.assignment.src = IRGenFromExpression(context, rightHand);
+		inst.assignment.dst = *leftValue;
+
+		return inst;
+	}
+}
+
 IRValue IRGenFromExpression(Context *context, ASTExpression *expression)
 {
 	IRValue result = {};
@@ -460,15 +516,13 @@ IRValue IRGenFromExpression(Context *context, ASTExpression *expression)
 			// Initial value
 			if (varDecl.value)
 			{
-				IRInstruction initialValueInst = {};
-				initialValueInst.type = IRINSTRUCTIONTYPE_ASSIGNMENT;
-				initialValueInst.assignment.src = IRGenFromExpression(context, varDecl.value);
-				initialValueInst.assignment.dst.valueType = IRVALUETYPE_VARIABLE;
-				initialValueInst.assignment.dst.variable = newVar.name;
-				initialValueInst.assignment.dst.typeInfo = ASTTypeToIRTypeInfo(context, varDecl.type);
-				initialValueInst.assignment.dst.pointerType = IRPOINTERTYPE_NONE;
+				IRValue leftValue = {};
+				leftValue.valueType = IRVALUETYPE_VARIABLE;
+				leftValue.variable = newVar.name;
+				leftValue.typeInfo = ASTTypeToIRTypeInfo(context, varDecl.type);
+				leftValue.pointerType = IRPOINTERTYPE_NONE;
 
-				*AddInstruction(context) = initialValueInst;
+				*AddInstruction(context) = IRInstructionFromAssignment(context, &leftValue, varDecl.value);
 			}
 		}
 	} break;
@@ -541,15 +595,15 @@ IRValue IRGenFromExpression(Context *context, ASTExpression *expression)
 				IRTypeInfo typeInfo = ASTTypeToIRTypeInfo(context, expression->type);
 
 				// Source side will be cast to a pointer of resulting type and then dereferenced
-				inst.dereference.src = result;
-				inst.dereference.src.typeInfo = typeInfo;
-				inst.dereference.src.typeInfo.isPointer = true;
-				inst.dereference.src.pointerType = IRPOINTERTYPE_DEREFERENCE;
+				inst.assignment.src = result;
+				inst.assignment.src.typeInfo = typeInfo;
+				inst.assignment.src.typeInfo.isPointer = true;
+				inst.assignment.src.pointerType = IRPOINTERTYPE_DEREFERENCE;
 
 				// Destination side will be of the dereferenced type
-				inst.dereference.dst = NewVirtualRegister(context);
-				inst.dereference.dst.typeInfo = typeInfo;
-				inst.dereference.dst.pointerType = IRPOINTERTYPE_NONE;
+				inst.assignment.dst = NewVirtualRegister(context);
+				inst.assignment.dst.typeInfo = typeInfo;
+				inst.assignment.dst.pointerType = IRPOINTERTYPE_NONE;
 
 				*AddInstruction(context) = inst;
 
@@ -590,32 +644,8 @@ IRValue IRGenFromExpression(Context *context, ASTExpression *expression)
 
 		if (expression->binaryOperation.op == TOKEN_OP_ASSIGNMENT)
 		{
-			if (rightHand->nodeType == ASTNODETYPE_BINARY_OPERATION &&
-				rightHand->binaryOperation.op != TOKEN_OP_ASSIGNMENT)
-			{
-				// This is to save a useless intermediate value, we use the assignment of the
-				// right-hand binary operation instead of making a new one.
-				IRInstruction inst = IRInstructionFromBinaryOperation(context, rightHand);
-				inst.binaryOperation.out = IRGenFromExpression(context, leftHand);
-				*AddInstruction(context) = inst;
-			}
-#if 0
-			else if (rightHand->nodeType == ASTNODETYPE_UNARY_OPERATION)
-			{
-				IRValue outValue = IRGenFromExpression(context, leftHand);
-				IRInstruction inst = IRInstructionFromUnaryOperation(context, rightHand, outValue);
-				*AddInstruction(context) = inst;
-			}
-#endif
-			else
-			{
-				IRInstruction inst = {};
-				inst.type = IRINSTRUCTIONTYPE_ASSIGNMENT;
-				inst.assignment.src = IRGenFromExpression(context, rightHand);
-				inst.assignment.dst = IRGenFromExpression(context, leftHand);
-
-				*AddInstruction(context) = inst;
-			}
+			IRValue leftValue = IRGenFromExpression(context, leftHand);
+			*AddInstruction(context) = IRInstructionFromAssignment(context, &leftValue, rightHand);
 		}
 		else
 		{
@@ -644,27 +674,34 @@ IRValue IRGenFromExpression(Context *context, ASTExpression *expression)
 	} break;
 	case ASTNODETYPE_LITERAL:
 	{
-		union
-		{
-			s64 asInt;
-			f64 asFloat;
-		};
-
 		switch (expression->literal.type)
 		{
 		case LITERALTYPE_FLOATING:
 			result.valueType = IRVALUETYPE_IMMEDIATE_FLOAT;
 			result.typeInfo = { IRTYPE_F64, false };
-			asFloat = expression->literal.floating;
+			result.immediateFloat = expression->literal.floating;
 			break;
 		case LITERALTYPE_INTEGER:
 			result.valueType = IRVALUETYPE_IMMEDIATE;
 			result.typeInfo = { IRTYPE_S64, false };
-			asInt = expression->literal.integer;
+			result.immediate = expression->literal.integer;
 			break;
-		}
+		case LITERALTYPE_STRING:
+		{
+			static u64 stringStaticVarUniqueID = 0;
 
-		result.immediate = asInt;
+			IRStaticVariable newStaticVar = {};
+			newStaticVar.name = TPrintF("staticString%d", stringStaticVarUniqueID++);
+			newStaticVar.typeInfo.type = IRTYPE_STRING;
+			newStaticVar.typeInfo.isPointer = false;
+			newStaticVar.initialValue.valueType = IRVALUETYPE_IMMEDIATE_STRING;
+			newStaticVar.initialValue.immediateString = expression->literal.string;
+			*DynamicArrayAdd(&context->irStaticVariables) = newStaticVar;
+
+			result.valueType = IRVALUETYPE_VARIABLE;
+			result.variable = newStaticVar.name;
+		} break;
+		}
 	} break;
 	case ASTNODETYPE_IF:
 	{

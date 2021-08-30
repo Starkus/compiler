@@ -33,6 +33,12 @@ typedef union Register
 	ptr ptr_;
 } Register;
 
+typedef struct String
+{
+	u64 size;
+	u8 *data;
+} String;
+
 inline Register FromU64(u64 value)
 {
 	Register r;

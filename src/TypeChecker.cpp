@@ -14,6 +14,10 @@ enum TypeTableIndexes
 	TYPETABLEIDX_NUMBER,
 	TYPETABLEIDX_FLOATING,
 	TYPETABLEIDX_VOID,
+
+	TYPETABLEIDX_STRUCT_BEGIN,
+	TYPETABLEIDX_STRUCT_STRING = TYPETABLEIDX_STRUCT_BEGIN,
+
 	TYPETABLEIDX_COUNT,
 };
 
@@ -127,7 +131,7 @@ void FindTypeInTable(Context *context, SourceLocation loc, String typeName, Type
 		type->typeTableIdx = TYPETABLEIDX_VOID;
 	else
 	{
-		for (int i = TYPETABLEIDX_COUNT; i < typeTable.size; ++i)
+		for (int i = TYPETABLEIDX_STRUCT_BEGIN; i < typeTable.size; ++i)
 		{
 			TypeInfo *t = &typeTable[i];
 			if (t->typeCategory == TYPECATEGORY_STRUCT &&
@@ -650,6 +654,9 @@ void TypeCheckExpression(Context *context, ASTExpression *expression)
 		case LITERALTYPE_FLOATING:
 			expression->type = { TYPETABLEIDX_FLOATING };
 			break;
+		case LITERALTYPE_STRING:
+			expression->type = { TYPETABLEIDX_STRUCT_STRING };
+			break;
 		default:
 			CRASH;
 		}
@@ -729,6 +736,27 @@ void TypeCheckMain(Context *context)
 		t.typeCategory = TYPECATEGORY_INVALID;
 		t.size = 0;
 		context->typeTable[TYPETABLEIDX_VOID] = t;
+
+		// Built-in structs
+		// String
+		{
+			t.typeCategory = TYPECATEGORY_STRUCT;
+			t.structInfo.name = "String"_s;
+			t.size = 16;
+			DynamicArrayInit(&t.structInfo.members, 2);
+
+			StructMember *sizeMember = DynamicArrayAdd(&t.structInfo.members);
+			sizeMember->name = "size"_s;
+			sizeMember->type = { TYPETABLEIDX_U64, 0, 0 };
+			sizeMember->offset = 0;
+
+			StructMember *dataMember = DynamicArrayAdd(&t.structInfo.members);
+			dataMember->name = "data"_s;
+			dataMember->type = { TYPETABLEIDX_U8, 1, 0 };
+			dataMember->offset = 8;
+
+			context->typeTable[TYPETABLEIDX_STRUCT_STRING] = t;
+		}
 	}
 	for (int i = 0; i < TYPETABLEIDX_COUNT; ++i)
 		*DynamicArrayAdd(&context->tcStack[0].typeIndices) = i;

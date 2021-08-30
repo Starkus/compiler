@@ -43,6 +43,8 @@ bool TryParseUnaryOperation(Context *context, s32 prevPrecedence, ASTUnaryOperat
 	Token *oldToken = context->token;
 	s64 oldTokenIdx = context->currentTokenIdx;
 
+	result->loc = context->token->loc;
+
 	switch (context->token->type)
 	{
 	case TOKEN_OP_POINTER_TO:

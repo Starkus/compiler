@@ -1,0 +1,8 @@
+main :: () -> s64
+{
+	str : String = "Hello, Sailor!";
+	//str = "Hello, Sailor!";
+	foo : s64 = 5 + 5;
+
+	return 0;
+}
