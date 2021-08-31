@@ -1,4 +1,4 @@
-foo : u64;
+foo :s u64;
 
 operatorPrecedence :: (arg1 : u32, arg2 : u64 = 4) -> s32
 {
@@ -8,6 +8,7 @@ operatorPrecedence :: (arg1 : u32, arg2 : u64 = 4) -> s32
 	foo = 2 + 4 * 5;
 	bar = 2 * 4 + 5;
 	baz = 2 * (4 + 5); // Parenthesis
+	baz = (2 * 4) + 5; // Parenthesis
 	emi = baz;
 
 	// Same precedence
@@ -29,6 +30,8 @@ operatorPrecedence :: (arg1 : u32, arg2 : u64 = 4) -> s32
 	baz /= 16;
 
 	asd := 1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1;
+
+	return 0;
 }
 
 main :: () -> s64
@@ -38,4 +41,6 @@ main :: () -> s64
 
 	// Default argument
 	//operatorPrecedence(var);
+
+	return 0;
 }

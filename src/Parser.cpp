@@ -364,15 +364,12 @@ ASTExpression ParseExpression(Context *context, s32 precedence)
 	{
 		Advance(context);
 
-		ASTExpression innerExp = ParseExpression(context, -1);
+		result = ParseExpression(context, -1);
 
 		AssertToken(context, context->token, ')');
 		Advance(context);
-
-		return innerExp;
 	}
-
-	if (context->token->type == TOKEN_IDENTIFIER)
+	else if (context->token->type == TOKEN_IDENTIFIER)
 	{
 		result.any.loc = context->token->loc;
 		String identifier = context->token->string;

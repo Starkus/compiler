@@ -494,7 +494,7 @@ void TypeCheckExpression(Context *context, ASTExpression *expression)
 		expression->type = returnType;
 
 		// Check all paths return
-		if (returnType.typeTableIdx != TYPETABLEIDX_VOID)
+		if (procDecl->body && returnType.typeTableIdx != TYPETABLEIDX_VOID)
 		{
 			ReturnCheckResult result = CheckIfReturnsValue(context, procDecl->body);
 			if (result == RETURNCHECKRESULT_SOMETIMES)

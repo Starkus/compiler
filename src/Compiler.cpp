@@ -134,7 +134,8 @@ inline void PrintError(Context *context, SourceLocation loc, const String errorS
 		Log("^");
 	Log("\n");
 
-	CRASH;
+	exit(1);
+	//CRASH;
 }
 
 inline void PrintWarning(SourceLocation loc, const String errorStr)

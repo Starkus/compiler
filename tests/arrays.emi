@@ -1,3 +1,8 @@
+arrayAsArgument :: (array : 5 s16)
+{
+	foo := array[3];
+}
+
 main :: () -> s64
 {
 	arrayA : 20 u8;
@@ -5,6 +10,9 @@ main :: () -> s64
 
 	foo : u8 = arrayA[2];
 	bar := arrayB[16];
+
+	arrayC : 5 s16;
+	arrayAsArgument(arrayC);
 
 	return 0;
 }

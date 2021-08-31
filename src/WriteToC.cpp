@@ -12,6 +12,12 @@ String IRValueToStr(Context *context, VariableStack *variableStack, IRValue valu
 
 	String typeStr = IRTypeToStr(value.typeInfo.type);
 
+	String castStr;
+	if (value.typeInfo.isPointer)
+		castStr = "ptr"_s;
+	else
+		castStr = typeStr;
+
 	if (value.valueType == IRVALUETYPE_REGISTER)
 	{
 		result = TPrintF("r%d", value.registerIdx);
@@ -34,14 +40,8 @@ String IRValueToStr(Context *context, VariableStack *variableStack, IRValue valu
 				}
 				else
 				{
-					String cast;
-					if (value.typeInfo.isPointer)
-						cast = "ptr"_s;
-					else
-						cast = typeStr;
-
 					result = TPrintF("/* %.*s */ *(%.*s*)(stack + 0x%x)", varName.size,
-							varName.data, cast.size, cast.data, offset);
+							varName.data, castStr.size, castStr.data, offset);
 				}
 				found = true;
 				break;
@@ -73,8 +73,7 @@ String IRValueToStr(Context *context, VariableStack *variableStack, IRValue valu
 
 	if (printTypeMemberAccess)
 	{
-		String member = value.typeInfo.isPointer ? "ptr"_s : typeStr;
-		result = TPrintF("%.*s.%.*s_", result.size, result.data, member.size, member.data);
+		result = TPrintF("%.*s.%.*s_", result.size, result.data, castStr.size, castStr.data);
 	}
 
 	if (value.pointerType == IRPOINTERTYPE_POINTERTO)
@@ -358,7 +357,7 @@ void WriteToC(Context *context)
 
 				String out = IRValueToStr(context, &variableStack, inst.memberAccess.out);
 				String base = IRValueToStr(context, &variableStack, inst.memberAccess.in);
-				PrintOut(outputFile, "%.*s = ((u8*)&(%.*s)) + %d;\n", out.size, out.data, base.size, base.data, offset);
+				PrintOut(outputFile, "%.*s = ((u8*)(%.*s)) + %d;\n", out.size, out.data, base.size, base.data, offset);
 			}
 			else if (inst.type == IRINSTRUCTIONTYPE_ARRAY_ACCESS)
 			{

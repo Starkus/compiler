@@ -320,6 +320,8 @@ IRInstruction IRInstructionFromBinaryOperation(Context *context, ASTExpression *
 	if (expression->binaryOperation.op == TOKEN_OP_MEMBER_ACCESS)
 	{
 		IRValue left = IRGenFromExpression(context, leftHand);
+		if (leftHand->type.pointerLevels == 0)
+			left.pointerType = IRPOINTERTYPE_POINTERTO;
 
 		ASSERT(rightHand->nodeType == ASTNODETYPE_VARIABLE);
 		String memberName = rightHand->variable.name;
@@ -418,15 +420,23 @@ IRInstruction IRInstructionFromAssignment(Context *context, IRValue *leftValue, 
 
 		return inst;
 	}
+#if 1
 	else if (rightHand->nodeType == ASTNODETYPE_BINARY_OPERATION &&
+		rightHand->binaryOperation.op != TOKEN_OP_MEMBER_ACCESS &&
 		rightHand->binaryOperation.op != TOKEN_OP_ASSIGNMENT)
 	{
 		// This is to save a useless intermediate value, we use the assignment of the
 		// right-hand binary operation instead of making a new one.
 		IRInstruction inst = IRInstructionFromBinaryOperation(context, rightHand);
-		inst.binaryOperation.out = *leftValue;
+		if (inst.type == IRINSTRUCTIONTYPE_MEMBER_ACCESS)
+			inst.memberAccess.out = *leftValue;
+		else if (inst.type == IRINSTRUCTIONTYPE_ARRAY_ACCESS)
+			inst.arrayAccess.out = *leftValue;
+		else
+			inst.binaryOperation.out = *leftValue;
 		return inst;
 	}
+#endif
 	else
 	{
 		IRInstruction inst = {};
@@ -503,7 +513,7 @@ IRValue IRGenFromExpression(Context *context, ASTExpression *expression)
 
 		bool isGlobalScope = context->currentProcedureIdx == U64_MAX;
 		if (isGlobalScope && !varDecl.isStatic)
-			PrintError(context, expression->any.loc, "Global variables have to be constant"_s);
+			PrintError(context, expression->any.loc, "Global variables have to be static"_s);
 
 		if (varDecl.isStatic)
 		{
@@ -687,8 +697,10 @@ IRValue IRGenFromExpression(Context *context, ASTExpression *expression)
 
 				result = inst.memberAccess.out;
 				result.typeInfo = ASTTypeToIRTypeInfo(context, expression->type);
-				result.typeInfo.isPointer = true;
 				result.pointerType = IRPOINTERTYPE_DEREFERENCE;
+				if (result.typeInfo.isPointer)
+					result.typeInfo.type = IRTYPE_PTR;
+				result.typeInfo.isPointer = true;
 			}
 			else if (expression->binaryOperation.op == TOKEN_OP_ARRAY_ACCESS)
 			{
