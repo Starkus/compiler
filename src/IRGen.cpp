@@ -42,7 +42,7 @@ struct IRValue
 	union
 	{
 		s64 registerIdx;
-		String variable;
+		Variable *variable;
 		s64 immediate;
 		f64 immediateFloat;
 		String immediateString;
@@ -119,7 +119,7 @@ struct IRSetParameter
 
 struct IRVariableDeclaration
 {
-	String name;
+	Variable *variable;
 	s64 size;
 };
 
@@ -186,22 +186,16 @@ struct IRInstruction
 	};
 };
 
-struct IRVariable
-{
-	String name;
-	Type type;
-};
-
 struct IRScope
 {
-	DynamicArray<IRVariable, malloc, realloc> variables;
+	DynamicArray<Variable *, malloc, realloc> variables;
 };
 
 struct IRProcedure
 {
 	String name;
 	bool isExternal;
-	Array<IRVariable> parameters;
+	Array<Variable *> parameters;
 	BucketArray<IRInstruction, 256, malloc, realloc> instructions;
 	IRTypeInfo returnTypeInfo;
 	u64 registerCount;
@@ -209,7 +203,7 @@ struct IRProcedure
 
 struct IRStaticVariable
 {
-	String name;
+	Variable *variable;
 	IRTypeInfo typeInfo;
 	IRValue initialValue;
 };
@@ -320,7 +314,7 @@ IRInstruction IRInstructionFromBinaryOperation(Context *context, ASTExpression *
 	if (expression->binaryOperation.op == TOKEN_OP_MEMBER_ACCESS)
 	{
 		IRValue left = IRGenFromExpression(context, leftHand);
-		if (leftHand->type.pointerLevels == 0)
+		if (left.typeInfo.type == IRTYPE_STRUCT && !left.typeInfo.isPointer)
 			left.pointerType = IRPOINTERTYPE_POINTERTO;
 
 		ASSERT(rightHand->nodeType == ASTNODETYPE_VARIABLE);
@@ -479,15 +473,7 @@ IRValue IRGenFromExpression(Context *context, ASTExpression *expression)
 		for (int paramIdx = 0; paramIdx < paramCount; ++paramIdx)
 		{
 			ASTVariableDeclaration param = expression->procedureDeclaration.parameters[paramIdx];
-
-			IRScope *stackTop = &context->irStack[context->irStack.size - 1];
-			IRVariable *newVar = DynamicArrayAdd(&stackTop->variables);
-			*newVar = {};
-
-			newVar->name = param.name;
-			newVar->type = param.type;
-
-			procedure->parameters[paramIdx] = { param.name, param.type };
+			procedure->parameters[paramIdx] = param.variable;
 		}
 
 		if (expression->procedureDeclaration.body)
@@ -518,8 +504,8 @@ IRValue IRGenFromExpression(Context *context, ASTExpression *expression)
 		if (varDecl.isStatic)
 		{
 			IRStaticVariable newStaticVar = {};
-			newStaticVar.name = varDecl.name;
-			newStaticVar.typeInfo = ASTTypeToIRTypeInfo(context, varDecl.type);
+			newStaticVar.variable = varDecl.variable;
+			newStaticVar.typeInfo = ASTTypeToIRTypeInfo(context, varDecl.variable->type);
 			newStaticVar.initialValue.valueType = IRVALUETYPE_INVALID;
 
 			// Initial value
@@ -537,17 +523,13 @@ IRValue IRGenFromExpression(Context *context, ASTExpression *expression)
 		}
 		else
 		{
-			IRVariable newVar = {};
-			newVar.name = varDecl.name;
-			newVar.type = varDecl.type;
-
 			IRScope *stackTop = &context->irStack[context->irStack.size - 1];
-			*DynamicArrayAdd(&stackTop->variables) = newVar;
+			*DynamicArrayAdd(&stackTop->variables) = varDecl.variable;
 
 			IRInstruction inst = {};
 			inst.type = IRINSTRUCTIONTYPE_VARIABLE_DECLARATION;
-			inst.variableDeclaration.name = varDecl.name;
-			inst.variableDeclaration.size = CalculateTypeSize(context, varDecl.type);
+			inst.variableDeclaration.variable = varDecl.variable;
+			inst.variableDeclaration.size = CalculateTypeSize(context, varDecl.variable->type);
 			*AddInstruction(context) = inst;
 
 			// Initial value
@@ -555,8 +537,8 @@ IRValue IRGenFromExpression(Context *context, ASTExpression *expression)
 			{
 				IRValue leftValue = {};
 				leftValue.valueType = IRVALUETYPE_VARIABLE;
-				leftValue.variable = newVar.name;
-				leftValue.typeInfo = ASTTypeToIRTypeInfo(context, varDecl.type);
+				leftValue.variable = varDecl.variable;
+				leftValue.typeInfo = ASTTypeToIRTypeInfo(context, varDecl.variable->type);
 				leftValue.pointerType = IRPOINTERTYPE_NONE;
 
 				*AddInstruction(context) = IRInstructionFromAssignment(context, &leftValue, varDecl.value);
@@ -566,9 +548,20 @@ IRValue IRGenFromExpression(Context *context, ASTExpression *expression)
 	case ASTNODETYPE_VARIABLE:
 	{
 		result.valueType = IRVALUETYPE_VARIABLE;
-		result.variable = expression->variable.name;
-		result.typeInfo = ASTTypeToIRTypeInfo(context, expression->type);
-		result.pointerType = IRPOINTERTYPE_NONE;
+		Variable *var = expression->variable.variable;
+		result.variable = var;
+		if (var->isParameter && var->type.typeTableIdx >= TYPETABLEIDX_STRUCT_BEGIN &&
+				var->type.pointerLevels == 0)
+		{
+			// Struct parameters by value are pointers!
+			result.typeInfo = { IRTYPE_STRUCT, true };
+			result.pointerType = IRPOINTERTYPE_NONE;
+		}
+		else
+		{
+			result.typeInfo = ASTTypeToIRTypeInfo(context, expression->variable.variable->type);
+			result.pointerType = IRPOINTERTYPE_NONE;
+		}
 	} break;
 	case ASTNODETYPE_PROCEDURE_CALL:
 	{
@@ -585,21 +578,79 @@ IRValue IRGenFromExpression(Context *context, ASTExpression *expression)
 		{
 			ASTExpression *arg = &expression->procedureCall.arguments[argIdx];
 
-			IRValue param = IRGenFromExpression(context, arg);
-			IRValue paramReg = NewVirtualRegister(context);
-			if (param.pointerType == IRPOINTERTYPE_NONE)
-				paramReg.typeInfo = param.typeInfo;
-			else
+			if (arg->type.typeTableIdx >= TYPETABLEIDX_STRUCT_BEGIN && arg->type.pointerLevels == 0)
+			{
+				// Struct by copy:
+				// Declare a variable in the stack, copy the struct to it, then pass the new
+				// variable as parameter to the procedure.
+				static u64 structByCopyDeclarationUniqueID = 0;
+
+				IRValue param = IRGenFromExpression(context, arg);
+
+				// Declare temporal value in the stack
+				String tempVarName = TPrintF("structByCopy%llu", structByCopyDeclarationUniqueID++);
+				u64 tempVarSize = CalculateTypeSize(context, arg->type);
+				Variable *tempVar = BucketArrayAdd(&context->variables);
+				tempVar->name = tempVarName;
+				tempVar->type = arg->type;
+
+				IRScope *stackTop = &context->irStack[context->irStack.size - 1];
+				*DynamicArrayAdd(&stackTop->variables) = tempVar;
+
+				IRInstruction varDeclInst = {};
+				varDeclInst.type = IRINSTRUCTIONTYPE_VARIABLE_DECLARATION;
+				varDeclInst.variableDeclaration.variable = tempVar;
+				varDeclInst.variableDeclaration.size = tempVarSize;
+				*AddInstruction(context) = varDeclInst;
+
+				// Memcpy original to temporal
+				IRValue tempVarIRValue = {};
+				tempVarIRValue.valueType = IRVALUETYPE_VARIABLE;
+				tempVarIRValue.variable = tempVar;
+				tempVarIRValue.typeInfo = { IRTYPE_STRUCT, false };
+				tempVarIRValue.pointerType = IRPOINTERTYPE_POINTERTO;
+
+				IRInstruction memCpyInst = {};
+				memCpyInst.type = IRINSTRUCTIONTYPE_INTRINSIC_MEMCPY;
+				memCpyInst.memcpy.src = param;
+				memCpyInst.memcpy.src.typeInfo = { IRTYPE_STRUCT, false };
+				memCpyInst.memcpy.src.pointerType = IRPOINTERTYPE_POINTERTO;
+				memCpyInst.memcpy.dst = tempVarIRValue;
+				memCpyInst.memcpy.size = tempVarSize;
+				*AddInstruction(context) = memCpyInst;
+
+				// Turn into a register
+				IRValue paramReg = NewVirtualRegister(context);
 				paramReg.typeInfo = { IRTYPE_PTR, false };
-			paramReg.pointerType = IRPOINTERTYPE_NONE;
+				paramReg.pointerType = IRPOINTERTYPE_NONE;
 
-			IRInstruction paramIntermediateInst = {};
-			paramIntermediateInst.type = IRINSTRUCTIONTYPE_ASSIGNMENT;
-			paramIntermediateInst.assignment.src = param;
-			paramIntermediateInst.assignment.dst = paramReg;
-			*AddInstruction(context) = paramIntermediateInst;
+				IRInstruction paramIntermediateInst = {};
+				paramIntermediateInst.type = IRINSTRUCTIONTYPE_ASSIGNMENT;
+				paramIntermediateInst.assignment.src = tempVarIRValue;
+				paramIntermediateInst.assignment.dst = paramReg;
+				*AddInstruction(context) = paramIntermediateInst;
 
-			*ArrayAdd(&inst.procedureCall.parameters) = paramReg;
+				// Add register as parameter
+				*ArrayAdd(&inst.procedureCall.parameters) = paramReg;
+			}
+			else
+			{
+				IRValue param = IRGenFromExpression(context, arg);
+				IRValue paramReg = NewVirtualRegister(context);
+				if (param.pointerType == IRPOINTERTYPE_NONE)
+					paramReg.typeInfo = param.typeInfo;
+				else
+					paramReg.typeInfo = { IRTYPE_PTR, false };
+				paramReg.pointerType = IRPOINTERTYPE_NONE;
+
+				IRInstruction paramIntermediateInst = {};
+				paramIntermediateInst.type = IRINSTRUCTIONTYPE_ASSIGNMENT;
+				paramIntermediateInst.assignment.src = param;
+				paramIntermediateInst.assignment.dst = paramReg;
+				*AddInstruction(context) = paramIntermediateInst;
+
+				*ArrayAdd(&inst.procedureCall.parameters) = paramReg;
+			}
 		}
 
 		inst.procedureCall.out.valueType = IRVALUETYPE_INVALID;
@@ -739,7 +790,8 @@ IRValue IRGenFromExpression(Context *context, ASTExpression *expression)
 			static u64 stringStaticVarUniqueID = 0;
 
 			IRStaticVariable newStaticVar = {};
-			newStaticVar.name = TPrintF("staticString%d", stringStaticVarUniqueID++);
+			newStaticVar.variable = BucketArrayAdd(&context->variables);
+			newStaticVar.variable->name = TPrintF("staticString%d", stringStaticVarUniqueID++);
 			newStaticVar.typeInfo.type = IRTYPE_STRING;
 			newStaticVar.typeInfo.isPointer = false;
 			newStaticVar.initialValue.valueType = IRVALUETYPE_IMMEDIATE_STRING;
@@ -747,7 +799,7 @@ IRValue IRGenFromExpression(Context *context, ASTExpression *expression)
 			*DynamicArrayAdd(&context->irStaticVariables) = newStaticVar;
 
 			result.valueType = IRVALUETYPE_VARIABLE;
-			result.variable = newStaticVar.name;
+			result.variable = newStaticVar.variable;
 		} break;
 		}
 	} break;
@@ -850,7 +902,7 @@ void PrintIRValue(IRValue value)
 	if (value.valueType == IRVALUETYPE_REGISTER)
 		Log("$r%d", value.registerIdx);
 	else if (value.valueType == IRVALUETYPE_VARIABLE)
-		Log("%.*s", value.variable.size, value.variable.data);
+		Log("%.*s", value.variable->name.size, value.variable->name.data);
 	else if (value.valueType == IRVALUETYPE_IMMEDIATE)
 		Log("0x%x", value.immediate);
 	else
@@ -930,8 +982,10 @@ String IRTypeToStr(IRType type)
 		return "f32"_s;
 	case IRTYPE_F64:
 		return "f64"_s;
+	case IRTYPE_STRUCT:
+		return "strct"_s; // This is alias of u8 just for legibility.
 	}
-	return "u8"_s; // Default to u8 for things like structs
+	return "???"_s;
 }
 
 String IRTypeInfoToStr(IRTypeInfo typeInfo)

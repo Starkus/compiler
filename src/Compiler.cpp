@@ -74,6 +74,7 @@ struct Context
 	BucketArray<ASTExpression, 1024, malloc, realloc> treeNodes;
 
 	// Type check
+	BucketArray<Variable, 512, malloc, realloc> variables;
 	DynamicArray<TypeInfo, malloc, realloc> typeTable;
 	DynamicArray<TCScope, malloc, realloc> tcStack;
 	Type currentReturnType;
@@ -134,8 +135,8 @@ inline void PrintError(Context *context, SourceLocation loc, const String errorS
 		Log("^");
 	Log("\n");
 
-	exit(1);
-	//CRASH;
+	//exit(1);
+	CRASH;
 }
 
 inline void PrintWarning(SourceLocation loc, const String errorStr)

@@ -1,4 +1,4 @@
-global : s32;
+global :s s32;
 
 main :: () -> s32
 {
@@ -6,4 +6,6 @@ main :: () -> s32
 
 	global = 40;
 	local = 50;
+
+	return 0;
 }

@@ -2,6 +2,16 @@ ASTExpression ParseExpression(Context *context, s32 precedence);
 ASTExpression ParseStatement(Context *context);
 ASTVariableDeclaration ParseVariableDeclaration(Context *context);
 
+struct Variable
+{
+	String name;
+	Type type;
+	bool isParameter;
+
+	// Back end
+	u64 stackOffset;
+};
+
 void Advance(Context *context)
 {
 	ASSERT(context->token == &context->tokens[context->currentTokenIdx]);
@@ -226,6 +236,35 @@ ASTWhile ParseWhile(Context *context)
 	return whileNode;
 }
 
+ASTStructMember ParseStructMember(Context *context)
+{
+	ASTStructMember structMem = {};
+	structMem.loc = context->token->loc;
+
+	AssertToken(context, context->token, TOKEN_IDENTIFIER);
+	structMem.name = context->token->string;
+	Advance(context);
+
+	AssertToken(context, context->token, TOKEN_OP_VARIABLE_DECLARATION);
+
+	Advance(context);
+
+	if (context->token->type != TOKEN_OP_ASSIGNMENT)
+	{
+		Type type = ParseType(context, &structMem.typeName);
+		structMem.type = type;
+	}
+
+	if (context->token->type == TOKEN_OP_ASSIGNMENT)
+	{
+		Advance(context);
+		structMem.value = NewTreeNode(context);
+		*structMem.value = ParseExpression(context, -1);
+	}
+
+	return structMem;
+}
+
 ASTStruct ParseStruct(Context *context)
 {
 	AssertToken(context, context->token, TOKEN_IDENTIFIER);
@@ -246,7 +285,7 @@ ASTStruct ParseStruct(Context *context)
 	Advance(context);
 	while (context->token->type != '}')
 	{
-		ASTVariableDeclaration member = ParseVariableDeclaration(context);
+		ASTStructMember member = ParseStructMember(context);
 		*DynamicArrayAdd(&structNode.members) = member;
 		AssertToken(context, context->token, ';');
 		Advance(context);
@@ -261,8 +300,11 @@ ASTVariableDeclaration ParseVariableDeclaration(Context *context)
 	ASTVariableDeclaration varDecl = {};
 	varDecl.loc = context->token->loc;
 
+	varDecl.variable = BucketArrayAdd(&context->variables);
+	*varDecl.variable = {};
+
 	AssertToken(context, context->token, TOKEN_IDENTIFIER);
-	varDecl.name = context->token->string;
+	varDecl.variable->name = context->token->string;
 	Advance(context);
 
 	if (context->token->type != TOKEN_OP_VARIABLE_DECLARATION && context->token->type !=
@@ -279,7 +321,7 @@ ASTVariableDeclaration ParseVariableDeclaration(Context *context)
 	if (context->token->type != TOKEN_OP_ASSIGNMENT)
 	{
 		Type type = ParseType(context, &varDecl.typeName);
-		varDecl.type = type;
+		varDecl.variable->type = type;
 	}
 
 	if (context->token->type == TOKEN_OP_ASSIGNMENT)
@@ -318,6 +360,7 @@ ASTProcedureDeclaration ParseProcedureDeclaration(Context *context)
 	{
 		// @Improve: separate node type for procedure parameter?
 		ASTVariableDeclaration parameter = ParseVariableDeclaration(context);
+		parameter.variable->isParameter = true;
 
 		if (parameter.isStatic)
 			PrintError(context, context->token->loc, "Procedure parameters can't be static"_s);
@@ -573,6 +616,7 @@ ASTRoot *GenerateSyntaxTree(Context *context)
 	context->astRoot = root;
 	DynamicArrayInit(&root->block.statements, 4096);
 	BucketArrayInit(&context->treeNodes);
+	BucketArrayInit(&context->variables);
 
 	context->currentTokenIdx = 0;
 	context->token = &context->tokens[0];

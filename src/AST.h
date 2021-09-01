@@ -35,12 +35,13 @@ struct ASTBinaryOperation : ASTBase
 	ASTExpression *rightHand;
 };
 
+struct Variable;
 struct ASTVariable : ASTBase
 {
 	String name;
+	Variable *variable;
 };
 
-struct TCVariable;
 struct ASTBlock : ASTBase
 {
 	DynamicArray<ASTExpression, malloc, realloc> statements;
@@ -55,10 +56,18 @@ struct Type
 
 struct ASTVariableDeclaration : ASTBase
 {
-	String name;
 	String typeName;
 	ASTExpression *value;
 	bool isStatic;
+
+	Variable *variable;
+};
+
+struct ASTStructMember : ASTBase
+{
+	String name;
+	String typeName;
+	ASTExpression *value;
 
 	Type type;
 };
@@ -103,7 +112,7 @@ struct ASTReturn : ASTBase
 struct ASTStruct : ASTBase
 {
 	String name;
-	DynamicArray<ASTVariableDeclaration, malloc, realloc> members;
+	DynamicArray<ASTStructMember, malloc, realloc> members;
 };
 
 struct TypeInfo;

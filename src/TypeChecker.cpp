@@ -65,23 +65,17 @@ struct TypeInfo
 	};
 };
 
-struct TCVariable
-{
-	String name;
-	Type type;
-};
-
 struct TCProcedure
 {
 	String name;
 	bool isExternal;
-	DynamicArray<TCVariable, malloc, realloc> parameters;
+	DynamicArray<Variable *, malloc, realloc> parameters;
 	Type returnType;
 };
 
 struct TCScope
 {
-	DynamicArray<TCVariable, malloc, realloc> variables;
+	DynamicArray<Variable *, malloc, realloc> variables;
 	DynamicArray<TCProcedure, malloc, realloc> procedures;
 	DynamicArray<s64, malloc, realloc> typeIndices;
 };
@@ -284,15 +278,16 @@ Type InferType(Type fromType)
 
 void TypeCheckExpression(Context *context, ASTExpression *expression);
 
-Type TypeCheckVariableDeclaration(Context *context, ASTVariableDeclaration *varDecl)
+void TypeCheckVariableDeclaration(Context *context, ASTVariableDeclaration *varDecl)
 {
-	String varName = varDecl->name;
+	String varName = varDecl->variable->name;
+	Type *varType = &varDecl->variable->type;
 	// Check if already exists
 	TCScope *stackTop = &context->tcStack[context->tcStack.size - 1];
 	for (s64 i = 0; i < (s64)stackTop->variables.size; ++i)
 	{
-		TCVariable currentVar = stackTop->variables[i];
-		if (StringEquals(varName, currentVar.name))
+		Variable *currentVar = stackTop->variables[i];
+		if (StringEquals(varName, currentVar->name))
 		{
 			PrintError(context, varDecl->loc, TPrintF("Duplicate variable \"%.*s\"", varName.size,
 						varName.data));
@@ -301,15 +296,11 @@ Type TypeCheckVariableDeclaration(Context *context, ASTVariableDeclaration *varD
 
 	if (varDecl->typeName)
 	{
-		TypeCheckType(context, varDecl->loc, varDecl->typeName, &varDecl->type);
+		TypeCheckType(context, varDecl->loc, varDecl->typeName, varType);
 
-		if (varDecl->type.typeTableIdx == TYPETABLEIDX_VOID && varDecl->type.pointerLevels == 0)
+		if (varType->typeTableIdx == TYPETABLEIDX_VOID && varType->pointerLevels == 0)
 			PrintError(context, varDecl->loc, "Variable can't be of type void!"_s);
 	}
-
-	TCVariable variable;
-	variable.name = varName;
-	variable.type = varDecl->type;
 
 	if (varDecl->value)
 	{
@@ -318,7 +309,7 @@ Type TypeCheckVariableDeclaration(Context *context, ASTVariableDeclaration *varD
 
 		if (varDecl->typeName)
 		{
-			if (!CheckTypesMatch(context, variable.type, valueType))
+			if (!CheckTypesMatch(context, *varType, valueType))
 				PrintError(context, varDecl->loc, "Variable declaration type and initial type don't match"_s);
 		}
 		else
@@ -326,13 +317,10 @@ Type TypeCheckVariableDeclaration(Context *context, ASTVariableDeclaration *varD
 			if (valueType.typeTableIdx == TYPETABLEIDX_VOID && valueType.pointerLevels == 0)
 				PrintError(context, varDecl->loc, "Variable can't be of type void!"_s);
 
-			variable.type = InferType(valueType);
-			varDecl->type = variable.type;
+			*varType = InferType(valueType);
 		}
 	}
-	*DynamicArrayAdd(&stackTop->variables) = variable;
-
-	return variable.type;
+	*DynamicArrayAdd(&stackTop->variables) = varDecl->variable;
 }
 
 enum ReturnCheckResult
@@ -403,8 +391,8 @@ void TypeCheckExpression(Context *context, ASTExpression *expression)
 	case ASTNODETYPE_VARIABLE_DECLARATION:
 	{
 		ASTVariableDeclaration *varDecl = &expression->variableDeclaration;
-		Type variableType = TypeCheckVariableDeclaration(context, varDecl);
-		expression->type = variableType;
+		TypeCheckVariableDeclaration(context, varDecl);
+		expression->type = varDecl->variable->type;
 	} break;
 	case ASTNODETYPE_STRUCT_DECLARATION:
 	{
@@ -416,7 +404,7 @@ void TypeCheckExpression(Context *context, ASTExpression *expression)
 
 		for (int memberIdx = 0; memberIdx < expression->structNode.members.size; ++memberIdx)
 		{
-			ASTVariableDeclaration *astMember = &expression->structNode.members[memberIdx];
+			ASTStructMember *astMember = &expression->structNode.members[memberIdx];
 
 			StructMember *member = DynamicArrayAdd(&t.structInfo.members);
 			member->name = astMember->name;
@@ -464,10 +452,7 @@ void TypeCheckExpression(Context *context, ASTExpression *expression)
 		{
 			ASTVariableDeclaration *astParam = &procDecl->parameters[i];
 			TypeCheckVariableDeclaration(context, astParam);
-
-			TCVariable *tcParam = DynamicArrayAdd(&procedure.parameters);
-			tcParam->name = astParam->name;
-			tcParam->type = astParam->type;
+			*DynamicArrayAdd(&procedure.parameters) = astParam->variable;
 		}
 
 		Type returnType = {};
@@ -519,10 +504,11 @@ void TypeCheckExpression(Context *context, ASTExpression *expression)
 			TCScope *currentScope = &context->tcStack[stackIdx];
 			for (int i = 0; i < currentScope->variables.size; ++i)
 			{
-				TCVariable currentVar = currentScope->variables[i];
-				if (StringEquals(varName, currentVar.name))
+				Variable *currentVar = currentScope->variables[i];
+				if (StringEquals(varName, currentVar->name))
 				{
-					expression->type = currentVar.type;
+					expression->variable.variable = currentVar;
+					expression->type = currentVar->type;
 					return;
 				}
 			}
@@ -570,8 +556,8 @@ void TypeCheckExpression(Context *context, ASTExpression *expression)
 			ASTExpression *arg = &expression->procedureCall.arguments[argIdx];
 			TypeCheckExpression(context, arg);
 
-			TCVariable param = procedure->parameters[argIdx];
-			if (!CheckTypesMatch(context, param.type, arg->type))
+			Variable *param = procedure->parameters[argIdx];
+			if (!CheckTypesMatch(context, param->type, arg->type))
 				PrintError(context, arg->any.loc, TPrintF("When calling procedure \"%.*s\": type of parameter #%d didn't match",
 							procName.size, procName.data, argIdx));
 		}

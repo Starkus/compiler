@@ -11,9 +11,14 @@ Couple :: struct
 	wife : Person;
 }
 
-structAsArgument :: (person : ^Person)
+structByValue :: (person : Person)
 {
-	foo := person.age;
+	person.age = 99;
+}
+
+structByPointer :: (person : ^Person)
+{
+	person.age = 99;
 }
 
 main :: ()
@@ -28,6 +33,7 @@ main :: ()
 	// Copy
 	b = a;
 
+	/*
 	couple : Couple;
 	couple.husband.id = 40;
 	couple.husband.age = 22;
@@ -35,6 +41,11 @@ main :: ()
 	couple.wife.id = 41;
 	couple.wife.age = 29;
 	couple.wife.height = 1.71;
+	*/
 
-	structAsArgument(^a);
+	structByValue(a);
+	structByPointer(^b);
+
+	pointerToA := ^a;
+	pointerToA.age = 64;
 }
