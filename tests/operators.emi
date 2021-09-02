@@ -31,6 +31,9 @@ operatorPrecedence :: (arg1 : u32, arg2 : u64 = 4) -> s32
 
 	asd := 1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1;
 
+	lop : u64 = 512;
+	bar = foo = lop;
+
 	return 0;
 }
 

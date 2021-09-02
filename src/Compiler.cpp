@@ -105,6 +105,7 @@ struct Context
 	DynamicArray<IRProcedure, malloc, realloc> irProcedures;
 	DynamicArray<IRStaticVariable, malloc, realloc> irStaticVariables;
 	DynamicArray<IRScope, malloc, realloc> irStack;
+	s64 currentProcedureStackBase;
 	u64 currentProcedureIdx;
 	u64 currentRegisterId;
 	u64 currentLabelId;
@@ -123,7 +124,7 @@ inline void PrintError(Context *context, SourceLocation loc, const String errorS
 	int size = 0;
 	{
 		int l = 1;
-		for (const char *scan = (const char *)context->fileBuffer; *scan; ++scan)
+		for (const char *scan = (const char *)loc.fileBuffer; *scan; ++scan)
 		{
 			if (l == loc.line)
 			{
@@ -258,7 +259,9 @@ int main(int argc, char **argv)
 	Context context = {};
 	BucketArrayInit(&context.tokens);
 
-	const char *filename = nullptr;
+	DynamicArray<String, malloc, realloc> inputFiles;
+	DynamicArrayInit(&inputFiles, 8);
+	*DynamicArrayAdd(&inputFiles) = "basic.emi"_s;
 	for (int argIdx = 1; argIdx < argc; ++argIdx)
 	{
 		char *arg = argv[argIdx];
@@ -268,14 +271,21 @@ int main(int argc, char **argv)
 				context.config.silent = true;
 		}
 		else
-			filename = arg;
+		{
+			*DynamicArrayAdd(&inputFiles) = CStrToString(arg);
+		}
 	}
-	ASSERT(filename);
-	context.filename = CStrToString(filename);
+	ASSERT(inputFiles.size > 1);
 
-	Win32ReadEntireFile(filename, &context.fileBuffer, &context.fileSize, FrameAlloc);
-
-	TokenizeFile(&context);
+	for (int i = 0; i < inputFiles.size; ++i)
+	{
+		context.filename = inputFiles[i];
+		Win32ReadEntireFile(StringToCStr(&inputFiles[i], FrameAlloc), &context.fileBuffer,
+				&context.fileSize, FrameAlloc);
+		TokenizeFile(&context);
+	}
+	Token eofToken = { TOKEN_END_OF_FILE };
+	*BucketArrayAdd(&context.tokens) = eofToken;
 
 	GenerateSyntaxTree(&context);
 #if PRINT_AST_TREE

@@ -210,10 +210,28 @@ void WriteToC(Context *context)
 
 		// @Speed: separate array of external procedures to avoid branching
 		if (proc.isExternal)
-			continue;
+		{
+			String returnTypeStr = IRTypeInfoToStr(proc.returnTypeInfo);
+			PrintOut(context, outputFile, "%.*s %.*s(", returnTypeStr.size, returnTypeStr.data,
+					proc.name.size, proc.name.data);
 
-		String signature = GetProcedureSignature(proc);
-		PrintOut(context, outputFile, "%.*s;\n", signature.size, signature.data);
+			for (int i = 0; i < proc.parameters.size; ++i)
+			{
+				if (i) PrintOut(context, outputFile, ", ");
+				Variable *param = proc.parameters[i];
+				String type = IRTypeInfoToStr(ASTTypeToIRTypeInfo(context, param->type));
+				PrintOut(context, outputFile, "%.*s %.*s", type.size, type.data, param->name.size,
+						param->name.data);
+			}
+			if (proc.isVarargs)
+				PrintOut(context, outputFile, ", ...");
+			PrintOut(context, outputFile, ");\n");
+		}
+		else
+		{
+			String signature = GetProcedureSignature(proc);
+			PrintOut(context, outputFile, "%.*s;\n", signature.size, signature.data);
+		}
 	}
 
 	PrintOut(context, outputFile, "\n");

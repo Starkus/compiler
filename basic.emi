@@ -1,0 +1,6 @@
+printf :: external (format : ^u8, ...);
+
+Print :: (string : String)
+{
+	printf(string.data);
+}

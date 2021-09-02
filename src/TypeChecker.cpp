@@ -347,7 +347,6 @@ ReturnCheckResult CheckIfReturnsValue(Context *context, ASTExpression *expressio
 			if (statementResult > result)
 			{
 				result = statementResult;
-				break;
 			}
 		}
 		return result;
@@ -383,9 +382,7 @@ void TypeCheckExpression(Context *context, ASTExpression *expression)
 		PushTCScope(context);
 
 		for (int i = 0; i < expression->block.statements.size; ++i)
-		{
 			TypeCheckExpression(context, &expression->block.statements[i]);
-		}
 
 		PopTCScope(context);
 	} break;
@@ -496,6 +493,10 @@ void TypeCheckExpression(Context *context, ASTExpression *expression)
 		Type type = expression->returnNode.expression->type;
 		if (!CheckTypesMatch(context, type, context->currentReturnType))
 			PrintError(context, expression->any.loc, "Incorrect return type"_s);
+	} break;
+	case ASTNODETYPE_DEFER:
+	{
+		TypeCheckExpression(context, expression->deferNode.expression);
 	} break;
 	case ASTNODETYPE_VARIABLE:
 	{

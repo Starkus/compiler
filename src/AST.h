@@ -109,6 +109,11 @@ struct ASTReturn : ASTBase
 	ASTExpression *expression;
 };
 
+struct ASTDefer : ASTBase
+{
+	ASTExpression *expression;
+};
+
 struct ASTStruct : ASTBase
 {
 	String name;
@@ -137,7 +142,8 @@ enum ASTNodeType
 	ASTNODETYPE_IF,
 	ASTNODETYPE_WHILE,
 	ASTNODETYPE_BREAK,
-	ASTNODETYPE_RETURN
+	ASTNODETYPE_RETURN,
+	ASTNODETYPE_DEFER
 };
 struct ASTExpression
 {
@@ -156,6 +162,7 @@ struct ASTExpression
 		ASTIf ifNode;
 		ASTWhile whileNode;
 		ASTReturn returnNode;
+		ASTDefer deferNode;
 		ASTStruct structNode;
 	};
 

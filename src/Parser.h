@@ -23,6 +23,7 @@ enum TokenType
 	TOKEN_KEYWORD_BREAK,
 	TOKEN_KEYWORD_STRUCT,
 	TOKEN_KEYWORD_EXTERNAL,
+	TOKEN_KEYWORD_DEFER,
 	TOKEN_KEYWORD_END,
 
 	TOKEN_ASCII_BEGIN = '!', // 33
@@ -69,6 +70,7 @@ struct SourceLocation
 	s64 line;
 	s64 character;
 	s64 size;
+	const u8 *fileBuffer; // @Improve: reference to file records instead of having both file name and buffer in all tokens
 };
 
 struct Token

@@ -1,6 +1,5 @@
 memset :: external (dst : ^void, src : ^void, num : u64);
 OutputDebugStringA :: external (message : ^u8);
-printf :: external (format : ^u8, ...);
 
 main :: () -> s64
 {

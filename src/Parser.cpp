@@ -165,6 +165,18 @@ bool TryParseBinaryOperation(Context *context, ASTExpression leftHand, s32 prevP
 		return true;
 	} break;
 	case TOKEN_OP_ASSIGNMENT:
+	{
+		result->leftHand = NewTreeNode(context);
+		*result->leftHand = leftHand;
+
+		result->op = TOKEN_OP_ASSIGNMENT;
+		Advance(context);
+
+		result->rightHand = NewTreeNode(context);
+		*result->rightHand = ParseExpression(context, -1);
+
+		return true;
+	} break;
 	case TOKEN_OP_EQUALS:
 	case TOKEN_OP_GREATER_THAN:
 	case TOKEN_OP_GREATER_THAN_OR_EQUAL:
@@ -546,8 +558,7 @@ ASTExpression ParseStatement(Context *context)
 		DynamicArrayInit(&result.block.statements, 512);
 		while (context->token->type != '}')
 		{
-			ASTExpression statement = ParseStatement(context);
-			*DynamicArrayAdd(&result.block.statements) = statement;
+			*DynamicArrayAdd(&result.block.statements) = ParseStatement(context);
 		}
 		Advance(context);
 	} break;
@@ -581,6 +592,18 @@ ASTExpression ParseStatement(Context *context)
 		result.nodeType = ASTNODETYPE_RETURN;
 		result.returnNode.expression = NewTreeNode(context);
 		*result.returnNode.expression = ParseExpression(context, -1);
+
+		AssertToken(context, context->token, ';');
+		Advance(context);
+	} break;
+	case TOKEN_KEYWORD_DEFER:
+	{
+		Advance(context);
+
+		result.any.loc = context->token->loc;
+		result.nodeType = ASTNODETYPE_DEFER;
+		result.deferNode.expression = NewTreeNode(context);
+		*result.deferNode.expression = ParseExpression(context, -1);
 
 		AssertToken(context, context->token, ';');
 		Advance(context);
@@ -626,6 +649,66 @@ ASTExpression ParseStatement(Context *context)
 	return result;
 }
 
+ASTExpression ParseStaticStatement(Context *context)
+{
+	ASTExpression result = {};
+
+	switch (context->token->type)
+	{
+	case '{':
+	{
+		result.nodeType = ASTNODETYPE_BLOCK;
+
+		Advance(context);
+		DynamicArrayInit(&result.block.statements, 512);
+		while (context->token->type != '}')
+		{
+			*DynamicArrayAdd(&result.block.statements) = ParseStaticStatement(context);
+		}
+		Advance(context);
+	} break;
+	default:
+	{
+		if ((context->token + 1)->type == TOKEN_OP_STATIC_DEF)
+		{
+			if ((context->token + 2)->type == '(' || (context->token + 2)->type == TOKEN_KEYWORD_EXTERNAL)
+			{
+				result.nodeType = ASTNODETYPE_PROCEDURE_DECLARATION;
+				result.procedureDeclaration = ParseProcedureDeclaration(context);
+			}
+			else if ((context->token + 2)->type == TOKEN_KEYWORD_STRUCT)
+			{
+				result.nodeType = ASTNODETYPE_STRUCT_DECLARATION;
+				result.structNode = ParseStruct(context);
+			}
+			else
+			{
+				// @Todo: static constants
+				PrintError(context, context->token->loc, "Unsupported!"_s);
+			}
+		}
+		else if ((context->token + 1)->type == TOKEN_OP_VARIABLE_DECLARATION ||
+				(context->token + 1)->type == TOKEN_OP_VARIABLE_DECLARATION_STATIC)
+		{
+			result.nodeType = ASTNODETYPE_VARIABLE_DECLARATION;
+			result.variableDeclaration = ParseVariableDeclaration(context);
+
+			AssertToken(context, context->token, ';');
+			Advance(context);
+		}
+		else
+		{
+			PrintError(context, context->token->loc, "Invalid expression in static context"_s);
+			result = ParseExpression(context, -1);
+			AssertToken(context, context->token, ';');
+			Advance(context);
+		}
+	} break;
+	}
+
+	return result;
+}
+
 ASTRoot *GenerateSyntaxTree(Context *context)
 {
 	ASTRoot *root = ALLOC(FrameAlloc, ASTRoot);
@@ -638,7 +721,7 @@ ASTRoot *GenerateSyntaxTree(Context *context)
 	context->token = &context->tokens[0];
 	while (context->token->type != TOKEN_END_OF_FILE)
 	{
-		*DynamicArrayAdd(&root->block.statements) = ParseStatement(context);
+		*DynamicArrayAdd(&root->block.statements) = ParseStaticStatement(context);
 	}
 
 	return root;

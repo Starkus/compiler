@@ -292,6 +292,8 @@ Token ReadTokenAndAdvance(Tokenizer *tokenizer)
 			result.type = TOKEN_KEYWORD_STRUCT;
 		else if (TokenIsStr(&result, "external"))
 			result.type = TOKEN_KEYWORD_EXTERNAL;
+		else if (TokenIsStr(&result, "defer"))
+			result.type = TOKEN_KEYWORD_DEFER;
 	}
 	else if (IsNumeric(*tokenizer->cursor))
 	{
@@ -503,10 +505,12 @@ void TokenizeFile(Context *context)
 		Token newToken = ReadTokenAndAdvance(&tokenizer);
 
 		newToken.loc.file = context->filename;
+		newToken.loc.fileBuffer = context->fileBuffer;
 		newToken.loc.size = newToken.size;
-		*BucketArrayAdd(&context->tokens) = newToken;
 
 		if (newToken.type == TOKEN_END_OF_FILE)
 			break;
+
+		*BucketArrayAdd(&context->tokens) = newToken;
 	}
 }

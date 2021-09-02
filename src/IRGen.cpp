@@ -188,13 +188,14 @@ struct IRInstruction
 
 struct IRScope
 {
-	DynamicArray<Variable *, malloc, realloc> variables;
+	DynamicArray<ASTExpression *, malloc, realloc> deferredStatements;
 };
 
 struct IRProcedure
 {
 	String name;
 	bool isExternal;
+	bool isVarargs;
 	Array<Variable *> parameters;
 	BucketArray<IRInstruction, 256, malloc, realloc> instructions;
 	IRTypeInfo returnTypeInfo;
@@ -224,7 +225,7 @@ String NewLabel(Context *context, String prefix)
 void PushIRScope(Context *context)
 {
 	IRScope *newScope = DynamicArrayAdd(&context->irStack);
-	DynamicArrayInit(&newScope->variables, 64);
+	DynamicArrayInit(&newScope->deferredStatements, 4);
 }
 
 void PopIRScope(Context *context)
@@ -454,13 +455,14 @@ IRValue IRGenFromExpression(Context *context, ASTExpression *expression)
 	case ASTNODETYPE_PROCEDURE_DECLARATION:
 	{
 		u64 prevProcedureIdx = context->currentProcedureIdx;
+		u64 prevProcedureStackBase = context->currentProcedureStackBase;
 
 		context->currentProcedureIdx = context->irProcedures.size;
 		IRProcedure *procedure = DynamicArrayAdd(&context->irProcedures);
-
 		*procedure = {};
 		procedure->name = expression->procedureDeclaration.name;
 		procedure->isExternal = expression->procedureDeclaration.isExternal;
+		procedure->isVarargs = expression->procedureDeclaration.isVarargs;
 
 		procedure->returnTypeInfo = ASTTypeToIRTypeInfo(context, expression->type);
 
@@ -470,6 +472,7 @@ IRValue IRGenFromExpression(Context *context, ASTExpression *expression)
 
 		BucketArrayInit(&procedure->instructions);
 
+		context->currentProcedureStackBase = context->irStack.size;
 		PushIRScope(context);
 
 		for (int paramIdx = 0; paramIdx < paramCount; ++paramIdx)
@@ -487,13 +490,23 @@ IRValue IRGenFromExpression(Context *context, ASTExpression *expression)
 
 		PopIRScope(context);
 		context->currentProcedureIdx = prevProcedureIdx;
+		context->currentProcedureStackBase = prevProcedureStackBase;
 	} break;
 	case ASTNODETYPE_BLOCK:
 	{
+		PushIRScope(context);
 		for (int i = 0; i < expression->block.statements.size; ++i)
 		{
 			IRGenFromExpression(context, &expression->block.statements[i]);
 		}
+
+		IRScope *currentScope = &context->irStack[context->irStack.size - 1];
+		for (s64 j = currentScope->deferredStatements.size - 1; j >= 0; --j)
+		{
+			IRGenFromExpression(context, currentScope->deferredStatements[j]);
+		}
+
+		PopIRScope(context);
 	} break;
 	case ASTNODETYPE_VARIABLE_DECLARATION:
 	{
@@ -525,9 +538,6 @@ IRValue IRGenFromExpression(Context *context, ASTExpression *expression)
 		}
 		else
 		{
-			IRScope *stackTop = &context->irStack[context->irStack.size - 1];
-			*DynamicArrayAdd(&stackTop->variables) = varDecl.variable;
-
 			IRInstruction inst = {};
 			inst.type = IRINSTRUCTIONTYPE_VARIABLE_DECLARATION;
 			inst.variableDeclaration.variable = varDecl.variable;
@@ -593,11 +603,9 @@ IRValue IRGenFromExpression(Context *context, ASTExpression *expression)
 				String tempVarName = TPrintF("structByCopy%llu", structByCopyDeclarationUniqueID++);
 				u64 tempVarSize = CalculateTypeSize(context, arg->type);
 				Variable *tempVar = BucketArrayAdd(&context->variables);
+				*tempVar = {};
 				tempVar->name = tempVarName;
 				tempVar->type = arg->type;
-
-				IRScope *stackTop = &context->irStack[context->irStack.size - 1];
-				*DynamicArrayAdd(&stackTop->variables) = tempVar;
 
 				IRInstruction varDeclInst = {};
 				varDeclInst.type = IRINSTRUCTIONTYPE_VARIABLE_DECLARATION;
@@ -738,6 +746,7 @@ IRValue IRGenFromExpression(Context *context, ASTExpression *expression)
 		{
 			IRValue leftValue = IRGenFromExpression(context, leftHand);
 			*AddInstruction(context) = IRInstructionFromAssignment(context, &leftValue, rightHand);
+			result = leftValue;
 		}
 		else
 		{
@@ -886,10 +895,26 @@ IRValue IRGenFromExpression(Context *context, ASTExpression *expression)
 	{
 		IRValue returnValue = IRGenFromExpression(context, expression->returnNode.expression);
 
+		for (s64 i = context->irStack.size - 1; i >= context->currentProcedureStackBase; --i)
+		{
+			IRScope *currentScope = &context->irStack[i];
+			for (s64 j = currentScope->deferredStatements.size - 1; j >= 0; --j)
+				IRGenFromExpression(context, currentScope->deferredStatements[j]);
+		}
+
+		// Clear deferred statements so they don't get added after the return
+		IRScope *stackTop = &context->irStack[context->irStack.size - 1];
+		stackTop->deferredStatements.size = 0;
+
 		IRInstruction inst;
 		inst.type = IRINSTRUCTIONTYPE_RETURN;
 		inst.returnValue = returnValue;
 		*AddInstruction(context) = inst;
+	} break;
+	case ASTNODETYPE_DEFER:
+	{
+		IRScope *stackTop = &context->irStack[context->irStack.size - 1];
+		*DynamicArrayAdd(&stackTop->deferredStatements) = expression->deferNode.expression;
 	} break;
 	}
 	return result;
@@ -996,7 +1021,7 @@ String IRTypeInfoToStr(IRTypeInfo typeInfo)
 {
 	String result = IRTypeToStr(typeInfo.type);
 	if (typeInfo.isPointer)
-		result = TPrintF("%.*s", result.size, result.data);
+		result = StringConcat(result, "*"_s);
 	return result;
 }
 

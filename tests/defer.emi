@@ -1,0 +1,29 @@
+main :: () -> s64
+{
+	Print("Program start\n");
+	foo : s64 = 4;
+	defer Print("I should be at the bottom\n");
+	defer foo = 8;
+
+	innerFunc :: () -> s64
+	{
+		return 8;
+	}
+
+	if (foo == 5)
+	{
+		return 1;
+	}
+
+	bar : s64 = 256;
+	{
+		Print("Entering a scope\n");
+		defer bar = 0;
+		defer Print("Scope defer\n");
+		foo = 7;
+		Print("Leaving scope\n");
+	}
+
+	Print("Program finishing\n");
+	return 0;
+}
