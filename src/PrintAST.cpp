@@ -38,6 +38,8 @@ String OperatorToString(s32 op)
 			return ":"_s;
 		case TOKEN_OP_STATIC_DEF:
 			return "::"_s;
+		case TOKEN_OP_VARARGS:
+			return "..."_s;
 		case TOKEN_OP_AND:
 			return "&&"_s;
 		case TOKEN_OP_OR:

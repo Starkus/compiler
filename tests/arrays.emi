@@ -14,5 +14,10 @@ main :: () -> s64
 	arrayC : 5 s16;
 	arrayAsArgument(arrayC);
 
+	arrayOfPointers : 8 ^u8;
+	asd := arrayOfPointers[2];
+
+	baz := arrayA[arrayB[5]];
+
 	return 0;
 }

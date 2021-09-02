@@ -298,6 +298,8 @@ IRTypeInfo ASTTypeToIRTypeInfo(Context *context, Type astType)
 	case TYPETABLEIDX_VOID:
 		result.type = IRTYPE_VOID;
 		break;
+	default:
+		CRASH;
 	}
 	return result;
 }
@@ -498,10 +500,10 @@ IRValue IRGenFromExpression(Context *context, ASTExpression *expression)
 		ASTVariableDeclaration varDecl = expression->variableDeclaration;
 
 		bool isGlobalScope = context->currentProcedureIdx == U64_MAX;
-		if (isGlobalScope && !varDecl.isStatic)
+		if (isGlobalScope && !varDecl.variable->isStatic)
 			PrintError(context, expression->any.loc, "Global variables have to be static"_s);
 
-		if (varDecl.isStatic)
+		if (varDecl.variable->isStatic)
 		{
 			IRStaticVariable newStaticVar = {};
 			newStaticVar.variable = varDecl.variable;
@@ -792,6 +794,7 @@ IRValue IRGenFromExpression(Context *context, ASTExpression *expression)
 			IRStaticVariable newStaticVar = {};
 			newStaticVar.variable = BucketArrayAdd(&context->variables);
 			newStaticVar.variable->name = TPrintF("staticString%d", stringStaticVarUniqueID++);
+			newStaticVar.variable->type = { TYPETABLEIDX_STRUCT_STRING, 0, 0 };
 			newStaticVar.typeInfo.type = IRTYPE_STRING;
 			newStaticVar.typeInfo.isPointer = false;
 			newStaticVar.initialValue.valueType = IRVALUETYPE_IMMEDIATE_STRING;
@@ -800,6 +803,7 @@ IRValue IRGenFromExpression(Context *context, ASTExpression *expression)
 
 			result.valueType = IRVALUETYPE_VARIABLE;
 			result.variable = newStaticVar.variable;
+			result.typeInfo = newStaticVar.typeInfo;
 		} break;
 		}
 	} break;
@@ -811,7 +815,7 @@ IRValue IRGenFromExpression(Context *context, ASTExpression *expression)
 		IRGenFromExpression(context, expression->ifNode.body);
 
 		IRInstruction *jumpAfterElse = nullptr;
-		if (expression->ifNode.elseNode)
+		if (expression->ifNode.elseBody)
 			// If we have an else, add a jump instruction here.
 			jumpAfterElse = AddInstruction(context);
 
@@ -827,12 +831,12 @@ IRValue IRGenFromExpression(Context *context, ASTExpression *expression)
 		skipLabelInst->type = IRINSTRUCTIONTYPE_LABEL;
 		skipLabelInst->label = skipLabel;
 
-		if (expression->ifNode.elseNode)
+		if (expression->ifNode.elseBody)
 		{
 			jumpAfterElse->type = IRINSTRUCTIONTYPE_JUMP;
 			jumpAfterElse->jump.label = afterElseLabel;
 
-			IRGenFromExpression(context, expression->ifNode.elseNode);
+			IRGenFromExpression(context, expression->ifNode.elseBody);
 		}
 		IRInstruction *afterElseLabelInst = AddInstruction(context);
 		afterElseLabelInst->type = IRINSTRUCTIONTYPE_LABEL;

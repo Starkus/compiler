@@ -68,6 +68,7 @@ struct TypeInfo
 struct TCProcedure
 {
 	String name;
+	bool isVarargs;
 	bool isExternal;
 	DynamicArray<Variable *, malloc, realloc> parameters;
 	Type returnType;
@@ -355,8 +356,8 @@ ReturnCheckResult CheckIfReturnsValue(Context *context, ASTExpression *expressio
 	{
 		ReturnCheckResult ifStatement = CheckIfReturnsValue(context, expression->ifNode.body);
 		ReturnCheckResult elseStatement = RETURNCHECKRESULT_NEVER;
-		if (expression->ifNode.elseNode)
-			elseStatement = CheckIfReturnsValue(context, expression->ifNode.elseNode);
+		if (expression->ifNode.elseBody)
+			elseStatement = CheckIfReturnsValue(context, expression->ifNode.elseBody);
 
 		if (ifStatement == RETURNCHECKRESULT_ALWAYS && elseStatement == RETURNCHECKRESULT_ALWAYS)
 			return RETURNCHECKRESULT_ALWAYS;
@@ -442,6 +443,7 @@ void TypeCheckExpression(Context *context, ASTExpression *expression)
 
 		TCProcedure procedure;
 		procedure.name = procName;
+		procedure.isVarargs = procDecl->isVarargs;
 		procedure.isExternal = procDecl->isExternal;
 
 		PushTCScope(context);
@@ -547,9 +549,19 @@ void TypeCheckExpression(Context *context, ASTExpression *expression)
 		// Type check arguments
 		s64 neededArguments = procedure->parameters.size;
 		s64 givenArguments  = expression->procedureCall.arguments.size;
-		if (neededArguments != givenArguments)
-			PrintError(context, expression->any.loc, TPrintF("Procedure \"%.*s\" has %d arguments but %d were given",
-						procName.size, procName.data, neededArguments, givenArguments));
+		if (procedure->isVarargs)
+		{
+			if (neededArguments > givenArguments)
+				PrintError(context, expression->any.loc,
+						TPrintF("Procedure \"%.*s\" needs at least %d arguments but only %d were given",
+							procName.size, procName.data, neededArguments, givenArguments));
+		}
+		else
+		{
+			if (neededArguments != givenArguments)
+				PrintError(context, expression->any.loc, TPrintF("Procedure \"%.*s\" has %d arguments but %d were given",
+							procName.size, procName.data, neededArguments, givenArguments));
+		}
 
 		for (int argIdx = 0; argIdx < neededArguments; ++argIdx)
 		{
@@ -622,6 +634,7 @@ void TypeCheckExpression(Context *context, ASTExpression *expression)
 		else if (expression->binaryOperation.op == TOKEN_OP_ARRAY_ACCESS)
 		{
 			TypeCheckExpression(context, expression->binaryOperation.leftHand);
+			TypeCheckExpression(context, expression->binaryOperation.rightHand);
 			Type leftSideType  = expression->binaryOperation.leftHand->type;
 			if (leftSideType.arrayCount == 0)
 				PrintError(context, expression->any.loc, "Expression does not evaluate to an array"_s);
@@ -674,6 +687,9 @@ void TypeCheckExpression(Context *context, ASTExpression *expression)
 			PrintError(context, expression->any.loc, "If condition doesn't evaluate to a boolean"_s);
 
 		TypeCheckExpression(context, expression->ifNode.body);
+
+		if (expression->ifNode.elseBody)
+			TypeCheckExpression(context, expression->ifNode.elseBody);
 	} break;
 	case ASTNODETYPE_WHILE:
 	{

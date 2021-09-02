@@ -15,6 +15,7 @@ void Log(const char *format, ...);
 
 Memory *g_memory;
 HANDLE g_hStdout;
+HANDLE g_hStderr;
 
 void Log(const char *format, ...)
 {
@@ -29,6 +30,20 @@ void Log(const char *format, ...)
 	// Stdout
 	DWORD bytesWritten;
 	WriteFile(g_hStdout, buffer, (DWORD)strlen(buffer), &bytesWritten, nullptr);
+
+	va_end(args);
+}
+
+void LogError(const char *format, ...)
+{
+	char *buffer = (char *)g_memory->framePtr;
+
+	va_list args;
+	va_start(args, format);
+
+	stbsp_vsprintf(buffer, format, args);
+	DWORD bytesWritten;
+	WriteFile(g_hStderr, buffer, (DWORD)strlen(buffer), &bytesWritten, nullptr);
 
 	va_end(args);
 }
@@ -52,6 +67,11 @@ const String TPrintF(const char *format, ...)
 #include "Parser.h"
 #include "AST.h"
 
+struct Config
+{
+	bool silent;
+};
+
 struct Token;
 struct ASTRoot;
 struct ASTExpression;
@@ -62,6 +82,8 @@ struct IRStaticVariable;
 struct IRScope;
 struct Context
 {
+	Config config;
+
 	String filename;
 	u8 *fileBuffer;
 	u64 fileSize;
@@ -93,7 +115,7 @@ struct Context
 
 inline void PrintError(Context *context, SourceLocation loc, const String errorStr)
 {
-	Log("ERROR! %.*s %d:%d\n... %.*s\n", loc.file.size, loc.file.data, loc.line, loc.character,
+	LogError("ERROR! %.*s %d:%d\n... %.*s\n", loc.file.size, loc.file.data, loc.line, loc.character,
 			errorStr.size, errorStr.data);
 
 	// Print line
@@ -222,11 +244,10 @@ bool Win32ReadEntireFile(const char *filename, u8 **fileBuffer, u64 *fileSize, v
 int main(int argc, char **argv)
 {
 	g_hStdout = GetStdHandle(STD_OUTPUT_HANDLE);
+	g_hStderr = GetStdHandle(STD_ERROR_HANDLE);
 
-	if (argc != 2)
+	if (argc < 2)
 		return 1;
-
-	const char *filename = argv[1];
 
 	// Allocate memory
 	Memory memory;
@@ -235,8 +256,22 @@ int main(int argc, char **argv)
 	MemoryInit(&memory);
 
 	Context context = {};
-	context.filename = CStrToString(filename);
 	BucketArrayInit(&context.tokens);
+
+	const char *filename = nullptr;
+	for (int argIdx = 1; argIdx < argc; ++argIdx)
+	{
+		char *arg = argv[argIdx];
+		if (arg[0] == '-')
+		{
+			if (strcmp("-silent", arg) == 0)
+				context.config.silent = true;
+		}
+		else
+			filename = arg;
+	}
+	ASSERT(filename);
+	context.filename = CStrToString(filename);
 
 	Win32ReadEntireFile(filename, &context.fileBuffer, &context.fileSize, FrameAlloc);
 
@@ -244,14 +279,16 @@ int main(int argc, char **argv)
 
 	GenerateSyntaxTree(&context);
 #if PRINT_AST_TREE
-	PrintAST(&context);
+	if (!context.config.silent)
+		PrintAST(&context);
 #endif
 
 	TypeCheckMain(&context);
 
 	IRGenMain(&context);
 #if PRINT_IR
-	PrintIRInstructions(&context);
+	if (!context.config.silent)
+		PrintIRInstructions(&context);
 #endif
 
 	WriteToC(&context);

@@ -1,5 +1,6 @@
 memset :: external (dst : ^void, src : ^void, num : u64);
 OutputDebugStringA :: external (message : ^u8);
+printf :: external (format : ^u8, ...);
 
 main :: () -> s64
 {
@@ -9,6 +10,9 @@ main :: () -> s64
 
 	message := "Hello, Sailor!\0";
 	OutputDebugStringA(message.data);
+
+	format : String = "Hello, the number is %d";
+	printf(format.data, 8);
 
 	return 0;
 }

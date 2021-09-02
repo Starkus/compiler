@@ -48,6 +48,8 @@ const String TokenTypeToString(s32 type)
 		return "< :s >"_s;
 	case TOKEN_OP_STATIC_DEF:
 		return "< :: >"_s;
+	case TOKEN_OP_VARARGS:
+		return "< ... >"_s;
 
 	case TOKEN_END_OF_FILE:
 		return "<EOF>"_s;
@@ -462,7 +464,13 @@ Token ReadTokenAndAdvance(Tokenizer *tokenizer)
 		} break;
 		case '.':
 		{
-			result.type = TOKEN_OP_MEMBER_ACCESS;
+			if (next == '.' && *(tokenizer->cursor + 2) == '.')
+			{
+				result.type = TOKEN_OP_VARARGS;
+				tokenizer->cursor += 2;
+			}
+			else
+				result.type = TOKEN_OP_MEMBER_ACCESS;
 		} break;
 		default:
 		{

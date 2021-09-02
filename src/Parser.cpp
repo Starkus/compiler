@@ -7,6 +7,7 @@ struct Variable
 	String name;
 	Type type;
 	bool isParameter;
+	bool isStatic;
 
 	// Back end
 	u64 stackOffset;
@@ -147,6 +148,22 @@ bool TryParseBinaryOperation(Context *context, ASTExpression leftHand, s32 prevP
 			return true;
 		}
 	} break;
+	case TOKEN_OP_ARRAY_ACCESS:
+	{
+		result->leftHand = NewTreeNode(context);
+		*result->leftHand = leftHand;
+
+		result->op = TOKEN_OP_ARRAY_ACCESS;
+		Advance(context);
+
+		result->rightHand = NewTreeNode(context);
+		*result->rightHand = ParseExpression(context, -1);
+
+		AssertToken(context, context->token, ']');
+		Advance(context);
+
+		return true;
+	} break;
 	case TOKEN_OP_ASSIGNMENT:
 	case TOKEN_OP_EQUALS:
 	case TOKEN_OP_GREATER_THAN:
@@ -158,7 +175,6 @@ bool TryParseBinaryOperation(Context *context, ASTExpression leftHand, s32 prevP
 	case TOKEN_OP_MULTIPLY:
 	case TOKEN_OP_DIVIDE:
 	case TOKEN_OP_MEMBER_ACCESS:
-	case TOKEN_OP_ARRAY_ACCESS:
 	{
 		result->leftHand = NewTreeNode(context);
 		*result->leftHand = leftHand;
@@ -168,17 +184,10 @@ bool TryParseBinaryOperation(Context *context, ASTExpression leftHand, s32 prevP
 		Advance(context);
 
 		s32 precedence = GetOperatorPrecedence(op);
-
 		if (precedence > prevPrecedence)
 		{
 			result->rightHand = NewTreeNode(context);
 			*result->rightHand = ParseExpression(context, precedence);
-
-			if (op == TOKEN_OP_ARRAY_ACCESS)
-			{
-				AssertToken(context, context->token, ']');
-				Advance(context);
-			}
 
 			return true;
 		}
@@ -214,8 +223,8 @@ ASTIf ParseIf(Context *context)
 	{
 		ifNode.elseLoc = context->token->loc;
 		Advance(context);
-		ifNode.elseNode = NewTreeNode(context);
-		*ifNode.elseNode = ParseStatement(context);
+		ifNode.elseBody = NewTreeNode(context);
+		*ifNode.elseBody = ParseStatement(context);
 	}
 	return ifNode;
 }
@@ -313,7 +322,7 @@ ASTVariableDeclaration ParseVariableDeclaration(Context *context)
 
 	if (context->token->type == TOKEN_OP_VARIABLE_DECLARATION_STATIC)
 	{
-		varDecl.isStatic = true;
+		varDecl.variable->isStatic = true;
 	}
 
 	Advance(context);
@@ -358,11 +367,18 @@ ASTProcedureDeclaration ParseProcedureDeclaration(Context *context)
 	Advance(context);
 	while (context->token->type != ')')
 	{
+		if (context->token->type == TOKEN_OP_VARARGS)
+		{
+			Advance(context);
+			procDecl.isVarargs = true;
+			break;
+		}
+
 		// @Improve: separate node type for procedure parameter?
 		ASTVariableDeclaration parameter = ParseVariableDeclaration(context);
 		parameter.variable->isParameter = true;
 
-		if (parameter.isStatic)
+		if (parameter.variable->isStatic)
 			PrintError(context, context->token->loc, "Procedure parameters can't be static"_s);
 
 		*DynamicArrayAdd(&procDecl.parameters) = parameter;

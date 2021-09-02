@@ -8,4 +8,5 @@ doThings :: (eight : u8, sixteen : u16, thirtytwo : u32)
 main :: () -> s64
 {
 	doThings(8, 16, 32);
+	return 0;
 }

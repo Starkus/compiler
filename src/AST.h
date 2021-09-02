@@ -58,7 +58,6 @@ struct ASTVariableDeclaration : ASTBase
 {
 	String typeName;
 	ASTExpression *value;
-	bool isStatic;
 
 	Variable *variable;
 };
@@ -83,6 +82,7 @@ struct ASTProcedureDeclaration : ASTBase
 {
 	String name;
 	String returnTypeName;
+	bool isVarargs;
 	bool isExternal;
 	DynamicArray<ASTVariableDeclaration, malloc, realloc> parameters;
 	ASTExpression *body;
@@ -94,7 +94,7 @@ struct ASTIf : ASTBase
 {
 	ASTExpression *condition;
 	ASTExpression *body;
-	ASTExpression *elseNode;
+	ASTExpression *elseBody;
 	SourceLocation elseLoc;
 };
 
