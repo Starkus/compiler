@@ -60,8 +60,8 @@ void PrintIRInstructions(Context *context)
 			}
 			else if (inst.type == IRINSTRUCTIONTYPE_VARIABLE_DECLARATION)
 			{
-				Log("%.*s : %d bytes", inst.variableDeclaration.name.size, inst.variableDeclaration.name.data,
-						inst.variableDeclaration.size);
+				Variable *var = inst.variableDeclaration.variable;
+				Log("variable %.*s", var->name.size, var->name.data);
 			}
 			else if (inst.type == IRINSTRUCTIONTYPE_ASSIGNMENT)
 			{
@@ -77,6 +77,15 @@ void PrintIRInstructions(Context *context)
 				Log(" -> offset(%.*s::%.*s)",
 						inst.memberAccess.structName.size, inst.memberAccess.structName.data,
 						inst.memberAccess.memberName.size, inst.memberAccess.memberName.data);
+			}
+			else if (inst.type == IRINSTRUCTIONTYPE_ARRAY_ACCESS)
+			{
+				PrintIRValue(inst.arrayAccess.out);
+				Log(" = ");
+				PrintIRValue(inst.arrayAccess.left);
+				Log("[");
+				PrintIRValue(inst.arrayAccess.right);
+				Log("]");
 			}
 			else if (inst.type >= IRINSTRUCTIONTYPE_UNARY_BEGIN && inst.type < IRINSTRUCTIONTYPE_UNARY_END)
 			{
@@ -94,6 +103,10 @@ void PrintIRInstructions(Context *context)
 				PrintIRInstructionOperator(inst);
 				Log(" ");
 				PrintIRValue(inst.binaryOperation.right);
+			}
+			else
+			{
+				Log("???INST");
 			}
 			Log("\n");
 		}

@@ -1,3 +1,29 @@
+s64 CalculateTypeSize(Context *context, s64 typeTableIdx)
+{
+	ASSERT(typeTableIdx >= 0);
+	TypeInfo *typeInfo  = &context->typeTable[typeTableIdx];
+
+	switch (typeInfo->typeCategory)
+	{
+	case TYPECATEGORY_INTEGER:
+		return typeInfo->integerInfo.size;
+
+	case TYPECATEGORY_FLOATING:
+		return typeInfo->floatingInfo.size;
+
+	case TYPECATEGORY_STRUCT:
+		return typeInfo->structInfo.size;
+
+	case TYPECATEGORY_POINTER:
+		return 8;
+
+	case TYPECATEGORY_ARRAY:
+		return CalculateTypeSize(context, typeInfo->arrayInfo.elementTypeTableIdx) * typeInfo->arrayInfo.count;
+	}
+
+	return 0;
+}
+
 String IRValueToStr(Context *context, IRValue value)
 {
 	String result = "???"_s;
@@ -35,13 +61,17 @@ String IRValueToStr(Context *context, IRValue value)
 					value.variable->stackOffset);
 		}
 	}
-	else if (value.valueType == IRVALUETYPE_IMMEDIATE)
+	else if (value.valueType == IRVALUETYPE_IMMEDIATE_INTEGER)
 	{
 		result = TPrintF("0x%x", value.immediate);
 	}
 	else if (value.valueType == IRVALUETYPE_IMMEDIATE_FLOAT)
 	{
 		result = TPrintF("%f", value.immediateFloat);
+	}
+	else if (value.valueType == IRVALUETYPE_SIZEOF)
+	{
+		result = TPrintF("%llu", CalculateTypeSize(context, value.sizeOfTypeTableIdx));
 	}
 
 	if (printTypeMemberAccess)
@@ -65,7 +95,7 @@ String IRValueToStrAsRegister(Context *context, IRValue value)
 	{
 		String result = IRValueToStr(context, value);
 
-		if (value.valueType == IRVALUETYPE_IMMEDIATE)
+		if (value.valueType == IRVALUETYPE_IMMEDIATE_INTEGER)
 			result = TPrintF("FromU64(%.*s)", result.size, result.data);
 		else if (value.valueType == IRVALUETYPE_IMMEDIATE_FLOAT)
 			result = TPrintF("FromF64(%.*s)", result.size, result.data);
@@ -162,6 +192,23 @@ void WriteToC(Context *context)
 
 	PrintOut(context, outputFile, "#include \"emi.c\"\n\n");
 
+	// Calculate size of structs
+	u64 tableSize = BucketArrayCount(&context->typeTable);
+	for (int typeInfoIdx = 0; typeInfoIdx < tableSize; ++typeInfoIdx)
+	{
+		TypeInfo *typeInfo = &context->typeTable[typeInfoIdx];
+		if (typeInfo->typeCategory != TYPECATEGORY_STRUCT)
+			continue;
+
+		typeInfo->structInfo.size = 0;
+		for (int i = 0; i < typeInfo->structInfo.members.size; ++i)
+		{
+			StructMember *member = &typeInfo->structInfo.members[i];
+			member->offset = typeInfo->structInfo.size;
+			typeInfo->structInfo.size += CalculateTypeSize(context, member->typeTableIdx);
+		}
+	}
+
 	const u64 staticVariableCount = context->irStaticVariables.size;
 	for (int staticVariableIdx = 0; staticVariableIdx < staticVariableCount; ++staticVariableIdx)
 	{
@@ -178,7 +225,7 @@ void WriteToC(Context *context)
 				staticVar.variable->name.data);
 		if (staticVar.initialValue.valueType != IRVALUETYPE_INVALID)
 		{
-			if (staticVar.initialValue.valueType == IRVALUETYPE_IMMEDIATE)
+			if (staticVar.initialValue.valueType == IRVALUETYPE_IMMEDIATE_INTEGER)
 			{
 				PrintOut(context, outputFile, " = 0x%x", staticVar.initialValue.immediate);
 			}
@@ -219,7 +266,7 @@ void WriteToC(Context *context)
 			{
 				if (i) PrintOut(context, outputFile, ", ");
 				Variable *param = proc.parameters[i];
-				String type = IRTypeInfoToStr(ASTTypeToIRTypeInfo(context, param->type));
+				String type = IRTypeInfoToStr(TypeToIRTypeInfo(context, param->typeTableIdx));
 				PrintOut(context, outputFile, "%.*s %.*s", type.size, type.data, param->name.size,
 						param->name.data);
 			}
@@ -255,13 +302,14 @@ void WriteToC(Context *context)
 			IRInstruction inst = proc.instructions[instructionIdx];
 			if (inst.type == IRINSTRUCTIONTYPE_VARIABLE_DECLARATION)
 			{
-				stackSize += inst.variableDeclaration.size;
+				stackSize += CalculateTypeSize(context,
+						inst.variableDeclaration.variable->typeTableIdx);
 			}
 		}
 		stackCursor = stackSize;
 
 		if (stackSize)
-			PrintOut(context, outputFile, "u8 stack[%d];\n", stackSize);
+			PrintOut(context, outputFile, "u8 stack[0x%x];\n", stackSize);
 
 		// Declare registers
 		if (proc.registerCount)
@@ -290,12 +338,13 @@ void WriteToC(Context *context)
 			if (inst.type == IRINSTRUCTIONTYPE_VARIABLE_DECLARATION)
 			{
 				Variable *var = inst.variableDeclaration.variable;
-				stackCursor -= inst.variableDeclaration.size;
+				u64 size = CalculateTypeSize(context,
+						inst.variableDeclaration.variable->typeTableIdx);
+				stackCursor -= size;
 				var->stackOffset = stackCursor;
 
 				PrintOut(context, outputFile, "/* Declare variable '%.*s' at stack + 0x%x (size %d) */\n",
-						var->name.size, var->name.data, var->stackOffset,
-						inst.variableDeclaration.size);
+						var->name.size, var->name.data, var->stackOffset, size);
 			}
 			else if (inst.type >= IRINSTRUCTIONTYPE_UNARY_BEGIN && inst.type < IRINSTRUCTIONTYPE_UNARY_END)
 			{
@@ -324,7 +373,7 @@ void WriteToC(Context *context)
 			{
 				// Compute struct offset
 				TypeInfo *typeInfo  = nullptr;
-				for (int i = 0; i < context->typeTable.size; ++i)
+				for (int i = 0; i < tableSize; ++i)
 				{
 					TypeInfo *currentTypeInfo  = &context->typeTable[i];
 					if (currentTypeInfo->typeCategory == TYPECATEGORY_STRUCT &&
@@ -357,14 +406,9 @@ void WriteToC(Context *context)
 				String out = IRValueToStr(context, inst.arrayAccess.out);
 				String array = IRValueToStr(context, inst.arrayAccess.left);
 				String index = IRValueToStr(context, inst.arrayAccess.right);
-				String cast;
-				if (inst.arrayAccess.out.typeInfo.isPointer)
-					cast = "ptr"_s;
-				else
-					cast = IRTypeInfoToStr(inst.arrayAccess.out.typeInfo);
-				PrintOut(context, outputFile, "%.*s = *(%.*s*)(((u8*)&(%.*s)) + %.*s * %llu);\n", out.size, out.data,
-						cast.size, cast.data,
-						array.size, array.data, index.size, index.data, inst.arrayAccess.elementSize);
+				u64 elementSize = CalculateTypeSize(context, inst.arrayAccess.elementTypeTableIdx);
+				PrintOut(context, outputFile, "%.*s = (((u8*)&(%.*s)) + %.*s * %llu);\n", out.size, out.data,
+						array.size, array.data, index.size, index.data, elementSize);
 			}
 			else if (inst.type == IRINSTRUCTIONTYPE_PROCEDURE_CALL)
 			{
@@ -415,8 +459,9 @@ void WriteToC(Context *context)
 			{
 				String src = IRValueToStrAsRegister(context, inst.memcpy.src);
 				String dst = IRValueToStrAsRegister(context, inst.memcpy.dst);
-				PrintOut(context, outputFile, "memcpy(%.*s, %.*s, %llu);\n", dst.size, dst.data, src.size,
-						src.data, inst.memcpy.size);
+				String size = IRValueToStrAsRegister(context, inst.memcpy.size);
+				PrintOut(context, outputFile, "memcpy(%.*s, %.*s, %.*s);\n", dst.size, dst.data, src.size,
+						src.data, size.size, size.data);
 			}
 		}
 		PrintOut(context, outputFile, "}\n\n");

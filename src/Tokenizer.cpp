@@ -110,10 +110,10 @@ s32 GetOperatorPrecedence(s32 op)
 		case TOKEN_OP_NOT:
 		case TOKEN_OP_BITWISE_NOT:
 			return 5;
-		case TOKEN_OP_MEMBER_ACCESS:
-			return 6;
 		case TOKEN_OP_POINTER_TO:
 		case TOKEN_OP_DEREFERENCE:
+			return 6;
+		case TOKEN_OP_MEMBER_ACCESS:
 		case TOKEN_OP_ARRAY_ACCESS:
 			return 7;
 	}

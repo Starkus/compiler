@@ -5,9 +5,10 @@ ASTVariableDeclaration ParseVariableDeclaration(Context *context);
 struct Variable
 {
 	String name;
-	Type type;
 	bool isParameter;
 	bool isStatic;
+
+	u64 typeTableIdx;
 
 	// Back end
 	u64 stackOffset;
@@ -22,33 +23,63 @@ void Advance(Context *context)
 	context->token = &context->tokens[context->currentTokenIdx];
 }
 
+String ASTTypeToString(ASTType *type)
+{
+	if (!type)
+		return "<inferred>"_s;
+
+	if (type->nodeType == ASTTYPENODETYPE_IDENTIFIER)
+	{
+		return type->name;
+	}
+	else if (type->nodeType == ASTTYPENODETYPE_POINTER)
+	{
+		return StringConcat("^"_s, ASTTypeToString(type->pointedType));
+	}
+	else if (type->nodeType == ASTTYPENODETYPE_ARRAY)
+	{
+		String typeStr = ASTTypeToString(type->arrayType);
+		return TPrintF("[%d] %.*s", type->arrayCount, typeStr.size, typeStr.data);
+	}
+	return "???TYPE"_s;
+}
+
 ASTExpression *NewTreeNode(Context *context)
 {
 	return BucketArrayAdd(&context->treeNodes);
 }
 
-Type ParseType(Context *context, String *outTypeName)
+ASTType *NewASTType(Context *context)
 {
-	*outTypeName = {};
-	Type result = {};
+	return BucketArrayAdd(&context->astTypeNodes);
+}
+
+ASTType *ParseType(Context *context)
+{
+	ASTType *result = NewASTType(context);
+	result->loc = context->token->loc;
 
 	if (context->token->type == TOKEN_LITERAL_NUMBER)
 	{
-		result.arrayCount = IntFromString(context->token->string);
+		result->nodeType = ASTTYPENODETYPE_ARRAY;
+		result->arrayCount = IntFromString(context->token->string);
 		Advance(context);
+		result->pointedType = ParseType(context);
 	}
-
-	while (context->token->type == TOKEN_OP_POINTER_TO)
+	else if (context->token->type == TOKEN_OP_POINTER_TO)
 	{
-		++result.pointerLevels;
+		Advance(context);
+		result->nodeType = ASTTYPENODETYPE_POINTER;
+		result->pointedType = ParseType(context);
+	}
+	else
+	{
+		Token *nameToken = context->token;
+		AssertToken(context, nameToken, TOKEN_IDENTIFIER);
+		result->nodeType = ASTTYPENODETYPE_IDENTIFIER;
+		result->name = nameToken->string;
 		Advance(context);
 	}
-
-	Token *nameToken = context->token;
-
-	AssertToken(context, nameToken, TOKEN_IDENTIFIER);
-	*outTypeName = nameToken->string;
-	Advance(context);
 
 	return result;
 }
@@ -172,10 +203,15 @@ bool TryParseBinaryOperation(Context *context, ASTExpression leftHand, s32 prevP
 		result->op = TOKEN_OP_ASSIGNMENT;
 		Advance(context);
 
-		result->rightHand = NewTreeNode(context);
-		*result->rightHand = ParseExpression(context, -1);
+		s32 precedence = GetOperatorPrecedence(TOKEN_OP_ASSIGNMENT);
+		// Greater or equal here so assignments are evaluated right to left when chained.
+		if (precedence >= prevPrecedence)
+		{
+			result->rightHand = NewTreeNode(context);
+			*result->rightHand = ParseExpression(context, precedence);
 
-		return true;
+			return true;
+		}
 	} break;
 	case TOKEN_OP_EQUALS:
 	case TOKEN_OP_GREATER_THAN:
@@ -272,8 +308,7 @@ ASTStructMember ParseStructMember(Context *context)
 
 	if (context->token->type != TOKEN_OP_ASSIGNMENT)
 	{
-		Type type = ParseType(context, &structMem.typeName);
-		structMem.type = type;
+		structMem.astType = ParseType(context);
 	}
 
 	if (context->token->type == TOKEN_OP_ASSIGNMENT)
@@ -288,6 +323,8 @@ ASTStructMember ParseStructMember(Context *context)
 
 ASTStruct ParseStruct(Context *context)
 {
+	SourceLocation loc = context->token->loc;
+
 	AssertToken(context, context->token, TOKEN_IDENTIFIER);
 	String name = context->token->string;
 	Advance(context);
@@ -299,6 +336,7 @@ ASTStruct ParseStruct(Context *context)
 	Advance(context);
 
 	ASTStruct structNode = {};
+	structNode.loc = loc;
 	structNode.name = name;
 	DynamicArrayInit(&structNode.members, 16);
 
@@ -341,8 +379,7 @@ ASTVariableDeclaration ParseVariableDeclaration(Context *context)
 
 	if (context->token->type != TOKEN_OP_ASSIGNMENT)
 	{
-		Type type = ParseType(context, &varDecl.typeName);
-		varDecl.variable->type = type;
+		varDecl.astType = ParseType(context);
 	}
 
 	if (context->token->type == TOKEN_OP_ASSIGNMENT)
@@ -406,13 +443,11 @@ ASTProcedureDeclaration ParseProcedureDeclaration(Context *context)
 	if (context->token->type == TOKEN_OP_ARROW)
 	{
 		Advance(context);
-
-		Type type = ParseType(context, &procDecl.returnTypeName);
-		procDecl.returnType = type;
+		procDecl.astReturnType = ParseType(context);
 	}
 	else
 	{
-		procDecl.returnTypeName = {};
+		procDecl.astReturnType = nullptr;
 	}
 
 	if (context->token->type == ';')
@@ -715,6 +750,7 @@ ASTRoot *GenerateSyntaxTree(Context *context)
 	context->astRoot = root;
 	DynamicArrayInit(&root->block.statements, 4096);
 	BucketArrayInit(&context->treeNodes);
+	BucketArrayInit(&context->astTypeNodes);
 	BucketArrayInit(&context->variables);
 
 	context->currentTokenIdx = 0;

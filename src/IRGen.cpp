@@ -3,9 +3,10 @@ enum IRValueType
 	IRVALUETYPE_INVALID = -1,
 	IRVALUETYPE_REGISTER,
 	IRVALUETYPE_VARIABLE,
-	IRVALUETYPE_IMMEDIATE,
+	IRVALUETYPE_IMMEDIATE_INTEGER,
 	IRVALUETYPE_IMMEDIATE_FLOAT,
-	IRVALUETYPE_IMMEDIATE_STRING
+	IRVALUETYPE_IMMEDIATE_STRING,
+	IRVALUETYPE_SIZEOF
 };
 enum IRType
 {
@@ -46,6 +47,7 @@ struct IRValue
 		s64 immediate;
 		f64 immediateFloat;
 		String immediateString;
+		u64 sizeOfTypeTableIdx;
 	};
 	IRTypeInfo typeInfo;
 	IRPointerType pointerType;
@@ -89,7 +91,7 @@ struct IRArrayAccess
 	IRValue left;
 	IRValue right;
 	IRValue out;
-	u64 elementSize;
+	s64 elementTypeTableIdx;
 };
 
 struct IRUnaryOperation
@@ -120,14 +122,13 @@ struct IRSetParameter
 struct IRVariableDeclaration
 {
 	Variable *variable;
-	s64 size;
 };
 
 struct IRIntrinsicMemcpy
 {
 	IRValue src;
 	IRValue dst;
-	u64 size;
+	IRValue size;
 };
 
 enum IRInstructionType
@@ -233,74 +234,70 @@ void PopIRScope(Context *context)
 	--context->irStack.size;
 }
 
-s64 CalculateTypeSize(Context *context, Type type)
-{
-	ASSERT(type.typeTableIdx >= 0);
-
-	if (type.pointerLevels != 0)
-		return 8;
-
-	TypeInfo *typeInfo  = &context->typeTable[type.typeTableIdx];
-	if (type.arrayCount)
-		return typeInfo->size * type.arrayCount;
-	return typeInfo->size;
-}
-
 inline IRInstruction *AddInstruction(Context *context)
 {
 	return BucketArrayAdd(&context->irProcedures[context->currentProcedureIdx].instructions);
 }
 
-IRTypeInfo ASTTypeToIRTypeInfo(Context *context, Type astType)
+IRTypeInfo TypeToIRTypeInfo(Context *context, s64 typeTableIdx)
 {
-	IRTypeInfo result;
+	IRTypeInfo result = {};
 	result.type = IRTYPE_INVALID;
-	result.isPointer = astType.pointerLevels > 0;
 
-	if (astType.pointerLevels > 1)
-		result.type = IRTYPE_PTR;
-	else if (astType.typeTableIdx >= TYPETABLEIDX_STRUCT_BEGIN)
-		result.type = IRTYPE_STRUCT;
-	else switch (astType.typeTableIdx)
+	if (typeTableIdx == TYPETABLEIDX_VOID)
 	{
-	case TYPETABLEIDX_U8:
-	case TYPETABLEIDX_BOOL:
-		result.type = IRTYPE_U8;
-		break;
-	case TYPETABLEIDX_U16:
-		result.type = IRTYPE_U16;
-		break;
-	case TYPETABLEIDX_U32:
-		result.type = IRTYPE_U32;
-		break;
-	case TYPETABLEIDX_U64:
-		result.type = IRTYPE_U64;
-		break;
-	case TYPETABLEIDX_S8:
-		result.type = IRTYPE_S8;
-		break;
-	case TYPETABLEIDX_S16:
-		result.type = IRTYPE_S16;
-		break;
-	case TYPETABLEIDX_S32:
-		result.type = IRTYPE_S32;
-		break;
-	case TYPETABLEIDX_S64:
-	case TYPETABLEIDX_NUMBER:
-		result.type = IRTYPE_S64;
-		break;
-	case TYPETABLEIDX_F32:
-	case TYPETABLEIDX_FLOATING:
-		result.type = IRTYPE_F32;
-		break;
-	case TYPETABLEIDX_F64:
-		result.type = IRTYPE_F64;
-		break;
-	case TYPETABLEIDX_VOID:
 		result.type = IRTYPE_VOID;
-		break;
-	default:
-		CRASH;
+		return result;
+	}
+	else
+	{
+		TypeInfo *typeInfo = &context->typeTable[typeTableIdx];
+		switch (typeInfo->typeCategory)
+		{
+		case TYPECATEGORY_POINTER:
+		{
+			result.isPointer = true;
+
+			TypeInfo *pointedTypeInfo = &context->typeTable[typeInfo->pointerInfo.pointedTypeTableIdx];
+			if (pointedTypeInfo->typeCategory == TYPECATEGORY_POINTER)
+				result.type = IRTYPE_PTR;
+			else
+				result.type = TypeToIRTypeInfo(context, typeInfo->pointerInfo.pointedTypeTableIdx).type;
+		} break;
+		case TYPECATEGORY_STRUCT:
+		{
+			result.type = IRTYPE_STRUCT;
+		} break;
+		case TYPECATEGORY_ARRAY:
+		{
+			result = TypeToIRTypeInfo(context, typeInfo->arrayInfo.elementTypeTableIdx);
+		} break;
+		case TYPECATEGORY_INTEGER:
+		{
+			if (typeInfo->integerInfo.isSigned) switch (typeInfo->integerInfo.size)
+			{
+				case 1: result.type = IRTYPE_S8; break;
+				case 2: result.type = IRTYPE_S16; break;
+				case 4: result.type = IRTYPE_S32; break;
+				case 8: result.type = IRTYPE_S64; break;
+			}
+			else switch (typeInfo->integerInfo.size)
+			{
+				case 1: result.type = IRTYPE_U8; break;
+				case 2: result.type = IRTYPE_U16; break;
+				case 4: result.type = IRTYPE_U32; break;
+				case 8: result.type = IRTYPE_U64; break;
+			}
+		} break;
+		case TYPECATEGORY_FLOATING:
+		{
+			switch (typeInfo->floatingInfo.size)
+			{
+				case 4: result.type = IRTYPE_F32; break;
+				case 8: result.type = IRTYPE_F64; break;
+			}
+		} break;
+		}
 	}
 	return result;
 }
@@ -323,9 +320,16 @@ IRInstruction IRInstructionFromBinaryOperation(Context *context, ASTExpression *
 		ASSERT(rightHand->nodeType == ASTNODETYPE_VARIABLE);
 		String memberName = rightHand->variable.name;
 
-		Type type = leftHand->type;
-		ASSERT(type.typeTableIdx >= 0);
-		TypeInfo *typeInfo  = &context->typeTable[type.typeTableIdx];
+		s64 typeTableIdx = leftHand->typeTableIdx;
+		ASSERT(typeTableIdx >= 0);
+		TypeInfo *typeInfo  = &context->typeTable[typeTableIdx];
+
+		if (typeInfo->typeCategory == TYPECATEGORY_POINTER)
+		{
+			s64 pointedTypeIdx = typeInfo->pointerInfo.pointedTypeTableIdx;
+			typeInfo = &context->typeTable[pointedTypeIdx];
+		}
+
 		ASSERT(typeInfo->typeCategory == TYPECATEGORY_STRUCT);
 
 		inst.type = IRINSTRUCTIONTYPE_MEMBER_ACCESS;
@@ -335,14 +339,20 @@ IRInstruction IRInstructionFromBinaryOperation(Context *context, ASTExpression *
 	}
 	else if (expression->binaryOperation.op == TOKEN_OP_ARRAY_ACCESS)
 	{
-		Type type = leftHand->type;
-		ASSERT(type.typeTableIdx >= 0);
-		TypeInfo *typeInfo  = &context->typeTable[type.typeTableIdx];
-
 		inst.type = IRINSTRUCTIONTYPE_ARRAY_ACCESS;
 		inst.arrayAccess.left  = IRGenFromExpression(context, leftHand);
 		inst.arrayAccess.right = IRGenFromExpression(context, rightHand);
-		inst.arrayAccess.elementSize = typeInfo->size;
+
+		TypeInfo *arrayTypeInfo = &context->typeTable[leftHand->typeTableIdx];
+		if (arrayTypeInfo->typeCategory == TYPECATEGORY_POINTER)
+		{
+			s64 pointedTypeIdx = arrayTypeInfo->pointerInfo.pointedTypeTableIdx;
+			arrayTypeInfo = &context->typeTable[pointedTypeIdx];
+		}
+
+		ASSERT(arrayTypeInfo->typeCategory == TYPECATEGORY_ARRAY);
+		s64 elementType = arrayTypeInfo->arrayInfo.elementTypeTableIdx;
+		inst.arrayAccess.elementTypeTableIdx = elementType;
 	}
 	else
 	{
@@ -399,17 +409,20 @@ IRInstruction IRInstructionFromBinaryOperation(Context *context, ASTExpression *
 
 IRInstruction IRInstructionFromAssignment(Context *context, IRValue *leftValue, ASTExpression *rightHand)
 {
-	if (rightHand->type.typeTableIdx >= TYPETABLEIDX_STRUCT_BEGIN &&
-			rightHand->type.pointerLevels == 0 && rightHand->type.arrayCount == 0)
+	s64 rightType = rightHand->typeTableIdx;
+	ASSERT(rightType > 0);
+	TypeInfo *rightTypeInfo = &context->typeTable[rightType];
+	if (rightTypeInfo->typeCategory == TYPECATEGORY_STRUCT)
 	{
-		TypeInfo *structTypeInfo = &context->typeTable[rightHand->type.typeTableIdx];
-		ASSERT(structTypeInfo);
+		IRValue sizeValue = {};
+		sizeValue.valueType = IRVALUETYPE_SIZEOF;
+		sizeValue.sizeOfTypeTableIdx = rightType;
 
 		IRInstruction inst = {};
 		inst.type = IRINSTRUCTIONTYPE_INTRINSIC_MEMCPY;
 		inst.memcpy.src = IRGenFromExpression(context, rightHand);
 		inst.memcpy.dst = *leftValue;
-		inst.memcpy.size = structTypeInfo->size;
+		inst.memcpy.size = sizeValue;
 
 		// @Cleanup: is this the best way?
 		inst.memcpy.src.pointerType = IRPOINTERTYPE_POINTERTO;
@@ -420,6 +433,7 @@ IRInstruction IRInstructionFromAssignment(Context *context, IRValue *leftValue, 
 #if 1
 	else if (rightHand->nodeType == ASTNODETYPE_BINARY_OPERATION &&
 		rightHand->binaryOperation.op != TOKEN_OP_MEMBER_ACCESS &&
+		rightHand->binaryOperation.op != TOKEN_OP_ARRAY_ACCESS &&
 		rightHand->binaryOperation.op != TOKEN_OP_ASSIGNMENT)
 	{
 		// This is to save a useless intermediate value, we use the assignment of the
@@ -464,7 +478,8 @@ IRValue IRGenFromExpression(Context *context, ASTExpression *expression)
 		procedure->isExternal = expression->procedureDeclaration.isExternal;
 		procedure->isVarargs = expression->procedureDeclaration.isVarargs;
 
-		procedure->returnTypeInfo = ASTTypeToIRTypeInfo(context, expression->type);
+		procedure->returnTypeInfo = TypeToIRTypeInfo(context,
+				expression->procedureDeclaration.returnTypeTableIdx);
 
 		u64 paramCount = expression->procedureDeclaration.parameters.size;
 		ArrayInit(&procedure->parameters, paramCount, malloc);
@@ -520,7 +535,7 @@ IRValue IRGenFromExpression(Context *context, ASTExpression *expression)
 		{
 			IRStaticVariable newStaticVar = {};
 			newStaticVar.variable = varDecl.variable;
-			newStaticVar.typeInfo = ASTTypeToIRTypeInfo(context, varDecl.variable->type);
+			newStaticVar.typeInfo = TypeToIRTypeInfo(context, varDecl.variable->typeTableIdx);
 			newStaticVar.initialValue.valueType = IRVALUETYPE_INVALID;
 
 			// Initial value
@@ -541,7 +556,6 @@ IRValue IRGenFromExpression(Context *context, ASTExpression *expression)
 			IRInstruction inst = {};
 			inst.type = IRINSTRUCTIONTYPE_VARIABLE_DECLARATION;
 			inst.variableDeclaration.variable = varDecl.variable;
-			inst.variableDeclaration.size = CalculateTypeSize(context, varDecl.variable->type);
 			*AddInstruction(context) = inst;
 
 			// Initial value
@@ -550,7 +564,7 @@ IRValue IRGenFromExpression(Context *context, ASTExpression *expression)
 				IRValue leftValue = {};
 				leftValue.valueType = IRVALUETYPE_VARIABLE;
 				leftValue.variable = varDecl.variable;
-				leftValue.typeInfo = ASTTypeToIRTypeInfo(context, varDecl.variable->type);
+				leftValue.typeInfo = TypeToIRTypeInfo(context, varDecl.variable->typeTableIdx);
 				leftValue.pointerType = IRPOINTERTYPE_NONE;
 
 				*AddInstruction(context) = IRInstructionFromAssignment(context, &leftValue, varDecl.value);
@@ -561,9 +575,9 @@ IRValue IRGenFromExpression(Context *context, ASTExpression *expression)
 	{
 		result.valueType = IRVALUETYPE_VARIABLE;
 		Variable *var = expression->variable.variable;
+		TypeInfo *varTypeInfo = &context->typeTable[var->typeTableIdx];
 		result.variable = var;
-		if (var->isParameter && var->type.typeTableIdx >= TYPETABLEIDX_STRUCT_BEGIN &&
-				var->type.pointerLevels == 0)
+		if (var->isParameter && varTypeInfo->typeCategory == TYPECATEGORY_STRUCT)
 		{
 			// Struct parameters by value are pointers!
 			result.typeInfo = { IRTYPE_STRUCT, true };
@@ -571,7 +585,8 @@ IRValue IRGenFromExpression(Context *context, ASTExpression *expression)
 		}
 		else
 		{
-			result.typeInfo = ASTTypeToIRTypeInfo(context, expression->variable.variable->type);
+			result.typeInfo = TypeToIRTypeInfo(context,
+					expression->variable.variable->typeTableIdx);
 			result.pointerType = IRPOINTERTYPE_NONE;
 		}
 	} break;
@@ -589,8 +604,8 @@ IRValue IRGenFromExpression(Context *context, ASTExpression *expression)
 		for (int argIdx = 0; argIdx < expression->procedureCall.arguments.size; ++argIdx)
 		{
 			ASTExpression *arg = &expression->procedureCall.arguments[argIdx];
-
-			if (arg->type.typeTableIdx >= TYPETABLEIDX_STRUCT_BEGIN && arg->type.pointerLevels == 0)
+			TypeInfo *argTypeInfo = &context->typeTable[arg->typeTableIdx];
+			if (argTypeInfo->typeCategory == TYPECATEGORY_STRUCT)
 			{
 				// Struct by copy:
 				// Declare a variable in the stack, copy the struct to it, then pass the new
@@ -601,16 +616,14 @@ IRValue IRGenFromExpression(Context *context, ASTExpression *expression)
 
 				// Declare temporal value in the stack
 				String tempVarName = TPrintF("structByCopy%llu", structByCopyDeclarationUniqueID++);
-				u64 tempVarSize = CalculateTypeSize(context, arg->type);
 				Variable *tempVar = BucketArrayAdd(&context->variables);
 				*tempVar = {};
 				tempVar->name = tempVarName;
-				tempVar->type = arg->type;
+				tempVar->typeTableIdx = arg->typeTableIdx;
 
 				IRInstruction varDeclInst = {};
 				varDeclInst.type = IRINSTRUCTIONTYPE_VARIABLE_DECLARATION;
 				varDeclInst.variableDeclaration.variable = tempVar;
-				varDeclInst.variableDeclaration.size = tempVarSize;
 				*AddInstruction(context) = varDeclInst;
 
 				// Memcpy original to temporal
@@ -620,13 +633,17 @@ IRValue IRGenFromExpression(Context *context, ASTExpression *expression)
 				tempVarIRValue.typeInfo = { IRTYPE_STRUCT, false };
 				tempVarIRValue.pointerType = IRPOINTERTYPE_POINTERTO;
 
+				IRValue sizeValue = {};
+				sizeValue.valueType = IRVALUETYPE_SIZEOF;
+				sizeValue.sizeOfTypeTableIdx = arg->typeTableIdx;
+
 				IRInstruction memCpyInst = {};
 				memCpyInst.type = IRINSTRUCTIONTYPE_INTRINSIC_MEMCPY;
 				memCpyInst.memcpy.src = param;
 				memCpyInst.memcpy.src.typeInfo = { IRTYPE_STRUCT, false };
 				memCpyInst.memcpy.src.pointerType = IRPOINTERTYPE_POINTERTO;
 				memCpyInst.memcpy.dst = tempVarIRValue;
-				memCpyInst.memcpy.size = tempVarSize;
+				memCpyInst.memcpy.size = sizeValue;
 				*AddInstruction(context) = memCpyInst;
 
 				// Turn into a register
@@ -664,10 +681,10 @@ IRValue IRGenFromExpression(Context *context, ASTExpression *expression)
 		}
 
 		inst.procedureCall.out.valueType = IRVALUETYPE_INVALID;
-		if (expression->type.typeTableIdx != TYPETABLEIDX_VOID)
+		if (expression->typeTableIdx != TYPETABLEIDX_VOID)
 		{
 			inst.procedureCall.out = NewVirtualRegister(context);
-			inst.procedureCall.out.typeInfo = ASTTypeToIRTypeInfo(context, expression->type);
+			inst.procedureCall.out.typeInfo = TypeToIRTypeInfo(context, expression->typeTableIdx);
 
 			result = inst.procedureCall.out;
 		}
@@ -678,9 +695,17 @@ IRValue IRGenFromExpression(Context *context, ASTExpression *expression)
 	{
 		if (expression->unaryOperation.op == TOKEN_OP_POINTER_TO)
 		{
-			result = IRGenFromExpression(context, expression->unaryOperation.expression);
-			ASSERT(result.valueType == IRVALUETYPE_VARIABLE);
-			result.pointerType = IRPOINTERTYPE_POINTERTO;
+			ASTExpression *right = expression->unaryOperation.expression;
+			result = IRGenFromExpression(context, right);
+
+			if (right->nodeType == ASTNODETYPE_BINARY_OPERATION &&
+					(right->binaryOperation.op == TOKEN_OP_MEMBER_ACCESS ||
+					right->binaryOperation.op == TOKEN_OP_ARRAY_ACCESS))
+				// Member and array access already return a pointer behind de scenes, so just remove
+				// the 'dereference' pointerType.
+				result.pointerType = IRPOINTERTYPE_NONE;
+			else
+				result.pointerType = IRPOINTERTYPE_POINTERTO;
 		}
 		else if (expression->unaryOperation.op == TOKEN_OP_DEREFERENCE)
 		{
@@ -692,7 +717,7 @@ IRValue IRGenFromExpression(Context *context, ASTExpression *expression)
 				inst.type = IRINSTRUCTIONTYPE_ASSIGNMENT;
 
 				// The resulting type
-				IRTypeInfo typeInfo = ASTTypeToIRTypeInfo(context, expression->type);
+				IRTypeInfo typeInfo = TypeToIRTypeInfo(context, expression->typeTableIdx);
 
 				// Source side will be cast to a pointer of resulting type and then dereferenced
 				inst.assignment.src = result;
@@ -719,7 +744,7 @@ IRValue IRGenFromExpression(Context *context, ASTExpression *expression)
 			IRInstruction inst = {};
 			inst.unaryOperation.in  = IRGenFromExpression(context, expression->unaryOperation.expression);
 			inst.unaryOperation.out = NewVirtualRegister(context);
-			inst.unaryOperation.out.typeInfo = ASTTypeToIRTypeInfo(context, expression->type);
+			inst.unaryOperation.out.typeInfo = TypeToIRTypeInfo(context, expression->typeTableIdx);
 
 			switch (expression->unaryOperation.op)
 			{
@@ -758,7 +783,7 @@ IRValue IRGenFromExpression(Context *context, ASTExpression *expression)
 				inst.memberAccess.out.typeInfo = { IRTYPE_PTR, false };
 
 				result = inst.memberAccess.out;
-				result.typeInfo = ASTTypeToIRTypeInfo(context, expression->type);
+				result.typeInfo = TypeToIRTypeInfo(context, expression->typeTableIdx);
 				result.pointerType = IRPOINTERTYPE_DEREFERENCE;
 				if (result.typeInfo.isPointer)
 					result.typeInfo.type = IRTYPE_PTR;
@@ -767,14 +792,20 @@ IRValue IRGenFromExpression(Context *context, ASTExpression *expression)
 			else if (expression->binaryOperation.op == TOKEN_OP_ARRAY_ACCESS)
 			{
 				inst.arrayAccess.out = NewVirtualRegister(context);
-				inst.arrayAccess.out.typeInfo = ASTTypeToIRTypeInfo(context, expression->type);
+				inst.arrayAccess.out.typeInfo = { IRTYPE_PTR, false };
 
 				result = inst.arrayAccess.out;
+				result.typeInfo = TypeToIRTypeInfo(context, expression->typeTableIdx);
+				result.pointerType = IRPOINTERTYPE_DEREFERENCE;
+				if (result.typeInfo.isPointer)
+					result.typeInfo.type = IRTYPE_PTR;
+				result.typeInfo.isPointer = true;
 			}
 			else
 			{
 				inst.binaryOperation.out = NewVirtualRegister(context);
-				inst.binaryOperation.out.typeInfo = ASTTypeToIRTypeInfo(context, expression->type);
+				inst.binaryOperation.out.typeInfo = TypeToIRTypeInfo(context,
+						expression->typeTableIdx);
 
 				result = inst.binaryOperation.out;
 			}
@@ -792,7 +823,7 @@ IRValue IRGenFromExpression(Context *context, ASTExpression *expression)
 			result.immediateFloat = expression->literal.floating;
 			break;
 		case LITERALTYPE_INTEGER:
-			result.valueType = IRVALUETYPE_IMMEDIATE;
+			result.valueType = IRVALUETYPE_IMMEDIATE_INTEGER;
 			result.typeInfo = { IRTYPE_S64, false };
 			result.immediate = expression->literal.integer;
 			break;
@@ -803,7 +834,7 @@ IRValue IRGenFromExpression(Context *context, ASTExpression *expression)
 			IRStaticVariable newStaticVar = {};
 			newStaticVar.variable = BucketArrayAdd(&context->variables);
 			newStaticVar.variable->name = TPrintF("staticString%d", stringStaticVarUniqueID++);
-			newStaticVar.variable->type = { TYPETABLEIDX_STRUCT_STRING, 0, 0 };
+			newStaticVar.variable->typeTableIdx = TYPETABLEIDX_STRUCT_STRING;
 			newStaticVar.typeInfo.type = IRTYPE_STRING;
 			newStaticVar.typeInfo.isPointer = false;
 			newStaticVar.initialValue.valueType = IRVALUETYPE_IMMEDIATE_STRING;
@@ -932,8 +963,12 @@ void PrintIRValue(IRValue value)
 		Log("$r%d", value.registerIdx);
 	else if (value.valueType == IRVALUETYPE_VARIABLE)
 		Log("%.*s", value.variable->name.size, value.variable->name.data);
-	else if (value.valueType == IRVALUETYPE_IMMEDIATE)
+	else if (value.valueType == IRVALUETYPE_IMMEDIATE_INTEGER)
 		Log("0x%x", value.immediate);
+	else if (value.valueType == IRVALUETYPE_IMMEDIATE_FLOAT)
+		Log("%f", value.immediateFloat);
+	else if (value.valueType == IRVALUETYPE_IMMEDIATE_STRING)
+		Log("%.*s", value.immediateString.size, value.immediateString.data);
 	else
 		Log("???");
 

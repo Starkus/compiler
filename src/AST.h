@@ -47,17 +47,31 @@ struct ASTBlock : ASTBase
 	DynamicArray<ASTExpression, malloc, realloc> statements;
 };
 
-struct Type
+enum ASTTypeNodeType
 {
-	s64 typeTableIdx;
-	s32 pointerLevels;
-	u64 arrayCount;
+	ASTTYPENODETYPE_IDENTIFIER,
+	ASTTYPENODETYPE_POINTER,
+	ASTTYPENODETYPE_ARRAY
+};
+struct ASTType : ASTBase
+{
+	ASTTypeNodeType nodeType;
+	union
+	{
+		String name;
+		ASTType *pointedType;
+		struct
+		{
+			ASTType *arrayType;
+			u64 arrayCount;
+		};
+	};
 };
 
 struct ASTVariableDeclaration : ASTBase
 {
-	String typeName;
 	ASTExpression *value;
+	ASTType *astType;
 
 	Variable *variable;
 };
@@ -65,10 +79,10 @@ struct ASTVariableDeclaration : ASTBase
 struct ASTStructMember : ASTBase
 {
 	String name;
-	String typeName;
+	ASTType *astType;
 	ASTExpression *value;
 
-	Type type;
+	u64 typeTableIdx;
 };
 
 struct ASTProcedureCall : ASTBase
@@ -81,13 +95,13 @@ struct ASTProcedureCall : ASTBase
 struct ASTProcedureDeclaration : ASTBase
 {
 	String name;
-	String returnTypeName;
+	ASTType *astReturnType;
 	bool isVarargs;
 	bool isExternal;
 	DynamicArray<ASTVariableDeclaration, malloc, realloc> parameters;
 	ASTExpression *body;
 
-	Type returnType;
+	u64 returnTypeTableIdx;
 };
 
 struct ASTIf : ASTBase
@@ -120,7 +134,6 @@ struct ASTStruct : ASTBase
 	DynamicArray<ASTStructMember, malloc, realloc> members;
 };
 
-struct TypeInfo;
 struct ASTRoot : ASTBase
 {
 	ASTBlock block;
@@ -167,5 +180,5 @@ struct ASTExpression
 	};
 
 	// Filled in during type checking
-	Type type;
+	u64 typeTableIdx;
 };

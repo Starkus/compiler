@@ -75,6 +75,7 @@ struct Config
 struct Token;
 struct ASTRoot;
 struct ASTExpression;
+struct ASTType;
 struct TypeInfo;
 struct TCScope;
 struct IRProcedure;
@@ -94,12 +95,13 @@ struct Context
 	Token *token;
 	ASTRoot *astRoot;
 	BucketArray<ASTExpression, 1024, malloc, realloc> treeNodes;
+	BucketArray<ASTType, 1024, malloc, realloc> astTypeNodes;
 
 	// Type check
 	BucketArray<Variable, 512, malloc, realloc> variables;
-	DynamicArray<TypeInfo, malloc, realloc> typeTable;
+	BucketArray<TypeInfo, 1024, malloc, realloc> typeTable;
 	DynamicArray<TCScope, malloc, realloc> tcStack;
-	Type currentReturnType;
+	s64 currentReturnType;
 
 	// IR
 	DynamicArray<IRProcedure, malloc, realloc> irProcedures;
@@ -141,7 +143,7 @@ inline void PrintError(Context *context, SourceLocation loc, const String errorS
 			++size;
 		}
 	}
-	Log("... %.*s\n... ", size, beginningOfLine);
+	LogError("... %.*s\n... ", size, beginningOfLine);
 
 	int shift = 0;
 	for (int i = 0; i < loc.character; ++i)
@@ -153,10 +155,10 @@ inline void PrintError(Context *context, SourceLocation loc, const String errorS
 	}
 
 	for (int i = 0; i < shift; ++i)
-		Log(" ");
+		LogError(" ");
 	for (int i = 0; i < loc.size; ++i)
-		Log("^");
-	Log("\n");
+		LogError("^");
+	LogError("\n");
 
 	//exit(1);
 	CRASH;

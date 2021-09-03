@@ -54,6 +54,12 @@ String OperatorToString(s32 op)
 			return "~"_s;
 		case TOKEN_OP_MEMBER_ACCESS:
 			return "."_s;
+		case TOKEN_OP_ARRAY_ACCESS:
+			return "[]"_s;
+		case TOKEN_OP_POINTER_TO:
+			return "^"_s;
+		case TOKEN_OP_DEREFERENCE:
+			return "@"_s;
 	}
 	return "???OP"_s;
 }
@@ -122,13 +128,13 @@ void PrintExpression(PrintContext *context, ASTExpression *e)
 	{
 	case ASTNODETYPE_VARIABLE_DECLARATION:
 	{
-		if (e->variableDeclaration.isStatic)
+		Variable *var = e->variableDeclaration.variable;
+		if (var->isStatic)
 			Log("Static variable declaration ");
 		else
 			Log("Variable declaration ");
-		Log("\"%.*s\" of type \"%.*s\"", e->variableDeclaration.name.size,
-				e->variableDeclaration.name.data, e->variableDeclaration.typeName.size,
-				e->variableDeclaration.typeName.data);
+		String typeStr = ASTTypeToString(e->variableDeclaration.astType);
+		Log("\"%.*s\" of type \"%.*s\"", var->name.size, var->name.data, typeStr.size, typeStr.data);
 
 		PrintSourceLocation(context, e->any.loc);
 		Log("\n");
@@ -251,7 +257,7 @@ void PrintExpression(PrintContext *context, ASTExpression *e)
 		++context->indentLevels;
 		PrintExpression(context, e->ifNode.condition);
 		PrintExpression(context, e->ifNode.body);
-		if (e->ifNode.elseNode)
+		if (e->ifNode.elseBody)
 		{
 			Indent(context);
 			Log("Else:");
@@ -260,7 +266,7 @@ void PrintExpression(PrintContext *context, ASTExpression *e)
 			Log("\n");
 
 			++context->indentLevels;
-			PrintExpression(context, e->ifNode.elseNode);
+			PrintExpression(context, e->ifNode.elseBody);
 			--context->indentLevels;
 		}
 		--context->indentLevels;
@@ -288,6 +294,17 @@ void PrintExpression(PrintContext *context, ASTExpression *e)
 		PrintExpression(context, e->returnNode.expression);
 		--context->indentLevels;
 	} break;
+	case ASTNODETYPE_DEFER:
+	{
+		Log("Defer");
+
+		PrintSourceLocation(context, e->any.loc);
+		Log("\n");
+
+		++context->indentLevels;
+		PrintExpression(context, e->deferNode.expression);
+		--context->indentLevels;
+	} break;
 	case ASTNODETYPE_BREAK:
 	{
 		Log("Break\n");
@@ -298,10 +315,21 @@ void PrintExpression(PrintContext *context, ASTExpression *e)
 		++context->indentLevels;
 		for (int i = 0; i < e->structNode.members.size; ++i)
 		{
-			ASTExpression pexp = {};
-			pexp.nodeType = ASTNODETYPE_VARIABLE_DECLARATION;
-			pexp.variableDeclaration = e->structNode.members[i];
-			PrintExpression(context, &pexp);
+			ASTStructMember *member = &e->structNode.members[i];
+
+			Log("Struct member ");
+			String typeStr = ASTTypeToString(member->astType);
+			Log("\"%.*s\" of type \"%.*s\"", member->name.size, member->name.data, typeStr.size, typeStr.data);
+
+			PrintSourceLocation(context, e->any.loc);
+			Log("\n");
+
+			if (member->value)
+			{
+				++context->indentLevels;
+				PrintExpression(context, member->value);
+				--context->indentLevels;
+			}
 		}
 		--context->indentLevels;
 	} break;

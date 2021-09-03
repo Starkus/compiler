@@ -19,5 +19,10 @@ main :: () -> s64
 
 	baz := arrayA[arrayB[5]];
 
+	arrayOfArrays : 16 16 u8;
+	row := ^arrayOfArrays[3];
+	cell := row[7];
+	anotherCell := arrayOfArrays[5][5];
+
 	return 0;
 }
