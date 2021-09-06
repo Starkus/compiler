@@ -77,8 +77,8 @@ struct ASTRoot;
 struct ASTExpression;
 struct ASTType;
 struct TypeInfo;
+struct Procedure;
 struct TCScope;
-struct IRProcedure;
 struct IRStaticVariable;
 struct IRScope;
 struct Context
@@ -99,16 +99,16 @@ struct Context
 
 	// Type check
 	BucketArray<Variable, 512, malloc, realloc> variables;
+	BucketArray<Procedure, 512, malloc, realloc> procedures;
 	BucketArray<TypeInfo, 1024, malloc, realloc> typeTable;
 	DynamicArray<TCScope, malloc, realloc> tcStack;
 	s64 currentReturnType;
 
 	// IR
-	DynamicArray<IRProcedure, malloc, realloc> irProcedures;
 	DynamicArray<IRStaticVariable, malloc, realloc> irStaticVariables;
 	DynamicArray<IRScope, malloc, realloc> irStack;
 	s64 currentProcedureStackBase;
-	u64 currentProcedureIdx;
+	Procedure *currentProcedure;
 	u64 currentRegisterId;
 	u64 currentLabelId;
 	String currentBreakLabel;

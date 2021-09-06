@@ -5,8 +5,15 @@ doThings :: (eight : u8, sixteen : u16, thirtytwo : u32)
 	baz := thirtytwo - 2;
 }
 
+defaultArg :: (eight : s8 = 8)
+{
+	foo := eight;
+}
+
 main :: () -> s64
 {
 	doThings(8, 16, 32);
+	defaultArg();
+	defaultArg(16);
 	return 0;
 }

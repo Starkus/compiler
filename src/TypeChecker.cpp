@@ -84,19 +84,10 @@ struct TypeInfo
 	};
 };
 
-struct TCProcedure
-{
-	String name;
-	bool isVarargs;
-	bool isExternal;
-	DynamicArray<Variable *, malloc, realloc> parameters;
-	u64 returnTypeTableIdx;
-};
-
 struct TCScope
 {
 	DynamicArray<Variable *, malloc, realloc> variables;
-	DynamicArray<TCProcedure, malloc, realloc> procedures;
+	DynamicArray<Procedure *, malloc, realloc> procedures;
 	DynamicArray<s64, malloc, realloc> typeIndices;
 };
 
@@ -559,32 +550,45 @@ void TypeCheckExpression(Context *context, ASTExpression *expression)
 	case ASTNODETYPE_PROCEDURE_DECLARATION:
 	{
 		ASTProcedureDeclaration *procDecl = &expression->procedureDeclaration;
-		String procName = procDecl->name;
+		Procedure *procedure = procDecl->procedure;
 		// Check if already exists
 		TCScope *stackTop = &context->tcStack[context->tcStack.size - 1];
 		for (s64 i = 0; i < (s64)stackTop->procedures.size; ++i)
 		{
-			TCProcedure currentProc = stackTop->procedures[i];
-			if (StringEquals(procName, currentProc.name))
+			Procedure *currentProc = stackTop->procedures[i];
+			if (StringEquals(procedure->name, currentProc->name))
 			{
-				PrintError(context, expression->any.loc, TPrintF("Duplicate procedure \"%S\"", procName));
+				PrintError(context, expression->any.loc, TPrintF("Duplicate procedure \"%S\"",
+							procedure->name));
 			}
 		}
 
-		TCProcedure procedure;
-		procedure.name = procName;
-		procedure.isVarargs = procDecl->isVarargs;
-		procedure.isExternal = procDecl->isExternal;
+		procedure->requiredParameterCount = 0;
 
 		PushTCScope(context);
 
 		// Parameters
-		DynamicArrayInit(&procedure.parameters, 8);
-		for (int i = 0; i < procDecl->parameters.size; ++i)
+		bool beginOptionalParameters = false;
+		DynamicArrayInit(&procedure->parameters, 8);
+		for (int i = 0; i < procDecl->astParameters.size; ++i)
 		{
-			ASTVariableDeclaration *astParam = &procDecl->parameters[i];
+			ASTVariableDeclaration *astParam = &procDecl->astParameters[i];
 			TypeCheckVariableDeclaration(context, astParam);
-			*DynamicArrayAdd(&procedure.parameters) = astParam->variable;
+			ProcedureParameter *procParam = DynamicArrayAdd(&procedure->parameters);
+			procParam->variable = astParam->variable;
+			procParam->defaultValue = astParam->value;
+
+			if (!astParam->value)
+			{
+				if (beginOptionalParameters)
+					PrintError(context, astParam->loc, "Non-optional parameter after optional parameter found!"_s);
+
+				++procedure->requiredParameterCount;
+			}
+			else
+			{
+				beginOptionalParameters = true;
+			}
 		}
 
 		s64 returnType = TYPETABLEIDX_VOID;
@@ -592,26 +596,26 @@ void TypeCheckExpression(Context *context, ASTExpression *expression)
 		{
 			returnType = TypeCheckType(context, expression->any.loc, procDecl->astReturnType);
 		}
-		procDecl->returnTypeTableIdx = returnType;
+		procedure->returnTypeTableIdx = returnType;
 
 		u64 oldReturnType = context->currentReturnType;
 		context->currentReturnType = returnType;
 
-		if (procDecl->body)
-			TypeCheckExpression(context, procDecl->body);
+		if (procedure->astBody)
+			TypeCheckExpression(context, procedure->astBody);
 
 		context->currentReturnType = oldReturnType;
 		PopTCScope(context);
 
-		procedure.returnTypeTableIdx = returnType;
+		procedure->returnTypeTableIdx = returnType;
 		*DynamicArrayAdd(&stackTop->procedures) = procedure;
 
 		//expression->typeTableIdx = returnType;
 
 		// Check all paths return
-		if (procDecl->body && returnType != TYPETABLEIDX_VOID)
+		if (procedure->astBody && returnType != TYPETABLEIDX_VOID)
 		{
-			ReturnCheckResult result = CheckIfReturnsValue(context, procDecl->body);
+			ReturnCheckResult result = CheckIfReturnsValue(context, procedure->astBody);
 			if (result == RETURNCHECKRESULT_SOMETIMES)
 				PrintError(context, expression->any.loc, "Procedure doesn't always return a value"_s);
 			else if (result == RETURNCHECKRESULT_NEVER)
@@ -655,13 +659,13 @@ void TypeCheckExpression(Context *context, ASTExpression *expression)
 		String procName = expression->procedureCall.name;
 
 		// Search backwards so we find procedures higher in the stack first.
-		TCProcedure *procedure = nullptr;
+		Procedure *procedure = nullptr;
 		for (s64 stackIdx = context->tcStack.size - 1; stackIdx >= 0; --stackIdx)
 		{
 			TCScope *currentScope = &context->tcStack[stackIdx];
 			for (int i = 0; i < currentScope->procedures.size; ++i)
 			{
-				TCProcedure *currentProc = &currentScope->procedures[i];
+				Procedure *currentProc = currentScope->procedures[i];
 				if (StringEquals(procName, currentProc->name))
 				{
 					procedure = currentProc;
@@ -673,32 +677,39 @@ void TypeCheckExpression(Context *context, ASTExpression *expression)
 		if (!procedure)
 			PrintError(context, expression->any.loc, TPrintF("Invalid procedure \"%S\" called", procName));
 
-		expression->procedureCall.isExternal = procedure->isExternal;
+		expression->procedureCall.procedure = procedure;
 		expression->typeTableIdx = procedure->returnTypeTableIdx;
 
 		// Type check arguments
-		s64 neededArguments = procedure->parameters.size;
+		s64 requiredArguments = procedure->requiredParameterCount;
+		s64 totalArguments = procedure->parameters.size;
 		s64 givenArguments  = expression->procedureCall.arguments.size;
 		if (procedure->isVarargs)
 		{
-			if (neededArguments > givenArguments)
+			if (requiredArguments > givenArguments)
 				PrintError(context, expression->any.loc,
 						TPrintF("Procedure \"%S\" needs at least %d arguments but only %d were given",
-							procName, neededArguments, givenArguments));
+							procName, requiredArguments, givenArguments));
 		}
 		else
 		{
-			if (neededArguments != givenArguments)
-				PrintError(context, expression->any.loc, TPrintF("Procedure \"%S\" has %d arguments but %d were given",
-							procName, neededArguments, givenArguments));
+			if (requiredArguments > givenArguments)
+				PrintError(context, expression->any.loc,
+						TPrintF("Procedure \"%S\" needs at least %d arguments but only %d were given",
+						procName, requiredArguments, givenArguments));
+
+			if (givenArguments > totalArguments)
+				PrintError(context, expression->any.loc,
+						TPrintF("Procedure \"%S\" needs %d arguments but %d were given",
+						procName, totalArguments, givenArguments));
 		}
 
-		for (int argIdx = 0; argIdx < neededArguments; ++argIdx)
+		for (int argIdx = 0; argIdx < givenArguments; ++argIdx)
 		{
 			ASTExpression *arg = &expression->procedureCall.arguments[argIdx];
 			TypeCheckExpression(context, arg);
 
-			Variable *param = procedure->parameters[argIdx];
+			Variable *param = procedure->parameters[argIdx].variable;
 			if (!CheckTypesMatch(context, param->typeTableIdx, arg->typeTableIdx))
 				PrintError(context, arg->any.loc, TPrintF("When calling procedure \"%S\": type of parameter #%d didn't match",
 							procName, argIdx));

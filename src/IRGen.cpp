@@ -38,8 +38,7 @@ struct IRConditionalJump
 
 struct IRProcedureCall
 {
-	String label;
-	bool isExternal;
+	Procedure *procedure;
 	Array<IRValue> parameters;
 	IRValue out;
 };
@@ -205,7 +204,7 @@ void PopIRScope(Context *context)
 
 inline IRInstruction *AddInstruction(Context *context)
 {
-	return BucketArrayAdd(&context->irProcedures[context->currentProcedureIdx].instructions);
+	return BucketArrayAdd(&context->currentProcedure->instructions);
 }
 
 IRValue IRGenFromExpression(Context *context, ASTExpression *expression);
@@ -459,42 +458,26 @@ IRValue IRGenFromExpression(Context *context, ASTExpression *expression)
 	{
 	case ASTNODETYPE_PROCEDURE_DECLARATION:
 	{
-		u64 prevProcedureIdx = context->currentProcedureIdx;
+		Procedure *prevProcedure = context->currentProcedure;
 		u64 prevProcedureStackBase = context->currentProcedureStackBase;
 
-		context->currentProcedureIdx = context->irProcedures.size;
-		IRProcedure *procedure = DynamicArrayAdd(&context->irProcedures);
-		*procedure = {};
-		procedure->name = expression->procedureDeclaration.name;
-		procedure->isExternal = expression->procedureDeclaration.isExternal;
-		procedure->isVarargs = expression->procedureDeclaration.isVarargs;
-
-		procedure->returnTypeTableIdx = expression->procedureDeclaration.returnTypeTableIdx;
-
-		u64 paramCount = expression->procedureDeclaration.parameters.size;
-		ArrayInit(&procedure->parameters, paramCount, malloc);
-		procedure->parameters.size = paramCount;
+		Procedure *procedure = expression->procedureDeclaration.procedure;
+		context->currentProcedure = procedure;
 
 		BucketArrayInit(&procedure->instructions);
 
 		context->currentProcedureStackBase = context->irStack.size;
 		PushIRScope(context);
 
-		for (int paramIdx = 0; paramIdx < paramCount; ++paramIdx)
-		{
-			ASTVariableDeclaration param = expression->procedureDeclaration.parameters[paramIdx];
-			procedure->parameters[paramIdx] = param.variable;
-		}
-
-		if (expression->procedureDeclaration.body)
+		if (procedure->astBody)
 		{
 			context->currentRegisterId = 0;
-			IRGenFromExpression(context, expression->procedureDeclaration.body);
+			IRGenFromExpression(context, procedure->astBody);
 			procedure->registerCount = context->currentRegisterId;
 		}
 
 		PopIRScope(context);
-		context->currentProcedureIdx = prevProcedureIdx;
+		context->currentProcedure = prevProcedure;
 		context->currentProcedureStackBase = prevProcedureStackBase;
 	} break;
 	case ASTNODETYPE_BLOCK:
@@ -517,7 +500,7 @@ IRValue IRGenFromExpression(Context *context, ASTExpression *expression)
 	{
 		ASTVariableDeclaration varDecl = expression->variableDeclaration;
 
-		bool isGlobalScope = context->currentProcedureIdx == U64_MAX;
+		bool isGlobalScope = context->currentProcedure == nullptr;
 		if (isGlobalScope && !varDecl.variable->isStatic)
 			PrintError(context, expression->any.loc, "Global variables have to be static"_s);
 
@@ -562,18 +545,18 @@ IRValue IRGenFromExpression(Context *context, ASTExpression *expression)
 	} break;
 	case ASTNODETYPE_PROCEDURE_CALL:
 	{
-		String label = expression->procedureCall.name; // @Improve: oh my god...
+		ASTProcedureCall *astProcCall = &expression->procedureCall;
+		String label = astProcCall->procedure->name; // @Improve: oh my god...
 
 		IRInstruction inst = {};
 		inst.type = IRINSTRUCTIONTYPE_PROCEDURE_CALL;
-		inst.procedureCall.label = label;
-		inst.procedureCall.isExternal = expression->procedureCall.isExternal;
-		ArrayInit(&inst.procedureCall.parameters, expression->procedureCall.arguments.size, malloc);
+		inst.procedureCall.procedure = astProcCall->procedure;
+		ArrayInit(&inst.procedureCall.parameters, astProcCall->procedure->parameters.size, malloc);
 
 		// Set up parameters
-		for (int argIdx = 0; argIdx < expression->procedureCall.arguments.size; ++argIdx)
+		for (int argIdx = 0; argIdx < astProcCall->arguments.size; ++argIdx)
 		{
-			ASTExpression *arg = &expression->procedureCall.arguments[argIdx];
+			ASTExpression *arg = &astProcCall->arguments[argIdx];
 			TypeInfo *argTypeInfo = &context->typeTable[arg->typeTableIdx];
 			if (argTypeInfo->typeCategory == TYPECATEGORY_STRUCT ||
 					argTypeInfo->typeCategory == TYPECATEGORY_ARRAY)
@@ -651,6 +634,27 @@ IRValue IRGenFromExpression(Context *context, ASTExpression *expression)
 
 				*ArrayAdd(&inst.procedureCall.parameters) = paramReg;
 			}
+		}
+
+		// Default parameters
+		for (u64 argIdx = astProcCall->arguments.size; argIdx < astProcCall->procedure->parameters.size;
+				++argIdx)
+		{
+			ASTExpression *arg = astProcCall->procedure->parameters[argIdx].defaultValue;
+			IRValue param = IRGenFromExpression(context, arg);
+
+			IRValue paramReg = {};
+			paramReg.valueType = IRVALUETYPE_REGISTER;
+			paramReg.registerIdx = NewVirtualRegister(context);
+			paramReg.typeTableIdx = arg->typeTableIdx;
+
+			IRInstruction paramIntermediateInst = {};
+			paramIntermediateInst.type = IRINSTRUCTIONTYPE_ASSIGNMENT;
+			paramIntermediateInst.assignment.src = param;
+			paramIntermediateInst.assignment.dst = paramReg;
+			*AddInstruction(context) = paramIntermediateInst;
+
+			*ArrayAdd(&inst.procedureCall.parameters) = paramReg;
 		}
 
 		inst.procedureCall.out.valueType = IRVALUETYPE_INVALID;
@@ -941,11 +945,10 @@ void PrintIRInstructionOperator(IRInstruction inst)
 
 void IRGenMain(Context *context)
 {
-	DynamicArrayInit(&context->irProcedures, 64);
 	DynamicArrayInit(&context->irStaticVariables, 64);
 	DynamicArrayInit(&context->irStack, 64);
-	context->currentProcedureIdx = U64_MAX;
-	context->currentRegisterId = 1;
+	context->currentProcedure = nullptr;
+	context->currentRegisterId = 0;
 	context->currentLabelId = 1;
 
 	PushIRScope(context);

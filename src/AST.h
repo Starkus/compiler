@@ -80,10 +80,9 @@ struct ASTType : ASTBase
 
 struct ASTVariableDeclaration : ASTBase
 {
+	Variable *variable;
 	ASTExpression *value;
 	ASTType *astType;
-
-	Variable *variable;
 };
 
 struct ASTStructMemberDeclaration : ASTBase
@@ -95,23 +94,19 @@ struct ASTStructMemberDeclaration : ASTBase
 	u64 typeTableIdx;
 };
 
+struct Procedure;
+struct ASTProcedureDeclaration : ASTBase
+{
+	Procedure *procedure;
+	ASTType *astReturnType;
+	DynamicArray<ASTVariableDeclaration, malloc, realloc> astParameters;
+};
+
 struct ASTProcedureCall : ASTBase
 {
 	String name;
-	bool isExternal;
+	Procedure *procedure;
 	DynamicArray<ASTExpression, malloc, realloc> arguments;
-};
-
-struct ASTProcedureDeclaration : ASTBase
-{
-	String name;
-	ASTType *astReturnType;
-	bool isVarargs;
-	bool isExternal;
-	DynamicArray<ASTVariableDeclaration, malloc, realloc> parameters;
-	ASTExpression *body;
-
-	u64 returnTypeTableIdx;
 };
 
 struct ASTIf : ASTBase

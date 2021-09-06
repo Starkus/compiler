@@ -14,6 +14,27 @@ struct Variable
 	u64 stackOffset;
 };
 
+struct ProcedureParameter
+{
+	Variable *variable;
+	ASTExpression *defaultValue;
+};
+struct IRInstruction;
+struct Procedure
+{
+	String name;
+	bool isVarargs;
+	bool isExternal;
+	DynamicArray<ProcedureParameter, malloc, realloc> parameters;
+	ASTExpression *astBody;
+	s32 requiredParameterCount;
+	s64 returnTypeTableIdx;
+
+	// IRGen
+	BucketArray<IRInstruction, 256, malloc, realloc> instructions;
+	u64 registerCount;
+};
+
 void Advance(Context *context)
 {
 	ASSERT(context->token == &context->tokens[context->currentTokenIdx]);
@@ -397,8 +418,12 @@ ASTProcedureDeclaration ParseProcedureDeclaration(Context *context)
 	ASTProcedureDeclaration procDecl = {};
 	procDecl.loc = context->token->loc;
 
+	Procedure *procedure = BucketArrayAdd(&context->procedures);
+	*procedure = {};
+	procDecl.procedure = procedure;
+
 	AssertToken(context, context->token, TOKEN_IDENTIFIER);
-	procDecl.name = context->token->string;
+	procedure->name = context->token->string;
 	Advance(context);
 
 	AssertToken(context, context->token, TOKEN_OP_STATIC_DEF);
@@ -406,11 +431,11 @@ ASTProcedureDeclaration ParseProcedureDeclaration(Context *context)
 
 	if (context->token->type == TOKEN_KEYWORD_EXTERNAL)
 	{
-		procDecl.isExternal = true;
+		procedure->isExternal = true;
 		Advance(context);
 	}
 
-	DynamicArrayInit(&procDecl.parameters, 4);
+	DynamicArrayInit(&procDecl.astParameters, 4);
 
 	AssertToken(context, context->token, '(');
 	Advance(context);
@@ -419,19 +444,19 @@ ASTProcedureDeclaration ParseProcedureDeclaration(Context *context)
 		if (context->token->type == TOKEN_OP_VARARGS)
 		{
 			Advance(context);
-			procDecl.isVarargs = true;
+			procedure->isVarargs = true;
 			break;
 		}
 
 		// @Improve: separate node type for procedure parameter?
-		ASTVariableDeclaration parameter = ParseVariableDeclaration(context);
-		ASSERT(procDecl.parameters.size <= S8_MAX);
-		parameter.variable->parameterIndex = (s8)procDecl.parameters.size;
+		ASTVariableDeclaration astParameter = ParseVariableDeclaration(context);
+		ASSERT(procDecl.astParameters.size <= S8_MAX);
+		astParameter.variable->parameterIndex = (s8)procDecl.astParameters.size;
 
-		if (parameter.variable->isStatic)
+		if (astParameter.variable->isStatic)
 			PrintError(context, context->token->loc, "Procedure parameters can't be static"_s);
 
-		*DynamicArrayAdd(&procDecl.parameters) = parameter;
+		*DynamicArrayAdd(&procDecl.astParameters) = astParameter;
 
 		if (context->token->type != ')')
 		{
@@ -455,8 +480,8 @@ ASTProcedureDeclaration ParseProcedureDeclaration(Context *context)
 		Advance(context);
 	else
 	{
-		procDecl.body = NewTreeNode(context);
-		*procDecl.body = ParseStatement(context);
+		procedure->astBody = NewTreeNode(context);
+		*procedure->astBody = ParseStatement(context);
 	}
 
 	return procDecl;
@@ -753,6 +778,7 @@ ASTRoot *GenerateSyntaxTree(Context *context)
 	BucketArrayInit(&context->treeNodes);
 	BucketArrayInit(&context->astTypeNodes);
 	BucketArrayInit(&context->variables);
+	BucketArrayInit(&context->procedures);
 
 	context->currentTokenIdx = 0;
 	context->token = &context->tokens[0];

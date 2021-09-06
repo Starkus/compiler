@@ -2,41 +2,41 @@
 void PrintIRInstructions(Context *context)
 {
 	const int padding = 20;
-	const u64 procedureCount = context->irProcedures.size;
+	const u64 procedureCount = BucketArrayCount(&context->procedures);
 	for (int procedureIdx = 0; procedureIdx < procedureCount; ++procedureIdx)
 	{
-		IRProcedure proc = context->irProcedures[procedureIdx];
-		String returnTypeStr = TypeInfoToString(context, proc.returnTypeTableIdx);
+		Procedure *proc = &context->procedures[procedureIdx];
+		String returnTypeStr = TypeInfoToString(context, proc->returnTypeTableIdx);
 
-		Log("proc %S(", proc.name);
-		for (int paramIdx = 0; paramIdx < proc.parameters.size; ++paramIdx)
+		Log("proc %S(", proc->name);
+		for (int paramIdx = 0; paramIdx < proc->parameters.size; ++paramIdx)
 		{
 			if (paramIdx) Log(", ");
-			String typeStr = TypeInfoToString(context, proc.parameters[paramIdx]->typeTableIdx);
+			String typeStr = TypeInfoToString(context, proc->parameters[paramIdx].variable->typeTableIdx);
 			Log("param%d : %S", paramIdx, typeStr);
 		}
 		Log(")");
-		if (proc.returnTypeTableIdx != TYPETABLEIDX_VOID)
+		if (proc->returnTypeTableIdx != TYPETABLEIDX_VOID)
 			Log(" -> %S", returnTypeStr);
 		Log("\n");
 
-		const u64 instructionCount = BucketArrayCount(&proc.instructions);
+		const u64 instructionCount = BucketArrayCount(&proc->instructions);
 		for (int instructionIdx = 0; instructionIdx < instructionCount; ++instructionIdx)
 		{
-			IRInstruction inst = proc.instructions[instructionIdx];
+			IRInstruction inst = proc->instructions[instructionIdx];
 			if (inst.type == IRINSTRUCTIONTYPE_LABEL)
 			{
 				Log("%S: ", inst.label);
 				for (s64 i = inst.label.size + 2; i < padding; ++i)
 					Log(" ");
 
-				IRInstruction nextInst = proc.instructions[instructionIdx + 1];
+				IRInstruction nextInst = proc->instructions[instructionIdx + 1];
 				if (nextInst.type != IRINSTRUCTIONTYPE_LABEL)
 				{
 					++instructionIdx;
 					if (instructionIdx >= instructionCount)
 						break;
-					inst = proc.instructions[instructionIdx];
+					inst = proc->instructions[instructionIdx];
 				}
 			}
 			else
@@ -57,7 +57,7 @@ void PrintIRInstructions(Context *context)
 			}
 			else if (inst.type == IRINSTRUCTIONTYPE_PROCEDURE_CALL)
 			{
-				Log("call %S", inst.procedureCall.label);
+				Log("call %S", inst.procedureCall.procedure->name);
 			}
 			else if (inst.type == IRINSTRUCTIONTYPE_RETURN)
 			{

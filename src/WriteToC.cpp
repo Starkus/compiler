@@ -183,20 +183,20 @@ String OperatorToStr(IRInstruction inst)
 	}
 }
 
-String CGetProcedureSignature(Context *context, IRProcedure proc)
+String CGetProcedureSignature(Context *context, Procedure *proc)
 {
 	String result;
 
-	String returnTypeStr = CTypeInfoToString(context, proc.returnTypeTableIdx);
+	String returnTypeStr = CTypeInfoToString(context, proc->returnTypeTableIdx);
 	// @Hack: write 'main' return type as 'int' for compatibility
-	if (StringEquals(proc.name, "main"_s))
+	if (StringEquals(proc->name, "main"_s))
 		returnTypeStr = "int"_s;
 
-	result = TPrintF("%S %S(", returnTypeStr, proc.name);
-	for (int i = 0; i < proc.parameters.size; ++i)
+	result = TPrintF("%S %S(", returnTypeStr, proc->name);
+	for (int i = 0; i < proc->parameters.size; ++i)
 	{
 		if (i) result = StringConcat(result, ", "_s);
-		Variable *param = proc.parameters[i];
+		Variable *param = proc->parameters[i].variable;
 		result = TPrintF("%SRegister param%hhu", result, param->parameterIndex);
 	}
 	result = StringConcat(result, ")"_s);
@@ -297,25 +297,25 @@ void WriteToC(Context *context)
 	PrintOut(context, outputFile, "\n");
 
 	PrintOut(context, outputFile, "// Forward declaration of procedures\n");
-	const u64 procedureCount = context->irProcedures.size;
+	const u64 procedureCount = BucketArrayCount(&context->procedures);
 	for (int procedureIdx = 0; procedureIdx < procedureCount; ++procedureIdx)
 	{
-		IRProcedure proc = context->irProcedures[procedureIdx];
+		Procedure *proc = &context->procedures[procedureIdx];
 
 		// @Speed: separate array of external procedures to avoid branching
-		if (proc.isExternal)
+		if (proc->isExternal)
 		{
-			String returnTypeStr = CTypeInfoToString(context, proc.returnTypeTableIdx);
-			PrintOut(context, outputFile, "%S %S(", returnTypeStr, proc.name);
+			String returnTypeStr = CTypeInfoToString(context, proc->returnTypeTableIdx);
+			PrintOut(context, outputFile, "%S %S(", returnTypeStr, proc->name);
 
-			for (int i = 0; i < proc.parameters.size; ++i)
+			for (int i = 0; i < proc->parameters.size; ++i)
 			{
 				if (i) PrintOut(context, outputFile, ", ");
-				Variable *param = proc.parameters[i];
+				Variable *param = proc->parameters[i].variable;
 				String type = CTypeInfoToString(context, param->typeTableIdx);
 				PrintOut(context, outputFile, "%S %S", type, param->name);
 			}
-			if (proc.isVarargs)
+			if (proc->isVarargs)
 				PrintOut(context, outputFile, ", ...");
 			PrintOut(context, outputFile, ");\n");
 		}
@@ -330,10 +330,10 @@ void WriteToC(Context *context)
 
 	for (int procedureIdx = 0; procedureIdx < procedureCount; ++procedureIdx)
 	{
-		IRProcedure proc = context->irProcedures[procedureIdx];
+		Procedure *proc = &context->procedures[procedureIdx];
 
 		// @Speed: separate array of external procedures to avoid branching
-		if (proc.isExternal)
+		if (proc->isExternal)
 			continue;
 
 		String signature = CGetProcedureSignature(context, proc);
@@ -341,10 +341,10 @@ void WriteToC(Context *context)
 
 		u64 stackSize = 0;
 		// Dry run to know stack size
-		const u64 instructionCount = BucketArrayCount(&proc.instructions);
+		const u64 instructionCount = BucketArrayCount(&proc->instructions);
 		for (int instructionIdx = 0; instructionIdx < instructionCount; ++instructionIdx)
 		{
-			IRInstruction inst = proc.instructions[instructionIdx];
+			IRInstruction inst = proc->instructions[instructionIdx];
 			if (inst.type == IRINSTRUCTIONTYPE_VARIABLE_DECLARATION)
 			{
 				stackSize += CCalculateTypeSize(context,
@@ -357,10 +357,10 @@ void WriteToC(Context *context)
 			PrintOut(context, outputFile, "u8 stack[0x%x];\n", stackSize);
 
 		// Declare registers
-		if (proc.registerCount)
+		if (proc->registerCount)
 		{
 			PrintOut(context, outputFile, "Register r0");
-			for (int regIdx = 1; regIdx < proc.registerCount; ++regIdx)
+			for (int regIdx = 1; regIdx < proc->registerCount; ++regIdx)
 			{
 				PrintOut(context, outputFile, ", r%d", regIdx);
 			}
@@ -370,15 +370,15 @@ void WriteToC(Context *context)
 		PrintOut(context, outputFile, "\n");
 
 		// Add parameters to variable stack
-		for (int paramIdx = 0; paramIdx < proc.parameters.size; ++paramIdx)
+		for (int paramIdx = 0; paramIdx < proc->parameters.size; ++paramIdx)
 		{
-			Variable *param = proc.parameters[paramIdx];
+			Variable *param = proc->parameters[paramIdx].variable;
 			param->stackOffset = U64_MAX; // FFFFFFFF offset means parameter @Cleanup
 		}
 
 		for (int instructionIdx = 0; instructionIdx < instructionCount; ++instructionIdx)
 		{
-			IRInstruction inst = proc.instructions[instructionIdx];
+			IRInstruction inst = proc->instructions[instructionIdx];
 
 			if (inst.type == IRINSTRUCTIONTYPE_VARIABLE_DECLARATION)
 			{
@@ -435,11 +435,11 @@ void WriteToC(Context *context)
 					String out = CIRValueToStr(context, inst.procedureCall.out);
 					PrintOut(context, outputFile, "%S = ", out);
 				}
-				PrintOut(context, outputFile, "%S(", inst.procedureCall.label);
+				PrintOut(context, outputFile, "%S(", inst.procedureCall.procedure->name);
 				for (int i = 0; i < inst.procedureCall.parameters.size; ++i)
 				{
 					String param;
-					if (inst.procedureCall.isExternal)
+					if (inst.procedureCall.procedure->isExternal)
 						param = CIRValueToStr(context, inst.procedureCall.parameters[i]);
 					else
 						param = IRValueToStrAsRegister(context, inst.procedureCall.parameters[i]);
