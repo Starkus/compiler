@@ -112,7 +112,7 @@ String TypeInfoToString(Context *context, s64 typeTableIdx)
 	case TYPECATEGORY_ARRAY:
 	{
 		String typeStr = TypeInfoToString(context, typeInfo->arrayInfo.elementTypeTableIdx);
-		return TPrintF("[%d] %.*s", typeInfo->arrayInfo.count, typeStr.size, typeStr.data);
+		return TPrintF("[%d] %S", typeInfo->arrayInfo.count, typeStr);
 	}
 	case TYPECATEGORY_INTEGER:
 	{
@@ -198,7 +198,7 @@ s64 FindLeafTypeInTable(Context *context, SourceLocation loc, ASTType *astType)
 	}
 
 	if (typeTableIdx < 0)
-		PrintError(context, loc, TPrintF("Type \"%.*s\" not found!", astType->name.size, astType->name.data));
+		PrintError(context, loc, TPrintF("Type \"%S\" not found!", astType->name));
 
 	return typeTableIdx;
 }
@@ -328,6 +328,15 @@ s64 FindOrAddTypeTableIdx(Context *context, TypeInfo typeInfo)
 	return typeTableIdx;
 }
 
+// Util TypeInfo procedures
+s64 GetTypeInfoPointerOf(Context *context, s64 inType)
+{
+	TypeInfo resultTypeInfo = {};
+	resultTypeInfo.typeCategory = TYPECATEGORY_POINTER;
+	resultTypeInfo.pointerInfo.pointedTypeTableIdx = inType;
+	return FindOrAddTypeTableIdx(context, resultTypeInfo);
+}
+
 s64 TypeCheckType(Context *context, SourceLocation loc, ASTType *astType)
 {
 	switch (astType->nodeType)
@@ -348,8 +357,7 @@ s64 TypeCheckType(Context *context, SourceLocation loc, ASTType *astType)
 			}
 		}
 
-		PrintError(context, loc, TPrintF("Type \"%.*s\" not in scope!", astType->name.size,
-					astType->name.data));
+		PrintError(context, loc, TPrintF("Type \"%S\" not in scope!", astType->name));
 	} break;
 	case ASTTYPENODETYPE_ARRAY:
 	{
@@ -412,7 +420,7 @@ void TypeCheckExpression(Context *context, ASTExpression *expression);
 void TypeCheckVariableDeclaration(Context *context, ASTVariableDeclaration *varDecl)
 {
 	String varName = varDecl->variable->name;
-	u64 *varType = &varDecl->variable->typeTableIdx;
+	s64 *varType = &varDecl->variable->typeTableIdx;
 	// Check if already exists
 	TCScope *stackTop = &context->tcStack[context->tcStack.size - 1];
 	for (s64 i = 0; i < (s64)stackTop->variables.size; ++i)
@@ -420,8 +428,7 @@ void TypeCheckVariableDeclaration(Context *context, ASTVariableDeclaration *varD
 		Variable *currentVar = stackTop->variables[i];
 		if (StringEquals(varName, currentVar->name))
 		{
-			PrintError(context, varDecl->loc, TPrintF("Duplicate variable \"%.*s\"", varName.size,
-						varName.data));
+			PrintError(context, varDecl->loc, TPrintF("Duplicate variable \"%S\"", varName));
 		}
 	}
 
@@ -446,8 +453,7 @@ void TypeCheckVariableDeclaration(Context *context, ASTVariableDeclaration *varD
 				String valueTypeStr = TypeInfoToString(context, valueType);
 				PrintError(context, varDecl->loc, TPrintF(
 							"Variable declaration type and initial type don't match (variable "
-							"is %.*s and initial value is %.*s", varTypeStr.size, varTypeStr.data,
-							valueTypeStr.size, valueTypeStr.data));
+							"is %S and initial value is %S", varTypeStr, valueTypeStr));
 			}
 		}
 		else
@@ -538,7 +544,7 @@ void TypeCheckExpression(Context *context, ASTExpression *expression)
 
 		for (int memberIdx = 0; memberIdx < expression->structNode.members.size; ++memberIdx)
 		{
-			ASTStructMember *astMember = &expression->structNode.members[memberIdx];
+			ASTStructMemberDeclaration *astMember = &expression->structNode.members[memberIdx];
 
 			StructMember *member = DynamicArrayAdd(&t.structInfo.members);
 			member->name = astMember->name;
@@ -561,8 +567,7 @@ void TypeCheckExpression(Context *context, ASTExpression *expression)
 			TCProcedure currentProc = stackTop->procedures[i];
 			if (StringEquals(procName, currentProc.name))
 			{
-				PrintError(context, expression->any.loc, TPrintF("Duplicate procedure \"%.*s\"", procName.size,
-							procName.data));
+				PrintError(context, expression->any.loc, TPrintF("Duplicate procedure \"%S\"", procName));
 			}
 		}
 
@@ -643,8 +648,7 @@ void TypeCheckExpression(Context *context, ASTExpression *expression)
 			}
 		}
 
-		PrintError(context, expression->any.loc, TPrintF("Invalid variable \"%.*s\" referenced", varName.size,
-					varName.data));
+		PrintError(context, expression->any.loc, TPrintF("Invalid variable \"%S\" referenced", varName));
 	} break;
 	case ASTNODETYPE_PROCEDURE_CALL:
 	{
@@ -667,8 +671,7 @@ void TypeCheckExpression(Context *context, ASTExpression *expression)
 		}
 
 		if (!procedure)
-			PrintError(context, expression->any.loc, TPrintF("Invalid procedure \"%.*s\" called", procName.size,
-						procName.data));
+			PrintError(context, expression->any.loc, TPrintF("Invalid procedure \"%S\" called", procName));
 
 		expression->procedureCall.isExternal = procedure->isExternal;
 		expression->typeTableIdx = procedure->returnTypeTableIdx;
@@ -680,14 +683,14 @@ void TypeCheckExpression(Context *context, ASTExpression *expression)
 		{
 			if (neededArguments > givenArguments)
 				PrintError(context, expression->any.loc,
-						TPrintF("Procedure \"%.*s\" needs at least %d arguments but only %d were given",
-							procName.size, procName.data, neededArguments, givenArguments));
+						TPrintF("Procedure \"%S\" needs at least %d arguments but only %d were given",
+							procName, neededArguments, givenArguments));
 		}
 		else
 		{
 			if (neededArguments != givenArguments)
-				PrintError(context, expression->any.loc, TPrintF("Procedure \"%.*s\" has %d arguments but %d were given",
-							procName.size, procName.data, neededArguments, givenArguments));
+				PrintError(context, expression->any.loc, TPrintF("Procedure \"%S\" has %d arguments but %d were given",
+							procName, neededArguments, givenArguments));
 		}
 
 		for (int argIdx = 0; argIdx < neededArguments; ++argIdx)
@@ -697,8 +700,8 @@ void TypeCheckExpression(Context *context, ASTExpression *expression)
 
 			Variable *param = procedure->parameters[argIdx];
 			if (!CheckTypesMatch(context, param->typeTableIdx, arg->typeTableIdx))
-				PrintError(context, arg->any.loc, TPrintF("When calling procedure \"%.*s\": type of parameter #%d didn't match",
-							procName.size, procName.data, argIdx));
+				PrintError(context, arg->any.loc, TPrintF("When calling procedure \"%S\": type of parameter #%d didn't match",
+							procName, argIdx));
 		}
 	} break;
 	case ASTNODETYPE_UNARY_OPERATION:
@@ -739,12 +742,17 @@ void TypeCheckExpression(Context *context, ASTExpression *expression)
 	} break;
 	case ASTNODETYPE_BINARY_OPERATION:
 	{
+		ASTExpression *leftHand  = expression->binaryOperation.leftHand;
+		ASTExpression *rightHand = expression->binaryOperation.rightHand;
+
 		if (expression->binaryOperation.op == TOKEN_OP_MEMBER_ACCESS)
 		{
-			TypeCheckExpression(context, expression->binaryOperation.leftHand);
-			s64 leftHandTypeIdx = expression->binaryOperation.leftHand->typeTableIdx;
+			TypeCheckExpression(context, leftHand);
+			s64 leftHandTypeIdx = leftHand->typeTableIdx;
 
-			ASSERT(expression->binaryOperation.rightHand->nodeType == ASTNODETYPE_VARIABLE);
+			ASSERT(rightHand->nodeType == ASTNODETYPE_VARIABLE);
+			// Augment right hand to STRUCT_MEMBER node
+			rightHand->nodeType = ASTNODETYPE_STRUCT_MEMBER;
 
 			TypeInfo *structTypeInfo = &context->typeTable[leftHandTypeIdx];
 			if (structTypeInfo->typeCategory == TYPECATEGORY_POINTER)
@@ -758,25 +766,26 @@ void TypeCheckExpression(Context *context, ASTExpression *expression)
 				PrintError(context, expression->any.loc, "Left of '.' has to be a struct"_s);
 			}
 
-			String memberName = expression->binaryOperation.rightHand->variable.name;
+			String memberName = rightHand->structMember.name;
 			for (int i = 0; i < structTypeInfo->structInfo.members.size; ++i)
 			{
 				if (StringEquals(memberName, structTypeInfo->structInfo.members[i].name))
 				{
-					expression->typeTableIdx = structTypeInfo->structInfo.members[i].typeTableIdx;
+					StructMember *structMember = &structTypeInfo->structInfo.members[i];
+					rightHand->structMember.structMember = structMember;
+					expression->typeTableIdx = structMember->typeTableIdx;
 					return;
 				}
 			}
-			PrintError(context, expression->any.loc, TPrintF("\"%.*s\" is not a member of \"%.*s\"",
-						memberName.size, memberName.data, structTypeInfo->structInfo.name.size,
-						structTypeInfo->structInfo.name.data));
+			PrintError(context, expression->any.loc, TPrintF("\"%S\" is not a member of \"%S\"",
+						memberName, structTypeInfo->structInfo.name));
 		}
 		else if (expression->binaryOperation.op == TOKEN_OP_ARRAY_ACCESS)
 		{
-			TypeCheckExpression(context, expression->binaryOperation.leftHand);
-			TypeCheckExpression(context, expression->binaryOperation.rightHand);
+			TypeCheckExpression(context, leftHand);
+			TypeCheckExpression(context, rightHand);
 
-			s64 arrayType = expression->binaryOperation.leftHand->typeTableIdx;
+			s64 arrayType = leftHand->typeTableIdx;
 			TypeInfo *arrayTypeInfo = &context->typeTable[arrayType];
 			if (arrayTypeInfo->typeCategory == TYPECATEGORY_POINTER)
 			{
@@ -785,16 +794,16 @@ void TypeCheckExpression(Context *context, ASTExpression *expression)
 			}
 
 			if (arrayTypeInfo->typeCategory != TYPECATEGORY_ARRAY)
-				PrintError(context, expression->binaryOperation.leftHand->any.loc,
+				PrintError(context, leftHand->any.loc,
 						"Expression does not evaluate to an array"_s);
 			expression->typeTableIdx = arrayTypeInfo->arrayInfo.elementTypeTableIdx;
 		}
 		else
 		{
-			TypeCheckExpression(context, expression->binaryOperation.leftHand);
-			TypeCheckExpression(context, expression->binaryOperation.rightHand);
-			s64 leftSideType  = expression->binaryOperation.leftHand->typeTableIdx;
-			s64 rightSideType = expression->binaryOperation.rightHand->typeTableIdx;
+			TypeCheckExpression(context, leftHand);
+			TypeCheckExpression(context, rightHand);
+			s64 leftSideType  = leftHand->typeTableIdx;
+			s64 rightSideType = rightHand->typeTableIdx;
 
 			if (!CheckTypesMatch(context, leftSideType, rightSideType))
 				PrintError(context, expression->any.loc, "Type mismatch!"_s);

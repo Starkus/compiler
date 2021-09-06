@@ -13,8 +13,9 @@ typedef uint64_t u64;
 typedef float f32;
 typedef double f64;
 
-typedef void* ptr;
+typedef uint8_t* ptr;
 typedef int8_t strct;
+typedef int8_t arr;
 
 typedef union Register
 {
@@ -33,6 +34,7 @@ typedef union Register
 
 	ptr ptr_;
 	strct strct_;
+	arr arr_;
 } Register;
 
 typedef struct String

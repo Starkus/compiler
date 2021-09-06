@@ -118,8 +118,7 @@ struct Context
 
 inline void PrintError(Context *context, SourceLocation loc, const String errorStr)
 {
-	LogError("ERROR! %.*s %d:%d\n... %.*s\n", loc.file.size, loc.file.data, loc.line, loc.character,
-			errorStr.size, errorStr.data);
+	LogError("ERROR! %S %d:%d\n... %S\n", loc.file, loc.line, loc.character, errorStr);
 
 	// Print line
 	const char *beginningOfLine = nullptr;
@@ -166,7 +165,7 @@ inline void PrintError(Context *context, SourceLocation loc, const String errorS
 
 inline void PrintWarning(SourceLocation loc, const String errorStr)
 {
-	Log("WARNING! %s:%d\n... %.*s\n", loc.file, loc.line, errorStr.size, errorStr.data);
+	Log("WARNING! %s:%d\n... %S\n", loc.file, loc.line, errorStr);
 }
 
 void AssertToken(Context *context, Token *token, int type)
@@ -175,8 +174,8 @@ void AssertToken(Context *context, Token *token, int type)
 	{
 		const String tokenTypeGot = TokenToString(token);
 		const String tokenTypeExp = TokenTypeToString(type);
-		const String errorStr = TPrintF("Expected token of type %.*s but got %.*s",
-				tokenTypeExp.size, tokenTypeExp.data, tokenTypeGot.size, tokenTypeGot.data);
+		const String errorStr = TPrintF("Expected token of type %S but got %S",
+				tokenTypeExp, tokenTypeGot);
 		PrintError(context, token->loc, errorStr);
 	}
 }
@@ -184,8 +183,7 @@ void AssertToken(Context *context, Token *token, int type)
 void UnexpectedTokenError(Context *context, Token *token)
 {
 	const String tokenType = TokenTypeToString(token->type);
-	const String errorStr = TPrintF("Unexpected token of type %.*s",
-			tokenType.size, tokenType.data);
+	const String errorStr = TPrintF("Unexpected token of type %S", tokenType);
 	PrintError(context, token->loc, errorStr);
 }
 

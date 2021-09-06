@@ -42,6 +42,16 @@ struct ASTVariable : ASTBase
 	Variable *variable;
 };
 
+struct StructMember;
+struct ASTStructMember : ASTVariable
+{
+	// Filled by type checker
+	StructMember *structMember;
+	// Note: saving this pointer assumes that once a struct is declared, further members cannot be
+	// added to it or, at least, adding them don't trigger a reallocation of the preexisting
+	// members.
+};
+
 struct ASTBlock : ASTBase
 {
 	DynamicArray<ASTExpression, malloc, realloc> statements;
@@ -76,7 +86,7 @@ struct ASTVariableDeclaration : ASTBase
 	Variable *variable;
 };
 
-struct ASTStructMember : ASTBase
+struct ASTStructMemberDeclaration : ASTBase
 {
 	String name;
 	ASTType *astType;
@@ -131,7 +141,7 @@ struct ASTDefer : ASTBase
 struct ASTStruct : ASTBase
 {
 	String name;
-	DynamicArray<ASTStructMember, malloc, realloc> members;
+	DynamicArray<ASTStructMemberDeclaration, malloc, realloc> members;
 };
 
 struct ASTRoot : ASTBase
@@ -143,6 +153,7 @@ enum ASTNodeType
 {
 	ASTNODETYPE_INVALID,
 	ASTNODETYPE_VARIABLE,
+	ASTNODETYPE_STRUCT_MEMBER,
 	ASTNODETYPE_LITERAL,
 	ASTNODETYPE_TYPE,
 	ASTNODETYPE_BLOCK,
@@ -165,6 +176,7 @@ struct ASTExpression
 	{
 		ASTBase any;
 		ASTVariable variable;
+		ASTStructMember structMember;
 		ASTLiteral literal;
 		ASTBlock block;
 		ASTUnaryOperation unaryOperation;

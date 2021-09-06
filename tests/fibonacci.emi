@@ -5,8 +5,8 @@ fibonacci :: (i : s64) -> s64
 	while i >= 0
 	{
 		t := a + b;
-		a := b;
-		b := t;
+		a = b;
+		b = t;
 		i = i - 1;
 	}
 	return b;

@@ -5,10 +5,10 @@ ASTVariableDeclaration ParseVariableDeclaration(Context *context);
 struct Variable
 {
 	String name;
-	bool isParameter;
+	s8 parameterIndex; // Negative if not a parameter
 	bool isStatic;
 
-	u64 typeTableIdx;
+	s64 typeTableIdx;
 
 	// Back end
 	u64 stackOffset;
@@ -39,7 +39,7 @@ String ASTTypeToString(ASTType *type)
 	else if (type->nodeType == ASTTYPENODETYPE_ARRAY)
 	{
 		String typeStr = ASTTypeToString(type->arrayType);
-		return TPrintF("[%d] %.*s", type->arrayCount, typeStr.size, typeStr.data);
+		return TPrintF("[%d] %S", type->arrayCount, typeStr);
 	}
 	return "???TYPE"_s;
 }
@@ -243,8 +243,7 @@ bool TryParseBinaryOperation(Context *context, ASTExpression leftHand, s32 prevP
 	default:
 	{
 		String opStr = TokenTypeToString(context->token->type);
-		PrintError(context, context->token->loc, TPrintF("Unexpected operator %.*s", opStr.size,
-					opStr.data));
+		PrintError(context, context->token->loc, TPrintF("Unexpected operator %S", opStr));
 	} break;
 	}
 
@@ -293,9 +292,9 @@ ASTWhile ParseWhile(Context *context)
 	return whileNode;
 }
 
-ASTStructMember ParseStructMember(Context *context)
+ASTStructMemberDeclaration ParseStructMemberDeclaration(Context *context)
 {
-	ASTStructMember structMem = {};
+	ASTStructMemberDeclaration structMem = {};
 	structMem.loc = context->token->loc;
 
 	AssertToken(context, context->token, TOKEN_IDENTIFIER);
@@ -344,7 +343,7 @@ ASTStruct ParseStruct(Context *context)
 	Advance(context);
 	while (context->token->type != '}')
 	{
-		ASTStructMember member = ParseStructMember(context);
+		ASTStructMemberDeclaration member = ParseStructMemberDeclaration(context);
 		*DynamicArrayAdd(&structNode.members) = member;
 		AssertToken(context, context->token, ';');
 		Advance(context);
@@ -361,6 +360,7 @@ ASTVariableDeclaration ParseVariableDeclaration(Context *context)
 
 	varDecl.variable = BucketArrayAdd(&context->variables);
 	*varDecl.variable = {};
+	varDecl.variable->parameterIndex = -1;
 
 	AssertToken(context, context->token, TOKEN_IDENTIFIER);
 	varDecl.variable->name = context->token->string;
@@ -425,7 +425,8 @@ ASTProcedureDeclaration ParseProcedureDeclaration(Context *context)
 
 		// @Improve: separate node type for procedure parameter?
 		ASTVariableDeclaration parameter = ParseVariableDeclaration(context);
-		parameter.variable->isParameter = true;
+		ASSERT(procDecl.parameters.size <= S8_MAX);
+		parameter.variable->parameterIndex = (s8)procDecl.parameters.size;
 
 		if (parameter.variable->isStatic)
 			PrintError(context, context->token->loc, "Procedure parameters can't be static"_s);

@@ -134,7 +134,7 @@ void PrintExpression(PrintContext *context, ASTExpression *e)
 		else
 			Log("Variable declaration ");
 		String typeStr = ASTTypeToString(e->variableDeclaration.astType);
-		Log("\"%.*s\" of type \"%.*s\"", var->name.size, var->name.data, typeStr.size, typeStr.data);
+		Log("\"%S\" of type \"%S\"", var->name, typeStr);
 
 		PrintSourceLocation(context, e->any.loc);
 		Log("\n");
@@ -148,8 +148,7 @@ void PrintExpression(PrintContext *context, ASTExpression *e)
 	} break;
 	case ASTNODETYPE_PROCEDURE_DECLARATION:
 	{
-		Log("Procedure declaration \"%.*s\"", e->procedureDeclaration.name.size,
-				e->procedureDeclaration.name.data);
+		Log("Procedure declaration \"%S\"", e->procedureDeclaration.name);
 		++context->indentLevels;
 
 		PrintSourceLocation(context, e->any.loc);
@@ -182,14 +181,14 @@ void PrintExpression(PrintContext *context, ASTExpression *e)
 	} break;
 	case ASTNODETYPE_VARIABLE:
 	{
-		Log("Variable \"%.*s\"", e->variable.name.size, e->variable.name.data);
+		Log("Variable \"%S\"", e->variable.name);
 
 		PrintSourceLocation(context, e->any.loc);
 		Log("\n");
 	} break;
 	case ASTNODETYPE_PROCEDURE_CALL:
 	{
-		Log("Procedure call \"%.*s\"", e->procedureCall.name.size, e->procedureCall.name.data);
+		Log("Procedure call \"%S\"", e->procedureCall.name);
 
 		PrintSourceLocation(context, e->any.loc);
 		Log("\n");
@@ -215,7 +214,7 @@ void PrintExpression(PrintContext *context, ASTExpression *e)
 		} break;
 		case LITERALTYPE_STRING:
 		{
-			Log("Constant \"%.*s\"", e->literal.string.size, e->literal.string.data);
+			Log("Constant \"%S\"", e->literal.string);
 		} break;
 		}
 
@@ -225,7 +224,7 @@ void PrintExpression(PrintContext *context, ASTExpression *e)
 	case ASTNODETYPE_UNARY_OPERATION:
 	{
 		String operatorStr = OperatorToString(e->unaryOperation.op);
-		Log("Unary operation (%.*s)", operatorStr.size, operatorStr.data);
+		Log("Unary operation (%S)", operatorStr);
 
 		PrintSourceLocation(context, e->any.loc);
 		Log("\n");
@@ -237,7 +236,7 @@ void PrintExpression(PrintContext *context, ASTExpression *e)
 	case ASTNODETYPE_BINARY_OPERATION:
 	{
 		String operatorStr = OperatorToString(e->binaryOperation.op);
-		Log("Binary operation (%.*s)", operatorStr.size, operatorStr.data);
+		Log("Binary operation (%S)", operatorStr);
 
 		PrintSourceLocation(context, e->any.loc);
 		Log("\n");
@@ -319,7 +318,7 @@ void PrintExpression(PrintContext *context, ASTExpression *e)
 
 			Log("Struct member ");
 			String typeStr = ASTTypeToString(member->astType);
-			Log("\"%.*s\" of type \"%.*s\"", member->name.size, member->name.data, typeStr.size, typeStr.data);
+			Log("\"%S\" of type \"%S\"", member->name, typeStr);
 
 			PrintSourceLocation(context, e->any.loc);
 			Log("\n");

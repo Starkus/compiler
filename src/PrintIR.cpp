@@ -6,12 +6,18 @@ void PrintIRInstructions(Context *context)
 	for (int procedureIdx = 0; procedureIdx < procedureCount; ++procedureIdx)
 	{
 		IRProcedure proc = context->irProcedures[procedureIdx];
-		String returnTypeStr = IRTypeInfoToStr(proc.returnTypeInfo);
+		String returnTypeStr = TypeInfoToString(context, proc.returnTypeTableIdx);
 
-		Log("proc %.*s(", proc.name.size, proc.name.data);
+		Log("proc %S(", proc.name);
+		for (int paramIdx = 0; paramIdx < proc.parameters.size; ++paramIdx)
+		{
+			if (paramIdx) Log(", ");
+			String typeStr = TypeInfoToString(context, proc.parameters[paramIdx]->typeTableIdx);
+			Log("param%d : %S", paramIdx, typeStr);
+		}
 		Log(")");
-		if (proc.returnTypeInfo.type != IRTYPE_VOID)
-			Log(" -> %.*s", returnTypeStr.size, returnTypeStr.data);
+		if (proc.returnTypeTableIdx != TYPETABLEIDX_VOID)
+			Log(" -> %S", returnTypeStr);
 		Log("\n");
 
 		const u64 instructionCount = BucketArrayCount(&proc.instructions);
@@ -20,7 +26,7 @@ void PrintIRInstructions(Context *context)
 			IRInstruction inst = proc.instructions[instructionIdx];
 			if (inst.type == IRINSTRUCTIONTYPE_LABEL)
 			{
-				Log("%.*s: ", inst.label.size, inst.label.data);
+				Log("%S: ", inst.label);
 				for (s64 i = inst.label.size + 2; i < padding; ++i)
 					Log(" ");
 
@@ -41,68 +47,87 @@ void PrintIRInstructions(Context *context)
 
 			if (inst.type == IRINSTRUCTIONTYPE_JUMP)
 			{
-				Log("jump \"%.*s\"", inst.jump.label.size, inst.jump.label.data);
+				Log("jump \"%S\"", inst.jump.label);
 			}
 			else if (inst.type == IRINSTRUCTIONTYPE_JUMP_IF_ZERO)
 			{
 				Log("if !");
-				PrintIRValue(inst.conditionalJump.condition);
-				Log(" jump %.*s", inst.conditionalJump.label.size, inst.conditionalJump.label.data);
+				PrintIRValue(context, inst.conditionalJump.condition);
+				Log(" jump %S", inst.conditionalJump.label);
 			}
 			else if (inst.type == IRINSTRUCTIONTYPE_PROCEDURE_CALL)
 			{
-				Log("call %.*s", inst.procedureCall.label.size, inst.procedureCall.label.data);
+				Log("call %S", inst.procedureCall.label);
 			}
 			else if (inst.type == IRINSTRUCTIONTYPE_RETURN)
 			{
 				Log("return ");
-				PrintIRValue(inst.returnValue);
+				PrintIRValue(context, inst.returnValue);
 			}
 			else if (inst.type == IRINSTRUCTIONTYPE_VARIABLE_DECLARATION)
 			{
 				Variable *var = inst.variableDeclaration.variable;
-				Log("variable %.*s", var->name.size, var->name.data);
+				String typeStr = TypeInfoToString(context, var->typeTableIdx);
+				Log("variable %S : %S", var->name, typeStr);
 			}
 			else if (inst.type == IRINSTRUCTIONTYPE_ASSIGNMENT)
 			{
-				PrintIRValue(inst.assignment.dst);
+				PrintIRValue(context, inst.assignment.dst);
 				Log(" = ");
-				PrintIRValue(inst.assignment.src);
+				PrintIRValue(context, inst.assignment.src);
 			}
 			else if (inst.type == IRINSTRUCTIONTYPE_MEMBER_ACCESS)
 			{
-				PrintIRValue(inst.memberAccess.out);
+				PrintIRValue(context, inst.memberAccess.out);
 				Log(" = ");
-				PrintIRValue(inst.memberAccess.in);
-				Log(" -> offset(%.*s::%.*s)",
-						inst.memberAccess.structName.size, inst.memberAccess.structName.data,
-						inst.memberAccess.memberName.size, inst.memberAccess.memberName.data);
+				PrintIRValue(context, inst.memberAccess.in);
+
+				TypeInfo *structTypeInfo = &context->typeTable[inst.memberAccess.in.typeTableIdx];
+				if (structTypeInfo->typeCategory == TYPECATEGORY_POINTER)
+				{
+					s64 structTypeInfoIdx = structTypeInfo->pointerInfo.pointedTypeTableIdx;
+					structTypeInfo = &context->typeTable[structTypeInfoIdx];
+				}
+				ASSERT(structTypeInfo->typeCategory == TYPECATEGORY_STRUCT);
+
+				String structName = structTypeInfo->structInfo.name;
+				String memberName = inst.memberAccess.structMember->name;
+				Log(" + offset(%S::%S)", structName, memberName);
 			}
 			else if (inst.type == IRINSTRUCTIONTYPE_ARRAY_ACCESS)
 			{
-				PrintIRValue(inst.arrayAccess.out);
+				PrintIRValue(context, inst.arrayAccess.out);
 				Log(" = ");
-				PrintIRValue(inst.arrayAccess.left);
-				Log("[");
-				PrintIRValue(inst.arrayAccess.right);
-				Log("]");
+				PrintIRValue(context, inst.arrayAccess.array);
+				Log(" + ");
+				PrintIRValue(context, inst.arrayAccess.index);
 			}
 			else if (inst.type >= IRINSTRUCTIONTYPE_UNARY_BEGIN && inst.type < IRINSTRUCTIONTYPE_UNARY_END)
 			{
-				PrintIRValue(inst.unaryOperation.out);
+				PrintIRValue(context, inst.unaryOperation.out);
 				Log(" := ");
 				PrintIRInstructionOperator(inst);
-				PrintIRValue(inst.unaryOperation.in);
+				PrintIRValue(context, inst.unaryOperation.in);
 			}
 			else if (inst.type >= IRINSTRUCTIONTYPE_BINARY_BEGIN && inst.type < IRINSTRUCTIONTYPE_BINARY_END)
 			{
-				PrintIRValue(inst.binaryOperation.out);
+				PrintIRValue(context, inst.binaryOperation.out);
 				Log(" := ");
-				PrintIRValue(inst.binaryOperation.left);
+				PrintIRValue(context, inst.binaryOperation.left);
 				Log(" ");
 				PrintIRInstructionOperator(inst);
 				Log(" ");
-				PrintIRValue(inst.binaryOperation.right);
+				PrintIRValue(context, inst.binaryOperation.right);
+			}
+			else if (inst.type == IRINSTRUCTIONTYPE_INTRINSIC_MEMCPY)
+			{
+				Log("memcpy(");
+				PrintIRValue(context, inst.memcpy.dst);
+				Log(", ");
+				PrintIRValue(context, inst.memcpy.src);
+				Log(", ");
+				PrintIRValue(context, inst.memcpy.size);
+				Log(")");
 			}
 			else
 			{

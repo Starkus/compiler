@@ -29,15 +29,15 @@ typedef double f64;
 #define U32_MAX 0xFFFFFFFF
 #define U64_MAX 0xFFFFFFFFFFFFFFFF
 
-#define S8_MIN ((i8)0xFF)
-#define S16_MIN ((i16)0xFFFF)
-#define S32_MIN ((i32)0xFFFFFFFF)
-#define S64_MIN ((i64)0xFFFFFFFFFFFFFFFF)
+#define S8_MIN  ((s8)0xFF)
+#define S16_MIN ((s16)0xFFFF)
+#define S32_MIN ((s32)0xFFFFFFFF)
+#define S64_MIN ((s64)0xFFFFFFFFFFFFFFFF)
 
-#define S8_MAX ((i8)0x7F)
-#define S16_MAX ((i16)0x7FFF)
-#define S32_MAX ((i32)0x7FFFFFFF)
-#define S64_MAX ((i64)0x7FFFFFFFFFFFFFFF)
+#define S8_MAX  ((s8)0x7F)
+#define S16_MAX ((s16)0x7FFF)
+#define S32_MAX ((s32)0x7FFFFFFF)
+#define S64_MAX ((s64)0x7FFFFFFFFFFFFFFF)
 
 #define CRASH do { *((int*)0) = 1; } while (false)
 
