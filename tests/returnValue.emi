@@ -28,7 +28,7 @@ AlwaysReturns :: () -> u64
 			return 65;
 }
 
-main :: () -> s64
+Main :: () -> s64
 {
 	anS32 := GiveS32();
 	return 0;

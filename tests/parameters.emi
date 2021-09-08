@@ -10,10 +10,11 @@ defaultArg :: (eight : s8 = 8)
 	foo := eight;
 }
 
-main :: () -> s64
+Main :: () -> s64
 {
 	doThings(8, 16, 32);
 	defaultArg();
 	defaultArg(16);
+
 	return 0;
 }

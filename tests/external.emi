@@ -1,7 +1,7 @@
 memset :: external (dst : ^void, src : ^void, num : u64);
 OutputDebugStringA :: external (message : ^u8);
 
-main :: () -> s64
+Main :: () -> s64
 {
 	arrayA : 20 u8;
 	arrayB : 20 u8;

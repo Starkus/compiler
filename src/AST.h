@@ -187,5 +187,5 @@ struct ASTExpression
 	};
 
 	// Filled in during type checking
-	u64 typeTableIdx;
+	s64 typeTableIdx;
 };

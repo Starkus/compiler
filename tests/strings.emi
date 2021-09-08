@@ -1,4 +1,4 @@
-main :: () -> s64
+Main :: () -> s64
 {
 	str : String = "Hello, Sailor!";
 	//str = "Hello, Sailor!";

@@ -3,7 +3,7 @@ argByPointer :: (n : ^s32)
 	@n = @n * @n;
 }
 
-main :: ()
+Main :: () -> s64
 {
 	foo : s32 = 5;
 	bar : s32;
@@ -23,4 +23,6 @@ main :: ()
 	//e : ^s8 = ^foo;
 
 	argByPointer(^foo);
+
+	return 0;
 }

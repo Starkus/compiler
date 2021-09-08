@@ -39,7 +39,7 @@ scopes :: ()
 	}
 }
 
-main :: () -> s64
+Main :: () -> s64
 {
 	//asd : AnotherStruct;
 	var : u32 = 7;

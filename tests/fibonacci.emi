@@ -12,7 +12,8 @@ fibonacci :: (i : s64) -> s64
 	return b;
 }
 
-main :: ()
+Main :: () -> s64
 {
 	fibonacci(8);
+	return 0;
 }

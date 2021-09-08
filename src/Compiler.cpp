@@ -102,7 +102,7 @@ struct Context
 	BucketArray<Procedure, 512, malloc, realloc> procedures;
 	BucketArray<TypeInfo, 1024, malloc, realloc> typeTable;
 	DynamicArray<TCScope, malloc, realloc> tcStack;
-	s64 currentReturnType;
+	s64 tcCurrentReturnType;
 
 	// IR
 	DynamicArray<IRStaticVariable, malloc, realloc> irStaticVariables;

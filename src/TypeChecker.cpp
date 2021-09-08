@@ -598,13 +598,13 @@ void TypeCheckExpression(Context *context, ASTExpression *expression)
 		}
 		procedure->returnTypeTableIdx = returnType;
 
-		u64 oldReturnType = context->currentReturnType;
-		context->currentReturnType = returnType;
+		u64 oldReturnType = context->tcCurrentReturnType;
+		context->tcCurrentReturnType = returnType;
 
 		if (procedure->astBody)
 			TypeCheckExpression(context, procedure->astBody);
 
-		context->currentReturnType = oldReturnType;
+		context->tcCurrentReturnType = oldReturnType;
 		PopTCScope(context);
 
 		procedure->returnTypeTableIdx = returnType;
@@ -626,7 +626,7 @@ void TypeCheckExpression(Context *context, ASTExpression *expression)
 	{
 		TypeCheckExpression(context, expression->returnNode.expression);
 		u64 typeTableIdx = expression->returnNode.expression->typeTableIdx;
-		if (!CheckTypesMatch(context, context->currentReturnType, typeTableIdx))
+		if (!CheckTypesMatch(context, context->tcCurrentReturnType, typeTableIdx))
 			PrintError(context, expression->any.loc, "Incorrect return type"_s);
 	} break;
 	case ASTNODETYPE_DEFER:
@@ -886,7 +886,7 @@ void TypeCheckExpression(Context *context, ASTExpression *expression)
 
 void TypeCheckMain(Context *context)
 {
-	context->currentReturnType = -1;
+	context->tcCurrentReturnType = -1;
 
 	DynamicArrayInit(&context->tcStack, 128);
 

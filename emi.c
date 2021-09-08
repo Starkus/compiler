@@ -56,3 +56,9 @@ inline Register FromS64(s64 value)
 	r.s64_ = value;
 	return r;
 }
+
+Register Main();
+int main(int argc, char **argv)
+{
+	return Main().s64_;
+}

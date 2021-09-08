@@ -37,7 +37,7 @@ operatorPrecedence :: (arg1 : u32, arg2 : u64 = 4) -> s32
 	return 0;
 }
 
-main :: () -> s64
+Main :: () -> s64
 {
 	var : u32 = 7;
 	operatorPrecedence(var, 5);

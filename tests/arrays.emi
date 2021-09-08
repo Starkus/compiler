@@ -3,7 +3,19 @@ arrayAsArgument :: (array : 5 s16)
 	foo := array[3];
 }
 
-main :: () -> s64
+returnArray :: () -> 4 s32
+{
+	array : 4 s32;
+	i : s32 = 0;
+	while i < 4
+	{
+		array[i] = i;
+		i += 1;
+	}
+	return array;
+}
+
+Main :: () -> s64
 {
 	arrayA : 20 u8;
 	arrayB : 32 s32;
@@ -25,6 +37,8 @@ main :: () -> s64
 	anotherCell := arrayOfArrays[5][5];
 
 	copyOfA := arrayA;
+
+	returnedArray := returnArray();
 
 	return 0;
 }

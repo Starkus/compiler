@@ -61,8 +61,7 @@ void PrintIRInstructions(Context *context)
 			}
 			else if (inst.type == IRINSTRUCTIONTYPE_RETURN)
 			{
-				Log("return ");
-				PrintIRValue(context, inst.returnValue);
+				Log("return");
 			}
 			else if (inst.type == IRINSTRUCTIONTYPE_VARIABLE_DECLARATION)
 			{

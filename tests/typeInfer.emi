@@ -19,7 +19,7 @@ makeStruct :: () -> Struct
 	return result;
 }
 
-main :: () -> s64
+Main :: () -> s64
 {
 	foo := 5;
 	bar := anS64;

@@ -77,7 +77,18 @@ String CIRValueToStr(Context *context, IRValue value)
 
 	if (value.valueType == IRVALUETYPE_REGISTER)
 	{
-		result = TPrintF("r%d", value.registerIdx);
+		switch (value.registerIdx)
+		{
+		case IRSPECIALREGISTER_RETURN:
+			result = "rRet"_s;
+			break;
+		case IRSPECIALREGISTER_SHOULD_RETURN:
+			result = "rDoRet"_s;
+			break;
+		default:
+			result = TPrintF("r%lld", value.registerIdx);
+			break;
+		}
 		printTypeMemberAccess = true;
 	}
 	else if (value.valueType == IRVALUETYPE_PARAMETER)
@@ -137,7 +148,7 @@ String CIRValueToStr(Context *context, IRValue value)
 	return result;
 }
 
-String IRValueToStrAsRegister(Context *context, IRValue value)
+String CIRValueToStrAsRegister(Context *context, IRValue value)
 {
 	if (value.valueType == IRVALUETYPE_REGISTER)
 		return TPrintF("r%d", value.registerIdx);
@@ -187,12 +198,17 @@ String CGetProcedureSignature(Context *context, Procedure *proc)
 {
 	String result;
 
-	String returnTypeStr = CTypeInfoToString(context, proc->returnTypeTableIdx);
-	// @Hack: write 'main' return type as 'int' for compatibility
-	if (StringEquals(proc->name, "main"_s))
-		returnTypeStr = "int"_s;
+	String returnTypeStr = proc->returnTypeTableIdx == TYPETABLEIDX_VOID ? "void"_s : "Register"_s;
 
 	result = TPrintF("%S %S(", returnTypeStr, proc->name);
+
+	if (IRShouldReturnByCopy(context, proc->returnTypeTableIdx))
+	{
+		if (proc->parameters.size)
+			result = StringConcat(result, "Register rRet, "_s);
+		else
+			result = StringConcat(result, "Register rRet"_s);
+	}
 	for (int i = 0; i < proc->parameters.size; ++i)
 	{
 		if (i) result = StringConcat(result, ", "_s);
@@ -366,6 +382,9 @@ void WriteToC(Context *context)
 			}
 			PrintOut(context, outputFile, ";\n");
 		}
+		if (!IRShouldReturnByCopy(context, proc->returnTypeTableIdx))
+			PrintOut(context, outputFile, "Register rRet;\n");
+		PrintOut(context, outputFile, "Register rDoRet;\n");
 
 		PrintOut(context, outputFile, "\n");
 
@@ -379,6 +398,9 @@ void WriteToC(Context *context)
 		for (int instructionIdx = 0; instructionIdx < instructionCount; ++instructionIdx)
 		{
 			IRInstruction inst = proc->instructions[instructionIdx];
+
+			if (inst.type != IRINSTRUCTIONTYPE_LABEL)
+				PrintOut(context, outputFile, "\t");
 
 			if (inst.type == IRINSTRUCTIONTYPE_VARIABLE_DECLARATION)
 			{
@@ -432,7 +454,7 @@ void WriteToC(Context *context)
 			{
 				if (inst.procedureCall.out.valueType != IRVALUETYPE_INVALID)
 				{
-					String out = CIRValueToStr(context, inst.procedureCall.out);
+					String out = CIRValueToStrAsRegister(context, inst.procedureCall.out);
 					PrintOut(context, outputFile, "%S = ", out);
 				}
 				PrintOut(context, outputFile, "%S(", inst.procedureCall.procedure->name);
@@ -442,7 +464,7 @@ void WriteToC(Context *context)
 					if (inst.procedureCall.procedure->isExternal)
 						param = CIRValueToStr(context, inst.procedureCall.parameters[i]);
 					else
-						param = IRValueToStrAsRegister(context, inst.procedureCall.parameters[i]);
+						param = CIRValueToStrAsRegister(context, inst.procedureCall.parameters[i]);
 					if (i > 0) PrintOut(context, outputFile, ", ");
 					PrintOut(context, outputFile, "%S", param);
 				}
@@ -450,8 +472,7 @@ void WriteToC(Context *context)
 			}
 			else if (inst.type == IRINSTRUCTIONTYPE_RETURN)
 			{
-				String returnStr = CIRValueToStr(context, inst.returnValue);
-				PrintOut(context, outputFile, "return %S;\n", returnStr);
+				PrintOut(context, outputFile, "return rRet;\n");
 			}
 			else if (inst.type == IRINSTRUCTIONTYPE_LABEL)
 			{
@@ -474,9 +495,9 @@ void WriteToC(Context *context)
 			}
 			else if (inst.type == IRINSTRUCTIONTYPE_INTRINSIC_MEMCPY)
 			{
-				String src = IRValueToStrAsRegister(context, inst.memcpy.src);
-				String dst = IRValueToStrAsRegister(context, inst.memcpy.dst);
-				String size = IRValueToStrAsRegister(context, inst.memcpy.size);
+				String src = CIRValueToStr(context, inst.memcpy.src);
+				String dst = CIRValueToStr(context, inst.memcpy.dst);
+				String size = CIRValueToStr(context, inst.memcpy.size);
 				PrintOut(context, outputFile, "memcpy(%S, %S, %S);\n", dst, src, size);
 			}
 			else

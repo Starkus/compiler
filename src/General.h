@@ -29,10 +29,10 @@ typedef double f64;
 #define U32_MAX 0xFFFFFFFF
 #define U64_MAX 0xFFFFFFFFFFFFFFFF
 
-#define S8_MIN  ((s8)0xFF)
-#define S16_MIN ((s16)0xFFFF)
-#define S32_MIN ((s32)0xFFFFFFFF)
-#define S64_MIN ((s64)0xFFFFFFFFFFFFFFFF)
+#define S8_MIN  ((s8)0x80)
+#define S16_MIN ((s16)0x8000)
+#define S32_MIN ((s32)0x80000000)
+#define S64_MIN ((s64)0x8000000000000000)
 
 #define S8_MAX  ((s8)0x7F)
 #define S16_MAX ((s16)0x7FFF)
