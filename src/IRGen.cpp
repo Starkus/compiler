@@ -291,7 +291,7 @@ IRInstruction IRInstructionFromBinaryOperation(Context *context, ASTExpression *
 		}
 
 		ASSERT(rightHand->nodeType == ASTNODETYPE_STRUCT_MEMBER);
-		String memberName = rightHand->structMember.name;
+		String memberName = rightHand->structMember.string;
 
 		s64 typeTableIdx = leftHand->typeTableIdx;
 		ASSERT(typeTableIdx >= 0);
@@ -476,6 +476,10 @@ IRValue IRGenFromExpression(Context *context, ASTExpression *expression)
 
 	switch (expression->nodeType)
 	{
+	case ASTNODETYPE_STATIC_DEFINITION:
+	{
+		IRGenFromExpression(context, expression->staticDefinition.expression);
+	} break;
 	case ASTNODETYPE_PROCEDURE_DECLARATION:
 	{
 		Procedure *prevProcedure = context->currentProcedure;
@@ -617,21 +621,43 @@ IRValue IRGenFromExpression(Context *context, ASTExpression *expression)
 			}
 		}
 	} break;
-	case ASTNODETYPE_VARIABLE:
+	case ASTNODETYPE_IDENTIFIER:
 	{
-		result = IRValueFromVariable(context, expression->variable.variable);
+		if (expression->identifier.isStaticDefinition)
+		{
+			switch (expression->identifier.staticDefinition->definitionType)
+			{
+			case STATICDEFINITIONTYPE_CONSTANT_INTEGER:
+			{
+				result.valueType = IRVALUETYPE_IMMEDIATE_INTEGER;
+				result.immediate = expression->identifier.staticDefinition->constantInteger.value;
+				result.typeTableIdx = TYPETABLEIDX_S64;
+			} break;
+			case STATICDEFINITIONTYPE_CONSTANT_FLOATING:
+			{
+				result.valueType = IRVALUETYPE_IMMEDIATE_FLOAT;
+				result.immediateFloat = expression->identifier.staticDefinition->constantFloating.value;
+				result.typeTableIdx = TYPETABLEIDX_F64;
+			} break;
+			}
+		}
+		else
+			result = IRValueFromVariable(context, expression->identifier.variable);
 	} break;
 	case ASTNODETYPE_PROCEDURE_CALL:
 	{
 		ASTProcedureCall *astProcCall = &expression->procedureCall;
-		String label = astProcCall->procedure->name; // @Improve: oh my god...
 
 		IRInstruction inst = {};
 		inst.type = IRINSTRUCTIONTYPE_PROCEDURE_CALL;
 		inst.procedureCall.procedure = astProcCall->procedure;
 
 		bool isReturnByCopy = IRShouldReturnByCopy(context, expression->typeTableIdx);
-		s32 paramCount = (s32)astProcCall->procedure->parameters.size + isReturnByCopy;
+
+		// Support both varargs and default parameters here
+		s32 totalParamCount = (s32)astProcCall->procedure->parameters.size;
+		s32 callParamCount = (s32)astProcCall->arguments.size;
+		s32 paramCount = Max(totalParamCount, callParamCount) + isReturnByCopy;
 		ArrayInit(&inst.procedureCall.parameters, paramCount, malloc);
 
 		// Return value
@@ -1050,6 +1076,9 @@ IRValue IRGenFromExpression(Context *context, ASTExpression *expression)
 	{
 		IRScope *stackTop = &context->irStack[context->irStack.size - 1];
 		*DynamicArrayAdd(&stackTop->deferredStatements) = expression->deferNode.expression;
+	} break;
+	case ASTNODETYPE_ENUM_DECLARATION:
+	{
 	} break;
 	}
 	return result;

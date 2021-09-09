@@ -3,13 +3,13 @@ Person :: struct
 	id : u64;
 	age : s32;
 	height : f32;
-}
+};
 
 Couple :: struct
 {
 	husband : Person;
 	wife : Person;
-}
+};
 
 structByValue :: (person : Person)
 {

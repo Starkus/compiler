@@ -4,3 +4,69 @@ Print :: (string : String)
 {
 	printf(string.data);
 }
+
+TypeKind :: enum
+{
+	TypeKind_Integer,
+	TypeKind_Floating,
+	TypeKind_Struct,
+	TypeKind_Enum,
+	TypeKind_Pointer,
+	TypeKind_Array
+};
+
+TypeInfoInteger :: struct
+{
+	size : s64;
+	isSigned : s32;
+};
+
+TypeInfoFloating :: struct
+{
+	size : s64;
+};
+
+TypeInfoStructMember :: struct
+{
+	name : String;
+	//typeInfo : ^TypeInfo;
+	offset : u64;
+};
+TypeInfoStruct :: struct
+{
+	name : String;
+	isUnion : bool;
+	members : [] TypeInfoStructMember;
+	size : u64;
+};
+
+TypeInfoEnum :: struct
+{
+	name : String;
+	//typeInfo : ^TypeInfo;
+};
+
+TypeInfoPointer :: struct
+{
+	//typeInfo : ^TypeInfo;
+};
+
+TypeInfoArray :: struct
+{
+	count : u64;
+	//typeInfo : ^TypeInfo;
+};
+
+TypeInfo :: struct
+{
+	typeKind : TypeKind;
+	union
+	{
+		integerInfo : TypeInfoInteger;
+		floatingInfo : TypeInfoFloating;
+		structInfo : TypeInfoStruct;
+		enumInfo : TypeInfoEnum;
+		pointerInfo : TypeInfoPointer;
+		arrayInfo : TypeInfoArray;
+	};
+};

@@ -1,11 +1,11 @@
-arrayAsArgument :: (array : 5 s16)
+arrayAsArgument :: (array : [5] s16)
 {
 	foo := array[3];
 }
 
-returnArray :: () -> 4 s32
+returnArray :: () -> [4] s32
 {
-	array : 4 s32;
+	array : [4] s32;
 	i : s32 = 0;
 	while i < 4
 	{
@@ -17,22 +17,22 @@ returnArray :: () -> 4 s32
 
 Main :: () -> s64
 {
-	arrayA : 20 u8;
-	arrayB : 32 s32;
+	arrayA : [20] u8;
+	arrayB : [32] s32;
 
 	foo : u8 = arrayA[2];
 	bar := arrayB[16];
 
-	arrayC : 5 s16;
+	arrayC : [5] s16;
 	arrayAsArgument(arrayC);
 
-	arrayOfPointers : 8 ^u8;
+	arrayOfPointers : [8] ^u8;
 	asd := arrayOfPointers[2];
 
 	baz := arrayA[arrayB[5]];
 
-	arrayOfArrays : 16 16 u8;
-	row : ^16 u8 = ^arrayOfArrays[3];
+	arrayOfArrays : [16] [16] u8;
+	row : ^[16] u8 = ^arrayOfArrays[3];
 	cell := row[7];
 	anotherCell := arrayOfArrays[5][5];
 

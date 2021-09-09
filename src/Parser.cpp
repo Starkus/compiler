@@ -22,7 +22,6 @@ struct ProcedureParameter
 struct IRInstruction;
 struct Procedure
 {
-	String name;
 	bool isVarargs;
 	bool isExternal;
 	DynamicArray<ProcedureParameter, malloc, realloc> parameters;
@@ -75,34 +74,60 @@ ASTType *NewASTType(Context *context)
 	return BucketArrayAdd(&context->astTypeNodes);
 }
 
-ASTType *ParseType(Context *context)
+ASTStructDeclaration ParseStructOrUnion(Context *context);
+ASTEnumDeclaration ParseEnumDeclaration(Context *context);
+ASTType ParseType(Context *context)
 {
-	ASTType *result = NewASTType(context);
-	result->loc = context->token->loc;
+	ASTType astType;
+	astType.loc = context->token->loc;
 
-	if (context->token->type == TOKEN_LITERAL_NUMBER)
+	if (context->token->type == TOKEN_OP_ARRAY_ACCESS)
 	{
-		result->nodeType = ASTTYPENODETYPE_ARRAY;
-		result->arrayCount = IntFromString(context->token->string);
 		Advance(context);
-		result->pointedType = ParseType(context);
+		astType.nodeType = ASTTYPENODETYPE_ARRAY;
+
+		astType.arrayCount = 0;
+		if (context->token->type == TOKEN_LITERAL_NUMBER)
+		{
+			astType.arrayCount = IntFromString(context->token->string);
+			Advance(context);
+		}
+		AssertToken(context, context->token, ']');
+		Advance(context);
+
+		astType.arrayType = NewASTType(context);
+		*astType.arrayType = ParseType(context);
 	}
 	else if (context->token->type == TOKEN_OP_POINTER_TO)
 	{
 		Advance(context);
-		result->nodeType = ASTTYPENODETYPE_POINTER;
-		result->pointedType = ParseType(context);
+		astType.nodeType = ASTTYPENODETYPE_POINTER;
+		astType.pointedType = NewASTType(context);
+		*astType.pointedType = ParseType(context);
+	}
+	else if (context->token->type == TOKEN_KEYWORD_STRUCT ||
+			 context->token->type == TOKEN_KEYWORD_UNION)
+	{
+		astType.nodeType = ASTTYPENODETYPE_STRUCT_DECLARATION;
+		astType.structDeclaration = ParseStructOrUnion(context);
+	}
+	else if (context->token->type == TOKEN_KEYWORD_ENUM)
+	{
+		astType.nodeType = ASTTYPENODETYPE_ENUM_DECLARATION;
+		astType.enumDeclaration = ParseEnumDeclaration(context);
+	}
+	else if (context->token->type == TOKEN_IDENTIFIER)
+	{
+		astType.nodeType = ASTTYPENODETYPE_IDENTIFIER;
+		astType.name = context->token->string;
+		Advance(context);
 	}
 	else
 	{
-		Token *nameToken = context->token;
-		AssertToken(context, nameToken, TOKEN_IDENTIFIER);
-		result->nodeType = ASTTYPENODETYPE_IDENTIFIER;
-		result->name = nameToken->string;
-		Advance(context);
+		astType.nodeType = ASTTYPENODETYPE_INVALID;
 	}
 
-	return result;
+	return astType;
 }
 
 bool TryParseUnaryOperation(Context *context, s32 prevPrecedence, ASTUnaryOperation *result)
@@ -318,17 +343,27 @@ ASTStructMemberDeclaration ParseStructMemberDeclaration(Context *context)
 	ASTStructMemberDeclaration structMem = {};
 	structMem.loc = context->token->loc;
 
-	AssertToken(context, context->token, TOKEN_IDENTIFIER);
-	structMem.name = context->token->string;
-	Advance(context);
+	// Anonymous structs/unions
+	if (context->token->type == TOKEN_KEYWORD_STRUCT || 
+		context->token->type == TOKEN_KEYWORD_UNION)
+	{
+	}
+	else
+	{
+		AssertToken(context, context->token, TOKEN_IDENTIFIER);
+		structMem.name = context->token->string;
+		Advance(context);
 
-	AssertToken(context, context->token, TOKEN_OP_VARIABLE_DECLARATION);
-
-	Advance(context);
+		AssertToken(context, context->token, TOKEN_OP_VARIABLE_DECLARATION);
+		Advance(context);
+	}
 
 	if (context->token->type != TOKEN_OP_ASSIGNMENT)
 	{
-		structMem.astType = ParseType(context);
+		structMem.astType = NewASTType(context);
+		*structMem.astType = ParseType(context);
+		if (structMem.astType->nodeType == ASTTYPENODETYPE_INVALID)
+			PrintError(context, context->token->loc, "Expected type"_s);
 	}
 
 	if (context->token->type == TOKEN_OP_ASSIGNMENT)
@@ -341,37 +376,73 @@ ASTStructMemberDeclaration ParseStructMemberDeclaration(Context *context)
 	return structMem;
 }
 
-ASTStruct ParseStruct(Context *context)
+ASTEnumDeclaration ParseEnumDeclaration(Context *context)
 {
 	SourceLocation loc = context->token->loc;
 
-	AssertToken(context, context->token, TOKEN_IDENTIFIER);
-	String name = context->token->string;
+	AssertToken(context, context->token, TOKEN_KEYWORD_ENUM);
 	Advance(context);
 
-	AssertToken(context, context->token, TOKEN_OP_STATIC_DEF);
+	ASTEnumDeclaration enumNode = {};
+	enumNode.loc = loc;
+	DynamicArrayInit(&enumNode.members, 16);
+
+	AssertToken(context, context->token, '{');
+	Advance(context);
+	while (context->token->type != '}')
+	{
+		ASTEnumMember enumMember = {};
+
+		AssertToken(context, context->token, TOKEN_IDENTIFIER);
+		enumMember.name = context->token->string;
+		Advance(context);
+
+		if (context->token->type == TOKEN_OP_ASSIGNMENT)
+		{
+			Advance(context);
+			enumMember.value = NewTreeNode(context);
+			*enumMember.value = ParseExpression(context, -1);
+		}
+
+		if (context->token->type != '}')
+		{
+			AssertToken(context, context->token, ',');
+			Advance(context);
+		}
+
+		*DynamicArrayAdd(&enumNode.members) = enumMember;
+	}
 	Advance(context);
 
-	AssertToken(context, context->token, TOKEN_KEYWORD_STRUCT);
+	return enumNode;
+}
+
+ASTStructDeclaration ParseStructOrUnion(Context *context)
+{
+	SourceLocation loc = context->token->loc;
+
+	ASSERT(context->token->type == TOKEN_KEYWORD_STRUCT ||
+			context->token->type == TOKEN_KEYWORD_UNION);
+	bool isUnion = context->token->type == TOKEN_KEYWORD_UNION;
 	Advance(context);
 
-	ASTStruct structNode = {};
-	structNode.loc = loc;
-	structNode.name = name;
-	DynamicArrayInit(&structNode.members, 16);
+	ASTStructDeclaration structDeclaration = {};
+	structDeclaration.loc = loc;
+	structDeclaration.isUnion = isUnion;
+	DynamicArrayInit(&structDeclaration.members, 16);
 
 	AssertToken(context, context->token, '{');
 	Advance(context);
 	while (context->token->type != '}')
 	{
 		ASTStructMemberDeclaration member = ParseStructMemberDeclaration(context);
-		*DynamicArrayAdd(&structNode.members) = member;
+		*DynamicArrayAdd(&structDeclaration.members) = member;
 		AssertToken(context, context->token, ';');
 		Advance(context);
 	}
 	Advance(context);
 
-	return structNode;
+	return structDeclaration;
 }
 
 ASTVariableDeclaration ParseVariableDeclaration(Context *context)
@@ -400,7 +471,8 @@ ASTVariableDeclaration ParseVariableDeclaration(Context *context)
 
 	if (context->token->type != TOKEN_OP_ASSIGNMENT)
 	{
-		varDecl.astType = ParseType(context);
+		varDecl.astType = NewASTType(context);
+		*varDecl.astType = ParseType(context);
 	}
 
 	if (context->token->type == TOKEN_OP_ASSIGNMENT)
@@ -421,13 +493,6 @@ ASTProcedureDeclaration ParseProcedureDeclaration(Context *context)
 	Procedure *procedure = BucketArrayAdd(&context->procedures);
 	*procedure = {};
 	procDecl.procedure = procedure;
-
-	AssertToken(context, context->token, TOKEN_IDENTIFIER);
-	procedure->name = context->token->string;
-	Advance(context);
-
-	AssertToken(context, context->token, TOKEN_OP_STATIC_DEF);
-	Advance(context);
 
 	if (context->token->type == TOKEN_KEYWORD_EXTERNAL)
 	{
@@ -469,7 +534,8 @@ ASTProcedureDeclaration ParseProcedureDeclaration(Context *context)
 	if (context->token->type == TOKEN_OP_ARROW)
 	{
 		Advance(context);
-		procDecl.astReturnType = ParseType(context);
+		procDecl.astReturnType = NewASTType(context);
+		*procDecl.astReturnType = ParseType(context);
 	}
 	else
 	{
@@ -531,9 +597,8 @@ ASTExpression ParseExpression(Context *context, s32 precedence)
 		}
 		else
 		{
-			// Variable
-			result.nodeType = ASTNODETYPE_VARIABLE;
-			result.variable.name = identifier;
+			result.nodeType = ASTNODETYPE_IDENTIFIER;
+			result.identifier.string = identifier;
 		}
 	}
 	else if (context->token->type == TOKEN_LITERAL_NUMBER)
@@ -601,6 +666,59 @@ ASTExpression ParseExpression(Context *context, s32 precedence)
 			result.binaryOperation = binaryOp;
 		}
 	}
+
+	return result;
+}
+
+ASTStaticDefinition ParseStaticDefinition(Context *context)
+{
+	ASTStaticDefinition result;
+
+	AssertToken(context, context->token, TOKEN_IDENTIFIER);
+	result.name = context->token->string;
+	Advance(context);
+
+	Advance(context);
+
+	ASTExpression expression = {};
+	expression.any.loc = context->token->loc;
+
+	if (context->token->type == '(' || (context->token)->type == TOKEN_KEYWORD_EXTERNAL)
+	{
+		expression.nodeType = ASTNODETYPE_PROCEDURE_DECLARATION;
+		expression.procedureDeclaration = ParseProcedureDeclaration(context);
+	}
+	else if (context->token->type == TOKEN_KEYWORD_STRUCT ||
+			 context->token->type == TOKEN_KEYWORD_UNION ||
+			 context->token->type == TOKEN_KEYWORD_ENUM)
+	{
+		expression.nodeType = ASTNODETYPE_TYPE;
+		expression.astType = ParseType(context);
+
+		AssertToken(context, context->token, ';');
+		Advance(context);
+	}
+	else if (context->token->type == TOKEN_KEYWORD_TYPE)
+	{
+		Advance(context);
+		expression.nodeType = ASTNODETYPE_TYPE;
+		expression.astType = ParseType(context);
+
+		AssertToken(context, context->token, ';');
+		Advance(context);
+	}
+	else
+	{
+		expression = ParseExpression(context, -1);
+		if (expression.nodeType != ASTNODETYPE_LITERAL)
+			PrintError(context, context->token->loc, "Unsupported!"_s);
+
+		AssertToken(context, context->token, ';');
+		Advance(context);
+	}
+
+	result.expression = NewTreeNode(context);
+	*result.expression = expression;
 
 	return result;
 }
@@ -673,21 +791,8 @@ ASTExpression ParseStatement(Context *context)
 	{
 		if ((context->token + 1)->type == TOKEN_OP_STATIC_DEF)
 		{
-			if ((context->token + 2)->type == '(' || (context->token + 2)->type == TOKEN_KEYWORD_EXTERNAL)
-			{
-				result.nodeType = ASTNODETYPE_PROCEDURE_DECLARATION;
-				result.procedureDeclaration = ParseProcedureDeclaration(context);
-			}
-			else if ((context->token + 2)->type == TOKEN_KEYWORD_STRUCT)
-			{
-				result.nodeType = ASTNODETYPE_STRUCT_DECLARATION;
-				result.structNode = ParseStruct(context);
-			}
-			else
-			{
-				// @Todo: static constants
-				PrintError(context, context->token->loc, "Unsupported!"_s);
-			}
+			result.nodeType = ASTNODETYPE_STATIC_DEFINITION;
+			result.staticDefinition = ParseStaticDefinition(context);
 		}
 		else if ((context->token + 1)->type == TOKEN_OP_VARIABLE_DECLARATION ||
 				(context->token + 1)->type == TOKEN_OP_VARIABLE_DECLARATION_STATIC)
@@ -732,27 +837,16 @@ ASTExpression ParseStaticStatement(Context *context)
 	{
 		if ((context->token + 1)->type == TOKEN_OP_STATIC_DEF)
 		{
-			if ((context->token + 2)->type == '(' || (context->token + 2)->type == TOKEN_KEYWORD_EXTERNAL)
-			{
-				result.nodeType = ASTNODETYPE_PROCEDURE_DECLARATION;
-				result.procedureDeclaration = ParseProcedureDeclaration(context);
-			}
-			else if ((context->token + 2)->type == TOKEN_KEYWORD_STRUCT)
-			{
-				result.nodeType = ASTNODETYPE_STRUCT_DECLARATION;
-				result.structNode = ParseStruct(context);
-			}
-			else
-			{
-				// @Todo: static constants
-				PrintError(context, context->token->loc, "Unsupported!"_s);
-			}
+			result.nodeType = ASTNODETYPE_STATIC_DEFINITION;
+			result.staticDefinition = ParseStaticDefinition(context);
 		}
 		else if ((context->token + 1)->type == TOKEN_OP_VARIABLE_DECLARATION ||
 				(context->token + 1)->type == TOKEN_OP_VARIABLE_DECLARATION_STATIC)
 		{
 			result.nodeType = ASTNODETYPE_VARIABLE_DECLARATION;
 			result.variableDeclaration = ParseVariableDeclaration(context);
+
+			ASSERT(result.variableDeclaration.variable->isStatic);
 
 			AssertToken(context, context->token, ';');
 			Advance(context);

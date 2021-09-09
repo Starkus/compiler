@@ -6,9 +6,17 @@ void PrintIRInstructions(Context *context)
 	for (int procedureIdx = 0; procedureIdx < procedureCount; ++procedureIdx)
 	{
 		Procedure *proc = &context->procedures[procedureIdx];
+		if (proc->isExternal)
+			continue;
+
 		String returnTypeStr = TypeInfoToString(context, proc->returnTypeTableIdx);
 
-		Log("proc %S(", proc->name);
+		StaticDefinition *staticDef = FindStaticDefinitionByProcedure(context, proc);
+		if (staticDef)
+			Log("proc %S(", staticDef->name);
+		else
+			Log("proc 0x%X(", proc);
+
 		for (int paramIdx = 0; paramIdx < proc->parameters.size; ++paramIdx)
 		{
 			if (paramIdx) Log(", ");
@@ -57,7 +65,12 @@ void PrintIRInstructions(Context *context)
 			}
 			else if (inst.type == IRINSTRUCTIONTYPE_PROCEDURE_CALL)
 			{
-				Log("call %S", inst.procedureCall.procedure->name);
+				StaticDefinition *procStaticDef = FindStaticDefinitionByProcedure(context,
+						inst.procedureCall.procedure);
+				if (procStaticDef)
+					Log("call %S", procStaticDef->name);
+				else
+					Log("call 0x%X", inst.procedureCall.procedure);
 			}
 			else if (inst.type == IRINSTRUCTIONTYPE_RETURN)
 			{
@@ -89,8 +102,13 @@ void PrintIRInstructions(Context *context)
 				}
 				ASSERT(structTypeInfo->typeCategory == TYPECATEGORY_STRUCT);
 
-				String structName = structTypeInfo->structInfo.name;
+				String structName = "<struct>"_s;
+				StaticDefinition *staticDefStruct = FindStaticDefinitionByTypeTableIdx(context,
+						inst.memberAccess.in.typeTableIdx);
+				if (staticDefStruct)
+					structName = staticDefStruct->name;
 				String memberName = inst.memberAccess.structMember->name;
+
 				Log(" + offset(%S::%S)", structName, memberName);
 			}
 			else if (inst.type == IRINSTRUCTIONTYPE_ARRAY_ACCESS)

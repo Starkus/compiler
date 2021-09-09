@@ -3,8 +3,8 @@ OutputDebugStringA :: external (message : ^u8);
 
 Main :: () -> s64
 {
-	arrayA : 20 u8;
-	arrayB : 20 u8;
+	arrayA : [20] u8;
+	arrayB : [20] u8;
 	memset(^arrayB, ^arrayA, 20);
 
 	message := "Hello, Sailor!\0";

@@ -1,5 +1,7 @@
 global :s s32;
 
+globalWithValue :s s32 = 5;
+
 Main :: () -> s64
 {
 	local :s s32 = 5;

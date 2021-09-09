@@ -1,0 +1,10 @@
+constant :: 8;
+constantFloat :: 8.5;
+
+Main :: () -> s64
+{
+	foo : s64 = constant;
+	bar : s32 = constant;
+	baz : f32 = constantFloat;
+	return 0;
+}

@@ -26,6 +26,7 @@ enum TypeCategory
 	TYPECATEGORY_INTEGER,
 	TYPECATEGORY_FLOATING,
 	TYPECATEGORY_STRUCT,
+	TYPECATEGORY_ENUM,
 	TYPECATEGORY_POINTER,
 	TYPECATEGORY_ARRAY,
 };
@@ -53,11 +54,16 @@ struct StructMember
 };
 struct TypeInfoStruct
 {
-	String name;
+	bool isUnion;
 	DynamicArray<StructMember, malloc, realloc> members;
 
 	// Filled by back-end
 	s64 size;
+};
+
+struct TypeInfoEnum
+{
+	s64 typeTableIdx;
 };
 
 struct TypeInfoPointer
@@ -79,17 +85,90 @@ struct TypeInfo
 		TypeInfoInteger integerInfo;
 		TypeInfoFloating floatingInfo;
 		TypeInfoStruct structInfo;
+		TypeInfoEnum enumInfo;
 		TypeInfoPointer pointerInfo;
 		TypeInfoArray arrayInfo;
+	};
+};
+
+enum StaticDefinitionType
+{
+	STATICDEFINITIONTYPE_TYPE,
+	STATICDEFINITIONTYPE_PROCEDURE,
+	STATICDEFINITIONTYPE_CONSTANT_INTEGER,
+	STATICDEFINITIONTYPE_CONSTANT_FLOATING
+};
+struct StaticDefinition
+{
+	String name;
+	StaticDefinitionType definitionType;
+	union
+	{
+		struct
+		{
+			s64 typeTableIdx;
+		} type;
+		struct
+		{
+			Procedure *procedure;
+		} procedure;
+		struct
+		{
+			s64 value;
+			s64 typeTableIdx;
+		} constantInteger;
+		struct
+		{
+			f64 value;
+			s64 typeTableIdx;
+		} constantFloating;
 	};
 };
 
 struct TCScope
 {
 	DynamicArray<Variable *, malloc, realloc> variables;
-	DynamicArray<Procedure *, malloc, realloc> procedures;
+	DynamicArray<StaticDefinition *, malloc, realloc> staticDefinitions;
 	DynamicArray<s64, malloc, realloc> typeIndices;
 };
+
+StaticDefinition *FindStaticDefinitionByName(Context *context, String name)
+{
+	u64 count = BucketArrayCount(&context->staticDefinitions);
+	for (u64 i = 0; i < count; ++i)
+	{
+		StaticDefinition *currentDef = &context->staticDefinitions[i];
+		if (StringEquals(name, currentDef->name))
+			return currentDef;
+	}
+	return nullptr;
+}
+
+StaticDefinition *FindStaticDefinitionByTypeTableIdx(Context *context, s64 typeTableIdx)
+{
+	u64 count = BucketArrayCount(&context->staticDefinitions);
+	for (u64 i = 0; i < count; ++i)
+	{
+		StaticDefinition *currentDef = &context->staticDefinitions[i];
+		if (currentDef->definitionType == STATICDEFINITIONTYPE_TYPE &&
+				currentDef->type.typeTableIdx == typeTableIdx)
+			return currentDef;
+	}
+	return nullptr;
+}
+
+StaticDefinition *FindStaticDefinitionByProcedure(Context *context, Procedure *procedure)
+{
+	u64 count = BucketArrayCount(&context->staticDefinitions);
+	for (u64 i = 0; i < count; ++i)
+	{
+		StaticDefinition *currentDef = &context->staticDefinitions[i];
+		if (currentDef->definitionType == STATICDEFINITIONTYPE_PROCEDURE &&
+				currentDef->procedure.procedure == procedure)
+			return currentDef;
+	}
+	return nullptr;
+}
 
 String TypeInfoToString(Context *context, s64 typeTableIdx)
 {
@@ -97,7 +176,19 @@ String TypeInfoToString(Context *context, s64 typeTableIdx)
 	switch (typeInfo->typeCategory)
 	{
 	case TYPECATEGORY_STRUCT:
-		return typeInfo->structInfo.name;
+	{
+		StaticDefinition *staticDef = FindStaticDefinitionByTypeTableIdx(context, typeTableIdx);
+		if (staticDef != nullptr)
+			return staticDef->name;
+		return "<struct>"_s;
+	}
+	case TYPECATEGORY_ENUM:
+	{
+		StaticDefinition *staticDef = FindStaticDefinitionByTypeTableIdx(context, typeTableIdx);
+		if (staticDef != nullptr)
+			return staticDef->name;
+		return "<enum>"_s;
+	}
 	case TYPECATEGORY_POINTER:
 		return StringConcat("^"_s, TypeInfoToString(context, typeInfo->pointerInfo.pointedTypeTableIdx));
 	case TYPECATEGORY_ARRAY:
@@ -139,7 +230,7 @@ void PushTCScope(Context *context)
 	TCScope *newScope = DynamicArrayAdd(&context->tcStack);
 
 	DynamicArrayInit(&newScope->variables, 128);
-	DynamicArrayInit(&newScope->procedures, 128);
+	DynamicArrayInit(&newScope->staticDefinitions, 128);
 	DynamicArrayInit(&newScope->typeIndices, 128);
 }
 
@@ -148,7 +239,7 @@ void PopTCScope(Context *context)
 	--context->tcStack.size;
 }
 
-s64 FindLeafTypeInTable(Context *context, SourceLocation loc, ASTType *astType)
+s64 FindLeafTypeInStack(Context *context, ASTType *astType)
 {
 	s64 typeTableIdx = -1;
 
@@ -176,20 +267,34 @@ s64 FindLeafTypeInTable(Context *context, SourceLocation loc, ASTType *astType)
 		typeTableIdx = TYPETABLEIDX_BOOL;
 	else if (StringEquals(astType->name, "void"_s))
 		typeTableIdx = TYPETABLEIDX_VOID;
+	else if (StringEquals(astType->name, "String"_s)) // @Cleanup
+		typeTableIdx = TYPETABLEIDX_STRUCT_STRING;
 	else
 	{
-		u64 tableSize = BucketArrayCount(&context->typeTable);
-		for (int i = 0; i < tableSize; ++i)
+		StaticDefinition *staticDef = nullptr;
+		// Search backwards so we find types higher in the stack first.
+		for (s64 stackIdx = context->tcStack.size - 1; stackIdx >= 0; --stackIdx)
 		{
-			TypeInfo *t = &context->typeTable[i];
-			if (t->typeCategory == TYPECATEGORY_STRUCT &&
-					StringEquals(astType->name, t->structInfo.name))
-				typeTableIdx = i;
+			TCScope *currentScope = &context->tcStack[stackIdx];
+			for (int i = 0; i < currentScope->staticDefinitions.size; ++i)
+			{
+				StaticDefinition *currentDef = currentScope->staticDefinitions[i];
+				if (StringEquals(astType->name, currentDef->name))
+				{
+					staticDef = currentDef;
+					break;
+				}
+			}
 		}
+		if (staticDef == nullptr)
+			PrintError(context, astType->loc, TPrintF("Type \"%S\" not in scope!", astType->name));
+		else if (staticDef->definitionType != STATICDEFINITIONTYPE_TYPE)
+			PrintError(context, astType->loc, TPrintF("\"%S\" is not a type!", astType->name));
+		typeTableIdx = staticDef->type.typeTableIdx;
 	}
 
 	if (typeTableIdx < 0)
-		PrintError(context, loc, TPrintF("Type \"%S\" not found!", astType->name));
+		PrintError(context, astType->loc, TPrintF("Type \"%S\" not in scope!", astType->name));
 
 	return typeTableIdx;
 }
@@ -285,7 +390,7 @@ bool AreTypeInfosEqual(TypeInfo *a, TypeInfo *b)
 	case TYPECATEGORY_FLOATING:
 		return true;
 	case TYPECATEGORY_STRUCT:
-		if (!StringEquals(a->structInfo.name, b->structInfo.name))
+		if (a->structInfo.isUnion != b->structInfo.isUnion)
 			return false;
 		if (a->structInfo.members.size != b->structInfo.members.size)
 			return false;
@@ -334,21 +439,8 @@ s64 TypeCheckType(Context *context, SourceLocation loc, ASTType *astType)
 	{
 	case ASTTYPENODETYPE_IDENTIFIER:
 	{
-		s64 typeTableIdx = FindLeafTypeInTable(context, loc, astType);
-
-		// Check type is in the scope stack!
-		// Search backwards so we find types higher in the stack first.
-		for (s64 stackIdx = context->tcStack.size - 1; stackIdx >= 0; --stackIdx)
-		{
-			TCScope *currentScope = &context->tcStack[stackIdx];
-			for (int i = 0; i < currentScope->typeIndices.size; ++i)
-			{
-				if (typeTableIdx == currentScope->typeIndices[i])
-					return typeTableIdx;
-			}
-		}
-
-		PrintError(context, loc, TPrintF("Type \"%S\" not in scope!", astType->name));
+		s64 typeTableIdx = FindLeafTypeInStack(context, astType);
+		return typeTableIdx;
 	} break;
 	case ASTTYPENODETYPE_ARRAY:
 	{
@@ -369,6 +461,67 @@ s64 TypeCheckType(Context *context, SourceLocation loc, ASTType *astType)
 		s64 typeTableIdx = FindOrAddTypeTableIdx(context, tempTypeInfo);
 		return typeTableIdx;
 	} break;
+	case ASTTYPENODETYPE_STRUCT_DECLARATION:
+	{
+		TypeInfo t;
+		t.typeCategory = TYPECATEGORY_STRUCT;
+		t.structInfo.isUnion = astType->structDeclaration.isUnion;
+		DynamicArrayInit(&t.structInfo.members, 16);
+
+		for (int memberIdx = 0; memberIdx < astType->structDeclaration.members.size; ++memberIdx)
+		{
+			ASTStructMemberDeclaration *astMember = &astType->structDeclaration.members[memberIdx];
+
+			StructMember *member = DynamicArrayAdd(&t.structInfo.members);
+			member->name = astMember->name;
+			member->typeTableIdx = TypeCheckType(context, astMember->loc, astMember->astType);
+		}
+
+		s64 typeTableIdx = BucketArrayCount(&context->typeTable);
+		*BucketArrayAdd(&context->typeTable) = t;
+
+		*DynamicArrayAdd(&context->tcStack[context->tcStack.size - 1].typeIndices) = typeTableIdx;
+		return typeTableIdx;
+	} break;
+	case ASTTYPENODETYPE_ENUM_DECLARATION:
+	{
+		TypeInfo t;
+		t.typeCategory = TYPECATEGORY_ENUM;
+		t.enumInfo.typeTableIdx = TYPETABLEIDX_S64;
+
+		s64 typeTableIdx = BucketArrayCount(&context->typeTable);
+		*BucketArrayAdd(&context->typeTable) = t;
+		*DynamicArrayAdd(&context->tcStack[context->tcStack.size - 1].typeIndices) = typeTableIdx;
+
+		s64 currentValue = 0;
+		for (int memberIdx = 0; memberIdx < astType->enumDeclaration.members.size; ++memberIdx)
+		{
+			ASTEnumMember astMember = astType->enumDeclaration.members[memberIdx];
+
+			StaticDefinition staticDefinition = {};
+			staticDefinition.name = astMember.name;
+			staticDefinition.definitionType = STATICDEFINITIONTYPE_CONSTANT_INTEGER;
+
+			if (astMember.value)
+			{
+				if (astMember.value->nodeType != ASTNODETYPE_LITERAL)
+				{
+					// @Todo: Somehow execute constant expressions and bake them?
+					PrintError(context, astType->loc, "Non literal initial values for enum values not yet supported"_s);
+				}
+				currentValue = astMember.value->literal.integer;
+			}
+			staticDefinition.constantInteger.value = currentValue++;
+			staticDefinition.constantInteger.typeTableIdx = typeTableIdx;
+
+			TCScope *stackTop = &context->tcStack[context->tcStack.size - 1];
+			StaticDefinition *newStaticDef = BucketArrayAdd(&context->staticDefinitions);
+			*newStaticDef = staticDefinition;
+			*DynamicArrayAdd(&stackTop->staticDefinitions) = newStaticDef;
+		}
+
+		return typeTableIdx;
+	} break;
 	default:
 		CRASH;
 	}
@@ -380,8 +533,8 @@ bool IsTemporalValue(ASTExpression *expression)
 {
 	switch (expression->nodeType)
 	{
-		case ASTNODETYPE_VARIABLE:
-			return false;
+		case ASTNODETYPE_IDENTIFIER:
+			return expression->identifier.isStaticDefinition;
 		case ASTNODETYPE_BINARY_OPERATION:
 			if (expression->binaryOperation.op == TOKEN_OP_MEMBER_ACCESS)
 				return false;
@@ -507,6 +660,24 @@ ReturnCheckResult CheckIfReturnsValue(Context *context, ASTExpression *expressio
 	return RETURNCHECKRESULT_NEVER;
 }
 
+StructMember *FindStructMemberByName(Context *context, TypeInfo *structTypeInfo, String name)
+{
+	for (int i = 0; i < structTypeInfo->structInfo.members.size; ++i)
+	{
+		StructMember *currentMember = &structTypeInfo->structInfo.members[i];
+		if (currentMember->name.size == 0)
+		{
+			// Anonymous structs/unions
+			TypeInfo *memberTypeInfo = &context->typeTable[currentMember->typeTableIdx];
+			ASSERT(memberTypeInfo->typeCategory == TYPECATEGORY_STRUCT);
+			return FindStructMemberByName(context, memberTypeInfo, name);
+		}
+		else if (StringEquals(name, currentMember->name))
+			return currentMember;
+	}
+	return nullptr;
+}
+
 void TypeCheckExpression(Context *context, ASTExpression *expression)
 {
 	switch (expression->nodeType)
@@ -526,42 +697,67 @@ void TypeCheckExpression(Context *context, ASTExpression *expression)
 		TypeCheckVariableDeclaration(context, varDecl);
 		expression->typeTableIdx = varDecl->variable->typeTableIdx;
 	} break;
-	case ASTNODETYPE_STRUCT_DECLARATION:
+	case ASTNODETYPE_STATIC_DEFINITION:
 	{
-		TypeInfo t;
-		t.typeCategory = TYPECATEGORY_STRUCT;
-		t.structInfo.name = expression->structNode.name;
-		DynamicArrayInit(&t.structInfo.members, 16);
+		ASTStaticDefinition astStaticDef = expression->staticDefinition;
 
-		for (int memberIdx = 0; memberIdx < expression->structNode.members.size; ++memberIdx)
+		StaticDefinition staticDefinition = {};
+		staticDefinition.name = astStaticDef.name;
+
+		// Check if already exists
+		TCScope *stackTop = &context->tcStack[context->tcStack.size - 1];
+		for (s64 i = 0; i < (s64)stackTop->staticDefinitions.size; ++i)
 		{
-			ASTStructMemberDeclaration *astMember = &expression->structNode.members[memberIdx];
-
-			StructMember *member = DynamicArrayAdd(&t.structInfo.members);
-			member->name = astMember->name;
-			member->typeTableIdx = TypeCheckType(context, astMember->loc, astMember->astType);
+			StaticDefinition *currentDef = stackTop->staticDefinitions[i];
+			if (StringEquals(staticDefinition.name, currentDef->name))
+			{
+				PrintError(context, expression->any.loc,
+						TPrintF("Duplicate static definition \"%S\"", staticDefinition.name));
+			}
 		}
 
-		s64 typeTableIdx = BucketArrayCount(&context->typeTable);
-		*BucketArrayAdd(&context->typeTable) = t;
+		TypeCheckExpression(context, astStaticDef.expression);
+		if (astStaticDef.expression->nodeType == ASTNODETYPE_PROCEDURE_DECLARATION)
+		{
+			staticDefinition.definitionType = STATICDEFINITIONTYPE_PROCEDURE;
+			staticDefinition.procedure.procedure =
+				astStaticDef.expression->procedureDeclaration.procedure;
+		}
+		else if (astStaticDef.expression->nodeType == ASTNODETYPE_TYPE)
+		{
+			staticDefinition.definitionType = STATICDEFINITIONTYPE_TYPE;
+			staticDefinition.type.typeTableIdx = astStaticDef.expression->typeTableIdx;
+		}
+		else if (astStaticDef.expression->nodeType == ASTNODETYPE_LITERAL)
+		{
+			ASTLiteral astLiteral = astStaticDef.expression->literal;
+			switch (astLiteral.type)
+			{
+			case LITERALTYPE_INTEGER:
+			{
+				staticDefinition.definitionType = STATICDEFINITIONTYPE_CONSTANT_INTEGER;
+				staticDefinition.constantInteger.value = astLiteral.integer;
+				staticDefinition.constantInteger.typeTableIdx = astStaticDef.expression->typeTableIdx;
+			} break;
+			case LITERALTYPE_FLOATING:
+			{
+				staticDefinition.definitionType = STATICDEFINITIONTYPE_CONSTANT_FLOATING;
+				staticDefinition.constantFloating.value = astLiteral.floating;
+				staticDefinition.constantFloating.typeTableIdx = astStaticDef.expression->typeTableIdx;
+			} break;
+			}
+		}
+		else
+			CRASH;
 
-		*DynamicArrayAdd(&context->tcStack[context->tcStack.size - 1].typeIndices) = typeTableIdx;
+		StaticDefinition *newStaticDef = BucketArrayAdd(&context->staticDefinitions);
+		*newStaticDef = staticDefinition;
+		*DynamicArrayAdd(&stackTop->staticDefinitions) = newStaticDef;
 	} break;
 	case ASTNODETYPE_PROCEDURE_DECLARATION:
 	{
 		ASTProcedureDeclaration *procDecl = &expression->procedureDeclaration;
 		Procedure *procedure = procDecl->procedure;
-		// Check if already exists
-		TCScope *stackTop = &context->tcStack[context->tcStack.size - 1];
-		for (s64 i = 0; i < (s64)stackTop->procedures.size; ++i)
-		{
-			Procedure *currentProc = stackTop->procedures[i];
-			if (StringEquals(procedure->name, currentProc->name))
-			{
-				PrintError(context, expression->any.loc, TPrintF("Duplicate procedure \"%S\"",
-							procedure->name));
-			}
-		}
 
 		procedure->requiredParameterCount = 0;
 
@@ -607,11 +803,6 @@ void TypeCheckExpression(Context *context, ASTExpression *expression)
 		context->tcCurrentReturnType = oldReturnType;
 		PopTCScope(context);
 
-		procedure->returnTypeTableIdx = returnType;
-		*DynamicArrayAdd(&stackTop->procedures) = procedure;
-
-		//expression->typeTableIdx = returnType;
-
 		// Check all paths return
 		if (procedure->astBody && returnType != TYPETABLEIDX_VOID)
 		{
@@ -633,9 +824,10 @@ void TypeCheckExpression(Context *context, ASTExpression *expression)
 	{
 		TypeCheckExpression(context, expression->deferNode.expression);
 	} break;
-	case ASTNODETYPE_VARIABLE:
+	case ASTNODETYPE_IDENTIFIER:
 	{
-		String varName = expression->variable.name;
+		String string = expression->identifier.string;
+
 		// Search backwards so we find variables higher in the stack first.
 		for (s64 stackIdx = context->tcStack.size - 1; stackIdx >= 0; --stackIdx)
 		{
@@ -643,16 +835,39 @@ void TypeCheckExpression(Context *context, ASTExpression *expression)
 			for (int i = 0; i < currentScope->variables.size; ++i)
 			{
 				Variable *currentVar = currentScope->variables[i];
-				if (StringEquals(varName, currentVar->name))
+				if (StringEquals(string, currentVar->name))
 				{
-					expression->variable.variable = currentVar;
+					expression->identifier.isStaticDefinition = false;
+					expression->identifier.variable = currentVar;
 					expression->typeTableIdx = currentVar->typeTableIdx;
+					return;
+				}
+			}
+
+			for (int i = 0; i < currentScope->staticDefinitions.size; ++i)
+			{
+				StaticDefinition *currentDef = currentScope->staticDefinitions[i];
+				if (StringEquals(string, currentDef->name))
+				{
+					expression->identifier.isStaticDefinition = true;
+					expression->identifier.staticDefinition = currentDef;
+					switch (currentDef->definitionType)
+					{
+					case STATICDEFINITIONTYPE_CONSTANT_INTEGER:
+					{
+						expression->typeTableIdx = currentDef->constantInteger.typeTableIdx;
+					} break;
+					case STATICDEFINITIONTYPE_CONSTANT_FLOATING:
+					{
+						expression->typeTableIdx = currentDef->constantFloating.typeTableIdx;
+					} break;
+					}
 					return;
 				}
 			}
 		}
 
-		PrintError(context, expression->any.loc, TPrintF("Invalid variable \"%S\" referenced", varName));
+		PrintError(context, expression->any.loc, TPrintF("Invalid variable \"%S\" referenced", string));
 	} break;
 	case ASTNODETYPE_PROCEDURE_CALL:
 	{
@@ -663,12 +878,15 @@ void TypeCheckExpression(Context *context, ASTExpression *expression)
 		for (s64 stackIdx = context->tcStack.size - 1; stackIdx >= 0; --stackIdx)
 		{
 			TCScope *currentScope = &context->tcStack[stackIdx];
-			for (int i = 0; i < currentScope->procedures.size; ++i)
+			for (int i = 0; i < currentScope->staticDefinitions.size; ++i)
 			{
-				Procedure *currentProc = currentScope->procedures[i];
-				if (StringEquals(procName, currentProc->name))
+				StaticDefinition *currentDef = currentScope->staticDefinitions[i];
+				if (StringEquals(procName, currentDef->name))
 				{
-					procedure = currentProc;
+					if (currentDef->definitionType != STATICDEFINITIONTYPE_PROCEDURE)
+						PrintError(context, expression->any.loc, "Calling a non-procedure"_s);
+
+					procedure = currentDef->procedure.procedure;
 					break;
 				}
 			}
@@ -704,7 +922,8 @@ void TypeCheckExpression(Context *context, ASTExpression *expression)
 						procName, totalArguments, givenArguments));
 		}
 
-		for (int argIdx = 0; argIdx < givenArguments; ++argIdx)
+		s64 argsToCheck = Min(givenArguments, totalArguments);
+		for (int argIdx = 0; argIdx < argsToCheck; ++argIdx)
 		{
 			ASTExpression *arg = &expression->procedureCall.arguments[argIdx];
 			TypeCheckExpression(context, arg);
@@ -761,7 +980,8 @@ void TypeCheckExpression(Context *context, ASTExpression *expression)
 			TypeCheckExpression(context, leftHand);
 			s64 leftHandTypeIdx = leftHand->typeTableIdx;
 
-			ASSERT(rightHand->nodeType == ASTNODETYPE_VARIABLE);
+			ASSERT(rightHand->nodeType == ASTNODETYPE_IDENTIFIER);
+			ASSERT(!rightHand->identifier.isStaticDefinition);
 			// Augment right hand to STRUCT_MEMBER node
 			rightHand->nodeType = ASTNODETYPE_STRUCT_MEMBER;
 
@@ -777,19 +997,17 @@ void TypeCheckExpression(Context *context, ASTExpression *expression)
 				PrintError(context, expression->any.loc, "Left of '.' has to be a struct"_s);
 			}
 
-			String memberName = rightHand->structMember.name;
-			for (int i = 0; i < structTypeInfo->structInfo.members.size; ++i)
+			String memberName = rightHand->structMember.string;
+			StructMember *foundMember = FindStructMemberByName(context, structTypeInfo, memberName);
+			if (foundMember)
 			{
-				if (StringEquals(memberName, structTypeInfo->structInfo.members[i].name))
-				{
-					StructMember *structMember = &structTypeInfo->structInfo.members[i];
-					rightHand->structMember.structMember = structMember;
-					expression->typeTableIdx = structMember->typeTableIdx;
-					return;
-				}
+				rightHand->structMember.structMember = foundMember;
+				expression->typeTableIdx = foundMember->typeTableIdx;
+				return;
 			}
+
 			PrintError(context, expression->any.loc, TPrintF("\"%S\" is not a member of \"%S\"",
-						memberName, structTypeInfo->structInfo.name));
+						memberName, TypeInfoToString(context, leftHandTypeIdx)));
 		}
 		else if (expression->binaryOperation.op == TOKEN_OP_ARRAY_ACCESS)
 		{
@@ -876,6 +1094,10 @@ void TypeCheckExpression(Context *context, ASTExpression *expression)
 	case ASTNODETYPE_BREAK:
 	{
 	} break;
+	case ASTNODETYPE_TYPE:
+	{
+		expression->typeTableIdx = TypeCheckType(context, expression->any.loc, &expression->astType);
+	} break;
 	default:
 	{
 		Log("COMPILER ERROR! Unknown expression type on type checking\n");
@@ -888,6 +1110,7 @@ void TypeCheckMain(Context *context)
 {
 	context->tcCurrentReturnType = -1;
 
+	BucketArrayInit(&context->staticDefinitions);
 	DynamicArrayInit(&context->tcStack, 128);
 
 	PushTCScope(context);
@@ -938,7 +1161,6 @@ void TypeCheckMain(Context *context)
 		// String
 		{
 			t.typeCategory = TYPECATEGORY_STRUCT;
-			t.structInfo.name = "String"_s;
 			DynamicArrayInit(&t.structInfo.members, 2);
 
 			StructMember *sizeMember = DynamicArrayAdd(&t.structInfo.members);

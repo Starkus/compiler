@@ -77,7 +77,7 @@ struct ASTRoot;
 struct ASTExpression;
 struct ASTType;
 struct TypeInfo;
-struct Procedure;
+struct StaticDefinition;
 struct TCScope;
 struct IRStaticVariable;
 struct IRScope;
@@ -100,6 +100,7 @@ struct Context
 	// Type check
 	BucketArray<Variable, 512, malloc, realloc> variables;
 	BucketArray<Procedure, 512, malloc, realloc> procedures;
+	BucketArray<StaticDefinition, 512, malloc, realloc> staticDefinitions;
 	BucketArray<TypeInfo, 1024, malloc, realloc> typeTable;
 	DynamicArray<TCScope, malloc, realloc> tcStack;
 	s64 tcCurrentReturnType;

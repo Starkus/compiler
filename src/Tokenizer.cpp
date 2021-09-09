@@ -290,6 +290,12 @@ Token ReadTokenAndAdvance(Tokenizer *tokenizer)
 			result.type = TOKEN_KEYWORD_BREAK;
 		else if (TokenIsStr(&result, "struct"))
 			result.type = TOKEN_KEYWORD_STRUCT;
+		else if (TokenIsStr(&result, "union"))
+			result.type = TOKEN_KEYWORD_UNION;
+		else if (TokenIsStr(&result, "enum"))
+			result.type = TOKEN_KEYWORD_ENUM;
+		else if (TokenIsStr(&result, "type"))
+			result.type = TOKEN_KEYWORD_TYPE;
 		else if (TokenIsStr(&result, "external"))
 			result.type = TOKEN_KEYWORD_EXTERNAL;
 		else if (TokenIsStr(&result, "defer"))

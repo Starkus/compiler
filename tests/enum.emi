@@ -1,0 +1,11 @@
+Color :: enum {
+	COLOR_RED,
+	COLOR_GREEN = 15,
+	COLOR_BLUE
+};
+
+Main :: () -> s64
+{
+	color : Color = COLOR_RED;
+	return 0;
+}

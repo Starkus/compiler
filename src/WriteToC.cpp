@@ -10,11 +10,9 @@ String CTypeInfoToString(Context *context, s64 typeTableIdx)
 	case TYPECATEGORY_STRUCT:
 		return "strct"_s;
 	case TYPECATEGORY_ARRAY:
-	{
-		//String typeStr = TypeInfoToString(context, typeInfo->arrayInfo.elementTypeTableIdx);
-		//return TPrintF("%S[%d]", typeStr, typeInfo->arrayInfo.count);
 		return "arr"_s;
-	}
+	case TYPECATEGORY_ENUM:
+		return CTypeInfoToString(context, typeInfo->enumInfo.typeTableIdx);
 	case TYPECATEGORY_INTEGER:
 	{
 		if (typeInfo->integerInfo.isSigned) switch (typeInfo->integerInfo.size)
@@ -59,6 +57,9 @@ s64 CCalculateTypeSize(Context *context, s64 typeTableIdx)
 
 	case TYPECATEGORY_STRUCT:
 		return typeInfo->structInfo.size;
+
+	case TYPECATEGORY_ENUM:
+		return CCalculateTypeSize(context, typeInfo->enumInfo.typeTableIdx);
 
 	case TYPECATEGORY_POINTER:
 		return 8;
@@ -194,13 +195,23 @@ String OperatorToStr(IRInstruction inst)
 	}
 }
 
+String CProcedureToLabel(Context *context, Procedure *proc)
+{
+	StaticDefinition *staticDef = FindStaticDefinitionByProcedure(context, proc);
+	if (staticDef)
+		return staticDef->name;
+	else
+		return TPrintF("0x%X", proc);
+}
+
 String CGetProcedureSignature(Context *context, Procedure *proc)
 {
 	String result;
 
+	String procLabel = CProcedureToLabel(context, proc);
 	String returnTypeStr = proc->returnTypeTableIdx == TYPETABLEIDX_VOID ? "void"_s : "Register"_s;
 
-	result = TPrintF("%S %S(", returnTypeStr, proc->name);
+	result = TPrintF("%S %S(", returnTypeStr, procLabel);
 
 	if (IRShouldReturnByCopy(context, proc->returnTypeTableIdx))
 	{
@@ -266,11 +277,24 @@ void WriteToC(Context *context)
 			continue;
 
 		typeInfo->structInfo.size = 0;
-		for (int i = 0; i < typeInfo->structInfo.members.size; ++i)
+		if (!typeInfo->structInfo.isUnion)
 		{
-			StructMember *member = &typeInfo->structInfo.members[i];
-			member->offset = typeInfo->structInfo.size;
-			typeInfo->structInfo.size += CCalculateTypeSize(context, member->typeTableIdx);
+			for (int i = 0; i < typeInfo->structInfo.members.size; ++i)
+			{
+				StructMember *member = &typeInfo->structInfo.members[i];
+				member->offset = typeInfo->structInfo.size;
+				typeInfo->structInfo.size += CCalculateTypeSize(context, member->typeTableIdx);
+			}
+		}
+		else
+		{
+			for (int i = 0; i < typeInfo->structInfo.members.size; ++i)
+			{
+				StructMember *member = &typeInfo->structInfo.members[i];
+				member->offset = 0;
+				typeInfo->structInfo.size = Max(typeInfo->structInfo.size,
+						CCalculateTypeSize(context, member->typeTableIdx));
+			}
 		}
 	}
 
@@ -322,7 +346,7 @@ void WriteToC(Context *context)
 		if (proc->isExternal)
 		{
 			String returnTypeStr = CTypeInfoToString(context, proc->returnTypeTableIdx);
-			PrintOut(context, outputFile, "%S %S(", returnTypeStr, proc->name);
+			PrintOut(context, outputFile, "%S %S(", returnTypeStr, CProcedureToLabel(context, proc));
 
 			for (int i = 0; i < proc->parameters.size; ++i)
 			{
@@ -457,7 +481,8 @@ void WriteToC(Context *context)
 					String out = CIRValueToStrAsRegister(context, inst.procedureCall.out);
 					PrintOut(context, outputFile, "%S = ", out);
 				}
-				PrintOut(context, outputFile, "%S(", inst.procedureCall.procedure->name);
+				String procLabel = CProcedureToLabel(context, inst.procedureCall.procedure);
+				PrintOut(context, outputFile, "%S(", procLabel);
 				for (int i = 0; i < inst.procedureCall.parameters.size; ++i)
 				{
 					String param;

@@ -1,0 +1,17 @@
+MyType :: type s16;
+PointerType :: type ^s64;
+Nested :: type ^MyType;
+
+Main :: () -> s64
+{
+	anS16 : MyType = 5;
+	ptr : PointerType;
+	foo : Nested = ^anS16;
+
+	{
+		ScopedType :: type ^^MyType;
+	}
+	//outOfScope : ScopedType;
+
+	return 0;
+}

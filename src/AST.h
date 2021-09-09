@@ -36,14 +36,22 @@ struct ASTBinaryOperation : ASTBase
 };
 
 struct Variable;
-struct ASTVariable : ASTBase
+struct StaticDefinition;
+struct ASTIdentifier : ASTBase
 {
-	String name;
-	Variable *variable;
+	String string;
+
+	// Type check
+	bool isStaticDefinition;
+	union
+	{
+		Variable *variable;
+		StaticDefinition *staticDefinition;
+	};
 };
 
 struct StructMember;
-struct ASTStructMember : ASTVariable
+struct ASTStructMember : ASTIdentifier
 {
 	// Filled by type checker
 	StructMember *structMember;
@@ -57,10 +65,38 @@ struct ASTBlock : ASTBase
 	DynamicArray<ASTExpression, malloc, realloc> statements;
 };
 
+struct ASTType;
+struct ASTStructMemberDeclaration : ASTBase
+{
+	String name;
+	ASTType *astType;
+	ASTExpression *value;
+
+	u64 typeTableIdx;
+};
+struct ASTStructDeclaration : ASTBase
+{
+	bool isUnion;
+	DynamicArray<ASTStructMemberDeclaration, malloc, realloc> members;
+};
+
+struct ASTEnumMember
+{
+	String name;
+	ASTExpression *value;
+};
+struct ASTEnumDeclaration : ASTBase
+{
+	DynamicArray<ASTEnumMember, malloc, realloc> members;
+};
+
 enum ASTTypeNodeType
 {
+	ASTTYPENODETYPE_INVALID,
 	ASTTYPENODETYPE_IDENTIFIER,
 	ASTTYPENODETYPE_POINTER,
+	ASTTYPENODETYPE_STRUCT_DECLARATION,
+	ASTTYPENODETYPE_ENUM_DECLARATION,
 	ASTTYPENODETYPE_ARRAY
 };
 struct ASTType : ASTBase
@@ -69,6 +105,8 @@ struct ASTType : ASTBase
 	union
 	{
 		String name;
+		ASTStructDeclaration structDeclaration;
+		ASTEnumDeclaration enumDeclaration;
 		ASTType *pointedType;
 		struct
 		{
@@ -85,21 +123,21 @@ struct ASTVariableDeclaration : ASTBase
 	ASTType *astType;
 };
 
-struct ASTStructMemberDeclaration : ASTBase
-{
-	String name;
-	ASTType *astType;
-	ASTExpression *value;
-
-	u64 typeTableIdx;
-};
-
 struct Procedure;
 struct ASTProcedureDeclaration : ASTBase
 {
 	Procedure *procedure;
 	ASTType *astReturnType;
 	DynamicArray<ASTVariableDeclaration, malloc, realloc> astParameters;
+};
+
+struct ASTStaticDefinition : ASTBase
+{
+	String name;
+	union
+	{
+		ASTExpression *expression;
+	};
 };
 
 struct ASTProcedureCall : ASTBase
@@ -133,12 +171,6 @@ struct ASTDefer : ASTBase
 	ASTExpression *expression;
 };
 
-struct ASTStruct : ASTBase
-{
-	String name;
-	DynamicArray<ASTStructMemberDeclaration, malloc, realloc> members;
-};
-
 struct ASTRoot : ASTBase
 {
 	ASTBlock block;
@@ -147,7 +179,7 @@ struct ASTRoot : ASTBase
 enum ASTNodeType
 {
 	ASTNODETYPE_INVALID,
-	ASTNODETYPE_VARIABLE,
+	ASTNODETYPE_IDENTIFIER,
 	ASTNODETYPE_STRUCT_MEMBER,
 	ASTNODETYPE_LITERAL,
 	ASTNODETYPE_TYPE,
@@ -155,8 +187,10 @@ enum ASTNodeType
 	ASTNODETYPE_UNARY_OPERATION,
 	ASTNODETYPE_BINARY_OPERATION,
 	ASTNODETYPE_VARIABLE_DECLARATION,
-	ASTNODETYPE_STRUCT_DECLARATION,
 	ASTNODETYPE_PROCEDURE_DECLARATION,
+	ASTNODETYPE_STRUCT_DECLARATION,
+	ASTNODETYPE_ENUM_DECLARATION,
+	ASTNODETYPE_STATIC_DEFINITION,
 	ASTNODETYPE_PROCEDURE_CALL,
 	ASTNODETYPE_IF,
 	ASTNODETYPE_WHILE,
@@ -170,20 +204,23 @@ struct ASTExpression
 	union
 	{
 		ASTBase any;
-		ASTVariable variable;
+		ASTIdentifier identifier;
 		ASTStructMember structMember;
 		ASTLiteral literal;
+		ASTType astType;
 		ASTBlock block;
 		ASTUnaryOperation unaryOperation;
 		ASTBinaryOperation binaryOperation;
 		ASTVariableDeclaration variableDeclaration;
 		ASTProcedureDeclaration procedureDeclaration;
+		ASTStructDeclaration structDeclaration;
+		ASTEnumDeclaration enumDeclaration;
+		ASTStaticDefinition staticDefinition;
 		ASTProcedureCall procedureCall;
 		ASTIf ifNode;
 		ASTWhile whileNode;
 		ASTReturn returnNode;
 		ASTDefer deferNode;
-		ASTStruct structNode;
 	};
 
 	// Filled in during type checking

@@ -1,0 +1,20 @@
+Test :: union
+{
+	integer : s32;
+	float : f32;
+	struct
+	{
+		a : s64;
+		b : s64;
+	};
+};
+
+Main :: () -> s64
+{
+	test : Test;
+	test.float = 2.0;
+	asInt : s32 = test.integer;
+	a := test.a;
+	b := test.b;
+	return 0;
+}
