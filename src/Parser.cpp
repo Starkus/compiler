@@ -787,6 +787,38 @@ ASTExpression ParseStatement(Context *context)
 		AssertToken(context, context->token, ';');
 		Advance(context);
 	} break;
+	case TOKEN_KEYWORD_STRUCT:
+	case TOKEN_KEYWORD_UNION:
+	{
+		ASTVariableDeclaration varDecl = {};
+		varDecl.loc = context->token->loc;
+
+		varDecl.variable = BucketArrayAdd(&context->variables);
+		*varDecl.variable = {};
+		varDecl.variable->parameterIndex = -1;
+
+		varDecl.astType = NewASTType(context);
+		*varDecl.astType = ParseType(context); // This will parse the struct/union declaration.
+
+		if (context->token->type == TOKEN_OP_ASSIGNMENT)
+		{
+			Advance(context);
+			varDecl.value = NewTreeNode(context);
+			*varDecl.value = ParseExpression(context, -1);
+		}
+
+		result.nodeType = ASTNODETYPE_VARIABLE_DECLARATION;
+		result.variableDeclaration = varDecl;
+
+		AssertToken(context, context->token, ';');
+		Advance(context);
+	} break;
+	case TOKEN_KEYWORD_ENUM:
+	{
+		result.any.loc = context->token->loc;
+		result.nodeType = ASTNODETYPE_ENUM_DECLARATION;
+		result.enumDeclaration = ParseEnumDeclaration(context);
+	}
 	default:
 	{
 		if ((context->token + 1)->type == TOKEN_OP_STATIC_DEF)

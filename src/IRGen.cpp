@@ -290,8 +290,9 @@ IRInstruction IRInstructionFromBinaryOperation(Context *context, ASTExpression *
 			}
 		}
 
-		ASSERT(rightHand->nodeType == ASTNODETYPE_STRUCT_MEMBER);
-		String memberName = rightHand->structMember.string;
+		ASSERT(rightHand->nodeType == ASTNODETYPE_IDENTIFIER);
+		ASSERT(rightHand->identifier.type == NAMETYPE_STRUCT_MEMBER);
+		String memberName = rightHand->identifier.string;
 
 		s64 typeTableIdx = leftHand->typeTableIdx;
 		ASSERT(typeTableIdx >= 0);
@@ -304,8 +305,9 @@ IRInstruction IRInstructionFromBinaryOperation(Context *context, ASTExpression *
 		}
 
 		ASSERT(typeInfo->typeCategory == TYPECATEGORY_STRUCT);
+		ASSERT (rightHand->identifier.structMemberInfo.offsets.size == 1);
 
-		StructMember *structMember = rightHand->structMember.structMember;
+		StructMember *structMember = rightHand->identifier.structMemberInfo.offsets[0];
 		inst.type = IRINSTRUCTIONTYPE_MEMBER_ACCESS;
 		inst.memberAccess.in = left;
 		inst.memberAccess.structMember = structMember;
@@ -623,7 +625,9 @@ IRValue IRGenFromExpression(Context *context, ASTExpression *expression)
 	} break;
 	case ASTNODETYPE_IDENTIFIER:
 	{
-		if (expression->identifier.isStaticDefinition)
+		switch (expression->identifier.type)
+		{
+		case NAMETYPE_STATIC_DEFINITION:
 		{
 			switch (expression->identifier.staticDefinition->definitionType)
 			{
@@ -640,9 +644,39 @@ IRValue IRGenFromExpression(Context *context, ASTExpression *expression)
 				result.typeTableIdx = TYPETABLEIDX_F64;
 			} break;
 			}
-		}
-		else
+		} break;
+		case NAMETYPE_STRUCT_MEMBER:
+		{
+			IRValue left = IRValueFromVariable(context, expression->identifier.structMemberInfo.base);
+
+			result = left;
+			for (int i = 0; i < expression->identifier.structMemberInfo.offsets.size; ++i)
+			{
+				StructMember *structMember = expression->identifier.structMemberInfo.offsets[i];
+
+				IRInstruction inst;
+				inst.type = IRINSTRUCTIONTYPE_MEMBER_ACCESS;
+				inst.memberAccess.in = result;
+				inst.memberAccess.structMember = structMember;
+				inst.memberAccess.out.valueType = IRVALUETYPE_REGISTER;
+				inst.memberAccess.out.registerIdx = NewVirtualRegister(context);
+				inst.memberAccess.out.typeTableIdx = GetTypeInfoPointerOf(context, structMember->typeTableIdx);
+				*AddInstruction(context) = inst;
+
+				result = inst.memberAccess.out;
+				result.typeTableIdx = structMember->typeTableIdx;
+			}
+			result.dereference = true;
+		} break;
+		case NAMETYPE_VARIABLE:
+		{
 			result = IRValueFromVariable(context, expression->identifier.variable);
+		} break;
+		default:
+		{
+			CRASH;
+		}
+		}
 	} break;
 	case ASTNODETYPE_PROCEDURE_CALL:
 	{

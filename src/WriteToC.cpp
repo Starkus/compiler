@@ -73,7 +73,7 @@ s64 CCalculateTypeSize(Context *context, s64 typeTableIdx)
 
 String CIRValueToStr(Context *context, IRValue value)
 {
-	String result = "???"_s;
+	String result = "???VALUE"_s;
 	bool printTypeMemberAccess = false;
 
 	if (value.valueType == IRVALUETYPE_REGISTER)

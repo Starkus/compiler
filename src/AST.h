@@ -36,28 +36,30 @@ struct ASTBinaryOperation : ASTBase
 };
 
 struct Variable;
+struct StructMember;
 struct StaticDefinition;
+enum NameType
+{
+	NAMETYPE_VARIABLE,
+	NAMETYPE_STRUCT_MEMBER,
+	NAMETYPE_STATIC_DEFINITION
+};
 struct ASTIdentifier : ASTBase
 {
 	String string;
 
 	// Type check
-	bool isStaticDefinition;
+	NameType type;
 	union
 	{
 		Variable *variable;
+		struct
+		{
+			Variable *base;
+			Array<StructMember *> offsets;
+		} structMemberInfo;
 		StaticDefinition *staticDefinition;
 	};
-};
-
-struct StructMember;
-struct ASTStructMember : ASTIdentifier
-{
-	// Filled by type checker
-	StructMember *structMember;
-	// Note: saving this pointer assumes that once a struct is declared, further members cannot be
-	// added to it or, at least, adding them don't trigger a reallocation of the preexisting
-	// members.
 };
 
 struct ASTBlock : ASTBase
@@ -180,7 +182,6 @@ enum ASTNodeType
 {
 	ASTNODETYPE_INVALID,
 	ASTNODETYPE_IDENTIFIER,
-	ASTNODETYPE_STRUCT_MEMBER,
 	ASTNODETYPE_LITERAL,
 	ASTNODETYPE_TYPE,
 	ASTNODETYPE_BLOCK,
@@ -205,7 +206,6 @@ struct ASTExpression
 	{
 		ASTBase any;
 		ASTIdentifier identifier;
-		ASTStructMember structMember;
 		ASTLiteral literal;
 		ASTType astType;
 		ASTBlock block;

@@ -579,13 +579,12 @@ STBSP__PUBLICDEF int STB_SPRINTF_DECORATE(vsprintfcb)(STBSP_SPRINTFCB *callback,
          // get the string
          s = va_arg(va, char *);
          // get the length
-         pr = *(int *)s;
+         n = *(int *)s;
          s = *(char **)(s + 8);
-         n = pr;
-         sn = s + pr;
+         sn = s + n;
          if (sn == 0)
             sn = (char *)"null";
-         l = (stbsp__uint32)(sn - s);
+         l = n;
          // clamp to precision
          lead[0] = 0;
          tail[0] = 0;
