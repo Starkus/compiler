@@ -649,19 +649,41 @@ IRValue IRGenFromExpression(Context *context, ASTExpression *expression)
 		{
 			IRValue left = IRValueFromVariable(context, expression->identifier.structMemberInfo.base);
 
-			result = left;
+			if (left.dereference)
+			{
+				TypeInfo *structTypeInfo = &context->typeTable[left.typeTableIdx];
+				if (structTypeInfo->typeCategory == TYPECATEGORY_POINTER)
+				{
+					s64 structTypeInfoIdx = structTypeInfo->pointerInfo.pointedTypeTableIdx;
+					structTypeInfo = &context->typeTable[structTypeInfoIdx];
+
+					// Only if it was pointer to a pointer, dereference
+					if (structTypeInfo->typeCategory == TYPECATEGORY_POINTER)
+						left = IRDereferenceValue(context, left);
+				}
+				else
+				{
+					left.dereference = false;
+					left.typeTableIdx = GetTypeInfoPointerOf(context, left.typeTableIdx);
+				}
+			}
+
 			for (int i = 0; i < expression->identifier.structMemberInfo.offsets.size; ++i)
 			{
 				StructMember *structMember = expression->identifier.structMemberInfo.offsets[i];
 
 				IRInstruction inst;
 				inst.type = IRINSTRUCTIONTYPE_MEMBER_ACCESS;
-				inst.memberAccess.in = result;
+				inst.memberAccess.in = left;
 				inst.memberAccess.structMember = structMember;
 				inst.memberAccess.out.valueType = IRVALUETYPE_REGISTER;
 				inst.memberAccess.out.registerIdx = NewVirtualRegister(context);
 				inst.memberAccess.out.typeTableIdx = GetTypeInfoPointerOf(context, structMember->typeTableIdx);
 				*AddInstruction(context) = inst;
+
+				// Set left for next one
+				left = inst.memberAccess.out;
+				left.typeTableIdx = GetTypeInfoPointerOf(context, structMember->typeTableIdx);
 
 				result = inst.memberAccess.out;
 				result.typeTableIdx = structMember->typeTableIdx;

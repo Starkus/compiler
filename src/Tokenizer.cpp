@@ -300,6 +300,8 @@ Token ReadTokenAndAdvance(Tokenizer *tokenizer)
 			result.type = TOKEN_KEYWORD_EXTERNAL;
 		else if (TokenIsStr(&result, "defer"))
 			result.type = TOKEN_KEYWORD_DEFER;
+		else if (TokenIsStr(&result, "using"))
+			result.type = TOKEN_KEYWORD_USING;
 	}
 	else if (IsNumeric(*tokenizer->cursor))
 	{

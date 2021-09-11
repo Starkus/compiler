@@ -1,0 +1,38 @@
+Struct :: struct
+{
+	foo : s64;
+	bar : s64;
+	union
+	{
+		unionA : s32;
+		unionB : s64;
+	};
+};
+
+AugmentedStruct :: struct
+{
+	using s : Struct;
+	baz : f32;
+};
+
+OnParam :: (using param : Struct)
+{
+	foo = bar;
+}
+
+Main :: () -> s64
+{
+	using stru : Struct;
+	stru.foo = 3;
+	foo = 4;
+	bar = 8;
+	unionA = 16;
+	unionB = 32;
+
+	augmentedStruct : AugmentedStruct;
+	augmentedStruct.foo = 64;
+
+	//using augmentedStruct.s; //@Todo: this doesn't work!
+
+	return 0;
+}

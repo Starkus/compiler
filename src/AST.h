@@ -47,6 +47,7 @@ enum NameType
 struct ASTIdentifier : ASTBase
 {
 	String string;
+	bool isUsing;
 
 	// Type check
 	NameType type;
@@ -73,6 +74,7 @@ struct ASTStructMemberDeclaration : ASTBase
 	String name;
 	ASTType *astType;
 	ASTExpression *value;
+	bool isUsing;
 
 	u64 typeTableIdx;
 };
@@ -123,6 +125,7 @@ struct ASTVariableDeclaration : ASTBase
 	Variable *variable;
 	ASTExpression *value;
 	ASTType *astType;
+	bool isUsing;
 };
 
 struct Procedure;

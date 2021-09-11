@@ -48,6 +48,7 @@ struct StructMember
 {
 	String name;
 	s64 typeTableIdx;
+	bool isUsing;
 
 	// Filled by back-end
 	u64 offset;
@@ -475,11 +476,12 @@ s64 TypeCheckStructDeclaration(Context *context, ASTStructDeclaration astStructD
 
 	for (int memberIdx = 0; memberIdx < astStructDecl.members.size; ++memberIdx)
 	{
-		ASTStructMemberDeclaration *astMember = &astStructDecl.members[memberIdx];
+		ASTStructMemberDeclaration astMember = astStructDecl.members[memberIdx];
 
 		StructMember *member = DynamicArrayAdd(&t.structInfo.members);
-		member->name = astMember->name;
-		member->typeTableIdx = TypeCheckType(context, astMember->loc, astMember->astType);
+		member->name = astMember.name;
+		member->isUsing = astMember.isUsing;
+		member->typeTableIdx = TypeCheckType(context, astMember.loc, astMember.astType);
 	}
 
 	s64 typeTableIdx = BucketArrayCount(&context->typeTable);
@@ -602,7 +604,7 @@ u64 InferType(u64 fromType)
 	return fromType;
 }
 
-void AddStructMembersToScope(Context *context, Variable *base, s64 typeTableIdx,
+void AddStructMembersToScope(Context *context, SourceLocation loc, Variable *base, s64 typeTableIdx,
 		DynamicArray<StructMember *, malloc, realloc> *offsetStack)
 {
 	TypeInfo *typeInfo = &context->typeTable[typeTableIdx];
@@ -614,8 +616,23 @@ void AddStructMembersToScope(Context *context, Variable *base, s64 typeTableIdx,
 		StructMember *member = &typeInfo->structInfo.members[memberIdx];
 		*DynamicArrayAdd(offsetStack) = member;
 
-		if (member->name.size)
+		if (member->name.size && !member->isUsing)
 		{
+			// Check if name already exists
+			for (s64 i = 0; i < (s64)stackTop->names.size; ++i)
+			{
+				TCScopeName currentName = stackTop->names[i];
+				if (StringEquals(member->name, currentName.name))
+				{
+					String fullMemberName = base->name;
+					for (int j = 0; j < offsetStack->size; ++j)
+						fullMemberName = TPrintF("%S.%S", fullMemberName, (*offsetStack)[j]->name);
+
+					PrintError(context, loc, TPrintF("Failed to pull name \"%S\" into scope because "
+								"name \"%S\" is already used", fullMemberName, member->name));
+				}
+			}
+
 			TCScopeName newScopeName;
 			newScopeName.type = NAMETYPE_STRUCT_MEMBER;
 			newScopeName.name = member->name;
@@ -629,7 +646,7 @@ void AddStructMembersToScope(Context *context, Variable *base, s64 typeTableIdx,
 		}
 		else
 		{
-			AddStructMembersToScope(context, base, member->typeTableIdx, offsetStack);
+			AddStructMembersToScope(context, loc, base, member->typeTableIdx, offsetStack);
 		}
 		--offsetStack->size;
 	}
@@ -637,10 +654,10 @@ void AddStructMembersToScope(Context *context, Variable *base, s64 typeTableIdx,
 
 void TypeCheckExpression(Context *context, ASTExpression *expression);
 
-void TypeCheckVariableDeclaration(Context *context, ASTVariableDeclaration *varDecl)
+void TypeCheckVariableDeclaration(Context *context, ASTVariableDeclaration varDecl)
 {
-	String varName = varDecl->variable->name;
-	s64 *varType = &varDecl->variable->typeTableIdx;
+	String varName = varDecl.variable->name;
+	s64 *varType = &varDecl.variable->typeTableIdx;
 
 	TCScope *stackTop = &context->tcStack[context->tcStack.size - 1];
 	if (varName.size)
@@ -651,31 +668,31 @@ void TypeCheckVariableDeclaration(Context *context, ASTVariableDeclaration *varD
 			TCScopeName currentName = stackTop->names[i];
 			if (StringEquals(varName, currentName.name))
 			{
-				PrintError(context, varDecl->loc, TPrintF("Duplicate name \"%S\" in scope", varName));
+				PrintError(context, varDecl.loc, TPrintF("Duplicate name \"%S\" in scope", varName));
 			}
 		}
 	}
 
-	if (varDecl->astType)
+	if (varDecl.astType)
 	{
-		*varType = TypeCheckType(context, varDecl->loc, varDecl->astType);
+		*varType = TypeCheckType(context, varDecl.loc, varDecl.astType);
 
 		if (*varType == TYPETABLEIDX_VOID)
-			PrintError(context, varDecl->loc, "Variable can't be of type void!"_s);
+			PrintError(context, varDecl.loc, "Variable can't be of type void!"_s);
 	}
 
-	if (varDecl->value)
+	if (varDecl.value)
 	{
-		TypeCheckExpression(context, varDecl->value);
-		u64 valueType = varDecl->value->typeTableIdx;
+		TypeCheckExpression(context, varDecl.value);
+		u64 valueType = varDecl.value->typeTableIdx;
 
-		if (varDecl->astType)
+		if (varDecl.astType)
 		{
 			if (!CheckTypesMatch(context, *varType, valueType))
 			{
 				String varTypeStr = TypeInfoToString(context, *varType);
 				String valueTypeStr = TypeInfoToString(context, valueType);
-				PrintError(context, varDecl->loc, TPrintF(
+				PrintError(context, varDecl.loc, TPrintF(
 							"Variable declaration type and initial type don't match (variable "
 							"is %S and initial value is %S", varTypeStr, valueTypeStr));
 			}
@@ -683,7 +700,7 @@ void TypeCheckVariableDeclaration(Context *context, ASTVariableDeclaration *varD
 		else
 		{
 			if (valueType == TYPETABLEIDX_VOID)
-				PrintError(context, varDecl->loc, "Variable can't be of type void!"_s);
+				PrintError(context, varDecl.loc, "Variable can't be of type void!"_s);
 
 			*varType = InferType(valueType);
 		}
@@ -693,17 +710,9 @@ void TypeCheckVariableDeclaration(Context *context, ASTVariableDeclaration *varD
 	{
 		TCScopeName newScopeName;
 		newScopeName.type = NAMETYPE_VARIABLE;
-		newScopeName.name = varDecl->variable->name;
-		newScopeName.variable = varDecl->variable;
+		newScopeName.name = varDecl.variable->name;
+		newScopeName.variable = varDecl.variable;
 		*DynamicArrayAdd(&stackTop->names) = newScopeName;
-	}
-	else
-	{
-		// Anonymous struct!
-		DynamicArray<StructMember *, malloc, realloc> offsetStack;
-		DynamicArrayInit(&offsetStack, 8);
-		AddStructMembersToScope(context, varDecl->variable, varDecl->variable->typeTableIdx,
-				&offsetStack);
 	}
 }
 
@@ -761,9 +770,9 @@ StructMember *FindStructMemberByName(Context *context, TypeInfo *structTypeInfo,
 	for (int i = 0; i < structTypeInfo->structInfo.members.size; ++i)
 	{
 		StructMember *currentMember = &structTypeInfo->structInfo.members[i];
-		if (currentMember->name.size == 0)
+		if (currentMember->isUsing || currentMember->name.size == 0)
 		{
-			// Anonymous structs/unions
+			// Anonymous structs/unions and using
 			TypeInfo *memberTypeInfo = &context->typeTable[currentMember->typeTableIdx];
 			ASSERT(memberTypeInfo->typeCategory == TYPECATEGORY_STRUCT);
 			return FindStructMemberByName(context, memberTypeInfo, name);
@@ -789,17 +798,33 @@ void TypeCheckExpression(Context *context, ASTExpression *expression)
 	} break;
 	case ASTNODETYPE_VARIABLE_DECLARATION:
 	{
-		ASTVariableDeclaration *varDecl = &expression->variableDeclaration;
+		ASTVariableDeclaration varDecl = expression->variableDeclaration;
 		TypeCheckVariableDeclaration(context, varDecl);
-		expression->typeTableIdx = varDecl->variable->typeTableIdx;
+		expression->typeTableIdx = varDecl.variable->typeTableIdx;
 
-		if (varDecl->variable->name.size == 0)
+		if (varDecl.isUsing || varDecl.variable->name.size == 0)
 		{
-			// Anonymous struct!
+			TypeInfo *typeInfo = &context->typeTable[expression->typeTableIdx];
+			if (typeInfo->typeCategory != TYPECATEGORY_STRUCT)
+				PrintError(context, expression->any.loc, "Using keyword only accepts structs!"_s);
+
 			DynamicArray<StructMember *, malloc, realloc> offsetStack;
 			DynamicArrayInit(&offsetStack, 8);
-			AddStructMembersToScope(context, varDecl->variable, varDecl->variable->typeTableIdx,
+			AddStructMembersToScope(context, varDecl.loc, varDecl.variable,
+					varDecl.variable->typeTableIdx,
 					&offsetStack);
+		}
+		else if (varDecl.variable->name.size == 0)
+		{
+			// Anonymous struct!
+			TypeInfo *typeInfo = &context->typeTable[expression->typeTableIdx];
+			if (typeInfo->typeCategory != TYPECATEGORY_STRUCT)
+				PrintError(context, expression->any.loc, "Anonymous variable has to be a struct!"_s);
+
+			DynamicArray<StructMember *, malloc, realloc> offsetStack;
+			DynamicArrayInit(&offsetStack, 8);
+			AddStructMembersToScope(context, varDecl.loc, varDecl.variable,
+					varDecl.variable->typeTableIdx, &offsetStack);
 		}
 	} break;
 	case ASTNODETYPE_STATIC_DEFINITION:
@@ -878,16 +903,25 @@ void TypeCheckExpression(Context *context, ASTExpression *expression)
 		DynamicArrayInit(&procedure->parameters, 8);
 		for (int i = 0; i < procDecl->astParameters.size; ++i)
 		{
-			ASTVariableDeclaration *astParam = &procDecl->astParameters[i];
-			TypeCheckVariableDeclaration(context, astParam);
-			ProcedureParameter *procParam = DynamicArrayAdd(&procedure->parameters);
-			procParam->variable = astParam->variable;
-			procParam->defaultValue = astParam->value;
+			ASTVariableDeclaration astVarDecl = procDecl->astParameters[i];
 
-			if (!astParam->value)
+			TypeCheckVariableDeclaration(context, astVarDecl);
+			ProcedureParameter *procParam = DynamicArrayAdd(&procedure->parameters);
+			procParam->variable = astVarDecl.variable;
+			procParam->defaultValue = astVarDecl.value;
+
+			if (astVarDecl.isUsing)
+			{
+				DynamicArray<StructMember *, malloc, realloc> offsetStack;
+				DynamicArrayInit(&offsetStack, 8);
+				AddStructMembersToScope(context, astVarDecl.loc, astVarDecl.variable,
+						astVarDecl.variable->typeTableIdx, &offsetStack);
+			}
+
+			if (!astVarDecl.value)
 			{
 				if (beginOptionalParameters)
-					PrintError(context, astParam->loc, "Non-optional parameter after optional parameter found!"_s);
+					PrintError(context, astVarDecl.loc, "Non-optional parameter after optional parameter found!"_s);
 
 				++procedure->requiredParameterCount;
 			}
@@ -971,12 +1005,29 @@ void TypeCheckExpression(Context *context, ASTExpression *expression)
 							GetStaticDefinitionTypeTableIdx(*currentName.staticDefinition);
 					} break;
 					}
-					return;
+					goto skipInvalidIdentifierError;
 				}
 			}
 		}
-
 		PrintError(context, expression->any.loc, TPrintF("Invalid variable \"%S\" referenced", string));
+
+skipInvalidIdentifierError:
+		if (expression->identifier.isUsing)
+		{
+			if (expression->identifier.type != NAMETYPE_VARIABLE)
+				PrintError(context, expression->any.loc,
+						"Expression after 'using' does not evaluate to a variable"_s);
+
+			TypeInfo *typeInfo = &context->typeTable[expression->typeTableIdx];
+			if (typeInfo->typeCategory != TYPECATEGORY_STRUCT)
+				PrintError(context, expression->any.loc, "Using keyword only accepts structs!"_s);
+
+			Variable *base = expression->identifier.variable;
+
+			DynamicArray<StructMember *, malloc, realloc> offsetStack;
+			DynamicArrayInit(&offsetStack, 8);
+			AddStructMembersToScope(context, expression->any.loc, base, base->typeTableIdx, &offsetStack);
+		}
 	} break;
 	case ASTNODETYPE_PROCEDURE_CALL:
 	{
@@ -1277,6 +1328,7 @@ void TypeCheckMain(Context *context)
 
 			StructMember *sizeMember = DynamicArrayAdd(&t.structInfo.members);
 			sizeMember->name = "size"_s;
+			sizeMember->isUsing = false;
 			sizeMember->typeTableIdx = TYPETABLEIDX_U64;
 
 			StructMember *dataMember = DynamicArrayAdd(&t.structInfo.members);
@@ -1285,6 +1337,7 @@ void TypeCheckMain(Context *context)
 			pointerToU8TypeInfo.pointerInfo.pointedTypeTableIdx = TYPETABLEIDX_U8;
 
 			dataMember->name = "data"_s;
+			dataMember->isUsing = false;
 			dataMember->typeTableIdx = FindOrAddTypeTableIdx(context, pointerToU8TypeInfo);
 
 			context->typeTable[TYPETABLEIDX_STRUCT_STRING] = t;

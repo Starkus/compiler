@@ -343,6 +343,12 @@ ASTStructMemberDeclaration ParseStructMemberDeclaration(Context *context)
 	ASTStructMemberDeclaration structMem = {};
 	structMem.loc = context->token->loc;
 
+	if (context->token->type == TOKEN_KEYWORD_USING)
+	{
+		structMem.isUsing = true;
+		Advance(context);
+	}
+
 	// Anonymous structs/unions
 	if (context->token->type == TOKEN_KEYWORD_STRUCT || 
 		context->token->type == TOKEN_KEYWORD_UNION)
@@ -450,6 +456,12 @@ ASTVariableDeclaration ParseVariableDeclaration(Context *context)
 	ASTVariableDeclaration varDecl = {};
 	varDecl.loc = context->token->loc;
 
+	if (context->token->type == TOKEN_KEYWORD_USING)
+	{
+		varDecl.isUsing = true;
+		Advance(context);
+	}
+
 	varDecl.variable = BucketArrayAdd(&context->variables);
 	*varDecl.variable = {};
 	varDecl.variable->parameterIndex = -1;
@@ -514,14 +526,14 @@ ASTProcedureDeclaration ParseProcedureDeclaration(Context *context)
 		}
 
 		// @Improve: separate node type for procedure parameter?
-		ASTVariableDeclaration astParameter = ParseVariableDeclaration(context);
+		ASTVariableDeclaration astVarDecl = ParseVariableDeclaration(context);
 		ASSERT(procDecl.astParameters.size <= S8_MAX);
-		astParameter.variable->parameterIndex = (s8)procDecl.astParameters.size;
+		astVarDecl.variable->parameterIndex = (s8)procDecl.astParameters.size;
 
-		if (astParameter.variable->isStatic)
+		if (astVarDecl.variable->isStatic)
 			PrintError(context, context->token->loc, "Procedure parameters can't be static"_s);
 
-		*DynamicArrayAdd(&procDecl.astParameters) = astParameter;
+		*DynamicArrayAdd(&procDecl.astParameters) = astVarDecl;
 
 		if (context->token->type != ')')
 		{
@@ -818,7 +830,25 @@ ASTExpression ParseStatement(Context *context)
 		result.any.loc = context->token->loc;
 		result.nodeType = ASTNODETYPE_ENUM_DECLARATION;
 		result.enumDeclaration = ParseEnumDeclaration(context);
-	}
+	} break;
+	case TOKEN_KEYWORD_USING:
+	{
+		Advance(context);
+
+		result = ParseStatement(context);
+		switch (result.nodeType)
+		{
+		case ASTNODETYPE_VARIABLE_DECLARATION:
+			result.variableDeclaration.isUsing = true;
+			break;
+		case ASTNODETYPE_IDENTIFIER:
+			result.identifier.isUsing = true;
+			break;
+		default:
+			PrintError(context, result.any.loc,
+					"Expression after 'using' should be a variable or variable declaration"_s);
+		}
+	} break;
 	default:
 	{
 		if ((context->token + 1)->type == TOKEN_OP_STATIC_DEF)
