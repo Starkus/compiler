@@ -393,6 +393,13 @@ ASTEnumDeclaration ParseEnumDeclaration(Context *context)
 	enumNode.loc = loc;
 	DynamicArrayInit(&enumNode.members, 16);
 
+	if (context->token->type == TOKEN_OP_VARIABLE_DECLARATION)
+	{
+		Advance(context);
+		enumNode.astType = NewASTType(context);
+		*enumNode.astType = ParseType(context);
+	}
+
 	AssertToken(context, context->token, '{');
 	Advance(context);
 	while (context->token->type != '}')

@@ -1,6 +1,7 @@
 enum TypeTableIndexes
 {
-	TYPETABLEIDX_S8,
+	TYPETABLEIDX_PRIMITIVE_BEGIN,
+	TYPETABLEIDX_S8 = TYPETABLEIDX_PRIMITIVE_BEGIN,
 	TYPETABLEIDX_S16,
 	TYPETABLEIDX_S32,
 	TYPETABLEIDX_S64,
@@ -10,6 +11,8 @@ enum TypeTableIndexes
 	TYPETABLEIDX_U64,
 	TYPETABLEIDX_F32,
 	TYPETABLEIDX_F64,
+	TYPETABLEIDX_PRIMITIVE_END = TYPETABLEIDX_F64,
+
 	TYPETABLEIDX_BOOL,
 	TYPETABLEIDX_INTEGER,
 	TYPETABLEIDX_FLOATING,
@@ -528,6 +531,16 @@ s64 TypeCheckType(Context *context, SourceLocation loc, ASTType *astType)
 		TypeInfo t;
 		t.typeCategory = TYPECATEGORY_ENUM;
 		t.enumInfo.typeTableIdx = TYPETABLEIDX_S64;
+
+		if (astType->enumDeclaration.astType)
+		{
+			SourceLocation astTypeLoc = astType->enumDeclaration.astType->loc;
+			t.enumInfo.typeTableIdx = TypeCheckType(context, astTypeLoc, astType->enumDeclaration.astType);
+
+			if (t.enumInfo.typeTableIdx < TYPETABLEIDX_PRIMITIVE_BEGIN ||
+				t.enumInfo.typeTableIdx > TYPETABLEIDX_PRIMITIVE_END)
+				PrintError(context, astTypeLoc, "Only primitive types are allowed as enum field types"_s);
+		}
 
 		s64 typeTableIdx = BucketArrayCount(&context->typeTable);
 		*BucketArrayAdd(&context->typeTable) = t;

@@ -1,4 +1,4 @@
-Color :: enum {
+Color :: enum : s8 {
 	COLOR_RED,
 	COLOR_GREEN = 15,
 	COLOR_BLUE

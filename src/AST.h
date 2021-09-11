@@ -91,6 +91,7 @@ struct ASTEnumMember
 };
 struct ASTEnumDeclaration : ASTBase
 {
+	ASTType *astType;
 	DynamicArray<ASTEnumMember, malloc, realloc> members;
 };
 

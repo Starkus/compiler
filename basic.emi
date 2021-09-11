@@ -14,26 +14,33 @@ TypeKind :: enum
 	TypeKind_Pointer,
 	TypeKind_Array
 };
+TypeInfo :: struct
+{
+	typeKind : TypeKind;
+};
 
 TypeInfoInteger :: struct
 {
+	using _typeInfo : TypeInfo;
 	size : s64;
 	isSigned : s32;
 };
 
 TypeInfoFloating :: struct
 {
+	using _typeInfo : TypeInfo;
 	size : s64;
 };
 
 TypeInfoStructMember :: struct
 {
 	name : String;
-	//typeInfo : ^TypeInfo;
+	typeInfo : ^TypeInfo;
 	offset : u64;
 };
 TypeInfoStruct :: struct
 {
+	using _typeInfo : TypeInfo;
 	name : String;
 	isUnion : bool;
 	members : [] TypeInfoStructMember;
@@ -42,31 +49,20 @@ TypeInfoStruct :: struct
 
 TypeInfoEnum :: struct
 {
+	using _typeInfo : TypeInfo;
 	name : String;
-	//typeInfo : ^TypeInfo;
+	typeInfo : ^TypeInfo;
 };
 
 TypeInfoPointer :: struct
 {
-	//typeInfo : ^TypeInfo;
+	using _typeInfo : TypeInfo;
+	typeInfo : ^TypeInfo;
 };
 
 TypeInfoArray :: struct
 {
+	using _typeInfo : TypeInfo;
 	count : u64;
-	//typeInfo : ^TypeInfo;
-};
-
-TypeInfo :: struct
-{
-	typeKind : TypeKind;
-	union
-	{
-		integerInfo : TypeInfoInteger;
-		floatingInfo : TypeInfoFloating;
-		structInfo : TypeInfoStruct;
-		enumInfo : TypeInfoEnum;
-		pointerInfo : TypeInfoPointer;
-		arrayInfo : TypeInfoArray;
-	};
+	elementTypeInfo : ^TypeInfo;
 };
