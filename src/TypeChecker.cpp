@@ -202,6 +202,9 @@ StaticDefinition *FindStaticDefinitionByProcedure(Context *context, Procedure *p
 
 String TypeInfoToString(Context *context, s64 typeTableIdx)
 {
+	if (typeTableIdx == TYPETABLEIDX_VOID)
+		return "void"_s;
+
 	TypeInfo *typeInfo = &context->typeTable[typeTableIdx];
 	switch (typeInfo->typeCategory)
 	{

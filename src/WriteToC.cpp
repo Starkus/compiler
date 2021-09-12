@@ -371,6 +371,10 @@ void WriteToC(Context *context)
 	// TypeInfo data
 	{
 #pragma pack(push, 1) // We'll pack these manually
+		struct ProgramTypeInfo
+		{
+			u8 typeCategory;
+		};
 		struct ProgramTypeInfoInteger
 		{
 			u8 typeCategory;
@@ -486,6 +490,11 @@ void WriteToC(Context *context)
 						"%llu, &_typeInfo%lld };\n",
 						typeTableIdx, 5, typeInfo->arrayInfo.count,
 						typeInfo->arrayInfo.elementTypeTableIdx);
+			} break;
+			case TYPECATEGORY_INVALID:
+			{
+				PrintOut(context, outputFile, "ProgramTypeInfo _typeInfo%lld = { %d };\n",
+						typeTableIdx, 6);
 			} break;
 			}
 		}

@@ -1,4 +1,4 @@
 #define PRINT_AST_TREE	0
 #define PRINT_TOKEN_SOURCE_LOCATION 0
 #define PRINT_IR		1
-#define PRINT_C_OUTPUT	1
+#define PRINT_C_OUTPUT	0

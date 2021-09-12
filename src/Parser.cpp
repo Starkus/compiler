@@ -48,18 +48,19 @@ String ASTTypeToString(ASTType *type)
 	if (!type)
 		return "<inferred>"_s;
 
-	if (type->nodeType == ASTTYPENODETYPE_IDENTIFIER)
+	switch (type->nodeType)
 	{
+	case ASTTYPENODETYPE_IDENTIFIER:
 		return type->name;
-	}
-	else if (type->nodeType == ASTTYPENODETYPE_POINTER)
-	{
+	case ASTTYPENODETYPE_POINTER:
 		return StringConcat("^"_s, ASTTypeToString(type->pointedType));
-	}
-	else if (type->nodeType == ASTTYPENODETYPE_ARRAY)
+	case ASTTYPENODETYPE_ARRAY:
 	{
 		String typeStr = ASTTypeToString(type->arrayType);
 		return TPrintF("[%d] %S", type->arrayCount, typeStr);
+	}
+	case ASTTYPENODETYPE_STRUCT_DECLARATION:
+		return "Struct"_s;
 	}
 	return "???TYPE"_s;
 }
@@ -210,6 +211,7 @@ bool TryParseBinaryOperation(Context *context, ASTExpression leftHand, s32 prevP
 			*result->leftHand = leftHand;
 
 			result->rightHand = NewTreeNode(context);
+			result->rightHand->any.loc = result->loc;
 			result->rightHand->nodeType = ASTNODETYPE_BINARY_OPERATION;
 
 			// NOTE! Tree branch referenced twice here! The tree is now a graph D:

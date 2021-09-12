@@ -18,6 +18,10 @@ typedef int8_t strct;
 typedef int8_t arr;
 
 #pragma pack(push, 1) // We'll pack these manually
+typedef struct ProgramTypeInfo
+{
+	u8 typeCategory;
+} ProgramTypeInfo;
 typedef struct ProgramTypeInfoInteger
 {
 	u8 typeCategory;

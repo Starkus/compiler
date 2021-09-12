@@ -140,10 +140,7 @@ struct ASTProcedureDeclaration : ASTBase
 struct ASTStaticDefinition : ASTBase
 {
 	String name;
-	union
-	{
-		ASTExpression *expression;
-	};
+	ASTExpression *expression;
 };
 
 struct ASTProcedureCall : ASTBase

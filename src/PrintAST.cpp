@@ -64,14 +64,6 @@ String OperatorToString(s32 op)
 	return "???OP"_s;
 }
 
-void Indent(PrintContext *context)
-{
-	for (int i = 0; i < context->indentLevels - 1; ++i)
-		Log("| ");
-	if (context->indentLevels)
-		Log("+-");
-}
-
 #if PRINT_TOKEN_SOURCE_LOCATION
 void PrintSourceLocation(PrintContext *context, SourceLocation loc)
 {
@@ -81,7 +73,7 @@ void PrintSourceLocation(PrintContext *context, SourceLocation loc)
 	const char *beginningOfLine = nullptr;
 	int size = 0;
 	int l = 1;
-	for (const char *scan = (const char *)context->fileBuffer; *scan; ++scan)
+	for (const char *scan = (const char *)loc.fileBuffer; *scan; ++scan)
 	{
 		if (l == loc.line)
 		{
@@ -121,6 +113,124 @@ void PrintSourceLocation(PrintContext *context, SourceLocation loc)
 #define PrintSourceLocation(...)
 #endif
 
+void Indent(PrintContext *context)
+{
+	for (int i = 0; i < context->indentLevels - 1; ++i)
+		Log("| ");
+	if (context->indentLevels)
+		Log("+-");
+}
+
+void PrintExpression(PrintContext *context, ASTExpression *e);
+void PrintASTType(PrintContext *context, ASTType *type)
+{
+	Indent(context);
+	if (!type)
+	{
+		Log("<inferred>");
+		return;
+	}
+
+	switch (type->nodeType)
+	{
+	case ASTTYPENODETYPE_IDENTIFIER:
+	{
+		Log("\"%S\"", type->name);
+
+		PrintSourceLocation(context, type->loc);
+		Log("\n");
+	} break;
+	case ASTTYPENODETYPE_POINTER:
+	{
+		Log("^");
+
+		PrintSourceLocation(context, type->loc);
+		Log("\n");
+
+		++context->indentLevels;
+		PrintASTType(context, type->pointedType);
+		--context->indentLevels;
+	} break;
+	case ASTTYPENODETYPE_ARRAY:
+	{
+		Log("[%d]", type->arrayCount);
+
+		PrintSourceLocation(context, type->loc);
+		Log("\n");
+
+		++context->indentLevels;
+		PrintASTType(context, type->arrayType);
+		--context->indentLevels;
+	} break;
+	case ASTTYPENODETYPE_STRUCT_DECLARATION:
+	{
+		Log("Struct");
+
+		PrintSourceLocation(context, type->loc);
+		Log("\n");
+
+		++context->indentLevels;
+		for (int i = 0; i < type->structDeclaration.members.size; ++i)
+		{
+			ASTStructMemberDeclaration *member = &type->structDeclaration.members[i];
+
+			Indent(context);
+			Log("Struct member \"%S\" of type:\n", member->name);
+
+			++context->indentLevels;
+			PrintASTType(context, member->astType);
+			--context->indentLevels;
+
+			if (member->value)
+			{
+				++context->indentLevels;
+				PrintExpression(context, member->value);
+				--context->indentLevels;
+			}
+		}
+		--context->indentLevels;
+	} break;
+	case ASTTYPENODETYPE_ENUM_DECLARATION:
+	{
+		Log("Enum");
+
+		PrintSourceLocation(context, type->loc);
+		Log("\n");
+
+		if (type->enumDeclaration.astType)
+		{
+			Indent(context);
+			Log("Of type:\n");
+			++context->indentLevels;
+			PrintASTType(context, type->enumDeclaration.astType);
+			--context->indentLevels;
+		}
+
+		++context->indentLevels;
+		for (int i = 0; i < type->enumDeclaration.members.size; ++i)
+		{
+			ASTEnumMember *member = &type->enumDeclaration.members[i];
+
+			Indent(context);
+			Log("Enum member \"%S\"\n", member->name);
+
+			if (member->value)
+			{
+				++context->indentLevels;
+				PrintExpression(context, member->value);
+				--context->indentLevels;
+			}
+		}
+		--context->indentLevels;
+	} break;
+	default:
+		Log("???TYPE");
+
+		PrintSourceLocation(context, type->loc);
+		Log("\n");
+	}
+}
+
 void PrintExpression(PrintContext *context, ASTExpression *e)
 {
 	Indent(context);
@@ -148,7 +258,7 @@ void PrintExpression(PrintContext *context, ASTExpression *e)
 	} break;
 	case ASTNODETYPE_PROCEDURE_DECLARATION:
 	{
-		Log("Procedure declaration \"%S\"", e->procedureDeclaration.name);
+		Log("Procedure declaration");
 		++context->indentLevels;
 
 		PrintSourceLocation(context, e->any.loc);
@@ -156,16 +266,16 @@ void PrintExpression(PrintContext *context, ASTExpression *e)
 
 		Indent(context);
 		Log("Parameters:\n");
-		for (int i = 0; i < e->procedureDeclaration.parameters.size; ++i)
+		for (int i = 0; i < e->procedureDeclaration.astParameters.size; ++i)
 		{
 			ASTExpression pexp = {};
 			pexp.nodeType = ASTNODETYPE_VARIABLE_DECLARATION;
-			pexp.variableDeclaration = e->procedureDeclaration.parameters[i];
+			pexp.variableDeclaration = e->procedureDeclaration.astParameters[i];
 			PrintExpression(context, &pexp);
 		}
 
-		if (e->procedureDeclaration.body)
-			PrintExpression(context, e->procedureDeclaration.body);
+		if (e->procedureDeclaration.procedure->astBody)
+			PrintExpression(context, e->procedureDeclaration.procedure->astBody);
 		--context->indentLevels;
 	} break;
 	case ASTNODETYPE_BLOCK:
@@ -179,9 +289,9 @@ void PrintExpression(PrintContext *context, ASTExpression *e)
 		}
 		--context->indentLevels;
 	} break;
-	case ASTNODETYPE_VARIABLE:
+	case ASTNODETYPE_IDENTIFIER:
 	{
-		Log("Variable \"%S\"", e->variable.name);
+		Log("Identifier \"%S\"", e->identifier.string);
 
 		PrintSourceLocation(context, e->any.loc);
 		Log("\n");
@@ -312,9 +422,9 @@ void PrintExpression(PrintContext *context, ASTExpression *e)
 	{
 		Log("Struct\n");
 		++context->indentLevels;
-		for (int i = 0; i < e->structNode.members.size; ++i)
+		for (int i = 0; i < e->structDeclaration.members.size; ++i)
 		{
-			ASTStructMember *member = &e->structNode.members[i];
+			ASTStructMemberDeclaration *member = &e->structDeclaration.members[i];
 
 			Log("Struct member ");
 			String typeStr = ASTTypeToString(member->astType);
@@ -330,6 +440,21 @@ void PrintExpression(PrintContext *context, ASTExpression *e)
 				--context->indentLevels;
 			}
 		}
+		--context->indentLevels;
+	} break;
+	case ASTNODETYPE_STATIC_DEFINITION:
+	{
+		Log("Static definition \"%S\"\n", e->staticDefinition.name);
+
+		++context->indentLevels;
+		PrintExpression(context, e->staticDefinition.expression);
+		--context->indentLevels;
+	} break;
+	case ASTNODETYPE_TYPE:
+	{
+		Log("Type\n");
+		++context->indentLevels;
+		PrintASTType(context, &e->astType);
 		--context->indentLevels;
 	} break;
 	default:

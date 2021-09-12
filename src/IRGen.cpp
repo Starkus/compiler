@@ -1192,7 +1192,12 @@ void PrintIRValue(Context *context, IRValue value)
 		Log("[");
 
 	if (value.valueType == IRVALUETYPE_REGISTER)
-		Log("$r%d", value.registerIdx);
+		if (value.registerIdx == IRSPECIALREGISTER_RETURN)
+			Log("$rRet");
+		else if (value.registerIdx == IRSPECIALREGISTER_SHOULD_RETURN)
+			Log("$rDoRet");
+		else
+			Log("$r%d", value.registerIdx);
 	else if (value.valueType == IRVALUETYPE_VARIABLE)
 		Log("%S", value.variable->name);
 	else if (value.valueType == IRVALUETYPE_PARAMETER)
