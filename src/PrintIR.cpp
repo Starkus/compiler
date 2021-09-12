@@ -100,6 +100,11 @@ void PrintIRInstructions(Context *context)
 					s64 structTypeInfoIdx = structTypeInfo->pointerInfo.pointedTypeTableIdx;
 					structTypeInfo = &context->typeTable[structTypeInfoIdx];
 				}
+				if (structTypeInfo->typeCategory == TYPECATEGORY_ARRAY)
+				{
+					s64 arrayTypeTableIdx = FindTypeInStackByName(context, {}, "Array"_s);
+					structTypeInfo = &context->typeTable[arrayTypeTableIdx];
+				}
 				ASSERT(structTypeInfo->typeCategory == TYPECATEGORY_STRUCT);
 
 				String structName = "<struct>"_s;

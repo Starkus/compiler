@@ -1,6 +1,9 @@
 global :s s32;
 
 globalWithValue :s s32 = 5;
+globalU8 :s u8 = 2;
+globalFloat :s f32 = 2.5;
+globalString :s = "Why hello";
 
 Main :: () -> s64
 {

@@ -40,5 +40,9 @@ Main :: () -> s64
 
 	returnedArray := returnArray();
 
+	dynamicArray : [] s32;
+	dynamicArray.size = 16;
+	dynamicArray.data = ^arrayB;
+
 	return 0;
 }

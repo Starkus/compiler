@@ -14,7 +14,8 @@ enum IRValueType
 	IRVALUETYPE_IMMEDIATE_INTEGER,
 	IRVALUETYPE_IMMEDIATE_FLOAT,
 	IRVALUETYPE_IMMEDIATE_STRING,
-	IRVALUETYPE_SIZEOF
+	IRVALUETYPE_SIZEOF,
+	IRVALUETYPE_TYPEOF
 };
 struct IRValue
 {
@@ -26,7 +27,8 @@ struct IRValue
 		s64 immediate;
 		f64 immediateFloat;
 		String immediateString;
-		u64 sizeOfTypeTableIdx;
+		s64 sizeOfTypeTableIdx;
+		s64 typeOfTypeTableIdx;
 	};
 	bool dereference;
 	s64 typeTableIdx;
@@ -304,6 +306,12 @@ IRInstruction IRInstructionFromBinaryOperation(Context *context, ASTExpression *
 			typeInfo = &context->typeTable[pointedTypeIdx];
 		}
 
+		if (typeInfo->typeCategory == TYPECATEGORY_ARRAY)
+		{
+			s64 arrayTypeTableIdx = FindTypeInStackByName(context, {}, "Array"_s);
+			typeInfo = &context->typeTable[arrayTypeTableIdx];
+		}
+
 		ASSERT(typeInfo->typeCategory == TYPECATEGORY_STRUCT);
 		ASSERT (rightHand->identifier.structMemberInfo.offsets.size == 1);
 
@@ -335,9 +343,29 @@ IRInstruction IRInstructionFromBinaryOperation(Context *context, ASTExpression *
 
 		ASSERT(arrayTypeInfo->typeCategory == TYPECATEGORY_ARRAY);
 		s64 elementType = arrayTypeInfo->arrayInfo.elementTypeTableIdx;
-		inst.arrayAccess.elementTypeTableIdx = elementType;
-
 		s64 pointerToElementTypeIdx = GetTypeInfoPointerOf(context, elementType);
+
+		if (arrayTypeInfo->arrayInfo.count == 0)
+		{
+			// Access the 'data' pointer
+			s64 arrayTypeTableIdx = FindTypeInStackByName(context, {}, "Array"_s);
+			TypeInfo *arrayStructTypeInfo = &context->typeTable[arrayTypeTableIdx];
+			StructMember *structMember = &arrayStructTypeInfo->structInfo.members[1];
+
+			IRInstruction memberAccessInst;
+			memberAccessInst.type = IRINSTRUCTIONTYPE_MEMBER_ACCESS;
+			memberAccessInst.memberAccess.in = inst.arrayAccess.array;
+			memberAccessInst.memberAccess.structMember = structMember;
+			memberAccessInst.memberAccess.out.valueType = IRVALUETYPE_REGISTER;
+			memberAccessInst.memberAccess.out.registerIdx = NewVirtualRegister(context);
+			memberAccessInst.memberAccess.out.typeTableIdx = pointerToElementTypeIdx;
+			*AddInstruction(context) = memberAccessInst;
+
+			inst.arrayAccess.array = memberAccessInst.memberAccess.out;
+			inst.arrayAccess.array.dereference = true;
+		}
+
+		inst.arrayAccess.elementTypeTableIdx = elementType;
 		inst.arrayAccess.out.typeTableIdx = pointerToElementTypeIdx;
 
 		outResultValue->typeTableIdx = elementType;
@@ -417,9 +445,10 @@ IRInstruction IRInstructionFromAssignment(Context *context, IRValue leftValue, A
 		inst.memcpy.dst = leftValue;
 		inst.memcpy.size = sizeValue;
 
-		// @Cleanup: is this the best way?
-		inst.memcpy.src.dereference = false;
-		inst.memcpy.dst.dereference = false;
+		if (inst.memcpy.src.dereference)
+			inst.memcpy.src = IRPointerToValue(context, inst.memcpy.src);
+		if (inst.memcpy.dst.dereference)
+			inst.memcpy.dst = IRPointerToValue(context, inst.memcpy.dst);
 
 		return inst;
 	}
@@ -603,7 +632,13 @@ IRValue IRGenFromExpression(Context *context, ASTExpression *expression)
 					// @Todo: Somehow execute constant expressions and bake them?
 					PrintError(context, expression->any.loc, "Non literal initial values for global variables not yet supported"_s);
 				}
-				newStaticVar.initialValue = IRGenFromExpression(context, varDecl.value);
+				else if (varDecl.value->literal.type == LITERALTYPE_STRING)
+				{
+					newStaticVar.initialValue.valueType = IRVALUETYPE_IMMEDIATE_STRING;
+					newStaticVar.initialValue.immediateString = varDecl.value->literal.string;
+				}
+				else
+					newStaticVar.initialValue = IRGenFromExpression(context, varDecl.value);
 			}
 
 			*DynamicArrayAdd(&context->irStaticVariables) = newStaticVar;
@@ -966,7 +1001,7 @@ IRValue IRGenFromExpression(Context *context, ASTExpression *expression)
 			IRStaticVariable newStaticVar = {};
 			newStaticVar.variable = BucketArrayAdd(&context->variables);
 			newStaticVar.variable->name = TPrintF("staticString%d", stringStaticVarUniqueID++);
-			newStaticVar.variable->typeTableIdx = TYPETABLEIDX_STRUCT_STRING;
+			newStaticVar.variable->typeTableIdx = FindTypeInStackByName(context, {}, "String"_s);
 			newStaticVar.initialValue.valueType = IRVALUETYPE_IMMEDIATE_STRING;
 			newStaticVar.initialValue.immediateString = expression->literal.string;
 			*DynamicArrayAdd(&context->irStaticVariables) = newStaticVar;
@@ -1133,6 +1168,17 @@ IRValue IRGenFromExpression(Context *context, ASTExpression *expression)
 		IRScope *stackTop = &context->irStack[context->irStack.size - 1];
 		*DynamicArrayAdd(&stackTop->deferredStatements) = expression->deferNode.expression;
 	} break;
+	case ASTNODETYPE_TYPEOF:
+	{
+		result.valueType = IRVALUETYPE_TYPEOF;
+		result.typeOfTypeTableIdx = expression->typeOfNode.expression->typeTableIdx;
+		result.typeTableIdx = expression->typeTableIdx;
+	} break;
+	case ASTNODETYPE_CAST:
+	{
+		result = IRGenFromExpression(context, expression->castNode.expression);
+		result.typeTableIdx = expression->typeTableIdx;
+	} break;
 	case ASTNODETYPE_ENUM_DECLARATION:
 	{
 	} break;
@@ -1152,8 +1198,8 @@ void PrintIRValue(Context *context, IRValue value)
 	else if (value.valueType == IRVALUETYPE_PARAMETER)
 		Log("param%hhd", value.variable->parameterIndex);
 	else if (value.valueType == IRVALUETYPE_IMMEDIATE_INTEGER)
-		Log("0x%x", value.immediate);
-	else if (value.valueType == IRVALUETYPE_IMMEDIATE_FLOAT)
+	Log("0x%x", value.immediate);
+else if (value.valueType == IRVALUETYPE_IMMEDIATE_FLOAT)
 		Log("%f", value.immediateFloat);
 	else if (value.valueType == IRVALUETYPE_IMMEDIATE_STRING)
 		Log("%S", value.immediateString);

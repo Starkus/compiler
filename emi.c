@@ -17,6 +17,55 @@ typedef uint8_t* ptr;
 typedef int8_t strct;
 typedef int8_t arr;
 
+#pragma pack(push, 1) // We'll pack these manually
+typedef struct ProgramTypeInfoInteger
+{
+	u8 typeCategory;
+	s32 isSigned;
+	s64 size;
+} ProgramTypeInfoInteger;
+typedef struct ProgramTypeInfoFloating
+{
+	u8 typeCategory;
+	s64 size;
+} ProgramTypeInfoFloating;
+typedef struct ProgramStructMemberInfo
+{
+	s64 nameSize;
+	u8 *nameData;
+	void *typeInfo;
+	u64 offset;
+} ProgramStructMemberInfo;
+typedef struct ProgramTypeInfoStruct
+{
+	u8 typeCategory;
+	s64 nameSize;
+	u8 *nameData;
+	s32 isUnion;
+	s64 memberCount;
+	void *memberData;
+	u64 size;
+} ProgramTypeInfoStruct;
+typedef struct ProgramTypeInfoEnum
+{
+	u8 typeCategory;
+	s64 nameSize;
+	u8 *nameData;
+	void *typeInfo;
+} ProgramTypeInfoEnum;
+typedef struct ProgramTypeInfoPointer
+{
+	u8 typeCategory;
+	void *typeInfo;
+} ProgramTypeInfoPointer;
+typedef struct ProgramTypeInfoArray
+{
+	u8 typeCategory;
+	u64 count;
+	void *typeInfo;
+} ProgramTypeInfoArray;
+#pragma pack(pop)
+
 typedef union Register
 {
 	u8  u8_;

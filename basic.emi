@@ -1,11 +1,16 @@
-printf :: external (format : ^u8, ...);
-
-Print :: (string : String)
+String :: struct
 {
-	printf(string.data);
-}
+	size : u64;
+	data : ^u8;
+};
 
-TypeKind :: enum
+Array :: struct
+{
+	size : u64;
+	data : ^void;
+};
+
+TypeKind :: enum : u8
 {
 	TypeKind_Integer,
 	TypeKind_Floating,
@@ -42,7 +47,7 @@ TypeInfoStruct :: struct
 {
 	using _typeInfo : TypeInfo;
 	name : String;
-	isUnion : bool;
+	isUnion : s32;
 	members : [] TypeInfoStructMember;
 	size : u64;
 };
@@ -66,3 +71,9 @@ TypeInfoArray :: struct
 	count : u64;
 	elementTypeInfo : ^TypeInfo;
 };
+
+printf :: external (format : ^u8, ...);
+Print :: (string : String)
+{
+	printf(string.data);
+}

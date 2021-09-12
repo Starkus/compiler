@@ -233,32 +233,19 @@ bool TryParseBinaryOperation(Context *context, ASTExpression leftHand, s32 prevP
 		result->op = TOKEN_OP_ARRAY_ACCESS;
 		Advance(context);
 
-		result->rightHand = NewTreeNode(context);
-		*result->rightHand = ParseExpression(context, -1);
-
-		AssertToken(context, context->token, ']');
-		Advance(context);
-
-		return true;
-	} break;
-	case TOKEN_OP_ASSIGNMENT:
-	{
-		result->leftHand = NewTreeNode(context);
-		*result->leftHand = leftHand;
-
-		result->op = TOKEN_OP_ASSIGNMENT;
-		Advance(context);
-
-		s32 precedence = GetOperatorPrecedence(TOKEN_OP_ASSIGNMENT);
-		// Greater or equal here so assignments are evaluated right to left when chained.
-		if (precedence >= prevPrecedence)
+		s32 precedence = GetOperatorPrecedence(TOKEN_OP_ARRAY_ACCESS);
+		if (precedence > (prevPrecedence & (~1)))
 		{
 			result->rightHand = NewTreeNode(context);
-			*result->rightHand = ParseExpression(context, precedence);
+			*result->rightHand = ParseExpression(context, -1);
+
+			AssertToken(context, context->token, ']');
+			Advance(context);
 
 			return true;
 		}
 	} break;
+	case TOKEN_OP_ASSIGNMENT:
 	case TOKEN_OP_EQUALS:
 	case TOKEN_OP_GREATER_THAN:
 	case TOKEN_OP_GREATER_THAN_OR_EQUAL:
@@ -278,7 +265,7 @@ bool TryParseBinaryOperation(Context *context, ASTExpression leftHand, s32 prevP
 		Advance(context);
 
 		s32 precedence = GetOperatorPrecedence(op);
-		if (precedence > prevPrecedence)
+		if (precedence > (prevPrecedence & (~1)))
 		{
 			result->rightHand = NewTreeNode(context);
 			*result->rightHand = ParseExpression(context, precedence);
@@ -653,6 +640,39 @@ ASTExpression ParseExpression(Context *context, s32 precedence)
 		result.literal.type = LITERALTYPE_STRING;
 		result.literal.string = context->token->string;
 		Advance(context);
+	}
+	else if (context->token->type == TOKEN_KEYWORD_TYPEOF)
+	{
+		Advance(context);
+
+		// Parenthesis should actually not be necessary here...
+		//AssertToken(context, context->token, '(');
+		//Advance(context);
+
+		result.any.loc = context->token->loc;
+		result.nodeType = ASTNODETYPE_TYPEOF;
+		result.typeOfNode.expression = NewTreeNode(context);
+		*result.typeOfNode.expression = ParseExpression(context, -1);
+
+		//AssertToken(context, context->token, ')');
+		//Advance(context);
+	}
+	else if (context->token->type == TOKEN_KEYWORD_CAST)
+	{
+		Advance(context);
+		result.any.loc = context->token->loc;
+		result.nodeType = ASTNODETYPE_CAST;
+
+		AssertToken(context, context->token, '(');
+		Advance(context);
+
+		result.castNode.astType = ParseType(context);
+
+		AssertToken(context, context->token, ')');
+		Advance(context);
+
+		result.castNode.expression = NewTreeNode(context);
+		*result.castNode.expression = ParseExpression(context, -1);
 	}
 	else if (IsTokenOperator(context->token))
 	{

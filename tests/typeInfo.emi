@@ -1,0 +1,26 @@
+Struct :: struct
+{
+	memberOne : s32;
+	memberTwo : s32;
+};
+
+PrintAllMembers :: ()
+{
+	str : Struct;
+	typeInfo : ^TypeInfoStruct = cast(^TypeInfoStruct) typeof(str);
+
+	i : u64 = 0;
+	while i < typeInfo.members.size
+	{
+		member : TypeInfoStructMember = typeInfo.members[i];
+		Print(member.name);
+		Print("\n");
+		i += 1;
+	}
+}
+
+Main :: () -> s64
+{
+	PrintAllMembers();
+	return 0;
+}

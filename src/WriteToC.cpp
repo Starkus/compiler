@@ -101,7 +101,7 @@ String CIRValueToStr(Context *context, IRValue value)
 	{
 		if (value.variable->isStatic)
 		{
-			result = TPrintF("&%S", value.variable->name);
+			result = TPrintF("%S", value.variable->name);
 		}
 		else if (value.variable->parameterIndex >= 0)
 		{
@@ -125,6 +125,10 @@ String CIRValueToStr(Context *context, IRValue value)
 	else if (value.valueType == IRVALUETYPE_SIZEOF)
 	{
 		result = TPrintF("%llu", CCalculateTypeSize(context, value.sizeOfTypeTableIdx));
+	}
+	else if (value.valueType == IRVALUETYPE_TYPEOF)
+	{
+		result = TPrintF("&_typeInfo%lld", value.typeOfTypeTableIdx);
 	}
 
 	if (printTypeMemberAccess)
@@ -310,28 +314,181 @@ void WriteToC(Context *context)
 		else
 			varType = CTypeInfoToString(context, staticVar.typeTableIdx);
 
-		PrintOut(context, outputFile, "%S %S", varType, staticVar.variable->name);
-		if (staticVar.initialValue.valueType != IRVALUETYPE_INVALID)
+		s64 size = CCalculateTypeSize(context, staticVar.typeTableIdx);
+
+		if (staticVar.initialValue.valueType == IRVALUETYPE_IMMEDIATE_STRING)
 		{
-			if (staticVar.initialValue.valueType == IRVALUETYPE_IMMEDIATE_INTEGER)
+			// @Cleanup
+			PrintOut(context, outputFile, "String _%S = { %llu, (u8 *)\"%S\" };\n",
+					staticVar.variable->name, staticVar.initialValue.immediateString.size,
+					staticVar.initialValue.immediateString);
+			PrintOut(context, outputFile, "u8 *%S = &_%S", staticVar.variable->name,
+					staticVar.variable->name);
+		}
+		else
+		{
+			PrintOut(context, outputFile, "u8 %S[%d]", staticVar.variable->name, size);
+			if (staticVar.initialValue.valueType != IRVALUETYPE_INVALID)
 			{
-				PrintOut(context, outputFile, " = 0x%x", staticVar.initialValue.immediate);
-			}
-			else if (staticVar.initialValue.valueType == IRVALUETYPE_IMMEDIATE_FLOAT)
-			{
-				PrintOut(context, outputFile, " = %f", staticVar.initialValue.immediateFloat);
-			}
-			else if (staticVar.initialValue.valueType == IRVALUETYPE_IMMEDIATE_STRING)
-			{
-				PrintOut(context, outputFile, " = { %llu, (u8 *)\"%S\" }", staticVar.initialValue.immediateString.size,
-						staticVar.initialValue.immediateString);
-			}
-			else
-			{
-				CRASH; // Non literal values not supported here.
+				union
+				{
+					s64 asS64;
+					f32 asF32;
+					f64 asF64;
+				};
+
+				if (staticVar.initialValue.valueType == IRVALUETYPE_IMMEDIATE_INTEGER)
+				{
+					asS64 = staticVar.initialValue.immediate;
+				}
+				else if (staticVar.initialValue.valueType == IRVALUETYPE_IMMEDIATE_FLOAT)
+				{
+					if (size == 4)
+						asF32 = (f32)staticVar.initialValue.immediateFloat;
+					else
+						asF64 = staticVar.initialValue.immediateFloat;
+				}
+				else
+				{
+					CRASH; // Non literal values not supported here.
+				}
+
+				PrintOut(context, outputFile, " = { ");
+				s64 scan = asS64;
+				for (int i = 0; i < size; ++i)
+				{
+					if (i)
+						PrintOut(context, outputFile, ", ");
+					PrintOut(context, outputFile, "0x%02X", scan & 0xFF);
+					scan = scan >> 8;
+				}
+				PrintOut(context, outputFile, " }");
 			}
 		}
 		PrintOut(context, outputFile, ";\n");
+	}
+
+	// TypeInfo data
+	{
+#pragma pack(push, 1) // We'll pack these manually
+		struct ProgramTypeInfoInteger
+		{
+			u8 typeCategory;
+			s32 isSigned;
+			s64 size;
+		};
+		struct ProgramTypeInfoFloating
+		{
+			u8 typeCategory;
+			s64 size;
+		};
+		struct ProgramStructMemberInfo
+		{
+			s64 nameSize;
+			u8 *nameData;
+			void *typeInfo;
+			u64 offset;
+		};
+		struct ProgramTypeInfoStruct
+		{
+			u8 typeCategory;
+			s64 nameSize;
+			u8 *nameData;
+			s32 isUnion;
+			s64 memberCount;
+			void *memberData;
+			u64 size;
+		};
+		struct TypeInfoEnum
+		{
+			u8 typeCategory;
+			s64 nameSize;
+			u8 *nameData;
+			void *typeInfo;
+		};
+		struct TypeInfoPointer
+		{
+			u8 typeCategory;
+			void *typeInfo;
+		};
+		struct TypeInfoArray
+		{
+			u8 typeCategory;
+			u64 count;
+			void *typeInfo;
+		};
+#pragma pack(pop)
+
+		for (u64 typeTableIdx = 0; typeTableIdx < tableSize; ++typeTableIdx)
+		{
+			TypeInfo *typeInfo = &context->typeTable[typeTableIdx];
+			switch (typeInfo->typeCategory)
+			{
+			case TYPECATEGORY_INTEGER:
+			{
+				PrintOut(context, outputFile, "ProgramTypeInfoInteger _typeInfo%lld = { %d, "
+						"%d, %lld };\n",
+						typeTableIdx, 0, typeInfo->integerInfo.isSigned, typeInfo->integerInfo.size);
+			} break;
+			case TYPECATEGORY_FLOATING:
+			{
+				PrintOut(context, outputFile, "ProgramTypeInfoFloating _typeInfo%lld = { %d, "
+						"%lld };\n",
+						typeTableIdx, 1, typeInfo->floatingInfo.size);
+			} break;
+			case TYPECATEGORY_STRUCT:
+			{
+				String memberArrayName = TPrintF("_memberInfos%d", typeTableIdx);
+
+				String structName = ""_s;
+				StaticDefinition *staticDefStruct = FindStaticDefinitionByTypeTableIdx(context,
+						typeTableIdx);
+				if (staticDefStruct)
+					structName = staticDefStruct->name;
+
+				PrintOut(context, outputFile, "ProgramStructMemberInfo %S[] = { ", memberArrayName);
+				for (int memberIdx = 0; memberIdx < typeInfo->structInfo.members.size; ++memberIdx)
+				{
+					StructMember member = typeInfo->structInfo.members[memberIdx];
+					if (memberIdx) PrintOut(context, outputFile, ", ");
+					PrintOut(context, outputFile, "{ %lld, \"%S\", &_typeInfo%lld, %llu }",
+							member.name.size, member.name, member.typeTableIdx, member.offset);
+				}
+				PrintOut(context, outputFile, " };\n");
+
+				PrintOut(context, outputFile, "ProgramTypeInfoStruct _typeInfo%lld = { %d, "
+						"%lld, \"%S\", %d, %lld, %S, %llu };\n",
+						typeTableIdx, 2, structName.size, structName,
+						(s32)typeInfo->structInfo.isUnion, typeInfo->structInfo.members.size,
+						memberArrayName);
+			} break;
+			case TYPECATEGORY_ENUM:
+			{
+				String enumName = ""_s;
+				StaticDefinition *staticDefStruct = FindStaticDefinitionByTypeTableIdx(context,
+						typeTableIdx);
+				if (staticDefStruct)
+					enumName = staticDefStruct->name;
+
+				PrintOut(context, outputFile, "ProgramTypeInfoEnum _typeInfo%lld = { %d, "
+						"%lld, \"%S\", &_typeInfo%lld };\n",
+						typeTableIdx, 3, enumName.size, enumName, typeInfo->enumInfo.typeTableIdx);
+			} break;
+			case TYPECATEGORY_POINTER:
+			{
+				PrintOut(context, outputFile, "ProgramTypeInfoPointer _typeInfo%lld = { %d, "
+						"&_typeInfo%lld };\n",
+						typeTableIdx, 4, typeInfo->pointerInfo.pointedTypeTableIdx);
+			} break;
+			case TYPECATEGORY_ARRAY:
+			{
+				PrintOut(context, outputFile, "ProgramTypeInfoArray _typeInfo%lld = { %d, "
+						"%llu, &_typeInfo%lld };\n",
+						typeTableIdx, 5, typeInfo->arrayInfo.count,
+						typeInfo->arrayInfo.elementTypeTableIdx);
+			} break;
+			}
+		}
 	}
 
 	PrintOut(context, outputFile, "\n");

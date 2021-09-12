@@ -177,6 +177,17 @@ struct ASTDefer : ASTBase
 	ASTExpression *expression;
 };
 
+struct ASTTypeOf : ASTBase
+{
+	ASTExpression *expression;
+};
+
+struct ASTCast : ASTBase
+{
+	ASTType astType;
+	ASTExpression *expression;
+};
+
 struct ASTRoot : ASTBase
 {
 	ASTBlock block;
@@ -201,7 +212,9 @@ enum ASTNodeType
 	ASTNODETYPE_WHILE,
 	ASTNODETYPE_BREAK,
 	ASTNODETYPE_RETURN,
-	ASTNODETYPE_DEFER
+	ASTNODETYPE_DEFER,
+	ASTNODETYPE_TYPEOF,
+	ASTNODETYPE_CAST
 };
 struct ASTExpression
 {
@@ -225,6 +238,8 @@ struct ASTExpression
 		ASTWhile whileNode;
 		ASTReturn returnNode;
 		ASTDefer deferNode;
+		ASTTypeOf typeOfNode;
+		ASTCast castNode;
 	};
 
 	// Filled in during type checking

@@ -18,8 +18,6 @@ enum TypeTableIndexes
 	TYPETABLEIDX_FLOATING,
 	TYPETABLEIDX_VOID,
 
-	TYPETABLEIDX_STRUCT_STRING,
-
 	TYPETABLEIDX_COUNT,
 };
 
@@ -270,36 +268,34 @@ void PopTCScope(Context *context)
 	--context->tcStack.size;
 }
 
-s64 FindLeafTypeInStack(Context *context, ASTType *astType)
+s64 FindTypeInStackByName(Context *context, SourceLocation loc, String name)
 {
 	s64 typeTableIdx = -1;
 
-	if (StringEquals(astType->name, "s8"_s))
+	if (StringEquals(name, "s8"_s))
 		typeTableIdx = TYPETABLEIDX_S8;
-	else if (StringEquals(astType->name, "s16"_s))
+	else if (StringEquals(name, "s16"_s))
 		typeTableIdx = TYPETABLEIDX_S16;
-	else if (StringEquals(astType->name, "s32"_s))
+	else if (StringEquals(name, "s32"_s))
 		typeTableIdx = TYPETABLEIDX_S32;
-	else if (StringEquals(astType->name, "s64"_s))
+	else if (StringEquals(name, "s64"_s))
 		typeTableIdx = TYPETABLEIDX_S64;
-	else if (StringEquals(astType->name, "u8"_s))
+	else if (StringEquals(name, "u8"_s))
 		typeTableIdx = TYPETABLEIDX_U8;
-	else if (StringEquals(astType->name, "u16"_s))
+	else if (StringEquals(name, "u16"_s))
 		typeTableIdx = TYPETABLEIDX_U16;
-	else if (StringEquals(astType->name, "u32"_s))
+	else if (StringEquals(name, "u32"_s))
 		typeTableIdx = TYPETABLEIDX_U32;
-	else if (StringEquals(astType->name, "u64"_s))
+	else if (StringEquals(name, "u64"_s))
 		typeTableIdx = TYPETABLEIDX_U64;
-	else if (StringEquals(astType->name, "f32"_s))
+	else if (StringEquals(name, "f32"_s))
 		typeTableIdx = TYPETABLEIDX_F32;
-	else if (StringEquals(astType->name, "f64"_s))
+	else if (StringEquals(name, "f64"_s))
 		typeTableIdx = TYPETABLEIDX_F64;
-	else if (StringEquals(astType->name, "bool"_s))
+	else if (StringEquals(name, "bool"_s))
 		typeTableIdx = TYPETABLEIDX_BOOL;
-	else if (StringEquals(astType->name, "void"_s))
+	else if (StringEquals(name, "void"_s))
 		typeTableIdx = TYPETABLEIDX_VOID;
-	else if (StringEquals(astType->name, "String"_s)) // @Cleanup
-		typeTableIdx = TYPETABLEIDX_STRUCT_STRING;
 	else
 	{
 		StaticDefinition *staticDef = nullptr;
@@ -310,11 +306,11 @@ s64 FindLeafTypeInStack(Context *context, ASTType *astType)
 			for (int i = 0; i < currentScope->names.size; ++i)
 			{
 				TCScopeName currentName = currentScope->names[i];
-				if (StringEquals(astType->name, currentName.name))
+				if (StringEquals(name, currentName.name))
 				{
 					if (currentName.type != NAMETYPE_STATIC_DEFINITION)
-						PrintError(context, astType->loc, TPrintF("\"%S\" is not a type!",
-									astType->name));
+						PrintError(context, loc, TPrintF("\"%S\" is not a type!",
+									name));
 
 					staticDef = currentName.staticDefinition;
 					break;
@@ -322,14 +318,14 @@ s64 FindLeafTypeInStack(Context *context, ASTType *astType)
 			}
 		}
 		if (staticDef == nullptr)
-			PrintError(context, astType->loc, TPrintF("Type \"%S\" not in scope!", astType->name));
+			PrintError(context, loc, TPrintF("Type \"%S\" not in scope!", name));
 		else if (staticDef->definitionType != STATICDEFINITIONTYPE_TYPE)
-			PrintError(context, astType->loc, TPrintF("\"%S\" is not a type!", astType->name));
+			PrintError(context, loc, TPrintF("\"%S\" is not a type!", name));
 		typeTableIdx = staticDef->type.typeTableIdx;
 	}
 
 	if (typeTableIdx < 0)
-		PrintError(context, astType->loc, TPrintF("Type \"%S\" not in scope!", astType->name));
+		PrintError(context, loc, TPrintF("Type \"%S\" not in scope!", name));
 
 	return typeTableIdx;
 }
@@ -500,7 +496,7 @@ s64 TypeCheckType(Context *context, SourceLocation loc, ASTType *astType)
 	{
 	case ASTTYPENODETYPE_IDENTIFIER:
 	{
-		s64 typeTableIdx = FindLeafTypeInStack(context, astType);
+		s64 typeTableIdx = FindTypeInStackByName(context, astType->loc, astType->name);
 		return typeTableIdx;
 	} break;
 	case ASTTYPENODETYPE_ARRAY:
@@ -783,15 +779,17 @@ StructMember *FindStructMemberByName(Context *context, TypeInfo *structTypeInfo,
 	for (int i = 0; i < structTypeInfo->structInfo.members.size; ++i)
 	{
 		StructMember *currentMember = &structTypeInfo->structInfo.members[i];
+		if (StringEquals(name, currentMember->name))
+			return currentMember;
 		if (currentMember->isUsing || currentMember->name.size == 0)
 		{
 			// Anonymous structs/unions and using
 			TypeInfo *memberTypeInfo = &context->typeTable[currentMember->typeTableIdx];
 			ASSERT(memberTypeInfo->typeCategory == TYPECATEGORY_STRUCT);
-			return FindStructMemberByName(context, memberTypeInfo, name);
+			StructMember *found = FindStructMemberByName(context, memberTypeInfo, name);
+			if (found)
+				return found;
 		}
-		else if (StringEquals(name, currentMember->name))
-			return currentMember;
 	}
 	return nullptr;
 }
@@ -1164,7 +1162,16 @@ skipInvalidIdentifierError:
 				structTypeInfo = &context->typeTable[pointedTypeIdx];
 			}
 
-			if (structTypeInfo->typeCategory != TYPECATEGORY_STRUCT)
+			if (structTypeInfo->typeCategory == TYPECATEGORY_ARRAY)
+			{
+				// This is only for dynamic size arrays!
+				if (structTypeInfo->arrayInfo.count != 0)
+					PrintError(context, expression->any.loc, "Array left of '.' has to be of dynamic size! ([])"_s);
+
+				s64 arrayTypeTableIdx = FindTypeInStackByName(context, {}, "Array"_s);
+				structTypeInfo = &context->typeTable[arrayTypeTableIdx];
+			}
+			else if (structTypeInfo->typeCategory != TYPECATEGORY_STRUCT)
 			{
 				PrintError(context, expression->any.loc, "Left of '.' has to be a struct"_s);
 			}
@@ -1211,7 +1218,12 @@ skipInvalidIdentifierError:
 			s64 rightSideType = rightHand->typeTableIdx;
 
 			if (!CheckTypesMatch(context, leftSideType, rightSideType))
-				PrintError(context, expression->any.loc, "Type mismatch!"_s);
+			{
+				String leftStr =  TypeInfoToString(context, leftSideType);
+				String rightStr = TypeInfoToString(context, rightSideType);
+				PrintError(context, expression->any.loc, TPrintF("Type mismatch! (%S and %S)",
+							leftStr, rightStr));
+			}
 
 			switch (expression->binaryOperation.op)
 			{
@@ -1240,7 +1252,7 @@ skipInvalidIdentifierError:
 			expression->typeTableIdx = TYPETABLEIDX_FLOATING;
 			break;
 		case LITERALTYPE_STRING:
-			expression->typeTableIdx = TYPETABLEIDX_STRUCT_STRING;
+			expression->typeTableIdx = FindTypeInStackByName(context, {}, "String"_s);
 			break;
 		default:
 			CRASH;
@@ -1273,6 +1285,18 @@ skipInvalidIdentifierError:
 	case ASTNODETYPE_TYPE:
 	{
 		expression->typeTableIdx = TypeCheckType(context, expression->any.loc, &expression->astType);
+	} break;
+	case ASTNODETYPE_TYPEOF:
+	{
+		TypeCheckExpression(context, expression->typeOfNode.expression);
+
+		s64 programTypeInfoTableIdx = FindTypeInStackByName(context, expression->any.loc, "TypeInfo"_s);
+		expression->typeTableIdx = GetTypeInfoPointerOf(context, programTypeInfoTableIdx);
+	} break;
+	case ASTNODETYPE_CAST:
+	{
+		TypeCheckExpression(context, expression->castNode.expression);
+		expression->typeTableIdx = TypeCheckType(context, expression->any.loc, &expression->castNode.astType);
 	} break;
 	default:
 	{
@@ -1332,29 +1356,6 @@ void TypeCheckMain(Context *context)
 		t = {};
 		t.typeCategory = TYPECATEGORY_INVALID;
 		context->typeTable[TYPETABLEIDX_VOID] = t;
-
-		// Built-in structs
-		// String
-		{
-			t.typeCategory = TYPECATEGORY_STRUCT;
-			DynamicArrayInit(&t.structInfo.members, 2);
-
-			StructMember *sizeMember = DynamicArrayAdd(&t.structInfo.members);
-			sizeMember->name = "size"_s;
-			sizeMember->isUsing = false;
-			sizeMember->typeTableIdx = TYPETABLEIDX_U64;
-
-			StructMember *dataMember = DynamicArrayAdd(&t.structInfo.members);
-			TypeInfo pointerToU8TypeInfo;
-			pointerToU8TypeInfo.typeCategory = TYPECATEGORY_POINTER;
-			pointerToU8TypeInfo.pointerInfo.pointedTypeTableIdx = TYPETABLEIDX_U8;
-
-			dataMember->name = "data"_s;
-			dataMember->isUsing = false;
-			dataMember->typeTableIdx = FindOrAddTypeTableIdx(context, pointerToU8TypeInfo);
-
-			context->typeTable[TYPETABLEIDX_STRUCT_STRING] = t;
-		}
 	}
 	for (int i = 0; i < TYPETABLEIDX_COUNT; ++i)
 		*DynamicArrayAdd(&context->tcStack[0].typeIndices) = i;
