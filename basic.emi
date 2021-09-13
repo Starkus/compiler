@@ -27,8 +27,8 @@ TypeInfo :: struct
 TypeInfoInteger :: struct
 {
 	using _typeInfo : TypeInfo;
-	size : s64;
 	isSigned : s32;
+	size : s64;
 };
 
 TypeInfoFloating :: struct
@@ -72,8 +72,18 @@ TypeInfoArray :: struct
 	elementTypeInfo : ^TypeInfo;
 };
 
-printf :: external (format : ^u8, ...);
+Any :: struct
+{
+	typeInfo : ^TypeInfo;
+	data : ^void;
+};
+
+GetStdHandle :: external (handle : s64) -> s64;
+WriteFile :: external (handle : s64, buffer : ^void, bytesToWrite : s64, bytesWritten : ^s64,
+		overlapped : ^void) -> bool;
 Print :: (string : String)
 {
-	printf(string.data);
+	stdOut := GetStdHandle(-11);
+	bytesWritten : s64;
+	WriteFile(stdOut, string.data, cast(s64) string.size, ^bytesWritten, 0);
 }

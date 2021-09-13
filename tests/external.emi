@@ -1,17 +1,13 @@
-memset :: external (dst : ^void, src : ^void, num : u64);
+memset :: external (dst : ^void, value : s32, num : u64);
 OutputDebugStringA :: external (message : ^u8);
 
 Main :: () -> s64
 {
-	arrayA : [20] u8;
-	arrayB : [20] u8;
-	memset(^arrayB, ^arrayA, 20);
+	array : [20] u8;
+	memset(^array, 0xFF, 20);
 
 	message := "Hello, Sailor!\0";
 	OutputDebugStringA(message.data);
-
-	format : String = "Hello, the number is %d";
-	printf(format.data, 8);
 
 	return 0;
 }

@@ -128,6 +128,7 @@ enum IRInstructionType
 
 	IRINSTRUCTIONTYPE_UNARY_BEGIN,
 	IRINSTRUCTIONTYPE_NOT = IRINSTRUCTIONTYPE_UNARY_BEGIN,
+	IRINSTRUCTIONTYPE_SUBTRACT_UNARY,
 	IRINSTRUCTIONTYPE_UNARY_END,
 
 	IRINSTRUCTIONTYPE_BINARY_BEGIN,
@@ -135,6 +136,7 @@ enum IRInstructionType
 	IRINSTRUCTIONTYPE_SUBTRACT,
 	IRINSTRUCTIONTYPE_MULTIPLY,
 	IRINSTRUCTIONTYPE_DIVIDE,
+	IRINSTRUCTIONTYPE_MODULO,
 	IRINSTRUCTIONTYPE_EQUALS,
 	IRINSTRUCTIONTYPE_GREATER_THAN,
 	IRINSTRUCTIONTYPE_GREATER_THAN_OR_EQUALS,
@@ -394,6 +396,10 @@ IRInstruction IRInstructionFromBinaryOperation(Context *context, ASTExpression *
 		{
 			inst.type = IRINSTRUCTIONTYPE_DIVIDE;
 		} break;
+		case TOKEN_OP_MODULO:
+		{
+			inst.type = IRINSTRUCTIONTYPE_MODULO;
+		} break;
 		case TOKEN_OP_EQUALS:
 		{
 			inst.type = IRINSTRUCTIONTYPE_EQUALS;
@@ -431,6 +437,93 @@ IRInstruction IRInstructionFromAssignment(Context *context, IRValue leftValue, A
 {
 	s64 rightType = rightHand->typeTableIdx;
 	ASSERT(rightType >= 0);
+
+	s64 anyTableIdx = FindTypeInStackByName(context, {}, "Any"_s);
+	s64 anyPointerTableIdx = GetTypeInfoPointerOf(context, anyTableIdx);
+	if ((leftValue.typeTableIdx == anyTableIdx || leftValue.typeTableIdx == anyPointerTableIdx) &&
+			rightType != anyTableIdx)
+	{
+		TypeInfo *anyTypeInfo = &context->typeTable[anyTableIdx];
+
+		// Access typeInfo member
+		IRInstruction typeMemAccessInst;
+		typeMemAccessInst.type = IRINSTRUCTIONTYPE_MEMBER_ACCESS;
+		typeMemAccessInst.memberAccess.in = leftValue.dereference ?
+			IRPointerToValue(context, leftValue) : leftValue;
+		typeMemAccessInst.memberAccess.structMember = &anyTypeInfo->structInfo.members[0];
+		typeMemAccessInst.memberAccess.out.valueType = IRVALUETYPE_REGISTER;
+		typeMemAccessInst.memberAccess.out.dereference = false;
+		typeMemAccessInst.memberAccess.out.registerIdx = NewVirtualRegister(context);
+		typeMemAccessInst.memberAccess.out.typeTableIdx = GetTypeInfoPointerOf(context,
+				anyTypeInfo->structInfo.members[0].typeTableIdx);
+		*AddInstruction(context) = typeMemAccessInst;
+
+		// Write pointer to typeInfo to it
+		IRInstruction typeAssignInst = {};
+		typeAssignInst.type = IRINSTRUCTIONTYPE_ASSIGNMENT;
+		typeAssignInst.assignment.src.valueType = IRVALUETYPE_TYPEOF;
+		typeAssignInst.assignment.src.typeOfTypeTableIdx = rightHand->typeTableIdx;
+		typeAssignInst.assignment.src.typeTableIdx = GetTypeInfoPointerOf(context,
+				FindTypeInStackByName(context, {}, "TypeInfo"_s));
+		typeAssignInst.assignment.dst = typeMemAccessInst.memberAccess.out;
+		typeAssignInst.assignment.dst.dereference = true;
+		*AddInstruction(context) = typeAssignInst;
+
+		// Access data member
+		IRInstruction dataMemAccessInst;
+		dataMemAccessInst.type = IRINSTRUCTIONTYPE_MEMBER_ACCESS;
+		dataMemAccessInst.memberAccess.in = leftValue.dereference ?
+			IRPointerToValue(context, leftValue) : leftValue;
+		dataMemAccessInst.memberAccess.structMember = &anyTypeInfo->structInfo.members[1];
+		dataMemAccessInst.memberAccess.out.valueType = IRVALUETYPE_REGISTER;
+		dataMemAccessInst.memberAccess.out.dereference = false;
+		dataMemAccessInst.memberAccess.out.registerIdx = NewVirtualRegister(context);
+		dataMemAccessInst.memberAccess.out.typeTableIdx = GetTypeInfoPointerOf(context,
+				rightHand->typeTableIdx);
+		*AddInstruction(context) = dataMemAccessInst;
+
+		IRValue data = IRGenFromExpression(context, rightHand);
+
+		// If data isn't a pointer to something, copy to a variable
+		if (!data.dereference)
+		{
+			static u64 tempVarForAnyUniqueID = 0;
+			String tempVarName = TPrintF("_tempVarForAny%llu", tempVarForAnyUniqueID++);
+			Variable *tempVar = BucketArrayAdd(&context->variables);
+			*tempVar = {};
+			tempVar->name = tempVarName;
+			tempVar->parameterIndex = -1;
+			tempVar->typeTableIdx = data.typeTableIdx;
+
+			IRInstruction varDeclInst = {};
+			varDeclInst.type = IRINSTRUCTIONTYPE_VARIABLE_DECLARATION;
+			varDeclInst.variableDeclaration.variable = tempVar;
+			*AddInstruction(context) = varDeclInst;
+
+			IRInstruction dataCopyInst = {};
+			dataCopyInst.type = IRINSTRUCTIONTYPE_ASSIGNMENT;
+			dataCopyInst.assignment.src = data;
+			dataCopyInst.assignment.dst.valueType = IRVALUETYPE_VARIABLE;
+			dataCopyInst.assignment.dst.variable = tempVar;
+			dataCopyInst.assignment.dst.dereference = true;
+			dataCopyInst.assignment.dst.typeTableIdx = data.typeTableIdx;
+			*AddInstruction(context) = dataCopyInst;
+
+			data = {};
+			data.valueType = IRVALUETYPE_VARIABLE;
+			data.variable = tempVar;
+			data.dereference = true;
+		}
+
+		// Write pointer to data to it
+		IRInstruction dataAssignInst = {};
+		dataAssignInst.type = IRINSTRUCTIONTYPE_ASSIGNMENT;
+		dataAssignInst.assignment.src = IRPointerToValue(context, data);
+		dataAssignInst.assignment.dst = dataMemAccessInst.memberAccess.out;
+		dataAssignInst.assignment.dst.dereference = true;
+		return dataAssignInst;
+	}
+
 	TypeInfo *rightTypeInfo = &context->typeTable[rightType];
 	if (rightTypeInfo->typeCategory == TYPECATEGORY_STRUCT ||
 		rightTypeInfo->typeCategory == TYPECATEGORY_ARRAY)
@@ -806,7 +899,18 @@ IRValue IRGenFromExpression(Context *context, ASTExpression *expression)
 		for (int argIdx = 0; argIdx < astProcCall->arguments.size; ++argIdx)
 		{
 			ASTExpression *arg = &astProcCall->arguments[argIdx];
-			TypeInfo *argTypeInfo = &context->typeTable[arg->typeTableIdx];
+			s64 argTypeTableIdx = arg->typeTableIdx;
+
+			if (argIdx < astProcCall->procedure->parameters.size)
+			{
+				ProcedureParameter originalParam = astProcCall->procedure->parameters[argIdx];
+				if (originalParam.variable->typeTableIdx != argTypeTableIdx)
+				{
+					argTypeTableIdx = originalParam.variable->typeTableIdx;
+				}
+			}
+
+			TypeInfo *argTypeInfo = &context->typeTable[argTypeTableIdx];
 			if (argTypeInfo->typeCategory == TYPECATEGORY_STRUCT ||
 					argTypeInfo->typeCategory == TYPECATEGORY_ARRAY)
 			{
@@ -815,53 +919,38 @@ IRValue IRGenFromExpression(Context *context, ASTExpression *expression)
 				// variable as parameter to the procedure.
 				static u64 structByCopyDeclarationUniqueID = 0;
 
-				IRValue param = IRGenFromExpression(context, arg);
-
 				// Declare temporal value in the stack
 				String tempVarName = TPrintF("_valueByCopy%llu", structByCopyDeclarationUniqueID++);
 				Variable *tempVar = BucketArrayAdd(&context->variables);
 				*tempVar = {};
 				tempVar->name = tempVarName;
 				tempVar->parameterIndex = -1;
-				tempVar->typeTableIdx = arg->typeTableIdx;
+				tempVar->typeTableIdx = argTypeTableIdx;
 
+				// Allocate stack space for temp struct
 				IRInstruction varDeclInst = {};
 				varDeclInst.type = IRINSTRUCTIONTYPE_VARIABLE_DECLARATION;
 				varDeclInst.variableDeclaration.variable = tempVar;
 				*AddInstruction(context) = varDeclInst;
 
-				// Memcpy original to temporal
 				IRValue tempVarIRValue = {};
 				tempVarIRValue.valueType = IRVALUETYPE_VARIABLE;
 				tempVarIRValue.variable = tempVar;
 
-				IRValue sizeValue = {};
-				sizeValue.valueType = IRVALUETYPE_SIZEOF;
-				sizeValue.sizeOfTypeTableIdx = arg->typeTableIdx;
-
-				IRInstruction memCpyInst = {};
-				memCpyInst.type = IRINSTRUCTIONTYPE_INTRINSIC_MEMCPY;
-				memCpyInst.memcpy.src = param;
-				memCpyInst.memcpy.dst = tempVarIRValue;
-				memCpyInst.memcpy.size = sizeValue;
-
-				if (memCpyInst.memcpy.src.dereference)
-					memCpyInst.memcpy.src = IRPointerToValue(context, memCpyInst.memcpy.src);
-				if (memCpyInst.memcpy.dst.dereference)
-					memCpyInst.memcpy.dst = IRPointerToValue(context, memCpyInst.memcpy.dst);
-				*AddInstruction(context) = memCpyInst;
-
-				// Turn into a register
 				IRValue paramReg = {};
 				paramReg.valueType = IRVALUETYPE_REGISTER;
 				paramReg.registerIdx = NewVirtualRegister(context);
-				paramReg.typeTableIdx = GetTypeInfoPointerOf(context, arg->typeTableIdx);
+				paramReg.typeTableIdx = GetTypeInfoPointerOf(context, argTypeTableIdx);
 
+				// Turn into a register, mainly to pass it to the procedure
 				IRInstruction paramIntermediateInst = {};
 				paramIntermediateInst.type = IRINSTRUCTIONTYPE_ASSIGNMENT;
 				paramIntermediateInst.assignment.src = tempVarIRValue;
 				paramIntermediateInst.assignment.dst = paramReg;
 				*AddInstruction(context) = paramIntermediateInst;
+
+				paramReg.dereference = true;
+				*AddInstruction(context) = IRInstructionFromAssignment(context, paramReg, arg);
 
 				// Add register as parameter
 				*ArrayAdd(&inst.procedureCall.parameters) = paramReg;
@@ -873,7 +962,7 @@ IRValue IRGenFromExpression(Context *context, ASTExpression *expression)
 				IRValue paramReg = {};
 				paramReg.valueType = IRVALUETYPE_REGISTER;
 				paramReg.registerIdx = NewVirtualRegister(context);
-				paramReg.typeTableIdx = arg->typeTableIdx;
+				paramReg.typeTableIdx = argTypeTableIdx;
 
 				IRInstruction paramIntermediateInst = {};
 				paramIntermediateInst.type = IRINSTRUCTIONTYPE_ASSIGNMENT;
@@ -928,12 +1017,17 @@ IRValue IRGenFromExpression(Context *context, ASTExpression *expression)
 			inst.unaryOperation.out = {};
 			inst.unaryOperation.out.valueType = IRVALUETYPE_REGISTER;
 			inst.unaryOperation.out.registerIdx = NewVirtualRegister(context);
+			inst.unaryOperation.out.typeTableIdx = expression->typeTableIdx;
 
 			switch (expression->unaryOperation.op)
 			{
 			case TOKEN_OP_NOT:
 			{
 				inst.type = IRINSTRUCTIONTYPE_NOT;
+			} break;
+			case TOKEN_OP_MINUS:
+			{
+				inst.type = IRINSTRUCTIONTYPE_SUBTRACT_UNARY;
 			} break;
 			default:
 			{
@@ -1234,6 +1328,9 @@ void PrintIRInstructionOperator(IRInstruction inst)
 		break;
 	case IRINSTRUCTIONTYPE_DIVIDE:
 		Log("/");
+		break;
+	case IRINSTRUCTIONTYPE_MODULO:
+		Log("%");
 		break;
 	case IRINSTRUCTIONTYPE_EQUALS:
 		Log("==");

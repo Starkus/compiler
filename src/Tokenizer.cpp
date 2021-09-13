@@ -103,6 +103,7 @@ s32 GetOperatorPrecedence(s32 op)
 			return 4;
 		case TOKEN_OP_MULTIPLY:
 		case TOKEN_OP_DIVIDE:
+		case TOKEN_OP_MODULO:
 			return 6;
 		case TOKEN_OP_AND:
 		case TOKEN_OP_OR:
@@ -437,6 +438,16 @@ Token ReadTokenAndAdvance(Tokenizer *tokenizer)
 			}
 			else
 				result.type = TOKEN_OP_DIVIDE;
+		} break;
+		case '%':
+		{
+			if (next == '=')
+			{
+				result.type = TOKEN_OP_MODULO_EQUALS;
+				++tokenizer->cursor;
+			}
+			else
+				result.type = TOKEN_OP_MODULO;
 		} break;
 		case '&':
 		{

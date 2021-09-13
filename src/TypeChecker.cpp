@@ -338,6 +338,11 @@ bool CheckTypesMatch(Context *context, s64 leftTableIdx, s64 rightTableIdx)
 	if (leftTableIdx == rightTableIdx)
 		return true;
 
+	// Allow anything to cast to Any
+	s64 anyTableIdx = FindTypeInStackByName(context, {}, "Any"_s);
+	if (leftTableIdx == anyTableIdx || rightTableIdx == anyTableIdx)
+		return true;
+
 	TypeInfo *left  = &context->typeTable[leftTableIdx];
 	TypeInfo *right = &context->typeTable[rightTableIdx];
 
@@ -406,6 +411,41 @@ bool CheckTypesMatch(Context *context, s64 leftTableIdx, s64 rightTableIdx)
 	{
 		return true;
 	} break;
+	}
+
+	return false;
+}
+
+bool CheckTypesMatchAndSpecialize(Context *context, s64 *leftTableIdx, s64 *rightTableIdx)
+{
+	if (CheckTypesMatch(context, *leftTableIdx, *rightTableIdx))
+		return true;
+
+	TypeInfo *left  = &context->typeTable[*leftTableIdx];
+	TypeInfo *right = &context->typeTable[*rightTableIdx];
+
+	if (*leftTableIdx == TYPETABLEIDX_INTEGER && (right->typeCategory == TYPECATEGORY_INTEGER ||
+				right->typeCategory == TYPECATEGORY_POINTER))
+	{
+		*rightTableIdx = *leftTableIdx;
+		return true;
+	}
+	if (*rightTableIdx == TYPETABLEIDX_INTEGER && (left->typeCategory == TYPECATEGORY_INTEGER ||
+				left->typeCategory == TYPECATEGORY_POINTER))
+	{
+		*leftTableIdx = *rightTableIdx;
+		return true;
+	}
+
+	if (*leftTableIdx == TYPETABLEIDX_FLOATING && right->typeCategory == TYPECATEGORY_FLOATING)
+	{
+		*rightTableIdx = *leftTableIdx;
+		return true;
+	}
+	if (*rightTableIdx == TYPETABLEIDX_FLOATING && left->typeCategory == TYPECATEGORY_FLOATING)
+	{
+		*leftTableIdx = *rightTableIdx;
+		return true;
 	}
 
 	return false;
@@ -1097,16 +1137,25 @@ skipInvalidIdentifierError:
 						procName, totalArguments, givenArguments));
 		}
 
+		for (int argIdx = 0; argIdx < givenArguments; ++argIdx)
+		{
+			ASTExpression *arg = &expression->procedureCall.arguments[argIdx];
+			TypeCheckExpression(context, arg);
+		}
+
 		s64 argsToCheck = Min(givenArguments, totalArguments);
 		for (int argIdx = 0; argIdx < argsToCheck; ++argIdx)
 		{
 			ASTExpression *arg = &expression->procedureCall.arguments[argIdx];
-			TypeCheckExpression(context, arg);
-
 			Variable *param = procedure->parameters[argIdx].variable;
-			if (!CheckTypesMatch(context, param->typeTableIdx, arg->typeTableIdx))
-				PrintError(context, arg->any.loc, TPrintF("When calling procedure \"%S\": type of parameter #%d didn't match",
-							procName, argIdx));
+			if (!CheckTypesMatchAndSpecialize(context, &param->typeTableIdx, &arg->typeTableIdx))
+			{
+				String paramStr =  TypeInfoToString(context, param->typeTableIdx);
+				String givenStr = TypeInfoToString(context, arg->typeTableIdx);
+				PrintError(context, arg->any.loc, TPrintF("When calling procedure \"%S\": type of "
+							"parameter #%d didn't match (parameter is %S but %S was given)",
+							procName, argIdx, paramStr, givenStr));
+			}
 		}
 	} break;
 	case ASTNODETYPE_UNARY_OPERATION:
@@ -1217,13 +1266,12 @@ skipInvalidIdentifierError:
 		{
 			TypeCheckExpression(context, leftHand);
 			TypeCheckExpression(context, rightHand);
-			s64 leftSideType  = leftHand->typeTableIdx;
-			s64 rightSideType = rightHand->typeTableIdx;
 
-			if (!CheckTypesMatch(context, leftSideType, rightSideType))
+			if (!CheckTypesMatchAndSpecialize(context, &leftHand->typeTableIdx,
+						&rightHand->typeTableIdx))
 			{
-				String leftStr =  TypeInfoToString(context, leftSideType);
-				String rightStr = TypeInfoToString(context, rightSideType);
+				String leftStr =  TypeInfoToString(context, leftHand->typeTableIdx);
+				String rightStr = TypeInfoToString(context, rightHand->typeTableIdx);
 				PrintError(context, expression->any.loc, TPrintF("Type mismatch! (%S and %S)",
 							leftStr, rightStr));
 			}
@@ -1238,8 +1286,10 @@ skipInvalidIdentifierError:
 			case TOKEN_OP_LESS_THAN:
 			case TOKEN_OP_LESS_THAN_OR_EQUAL:
 				expression->typeTableIdx = TYPETABLEIDX_BOOL;
+				break;
 			default:
-				expression->typeTableIdx = leftSideType;
+				expression->typeTableIdx = leftHand->typeTableIdx;
+				break;
 			};
 			return;
 		}

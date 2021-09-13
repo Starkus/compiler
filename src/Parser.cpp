@@ -146,6 +146,7 @@ bool TryParseUnaryOperation(Context *context, s32 prevPrecedence, ASTUnaryOperat
 	case TOKEN_OP_POINTER_TO:
 	case TOKEN_OP_DEREFERENCE:
 	case TOKEN_OP_NOT:
+	case TOKEN_OP_MINUS:
 	{
 		enum TokenType op = context->token->type;
 		result->op = op;
@@ -197,6 +198,8 @@ bool TryParseBinaryOperation(Context *context, ASTExpression leftHand, s32 prevP
 			op = TOKEN_OP_MULTIPLY; break;
 		case TOKEN_OP_DIVIDE_EQUALS:
 			op = TOKEN_OP_DIVIDE; break;
+		case TOKEN_OP_MODULO_EQUALS:
+			op = TOKEN_OP_MODULO; break;
 		default:
 			op = TOKEN_END_OF_FILE;
 			CRASH;
@@ -257,6 +260,7 @@ bool TryParseBinaryOperation(Context *context, ASTExpression leftHand, s32 prevP
 	case TOKEN_OP_MINUS:
 	case TOKEN_OP_MULTIPLY:
 	case TOKEN_OP_DIVIDE:
+	case TOKEN_OP_MODULO:
 	case TOKEN_OP_MEMBER_ACCESS:
 	{
 		result->leftHand = NewTreeNode(context);

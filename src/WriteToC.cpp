@@ -177,11 +177,14 @@ String OperatorToStr(IRInstruction inst)
 	case IRINSTRUCTIONTYPE_ADD:
 		return "+"_s;
 	case IRINSTRUCTIONTYPE_SUBTRACT:
+	case IRINSTRUCTIONTYPE_SUBTRACT_UNARY:
 		return "-"_s;
 	case IRINSTRUCTIONTYPE_MULTIPLY:
 		return "*"_s;
 	case IRINSTRUCTIONTYPE_DIVIDE:
 		return "/"_s;
+	case IRINSTRUCTIONTYPE_MODULO:
+		return "%"_s;
 	case IRINSTRUCTIONTYPE_EQUALS:
 		return "=="_s;
 	case IRINSTRUCTIONTYPE_GREATER_THAN:
@@ -644,7 +647,11 @@ void WriteToC(Context *context)
 			{
 				if (inst.procedureCall.out.valueType != IRVALUETYPE_INVALID)
 				{
-					String out = CIRValueToStrAsRegister(context, inst.procedureCall.out);
+					String out;
+					if (inst.procedureCall.procedure->isExternal)
+						out = CIRValueToStr(context, inst.procedureCall.out);
+					else
+						out = CIRValueToStrAsRegister(context, inst.procedureCall.out);
 					PrintOut(context, outputFile, "%S = ", out);
 				}
 				String procLabel = CProcedureToLabel(context, inst.procedureCall.procedure);
@@ -693,7 +700,7 @@ void WriteToC(Context *context)
 			}
 			else
 			{
-				PrintOut(context, outputFile, "???INST");
+				PrintOut(context, outputFile, "???INST\n");
 			}
 		}
 		PrintOut(context, outputFile, "}\n\n");
