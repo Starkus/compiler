@@ -96,20 +96,6 @@ typedef struct String
 	u8 *data;
 } String;
 
-inline Register FromU64(u64 value)
-{
-	Register r;
-	r.u64_ = value;
-	return r;
-}
-
-inline Register FromS64(s64 value)
-{
-	Register r;
-	r.s64_ = value;
-	return r;
-}
-
 Register Main();
 int main(int argc, char **argv)
 {

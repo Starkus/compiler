@@ -109,6 +109,7 @@ struct Context
 	DynamicArray<IRStaticVariable, malloc, realloc> irStaticVariables;
 	DynamicArray<IRScope, malloc, realloc> irStack;
 	s64 currentProcedureStackBase;
+	String currentProcedureReturnLabel;
 	Procedure *currentProcedure;
 	u64 currentRegisterId;
 	u64 currentLabelId;

@@ -115,6 +115,8 @@ enum IRInstructionType
 {
 	IRINSTRUCTIONTYPE_INVALID = -1,
 
+	IRINSTRUCTIONTYPE_COMMENT,
+
 	IRINSTRUCTIONTYPE_LABEL,
 	IRINSTRUCTIONTYPE_JUMP,
 	IRINSTRUCTIONTYPE_JUMP_IF_ZERO,
@@ -151,6 +153,7 @@ struct IRInstruction
 	IRInstructionType type;
 	union
 	{
+		String comment;
 		String label;
 		IRJump jump;
 		IRConditionalJump conditionalJump;
@@ -603,6 +606,34 @@ bool IRShouldReturnByCopy(Context *context, s64 returnTypeTableIdx)
 			returnTypeInfo->structInfo.size != 8);
 }
 
+IRValue IRValueImmediate(s64 immediate, s64 typeTableIdx)
+{
+	IRValue result;
+	result.valueType = IRVALUETYPE_IMMEDIATE_INTEGER;
+	result.immediate = immediate;
+	result.typeTableIdx = typeTableIdx;
+	result.dereference = false;
+	return result;
+}
+
+IRValue IRValueRegister(s64 registerIdx, s64 typeTableIdx)
+{
+	IRValue result;
+	result.valueType = IRVALUETYPE_REGISTER;
+	result.registerIdx = registerIdx;
+	result.typeTableIdx = typeTableIdx;
+	result.dereference = false;
+	return result;
+}
+
+void IRAddComment(Context  *context, String comment)
+{
+	IRInstruction result;
+	result.type = IRINSTRUCTIONTYPE_COMMENT;
+	result.comment = comment;
+	*AddInstruction(context) = result;
+}
+
 IRValue IRGenFromExpression(Context *context, ASTExpression *expression)
 {
 	IRValue result = {};
@@ -618,12 +649,15 @@ IRValue IRGenFromExpression(Context *context, ASTExpression *expression)
 	{
 		Procedure *prevProcedure = context->currentProcedure;
 		u64 prevProcedureStackBase = context->currentProcedureStackBase;
+		String prevProcedureReturnLabel = context->currentProcedureReturnLabel;
 
 		Procedure *procedure = expression->procedureDeclaration.procedure;
 		context->currentProcedure = procedure;
 
 		BucketArrayInit(&procedure->instructions);
 
+		String returnLabel = NewLabel(context, "return"_s);
+		context->currentProcedureReturnLabel = returnLabel;
 		context->currentProcedureStackBase = context->irStack.size;
 		PushIRScope(context);
 
@@ -633,6 +667,10 @@ IRValue IRGenFromExpression(Context *context, ASTExpression *expression)
 			IRGenFromExpression(context, procedure->astBody);
 			procedure->registerCount = context->currentRegisterId;
 
+			IRInstruction *returnLabelInst = AddInstruction(context);
+			returnLabelInst->type = IRINSTRUCTIONTYPE_LABEL;
+			returnLabelInst->label = returnLabel;
+
 			// Return
 			IRInstruction returnInst;
 			returnInst.type = IRINSTRUCTIONTYPE_RETURN;
@@ -640,8 +678,10 @@ IRValue IRGenFromExpression(Context *context, ASTExpression *expression)
 		}
 
 		PopIRScope(context);
+
 		context->currentProcedure = prevProcedure;
 		context->currentProcedureStackBase = prevProcedureStackBase;
+		context->currentProcedureReturnLabel = prevProcedureReturnLabel;
 	} break;
 	case ASTNODETYPE_BLOCK:
 	{
@@ -654,43 +694,38 @@ IRValue IRGenFromExpression(Context *context, ASTExpression *expression)
 			IRGenFromExpression(context, &expression->block.statements[i]);
 		}
 
-		IRValue shouldReturnRegister;
-		shouldReturnRegister.valueType = IRVALUETYPE_REGISTER;
-		shouldReturnRegister.registerIdx = IRSPECIALREGISTER_SHOULD_RETURN;
-		shouldReturnRegister.typeTableIdx = TYPETABLEIDX_U8;
-		shouldReturnRegister.dereference = false;
-
+		bool isThereCleanUpToDo = false;
+		for (s64 stackIdx = context->irStack.size - 1;
+				stackIdx >= context->currentProcedureStackBase; --stackIdx)
 		{
-			IRValue zero;
-			zero.valueType = IRVALUETYPE_IMMEDIATE_INTEGER;
-			zero.immediate = 0;
-			zero.typeTableIdx = TYPETABLEIDX_U8;
-			zero.dereference = false;
-
-			IRInstruction setShouldReturnInst;
-			setShouldReturnInst.type = IRINSTRUCTIONTYPE_ASSIGNMENT;
-			setShouldReturnInst.assignment.src = zero;
-			setShouldReturnInst.assignment.dst = shouldReturnRegister;
-			*AddInstruction(context) = setShouldReturnInst;
+			if (context->irStack[stackIdx].deferredStatements.size)
+			{
+				isThereCleanUpToDo = true;
+				break;
+			}
 		}
 
+		if (isThereCleanUpToDo)
 		{
+			// Set should-return register to 0
+			IRValue shouldReturnRegister = IRValueRegister(IRSPECIALREGISTER_SHOULD_RETURN,
+					TYPETABLEIDX_U8);
+			IRValue zero = IRValueImmediate(0, TYPETABLEIDX_U8);
+			IRInstructionFromAssignment(context, shouldReturnRegister, zero);
+
+			// Add close label
 			IRInstruction *closeScopeLabelInst = AddInstruction(context);
 			closeScopeLabelInst->type = IRINSTRUCTIONTYPE_LABEL;
 			closeScopeLabelInst->label = currentScope->closeLabel;
-		}
 
-		// Run deferred statements
-		for (s64 j = currentScope->deferredStatements.size - 1; j >= 0; --j)
-		{
-			IRGenFromExpression(context, currentScope->deferredStatements[j]);
-		}
+			// Run deferred statements
+			for (s64 j = currentScope->deferredStatements.size - 1; j >= 0; --j)
+			{
+				IRGenFromExpression(context, currentScope->deferredStatements[j]);
+			}
 
-		PopIRScope(context);
-
-		// If should-return register is set, return
-		{
-			if ((s64)(context->irStack.size - 1) != context->currentProcedureStackBase)
+			// If should-return register is set, return
+			if ((s64)(context->irStack.size - 2) != context->currentProcedureStackBase)
 			{
 				String skipLabel = NewLabel(context, "skipReturn"_s);
 
@@ -703,7 +738,7 @@ IRValue IRGenFromExpression(Context *context, ASTExpression *expression)
 				// Jump to closing of next scope
 				IRInstruction jumpInst;
 				jumpInst.type = IRINSTRUCTIONTYPE_JUMP;
-				jumpInst.jump.label = context->irStack[context->irStack.size - 1].closeLabel;
+				jumpInst.jump.label = context->irStack[context->irStack.size - 2].closeLabel;
 				*AddInstruction(context) = jumpInst;
 
 				IRInstruction *skipLabelInst = AddInstruction(context);
@@ -711,6 +746,8 @@ IRValue IRGenFromExpression(Context *context, ASTExpression *expression)
 				skipLabelInst->label = skipLabel;
 			}
 		}
+
+		PopIRScope(context);
 	} break;
 	case ASTNODETYPE_VARIABLE_DECLARATION:
 	{
@@ -815,9 +852,8 @@ IRValue IRGenFromExpression(Context *context, ASTExpression *expression)
 				inst.type = IRINSTRUCTIONTYPE_MEMBER_ACCESS;
 				inst.memberAccess.in = left;
 				inst.memberAccess.structMember = structMember;
-				inst.memberAccess.out.valueType = IRVALUETYPE_REGISTER;
-				inst.memberAccess.out.registerIdx = NewVirtualRegister(context);
-				inst.memberAccess.out.typeTableIdx = GetTypeInfoPointerOf(context, structMember->typeTableIdx);
+				inst.memberAccess.out = IRValueRegister(NewVirtualRegister(context),
+						GetTypeInfoPointerOf(context, structMember->typeTableIdx));
 				*AddInstruction(context) = inst;
 
 				// Set left for next one
@@ -864,6 +900,7 @@ IRValue IRGenFromExpression(Context *context, ASTExpression *expression)
 			{
 				static u64 returnByCopyDeclarationUniqueID = 0;
 
+				// Allocate stack for return value
 				String tempVarName = TPrintF("_returnByCopy%llu", returnByCopyDeclarationUniqueID++);
 				Variable *tempVar = BucketArrayAdd(&context->variables);
 				*tempVar = {};
@@ -877,10 +914,8 @@ IRValue IRGenFromExpression(Context *context, ASTExpression *expression)
 				*AddInstruction(context) = varDeclInst;
 
 				// Turn into a register
-				IRValue reg = {};
-				reg.valueType = IRVALUETYPE_REGISTER;
-				reg.registerIdx = NewVirtualRegister(context);
-				reg.typeTableIdx = GetTypeInfoPointerOf(context, expression->typeTableIdx);
+				IRValue reg = IRValueRegister(NewVirtualRegister(context),
+						GetTypeInfoPointerOf(context, expression->typeTableIdx));
 
 				IRValue tempVarIRValue = {};
 				tempVarIRValue.valueType = IRVALUETYPE_VARIABLE;
@@ -890,7 +925,6 @@ IRValue IRGenFromExpression(Context *context, ASTExpression *expression)
 				paramIntermediateInst.type = IRINSTRUCTIONTYPE_ASSIGNMENT;
 				paramIntermediateInst.assignment.src = tempVarIRValue;
 				paramIntermediateInst.assignment.dst = reg;
-				*AddInstruction(context) = paramIntermediateInst;
 
 				// Add register as parameter
 				*ArrayAdd(&procCallInst.procedureCall.parameters) = reg;
@@ -899,10 +933,8 @@ IRValue IRGenFromExpression(Context *context, ASTExpression *expression)
 			}
 			else
 			{
-				procCallInst.procedureCall.out = {};
-				procCallInst.procedureCall.out.valueType = IRVALUETYPE_REGISTER;
-				procCallInst.procedureCall.out.registerIdx = NewVirtualRegister(context);
-				procCallInst.procedureCall.out.typeTableIdx = expression->typeTableIdx;
+				procCallInst.procedureCall.out = IRValueRegister(NewVirtualRegister(context),
+						expression->typeTableIdx);
 				result = procCallInst.procedureCall.out;
 			}
 		}
@@ -930,6 +962,7 @@ IRValue IRGenFromExpression(Context *context, ASTExpression *expression)
 				// variable as parameter to the procedure.
 				static u64 structByCopyDeclarationUniqueID = 0;
 
+				IRAddComment(context, "Copy argument to the stack to pass as pointer"_s);
 				// Declare temporal value in the stack
 				String tempVarName = TPrintF("_valueByCopy%llu", structByCopyDeclarationUniqueID++);
 				Variable *tempVar = BucketArrayAdd(&context->variables);
@@ -948,17 +981,10 @@ IRValue IRGenFromExpression(Context *context, ASTExpression *expression)
 				tempVarIRValue.valueType = IRVALUETYPE_VARIABLE;
 				tempVarIRValue.variable = tempVar;
 
-				IRValue paramReg = {};
-				paramReg.valueType = IRVALUETYPE_REGISTER;
-				paramReg.registerIdx = NewVirtualRegister(context);
-				paramReg.typeTableIdx = GetTypeInfoPointerOf(context, argTypeTableIdx);
-
 				// Turn into a register, mainly to pass it to the procedure
-				IRInstruction paramIntermediateInst = {};
-				paramIntermediateInst.type = IRINSTRUCTIONTYPE_ASSIGNMENT;
-				paramIntermediateInst.assignment.src = tempVarIRValue;
-				paramIntermediateInst.assignment.dst = paramReg;
-				*AddInstruction(context) = paramIntermediateInst;
+				IRValue paramReg = IRValueRegister(NewVirtualRegister(context),
+						GetTypeInfoPointerOf(context, argTypeTableIdx));
+				IRInstructionFromAssignment(context, paramReg, tempVarIRValue);
 
 				paramReg.dereference = true;
 				IRValue rightValue = IRGenFromExpression(context, arg);
@@ -971,18 +997,16 @@ IRValue IRGenFromExpression(Context *context, ASTExpression *expression)
 			{
 				IRValue param = IRGenFromExpression(context, arg);
 
-				IRValue paramReg = {};
-				paramReg.valueType = IRVALUETYPE_REGISTER;
-				paramReg.registerIdx = NewVirtualRegister(context);
-				paramReg.typeTableIdx = argTypeTableIdx;
+				// Make it a register if it's not already one
+				if (param.valueType != IRVALUETYPE_REGISTER)
+				{
+					IRValue paramReg = IRValueRegister(NewVirtualRegister(context),
+							argTypeTableIdx);
+					IRInstructionFromAssignment(context, paramReg, param);
+					param = paramReg;
+				}
 
-				IRInstruction paramIntermediateInst = {};
-				paramIntermediateInst.type = IRINSTRUCTIONTYPE_ASSIGNMENT;
-				paramIntermediateInst.assignment.src = param;
-				paramIntermediateInst.assignment.dst = paramReg;
-				*AddInstruction(context) = paramIntermediateInst;
-
-				*ArrayAdd(&procCallInst.procedureCall.parameters) = paramReg;
+				*ArrayAdd(&procCallInst.procedureCall.parameters) = param;
 			}
 		}
 
@@ -993,18 +1017,15 @@ IRValue IRGenFromExpression(Context *context, ASTExpression *expression)
 			ASTExpression *arg = astProcCall->procedure->parameters[argIdx].defaultValue;
 			IRValue param = IRGenFromExpression(context, arg);
 
-			IRValue paramReg = {};
-			paramReg.valueType = IRVALUETYPE_REGISTER;
-			paramReg.registerIdx = NewVirtualRegister(context);
-			paramReg.typeTableIdx = arg->typeTableIdx;
+			// Make it a register if it's not already one
+			if (param.valueType != IRVALUETYPE_REGISTER)
+			{
+				IRValue paramReg = IRValueRegister(NewVirtualRegister(context), arg->typeTableIdx);
+				IRInstructionFromAssignment(context, paramReg, param);
+				param = paramReg;
+			}
 
-			IRInstruction paramIntermediateInst = {};
-			paramIntermediateInst.type = IRINSTRUCTIONTYPE_ASSIGNMENT;
-			paramIntermediateInst.assignment.src = param;
-			paramIntermediateInst.assignment.dst = paramReg;
-			*AddInstruction(context) = paramIntermediateInst;
-
-			*ArrayAdd(&procCallInst.procedureCall.parameters) = paramReg;
+			*ArrayAdd(&procCallInst.procedureCall.parameters) = param;
 		}
 
 		// Varargs
@@ -1013,6 +1034,8 @@ IRValue IRGenFromExpression(Context *context, ASTExpression *expression)
 		if (varargsCount > 0)
 		{
 			static u64 varargsUniqueID = 0;
+
+			IRAddComment(context, "Build varargs array"_s);
 
 			s64 anyTableIdx = FindTypeInStackByName(context, {}, "Any"_s);
 
@@ -1295,24 +1318,26 @@ IRValue IRGenFromExpression(Context *context, ASTExpression *expression)
 	{
 		IRValue returnValue = IRGenFromExpression(context, expression->returnNode.expression);
 
+		bool isThereCleanUpToDo = false;
+		for (s64 stackIdx = context->irStack.size - 1;
+				stackIdx >= context->currentProcedureStackBase; --stackIdx)
 		{
-			IRValue one;
-			one.valueType = IRVALUETYPE_IMMEDIATE_INTEGER;
-			one.immediate = 1;
-			one.typeTableIdx = TYPETABLEIDX_U8;
-			one.dereference = false;
+			if (context->irStack[stackIdx].deferredStatements.size)
+			{
+				isThereCleanUpToDo = true;
+				break;
+			}
+		}
 
-			IRValue shouldReturnRegister;
-			shouldReturnRegister.valueType = IRVALUETYPE_REGISTER;
-			shouldReturnRegister.registerIdx = IRSPECIALREGISTER_SHOULD_RETURN;
-			shouldReturnRegister.typeTableIdx = TYPETABLEIDX_U8;
-			shouldReturnRegister.dereference = false;
-
-			IRInstruction setShouldReturnInst;
-			setShouldReturnInst.type = IRINSTRUCTIONTYPE_ASSIGNMENT;
-			setShouldReturnInst.assignment.src = one;
-			setShouldReturnInst.assignment.dst = shouldReturnRegister;
-			*AddInstruction(context) = setShouldReturnInst;
+		if (isThereCleanUpToDo)
+		{
+			// Set should return to one
+			IRValue one = IRValueImmediate(1, TYPETABLEIDX_U8);
+			IRValue shouldReturnRegister = IRValueRegister(IRSPECIALREGISTER_SHOULD_RETURN, TYPETABLEIDX_U8);
+			IRInstructionFromAssignment(context, shouldReturnRegister, one);
+		}
+		else
+		{
 		}
 
 		s64 returnTypeTableIdx = expression->returnNode.expression->typeTableIdx;
@@ -1358,10 +1383,18 @@ IRValue IRGenFromExpression(Context *context, ASTExpression *expression)
 			*AddInstruction(context) = returnValueSaveInst;
 		}
 
+		if (isThereCleanUpToDo)
 		{
 			IRInstruction jumpInst;
 			jumpInst.type = IRINSTRUCTIONTYPE_JUMP;
 			jumpInst.jump.label = context->irStack[context->irStack.size - 1].closeLabel;
+			*AddInstruction(context) = jumpInst;
+		}
+		else
+		{
+			IRInstruction jumpInst;
+			jumpInst.type = IRINSTRUCTIONTYPE_JUMP;
+			jumpInst.jump.label = context->currentProcedureReturnLabel;
 			*AddInstruction(context) = jumpInst;
 		}
 	} break;

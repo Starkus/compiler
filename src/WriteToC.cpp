@@ -131,7 +131,7 @@ String CIRValueToStr(Context *context, IRValue value)
 		result = TPrintF("&_typeInfo%lld", value.typeOfTypeTableIdx);
 	}
 	else
-		CRASH;
+		ASSERT(!"Invalid value type!");
 
 	if (printTypeMemberAccess)
 	{
@@ -160,16 +160,8 @@ String CIRValueToStrAsRegister(Context *context, IRValue value)
 	if (value.valueType == IRVALUETYPE_REGISTER)
 		return TPrintF("r%d", value.registerIdx);
 	else
-	{
-		String result = CIRValueToStr(context, value);
-
-		if (value.valueType == IRVALUETYPE_IMMEDIATE_INTEGER)
-			result = TPrintF("FromU64(%S)", result);
-		else if (value.valueType == IRVALUETYPE_IMMEDIATE_FLOAT)
-			result = TPrintF("FromF64(%S)", result);
-
-		return result;
-	}
+		ASSERT(!"Value is not a register!");
+	return "???REG"_s;
 }
 
 String OperatorToStr(IRInstruction inst)
@@ -597,7 +589,9 @@ void WriteToC(Context *context)
 			if (inst.type != IRINSTRUCTIONTYPE_LABEL)
 				PrintOut(context, outputFile, "\t");
 
-			if (inst.type == IRINSTRUCTIONTYPE_VARIABLE_DECLARATION)
+			if (inst.type == IRINSTRUCTIONTYPE_COMMENT)
+				PrintOut(context, outputFile, "// %S\n", inst.comment);
+			else if (inst.type == IRINSTRUCTIONTYPE_VARIABLE_DECLARATION)
 			{
 				Variable *var = inst.variableDeclaration.variable;
 				u64 size = CCalculateTypeSize(context,
