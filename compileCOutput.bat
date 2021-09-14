@@ -11,6 +11,6 @@ pushd .\bin
 
 cl %CommonCompilerFlags% -DDEBUG_BUILD=1 %SourceFiles% %Libraries% -link %CommonLinkerFlags%
 IF %ERRORLEVEL% NEQ 0 echo [31mFailed![0m
-IF %ERRORLEVEL% EQU 0 echo [32mSuccess[0m
+IF %ERRORLEVEL% EQU 0 (echo [32mSuccess[0m) & out.exe
 
 popd

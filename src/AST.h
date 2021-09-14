@@ -9,6 +9,7 @@ enum LiteralType
 {
 	LITERALTYPE_INTEGER,
 	LITERALTYPE_FLOATING,
+	LITERALTYPE_CHARACTER,
 	LITERALTYPE_STRING
 };
 struct ASTLiteral : ASTBase
@@ -18,6 +19,7 @@ struct ASTLiteral : ASTBase
 	{
 		s64 integer;
 		f64 floating;
+		char character;
 		String string;
 	};
 };

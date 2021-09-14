@@ -130,6 +130,8 @@ String CIRValueToStr(Context *context, IRValue value)
 	{
 		result = TPrintF("&_typeInfo%lld", value.typeOfTypeTableIdx);
 	}
+	else
+		CRASH;
 
 	if (printTypeMemberAccess)
 	{

@@ -64,12 +64,32 @@ inline bool IsWhitespace(char c)
 s64 IntFromString(String string)
 {
 	s64 result = 0;
+	const char *scan = string.data;
 	for (int i = 0; i < string.size; ++i)
 	{
-		char c = string.data[i];
+		char c = *scan++;
 		ASSERT(IsNumeric(c));
 		s64 digit = c - '0';
 		result *= 10;
+		result += digit;
+	}
+	return result;
+}
+
+s64 IntFromStringHex(String string)
+{
+	s64 result = 0;
+	for (int i = 0; i < string.size; ++i)
+	{
+		char c = string.data[i];
+
+		s64 digit = -1;
+		digit = c - '0' * (c >= '0' && c <= '9');
+		digit += (0xA - 'a') * (c >= 'a' && c <= 'f');
+		digit += (0xA - 'A') * (c >= 'A' && c <= 'F');
+		ASSERT(digit >= 0);
+
+		result = result << 4;
 		result += digit;
 	}
 	return result;

@@ -7,7 +7,7 @@ const String TokenTypeToString(s32 type)
 	case TOKEN_IDENTIFIER:
 		return "<Identifier>"_s;
 
-	case TOKEN_LITERAL_CHAR:
+	case TOKEN_LITERAL_CHARACTER:
 		return "<Literal char>"_s;
 	case TOKEN_LITERAL_NUMBER:
 		return "<Literal number>"_s;
@@ -261,7 +261,7 @@ Token ReadTokenAndAdvance(Tokenizer *tokenizer)
 	}
 	else if (*tokenizer->cursor == '\'')
 	{
-		result.type = TOKEN_LITERAL_CHAR;
+		result.type = TOKEN_LITERAL_CHARACTER;
 		++tokenizer->cursor;
 		if (*tokenizer->cursor == '\\')
 		{

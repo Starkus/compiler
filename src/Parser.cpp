@@ -28,6 +28,7 @@ struct Procedure
 	ASTExpression *astBody;
 	s32 requiredParameterCount;
 	s64 returnTypeTableIdx;
+	String varargsName;
 
 	// IRGen
 	BucketArray<IRInstruction, 256, malloc, realloc> instructions;
@@ -522,6 +523,15 @@ ASTProcedureDeclaration ParseProcedureDeclaration(Context *context)
 		{
 			Advance(context);
 			procedure->isVarargs = true;
+
+			if (!procedure->isExternal)
+			{
+				if (context->token->type != TOKEN_IDENTIFIER)
+					PrintError(context, context->token->loc, "Name missing after varargs token (...)"_s);
+
+				procedure->varargsName = context->token->string;
+				Advance(context);
+			}
 			break;
 		}
 
@@ -618,7 +628,14 @@ ASTExpression ParseExpression(Context *context, s32 precedence)
 		result.any.loc = context->token->loc;
 		result.nodeType = ASTNODETYPE_LITERAL;
 
+		bool isHex = false;
 		bool isFloating = false;
+		if (context->token->begin[0] == '0')
+		{
+			if (context->token->begin[1] == 'x' || context->token->begin[1] == 'X')
+				isHex = true;
+		}
+
 		for (int i = 0; i < context->token->size; ++i)
 		{
 			if (context->token->begin[i] == '.')
@@ -630,13 +647,31 @@ ASTExpression ParseExpression(Context *context, s32 precedence)
 		if (!isFloating)
 		{
 			result.literal.type = LITERALTYPE_INTEGER;
-			result.literal.integer = IntFromString(context->token->string);
+			if (isHex)
+			{
+				String numbersOnly = context->token->string;
+				numbersOnly.size -= 2;
+				numbersOnly.data += 2;
+				// @Todo: error reporting
+				result.literal.integer = IntFromStringHex(numbersOnly);
+			}
+			else
+				// @Todo: error reporting
+				result.literal.integer = IntFromString(context->token->string);
 		}
 		else
 		{
 			result.literal.type = LITERALTYPE_FLOATING;
 			result.literal.floating = atof(context->token->string.data); // @Todo: replace atof
 		}
+		Advance(context);
+	}
+	else if (context->token->type == TOKEN_LITERAL_CHARACTER)
+	{
+		result.any.loc = context->token->loc;
+		result.nodeType = ASTNODETYPE_LITERAL;
+		result.literal.type = LITERALTYPE_CHARACTER;
+		result.literal.character = context->token->begin[1];
 		Advance(context);
 	}
 	else if (context->token->type == TOKEN_LITERAL_STRING)
@@ -884,13 +919,14 @@ ASTExpression ParseStatement(Context *context)
 	} break;
 	default:
 	{
-		if ((context->token + 1)->type == TOKEN_OP_STATIC_DEF)
+		Token *next = &context->tokens[context->currentTokenIdx + 1];
+		if (next->type == TOKEN_OP_STATIC_DEF)
 		{
 			result.nodeType = ASTNODETYPE_STATIC_DEFINITION;
 			result.staticDefinition = ParseStaticDefinition(context);
 		}
-		else if ((context->token + 1)->type == TOKEN_OP_VARIABLE_DECLARATION ||
-				(context->token + 1)->type == TOKEN_OP_VARIABLE_DECLARATION_STATIC)
+		else if (next->type == TOKEN_OP_VARIABLE_DECLARATION ||
+				next->type == TOKEN_OP_VARIABLE_DECLARATION_STATIC)
 		{
 			result.nodeType = ASTNODETYPE_VARIABLE_DECLARATION;
 			result.variableDeclaration = ParseVariableDeclaration(context);
@@ -930,13 +966,14 @@ ASTExpression ParseStaticStatement(Context *context)
 	} break;
 	default:
 	{
-		if ((context->token + 1)->type == TOKEN_OP_STATIC_DEF)
+		Token *next = &context->tokens[context->currentTokenIdx + 1];
+		if (next->type == TOKEN_OP_STATIC_DEF)
 		{
 			result.nodeType = ASTNODETYPE_STATIC_DEFINITION;
 			result.staticDefinition = ParseStaticDefinition(context);
 		}
-		else if ((context->token + 1)->type == TOKEN_OP_VARIABLE_DECLARATION ||
-				(context->token + 1)->type == TOKEN_OP_VARIABLE_DECLARATION_STATIC)
+		else if (next->type == TOKEN_OP_VARIABLE_DECLARATION ||
+				next->type == TOKEN_OP_VARIABLE_DECLARATION_STATIC)
 		{
 			result.nodeType = ASTNODETYPE_VARIABLE_DECLARATION;
 			result.variableDeclaration = ParseVariableDeclaration(context);

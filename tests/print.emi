@@ -1,0 +1,5 @@
+Main :: () -> s64
+{
+	PrintF("Asd % another % this is awesome! Another %!", 5, 2, 3.5);
+	return 0;
+}

@@ -72,17 +72,19 @@ Proc :: (param : Any)
 	Print("\n");
 }
 
+Varargs :: (...args)
+{
+	i : s64 = 0;
+	while (i < cast(s64) args.size)
+	{
+		Print("An arg\n");
+		Proc(args[i]);
+		i += 1;
+	}
+}
+
 Main :: () -> s64
 {
-	n : s64 = 2345;
-	a : Any;
-	a.typeInfo = typeof(n);
-	a.data = ^n;
-	Proc(a);
-
-	anAny : Any = n;
-
-	Proc(12345.6789);
-
+	Varargs(cast(s32) 15, 32, 98, 5.42);
 	return 0;
 }

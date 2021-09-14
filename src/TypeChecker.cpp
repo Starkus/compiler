@@ -1,4 +1,4 @@
-enum TypeTableIndexes
+enum TypeTableIndices
 {
 	TYPETABLEIDX_PRIMITIVE_BEGIN,
 	TYPETABLEIDX_S8 = TYPETABLEIDX_PRIMITIVE_BEGIN,
@@ -18,7 +18,7 @@ enum TypeTableIndexes
 	TYPETABLEIDX_FLOATING,
 	TYPETABLEIDX_VOID,
 
-	TYPETABLEIDX_COUNT,
+	TYPETABLEIDX_COUNT
 };
 
 enum TypeCategory
@@ -371,6 +371,12 @@ bool CheckTypesMatch(Context *context, s64 leftTableIdx, s64 rightTableIdx)
 			right->typeCategory == TYPECATEGORY_FLOATING)
 			return true;
 
+		if ((left->typeCategory == TYPECATEGORY_POINTER &&
+			right->typeCategory == TYPECATEGORY_INTEGER) ||
+			(right->typeCategory == TYPECATEGORY_POINTER &&
+			left->typeCategory == TYPECATEGORY_INTEGER))
+			return true;
+
 		return false;
 	}
 
@@ -504,6 +510,15 @@ s64 GetTypeInfoPointerOf(Context *context, s64 inType)
 	TypeInfo resultTypeInfo = {};
 	resultTypeInfo.typeCategory = TYPECATEGORY_POINTER;
 	resultTypeInfo.pointerInfo.pointedTypeTableIdx = inType;
+	return FindOrAddTypeTableIdx(context, resultTypeInfo);
+}
+
+s64 GetTypeInfoArrayOf(Context *context, s64 inType, s64 count)
+{
+	TypeInfo resultTypeInfo = {};
+	resultTypeInfo.typeCategory = TYPECATEGORY_ARRAY;
+	resultTypeInfo.arrayInfo.elementTypeTableIdx = inType;
+	resultTypeInfo.arrayInfo.count = count;
 	return FindOrAddTypeTableIdx(context, resultTypeInfo);
 }
 
@@ -929,6 +944,12 @@ void TypeCheckExpression(Context *context, ASTExpression *expression)
 				staticDefinition.constantFloating.value = astLiteral.floating;
 				staticDefinition.constantFloating.typeTableIdx = astStaticDef.expression->typeTableIdx;
 			} break;
+			case LITERALTYPE_CHARACTER:
+			{
+				staticDefinition.definitionType = STATICDEFINITIONTYPE_CONSTANT_INTEGER;
+				staticDefinition.constantFloating.value = astLiteral.character;
+				staticDefinition.constantFloating.typeTableIdx = astStaticDef.expression->typeTableIdx;
+			} break;
 			}
 		}
 		else
@@ -983,6 +1004,28 @@ void TypeCheckExpression(Context *context, ASTExpression *expression)
 			{
 				beginOptionalParameters = true;
 			}
+		}
+
+		// Varargs array
+		if (procedure->isVarargs)
+		{
+			s64 anyTableIdx = FindTypeInStackByName(context, {}, "Any"_s);
+			Variable *var = BucketArrayAdd(&context->variables);
+			*var = {};
+			var->name = procedure->varargsName;
+			var->parameterIndex = (s8)procedure->parameters.size;
+			var->typeTableIdx = GetTypeInfoArrayOf(context, anyTableIdx, 0);
+
+			ProcedureParameter *procParam = DynamicArrayAdd(&procedure->parameters);
+			procParam->variable = var;
+			procParam->defaultValue = nullptr;
+
+			TCScope *stackTop = &context->tcStack[context->tcStack.size - 1];
+			TCScopeName newScopeName;
+			newScopeName.type = NAMETYPE_VARIABLE;
+			newScopeName.name = var->name;
+			newScopeName.variable = var;
+			*DynamicArrayAdd(&stackTop->names) = newScopeName;
 		}
 
 		s64 returnType = TYPETABLEIDX_VOID;
@@ -1115,7 +1158,7 @@ skipInvalidIdentifierError:
 
 		// Type check arguments
 		s64 requiredArguments = procedure->requiredParameterCount;
-		s64 totalArguments = procedure->parameters.size;
+		s64 totalArguments = procedure->parameters.size - procedure->isVarargs;
 		s64 givenArguments  = expression->procedureCall.arguments.size;
 		if (procedure->isVarargs)
 		{
@@ -1257,10 +1300,18 @@ skipInvalidIdentifierError:
 				arrayTypeInfo = &context->typeTable[pointedTypeIdx];
 			}
 
-			if (arrayTypeInfo->typeCategory != TYPECATEGORY_ARRAY)
-				PrintError(context, leftHand->any.loc,
-						"Expression does not evaluate to an array"_s);
-			expression->typeTableIdx = arrayTypeInfo->arrayInfo.elementTypeTableIdx;
+			s64 stringTypeIdx = FindTypeInStackByName(context, {}, "String"_s);
+			if (arrayType == stringTypeIdx)
+			{
+				expression->typeTableIdx = TYPETABLEIDX_U8;
+			}
+			else
+			{
+				if (arrayTypeInfo->typeCategory != TYPECATEGORY_ARRAY)
+					PrintError(context, leftHand->any.loc,
+							"Expression does not evaluate to an array"_s);
+				expression->typeTableIdx = arrayTypeInfo->arrayInfo.elementTypeTableIdx;
+			}
 		}
 		else
 		{
@@ -1303,6 +1354,9 @@ skipInvalidIdentifierError:
 			break;
 		case LITERALTYPE_FLOATING:
 			expression->typeTableIdx = TYPETABLEIDX_FLOATING;
+			break;
+		case LITERALTYPE_CHARACTER:
+			expression->typeTableIdx = TYPETABLEIDX_INTEGER;
 			break;
 		case LITERALTYPE_STRING:
 			expression->typeTableIdx = FindTypeInStackByName(context, {}, "String"_s);
