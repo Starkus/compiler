@@ -6,8 +6,8 @@
 
 void Log(const char *format, ...);
 
-#include "Config.h"
 #include "General.h"
+#include "Config.h"
 #include "Maths.h"
 #include "MemoryAlloc.h"
 #include "Containers.h"
@@ -81,6 +81,7 @@ struct StaticDefinition;
 struct TCScope;
 struct IRStaticVariable;
 struct IRScope;
+struct IRProcedureScope;
 struct Context
 {
 	Config config;
@@ -108,9 +109,7 @@ struct Context
 	// IR
 	DynamicArray<IRStaticVariable, malloc, realloc> irStaticVariables;
 	DynamicArray<IRScope, malloc, realloc> irStack;
-	s64 currentProcedureStackBase;
-	String currentProcedureReturnLabel;
-	Procedure *currentProcedure;
+	DynamicArray<IRProcedureScope, malloc, realloc> irProcedureStack;
 	u64 currentRegisterId;
 	u64 currentLabelId;
 	String currentBreakLabel;

@@ -36,13 +36,7 @@ struct TypeInfo;
 
 struct TypeInfoInteger
 {
-	s64 size;
 	s32 isSigned;
-};
-
-struct TypeInfoFloating
-{
-	s64 size;
 };
 
 struct StructMember
@@ -50,17 +44,12 @@ struct StructMember
 	String name;
 	s64 typeTableIdx;
 	bool isUsing;
-
-	// Filled by back-end
 	u64 offset;
 };
 struct TypeInfoStruct
 {
 	bool isUnion;
 	DynamicArray<StructMember, malloc, realloc> members;
-
-	// Filled by back-end
-	s64 size;
 };
 
 struct TypeInfoEnum
@@ -82,10 +71,10 @@ struct TypeInfoArray
 struct TypeInfo
 {
 	TypeCategory typeCategory;
+	s64 size;
 	union
 	{
 		TypeInfoInteger integerInfo;
-		TypeInfoFloating floatingInfo;
 		TypeInfoStruct structInfo;
 		TypeInfoEnum enumInfo;
 		TypeInfoPointer pointerInfo;
@@ -231,14 +220,14 @@ String TypeInfoToString(Context *context, s64 typeTableIdx)
 	}
 	case TYPECATEGORY_INTEGER:
 	{
-		if (typeInfo->integerInfo.isSigned) switch (typeInfo->integerInfo.size)
+		if (typeInfo->integerInfo.isSigned) switch (typeInfo->size)
 		{
 			case 1: return "s8"_s;
 			case 2: return "s16"_s;
 			case 4: return "s32"_s;
 			case 8: return "s64"_s;
 		}
-		else switch (typeInfo->integerInfo.size)
+		else switch (typeInfo->size)
 		{
 			case 1: return "u8"_s;
 			case 2: return "u16"_s;
@@ -248,7 +237,7 @@ String TypeInfoToString(Context *context, s64 typeTableIdx)
 	} break;
 	case TYPECATEGORY_FLOATING:
 	{
-		switch (typeInfo->floatingInfo.size)
+		switch (typeInfo->size)
 		{
 			case 4: return "f32"_s;
 			case 8: return "f64"_s;
@@ -405,10 +394,10 @@ bool CheckTypesMatch(Context *context, s64 leftTableIdx, s64 rightTableIdx)
 			Log("Signed-unsigned mismatch!\n");
 			return false;
 		}
-		if (left->integerInfo.size < right->integerInfo.size)
+		if (left->size < right->size)
 		{
 			Log("Trying to fit integer of size %d into integer of size %d!\n",
-					right->integerInfo.size, left->integerInfo.size);
+					right->size, left->size);
 			return false;
 		}
 		return true;
@@ -462,11 +451,13 @@ bool AreTypeInfosEqual(TypeInfo *a, TypeInfo *b)
 	if (a->typeCategory != b->typeCategory)
 		return false;
 
+	if (a->size != b->size)
+		return false;
+
 	switch (a->typeCategory)
 	{
 	case TYPECATEGORY_INTEGER:
-		return a->integerInfo.size == b->integerInfo.size &&
-			a->integerInfo.isSigned == b->integerInfo.isSigned;
+		return a->integerInfo.isSigned == b->integerInfo.isSigned;
 	case TYPECATEGORY_FLOATING:
 		return true;
 	case TYPECATEGORY_STRUCT:
@@ -509,6 +500,7 @@ s64 GetTypeInfoPointerOf(Context *context, s64 inType)
 {
 	TypeInfo resultTypeInfo = {};
 	resultTypeInfo.typeCategory = TYPECATEGORY_POINTER;
+	resultTypeInfo.size = g_pointerSize;
 	resultTypeInfo.pointerInfo.pointedTypeTableIdx = inType;
 	return FindOrAddTypeTableIdx(context, resultTypeInfo);
 }
@@ -519,6 +511,13 @@ s64 GetTypeInfoArrayOf(Context *context, s64 inType, s64 count)
 	resultTypeInfo.typeCategory = TYPECATEGORY_ARRAY;
 	resultTypeInfo.arrayInfo.elementTypeTableIdx = inType;
 	resultTypeInfo.arrayInfo.count = count;
+	if (count == 0)
+		resultTypeInfo.size = 8 + g_pointerSize;
+	else
+	{
+		TypeInfo *elementTypeInfo = &context->typeTable[inType];
+		resultTypeInfo.size = elementTypeInfo->size * count;
+	}
 	return FindOrAddTypeTableIdx(context, resultTypeInfo);
 }
 
@@ -526,7 +525,7 @@ s64 TypeCheckType(Context *context, SourceLocation loc, ASTType *astType);
 
 s64 TypeCheckStructDeclaration(Context *context, ASTStructDeclaration astStructDecl)
 {
-	TypeInfo t;
+	TypeInfo t = {};
 	t.typeCategory = TYPECATEGORY_STRUCT;
 	t.structInfo.isUnion = astStructDecl.isUnion;
 	DynamicArrayInit(&t.structInfo.members, 16);
@@ -539,6 +538,10 @@ s64 TypeCheckStructDeclaration(Context *context, ASTStructDeclaration astStructD
 		member->name = astMember.name;
 		member->isUsing = astMember.isUsing;
 		member->typeTableIdx = TypeCheckType(context, astMember.loc, astMember.astType);
+		member->offset = t.size; // @Todo: aligning
+
+		s64 memberSize = context->typeTable[member->typeTableIdx].size;
+		t.size += memberSize; // @Todo: aligning
 	}
 
 	s64 typeTableIdx = BucketArrayCount(&context->typeTable);
@@ -559,21 +562,14 @@ s64 TypeCheckType(Context *context, SourceLocation loc, ASTType *astType)
 	} break;
 	case ASTTYPENODETYPE_ARRAY:
 	{
-		TypeInfo tempTypeInfo;
-		tempTypeInfo.typeCategory = TYPECATEGORY_ARRAY;
-		tempTypeInfo.arrayInfo.count = astType->arrayCount;
-		tempTypeInfo.arrayInfo.elementTypeTableIdx = TypeCheckType(context, loc, astType->arrayType);
-
-		s64 typeTableIdx = FindOrAddTypeTableIdx(context, tempTypeInfo);
+		s64 elementTypeIdx = TypeCheckType(context, loc, astType->arrayType);
+		s64 typeTableIdx = GetTypeInfoArrayOf(context, elementTypeIdx, astType->arrayCount);
 		return typeTableIdx;
 	} break;
 	case ASTTYPENODETYPE_POINTER:
 	{
-		TypeInfo tempTypeInfo;
-		tempTypeInfo.typeCategory = TYPECATEGORY_POINTER;
-		tempTypeInfo.arrayInfo.elementTypeTableIdx = TypeCheckType(context, loc, astType->pointedType);
-
-		s64 typeTableIdx = FindOrAddTypeTableIdx(context, tempTypeInfo);
+		s64 pointedTypeIdx = TypeCheckType(context, loc, astType->pointedType);
+		s64 typeTableIdx = GetTypeInfoPointerOf(context, pointedTypeIdx);
 		return typeTableIdx;
 	} break;
 	case ASTTYPENODETYPE_STRUCT_DECLARATION:
@@ -595,6 +591,8 @@ s64 TypeCheckType(Context *context, SourceLocation loc, ASTType *astType)
 				t.enumInfo.typeTableIdx > TYPETABLEIDX_PRIMITIVE_END)
 				PrintError(context, astTypeLoc, "Only primitive types are allowed as enum field types"_s);
 		}
+
+		t.size = context->typeTable[t.enumInfo.typeTableIdx].size;
 
 		s64 typeTableIdx = BucketArrayCount(&context->typeTable);
 		*BucketArrayAdd(&context->typeTable) = t;
@@ -1219,10 +1217,7 @@ skipInvalidIdentifierError:
 			if (IsTemporalValue(expression->unaryOperation.expression))
 				PrintError(context, expression->any.loc, "Trying to get pointer to temporal value"_s);
 
-			TypeInfo newTypeInfo;
-			newTypeInfo.typeCategory = TYPECATEGORY_POINTER;
-			newTypeInfo.pointerInfo.pointedTypeTableIdx = expressionType;
-			expression->typeTableIdx = FindOrAddTypeTableIdx(context, newTypeInfo);
+			expression->typeTableIdx = GetTypeInfoPointerOf(context, expressionType);
 		} break;
 		case TOKEN_OP_DEREFERENCE:
 		{
@@ -1431,32 +1426,32 @@ void TypeCheckMain(Context *context)
 		t.typeCategory = TYPECATEGORY_INTEGER;
 		t.integerInfo.isSigned = true;
 
-		t.integerInfo.size = 1;
+		t.size = 1;
 		context->typeTable[TYPETABLEIDX_S8]  = t;
-		t.integerInfo.size = 2;
+		t.size = 2;
 		context->typeTable[TYPETABLEIDX_S16] = t;
-		t.integerInfo.size = 4;
+		t.size = 4;
 		context->typeTable[TYPETABLEIDX_S32] = t;
-		t.integerInfo.size = 8;
+		t.size = 8;
 		context->typeTable[TYPETABLEIDX_S64] = t;
 		context->typeTable[TYPETABLEIDX_INTEGER] = t;
 
 		t.integerInfo.isSigned = false;
 
-		t.integerInfo.size = 1;
+		t.size = 1;
 		context->typeTable[TYPETABLEIDX_U8]  = t;
 		context->typeTable[TYPETABLEIDX_BOOL]  = t;
-		t.integerInfo.size = 2;
+		t.size = 2;
 		context->typeTable[TYPETABLEIDX_U16] = t;
-		t.integerInfo.size = 4;
+		t.size = 4;
 		context->typeTable[TYPETABLEIDX_U32] = t;
-		t.integerInfo.size = 8;
+		t.size = 8;
 		context->typeTable[TYPETABLEIDX_U64] = t;
 
 		t.typeCategory = TYPECATEGORY_FLOATING;
-		t.floatingInfo.size = 4;
+		t.size = 4;
 		context->typeTable[TYPETABLEIDX_F32] = t;
-		t.floatingInfo.size = 8;
+		t.size = 8;
 		context->typeTable[TYPETABLEIDX_F64] = t;
 		context->typeTable[TYPETABLEIDX_FLOATING] = t;
 

@@ -22,19 +22,13 @@ TypeKind :: enum : u8
 TypeInfo :: struct
 {
 	typeKind : TypeKind;
+	size : s64;
 };
 
 TypeInfoInteger :: struct
 {
 	using _typeInfo : TypeInfo;
 	isSigned : s32;
-	size : s64;
-};
-
-TypeInfoFloating :: struct
-{
-	using _typeInfo : TypeInfo;
-	size : s64;
 };
 
 TypeInfoStructMember :: struct
@@ -49,7 +43,6 @@ TypeInfoStruct :: struct
 	name : String;
 	isUnion : s32;
 	members : [] TypeInfoStructMember;
-	size : u64;
 };
 
 TypeInfoEnum :: struct

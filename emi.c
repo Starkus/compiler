@@ -21,18 +21,14 @@ typedef int8_t arr;
 typedef struct ProgramTypeInfo
 {
 	u8 typeCategory;
+	s64 size;
 } ProgramTypeInfo;
 typedef struct ProgramTypeInfoInteger
 {
 	u8 typeCategory;
+	s64 size;
 	s32 isSigned;
-	s64 size;
 } ProgramTypeInfoInteger;
-typedef struct ProgramTypeInfoFloating
-{
-	u8 typeCategory;
-	s64 size;
-} ProgramTypeInfoFloating;
 typedef struct ProgramStructMemberInfo
 {
 	s64 nameSize;
@@ -43,16 +39,17 @@ typedef struct ProgramStructMemberInfo
 typedef struct ProgramTypeInfoStruct
 {
 	u8 typeCategory;
+	s64 size;
 	s64 nameSize;
 	u8 *nameData;
 	s32 isUnion;
 	s64 memberCount;
 	void *memberData;
-	u64 size;
 } ProgramTypeInfoStruct;
 typedef struct ProgramTypeInfoEnum
 {
 	u8 typeCategory;
+	u64 size;
 	s64 nameSize;
 	u8 *nameData;
 	void *typeInfo;
@@ -60,11 +57,13 @@ typedef struct ProgramTypeInfoEnum
 typedef struct ProgramTypeInfoPointer
 {
 	u8 typeCategory;
+	u64 size;
 	void *typeInfo;
 } ProgramTypeInfoPointer;
 typedef struct ProgramTypeInfoArray
 {
 	u8 typeCategory;
+	u64 size;
 	u64 count;
 	void *typeInfo;
 } ProgramTypeInfoArray;

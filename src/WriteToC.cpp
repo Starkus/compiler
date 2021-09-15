@@ -15,14 +15,14 @@ String CTypeInfoToString(Context *context, s64 typeTableIdx)
 		return CTypeInfoToString(context, typeInfo->enumInfo.typeTableIdx);
 	case TYPECATEGORY_INTEGER:
 	{
-		if (typeInfo->integerInfo.isSigned) switch (typeInfo->integerInfo.size)
+		if (typeInfo->integerInfo.isSigned) switch (typeInfo->size)
 		{
 			case 1: return "s8"_s;
 			case 2: return "s16"_s;
 			case 4: return "s32"_s;
 			case 8: return "s64"_s;
 		}
-		else switch (typeInfo->integerInfo.size)
+		else switch (typeInfo->size)
 		{
 			case 1: return "u8"_s;
 			case 2: return "u16"_s;
@@ -32,7 +32,7 @@ String CTypeInfoToString(Context *context, s64 typeTableIdx)
 	} break;
 	case TYPECATEGORY_FLOATING:
 	{
-		switch (typeInfo->floatingInfo.size)
+		switch (typeInfo->size)
 		{
 			case 4: return "f32"_s;
 			case 8: return "f64"_s;
@@ -46,29 +46,7 @@ s64 CCalculateTypeSize(Context *context, s64 typeTableIdx)
 {
 	ASSERT(typeTableIdx >= 0);
 	TypeInfo *typeInfo  = &context->typeTable[typeTableIdx];
-
-	switch (typeInfo->typeCategory)
-	{
-	case TYPECATEGORY_INTEGER:
-		return typeInfo->integerInfo.size;
-
-	case TYPECATEGORY_FLOATING:
-		return typeInfo->floatingInfo.size;
-
-	case TYPECATEGORY_STRUCT:
-		return typeInfo->structInfo.size;
-
-	case TYPECATEGORY_ENUM:
-		return CCalculateTypeSize(context, typeInfo->enumInfo.typeTableIdx);
-
-	case TYPECATEGORY_POINTER:
-		return 8;
-
-	case TYPECATEGORY_ARRAY:
-		return CCalculateTypeSize(context, typeInfo->arrayInfo.elementTypeTableIdx) * typeInfo->arrayInfo.count;
-	}
-
-	return 0;
+	return typeInfo->size;
 }
 
 String CIRValueToStr(Context *context, IRValue value)
@@ -113,6 +91,10 @@ String CIRValueToStr(Context *context, IRValue value)
 			result = TPrintF("/* %S */ stack + 0x%x", value.variable->name,
 					value.variable->stackOffset);
 		}
+	}
+	else if (value.valueType == IRVALUETYPE_STACK_OFFSET)
+	{
+		result = TPrintF("stack + 0x%x", value.stackOffset);
 	}
 	else if (value.valueType == IRVALUETYPE_IMMEDIATE_INTEGER)
 	{
@@ -269,36 +251,6 @@ void WriteToC(Context *context)
 
 	PrintOut(context, outputFile, "#include \"emi.c\"\n\n");
 
-	// Calculate size of structs
-	u64 tableSize = BucketArrayCount(&context->typeTable);
-	for (int typeInfoIdx = 0; typeInfoIdx < tableSize; ++typeInfoIdx)
-	{
-		TypeInfo *typeInfo = &context->typeTable[typeInfoIdx];
-		if (typeInfo->typeCategory != TYPECATEGORY_STRUCT)
-			continue;
-
-		typeInfo->structInfo.size = 0;
-		if (!typeInfo->structInfo.isUnion)
-		{
-			for (int i = 0; i < typeInfo->structInfo.members.size; ++i)
-			{
-				StructMember *member = &typeInfo->structInfo.members[i];
-				member->offset = typeInfo->structInfo.size;
-				typeInfo->structInfo.size += CCalculateTypeSize(context, member->typeTableIdx);
-			}
-		}
-		else
-		{
-			for (int i = 0; i < typeInfo->structInfo.members.size; ++i)
-			{
-				StructMember *member = &typeInfo->structInfo.members[i];
-				member->offset = 0;
-				typeInfo->structInfo.size = Max(typeInfo->structInfo.size,
-						CCalculateTypeSize(context, member->typeTableIdx));
-			}
-		}
-	}
-
 	const u64 staticVariableCount = context->irStaticVariables.size;
 	for (int staticVariableIdx = 0; staticVariableIdx < staticVariableCount; ++staticVariableIdx)
 	{
@@ -367,59 +319,7 @@ void WriteToC(Context *context)
 
 	// TypeInfo data
 	{
-#pragma pack(push, 1) // We'll pack these manually
-		struct ProgramTypeInfo
-		{
-			u8 typeCategory;
-		};
-		struct ProgramTypeInfoInteger
-		{
-			u8 typeCategory;
-			s32 isSigned;
-			s64 size;
-		};
-		struct ProgramTypeInfoFloating
-		{
-			u8 typeCategory;
-			s64 size;
-		};
-		struct ProgramStructMemberInfo
-		{
-			s64 nameSize;
-			u8 *nameData;
-			void *typeInfo;
-			u64 offset;
-		};
-		struct ProgramTypeInfoStruct
-		{
-			u8 typeCategory;
-			s64 nameSize;
-			u8 *nameData;
-			s32 isUnion;
-			s64 memberCount;
-			void *memberData;
-			u64 size;
-		};
-		struct TypeInfoEnum
-		{
-			u8 typeCategory;
-			s64 nameSize;
-			u8 *nameData;
-			void *typeInfo;
-		};
-		struct TypeInfoPointer
-		{
-			u8 typeCategory;
-			void *typeInfo;
-		};
-		struct TypeInfoArray
-		{
-			u8 typeCategory;
-			u64 count;
-			void *typeInfo;
-		};
-#pragma pack(pop)
-
+		u64 tableSize = BucketArrayCount(&context->typeTable);
 		for (u64 typeTableIdx = 0; typeTableIdx < tableSize; ++typeTableIdx)
 		{
 			TypeInfo *typeInfo = &context->typeTable[typeTableIdx];
@@ -427,15 +327,14 @@ void WriteToC(Context *context)
 			{
 			case TYPECATEGORY_INTEGER:
 			{
-				PrintOut(context, outputFile, "ProgramTypeInfoInteger _typeInfo%lld = { %d, "
-						"%d, %lld };\n",
-						typeTableIdx, 0, typeInfo->integerInfo.isSigned, typeInfo->integerInfo.size);
+				PrintOut(context, outputFile, "ProgramTypeInfoInteger _typeInfo%lld = { 0, "
+						"%lld, %d };\n",
+						typeTableIdx, typeInfo->size, typeInfo->integerInfo.isSigned);
 			} break;
 			case TYPECATEGORY_FLOATING:
 			{
-				PrintOut(context, outputFile, "ProgramTypeInfoFloating _typeInfo%lld = { %d, "
-						"%lld };\n",
-						typeTableIdx, 1, typeInfo->floatingInfo.size);
+				PrintOut(context, outputFile, "ProgramTypeInfo _typeInfo%lld = { 1, %lld };\n",
+						typeTableIdx, typeInfo->size);
 			} break;
 			case TYPECATEGORY_STRUCT:
 			{
@@ -457,9 +356,9 @@ void WriteToC(Context *context)
 				}
 				PrintOut(context, outputFile, " };\n");
 
-				PrintOut(context, outputFile, "ProgramTypeInfoStruct _typeInfo%lld = { %d, "
-						"%lld, \"%S\", %d, %lld, %S, %llu };\n",
-						typeTableIdx, 2, structName.size, structName,
+				PrintOut(context, outputFile, "ProgramTypeInfoStruct _typeInfo%lld = { 2, "
+						"%lld, %lld, \"%S\", %d, %lld, %S };\n",
+						typeTableIdx, typeInfo->size, structName.size, structName,
 						(s32)typeInfo->structInfo.isUnion, typeInfo->structInfo.members.size,
 						memberArrayName);
 			} break;
@@ -471,27 +370,28 @@ void WriteToC(Context *context)
 				if (staticDefStruct)
 					enumName = staticDefStruct->name;
 
-				PrintOut(context, outputFile, "ProgramTypeInfoEnum _typeInfo%lld = { %d, "
-						"%lld, \"%S\", &_typeInfo%lld };\n",
-						typeTableIdx, 3, enumName.size, enumName, typeInfo->enumInfo.typeTableIdx);
+				PrintOut(context, outputFile, "ProgramTypeInfoEnum _typeInfo%lld = { 3, "
+						"%lld, %lld, \"%S\", &_typeInfo%lld };\n",
+						typeTableIdx, typeInfo->size, enumName.size, enumName,
+						typeInfo->enumInfo.typeTableIdx);
 			} break;
 			case TYPECATEGORY_POINTER:
 			{
-				PrintOut(context, outputFile, "ProgramTypeInfoPointer _typeInfo%lld = { %d, "
-						"&_typeInfo%lld };\n",
-						typeTableIdx, 4, typeInfo->pointerInfo.pointedTypeTableIdx);
+				PrintOut(context, outputFile, "ProgramTypeInfoPointer _typeInfo%lld = { 4, "
+						"%lld, &_typeInfo%lld };\n",
+						typeTableIdx, typeInfo->size, typeInfo->pointerInfo.pointedTypeTableIdx);
 			} break;
 			case TYPECATEGORY_ARRAY:
 			{
-				PrintOut(context, outputFile, "ProgramTypeInfoArray _typeInfo%lld = { %d, "
-						"%llu, &_typeInfo%lld };\n",
-						typeTableIdx, 5, typeInfo->arrayInfo.count,
+				PrintOut(context, outputFile, "ProgramTypeInfoArray _typeInfo%lld = { 5, "
+						"%llu, %llu, &_typeInfo%lld };\n",
+						typeTableIdx, typeInfo->size, typeInfo->arrayInfo.count,
 						typeInfo->arrayInfo.elementTypeTableIdx);
 			} break;
 			case TYPECATEGORY_INVALID:
 			{
-				PrintOut(context, outputFile, "ProgramTypeInfo _typeInfo%lld = { %d };\n",
-						typeTableIdx, 6);
+				PrintOut(context, outputFile, "ProgramTypeInfo _typeInfo%lld = { 6 };\n",
+						typeTableIdx);
 			} break;
 			}
 		}
@@ -597,7 +497,6 @@ void WriteToC(Context *context)
 				u64 size = CCalculateTypeSize(context,
 						inst.variableDeclaration.variable->typeTableIdx);
 				stackCursor -= size;
-				var->stackOffset = stackCursor;
 
 				PrintOut(context, outputFile, "/* Declare variable '%S' at stack + 0x%x (size %d) */\n",
 						var->name, var->stackOffset, size);
@@ -622,14 +521,6 @@ void WriteToC(Context *context)
 				String src = CIRValueToStr(context, inst.assignment.src);
 				String dst = CIRValueToStr(context, inst.assignment.dst);
 				PrintOut(context, outputFile, "%S = %S;\n", dst, src);
-			}
-			else if (inst.type == IRINSTRUCTIONTYPE_MEMBER_ACCESS)
-			{
-				u64 offset = inst.memberAccess.structMember->offset;
-
-				String out = CIRValueToStr(context, inst.memberAccess.out);
-				String base = CIRValueToStr(context, inst.memberAccess.in);
-				PrintOut(context, outputFile, "%S = %S + %llu;\n", out, base, offset);
 			}
 			else if (inst.type == IRINSTRUCTIONTYPE_ARRAY_ACCESS)
 			{

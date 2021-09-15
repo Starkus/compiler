@@ -32,11 +32,10 @@ PrintF :: (format : String, ...args)
 		}
 		else if arg.typeInfo.typeKind == TypeKind_Floating
 		{
-			floatInfo := cast(^TypeInfoFloating) arg.typeInfo;
 			f : f64;
-			if floatInfo.size == 4
+			if arg.typeInfo.size == 4
 				f = @ cast(^f32) arg.data;
-			else if floatInfo.size == 8
+			else if arg.typeInfo.size == 8
 				f = @ cast(^f64) arg.data;
 
 			// Cheat
@@ -71,6 +70,8 @@ PrintF :: (format : String, ...args)
 			numStr.data = ^buffer[32 - count];
 			Print(numStr);
 		}
+		else
+			Print("<Unknown type>");
 	}
 
 	stdOut := GetStdHandle(-11);

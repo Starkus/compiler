@@ -7,10 +7,9 @@ struct Variable
 	String name;
 	s8 parameterIndex; // Negative if not a parameter
 	bool isStatic;
-
 	s64 typeTableIdx;
 
-	// Back end
+	// IRGen
 	u64 stackOffset;
 };
 
