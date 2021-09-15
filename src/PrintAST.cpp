@@ -32,6 +32,12 @@ String OperatorToString(s32 op)
 			return "*"_s;
 		case TOKEN_OP_DIVIDE:
 			return "/"_s;
+		case TOKEN_OP_MODULO:
+			return "%"_s;
+		case TOKEN_OP_SHIFT_LEFT:
+			return "<<"_s;
+		case TOKEN_OP_SHIFT_RIGHT:
+			return ">>"_s;
 		case TOKEN_OP_ARROW:
 			return "->"_s;
 		case TOKEN_OP_VARIABLE_DECLARATION:

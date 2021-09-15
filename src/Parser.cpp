@@ -31,6 +31,7 @@ struct Procedure
 
 	// IRGen
 	BucketArray<IRInstruction, 256, malloc, realloc> instructions;
+	s64 stackSize;
 	u64 registerCount;
 };
 
@@ -261,6 +262,8 @@ bool TryParseBinaryOperation(Context *context, ASTExpression leftHand, s32 prevP
 	case TOKEN_OP_MULTIPLY:
 	case TOKEN_OP_DIVIDE:
 	case TOKEN_OP_MODULO:
+	case TOKEN_OP_SHIFT_LEFT:
+	case TOKEN_OP_SHIFT_RIGHT:
 	case TOKEN_OP_MEMBER_ACCESS:
 	{
 		result->leftHand = NewTreeNode(context);

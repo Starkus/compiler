@@ -133,7 +133,6 @@ enum IRInstructionType
 
 	IRINSTRUCTIONTYPE_VARIABLE_DECLARATION,
 	IRINSTRUCTIONTYPE_ASSIGNMENT,
-	IRINSTRUCTIONTYPE_ARRAY_ACCESS,
 
 	IRINSTRUCTIONTYPE_UNARY_BEGIN,
 	IRINSTRUCTIONTYPE_NOT = IRINSTRUCTIONTYPE_UNARY_BEGIN,
@@ -146,6 +145,8 @@ enum IRInstructionType
 	IRINSTRUCTIONTYPE_MULTIPLY,
 	IRINSTRUCTIONTYPE_DIVIDE,
 	IRINSTRUCTIONTYPE_MODULO,
+	IRINSTRUCTIONTYPE_SHIFT_LEFT,
+	IRINSTRUCTIONTYPE_SHIFT_RIGHT,
 	IRINSTRUCTIONTYPE_EQUALS,
 	IRINSTRUCTIONTYPE_GREATER_THAN,
 	IRINSTRUCTIONTYPE_GREATER_THAN_OR_EQUALS,
@@ -232,16 +233,19 @@ void PopIRScope(Context *context)
 	--context->irStack.size;
 }
 
-void PushIRProcedure(Context *context, Procedure *procedure, String returnLabel)
+IRProcedureScope *PushIRProcedure(Context *context, Procedure *procedure, String returnLabel)
 {
 	IRProcedureScope procScope;
 	procScope.procedure = procedure;
 	procScope.irStackBase = context->irStack.size;
 	procScope.returnLabel = returnLabel;
 	procScope.stackCursor = 0;
-	*DynamicArrayAdd(&context->irProcedureStack) = procScope;
+
+	IRProcedureScope *newProcScope = DynamicArrayAdd(&context->irProcedureStack);
+	*newProcScope = procScope;
 
 	PushIRScope(context);
+	return newProcScope;
 }
 
 void PopIRProcedure(Context *context)
@@ -327,18 +331,12 @@ IRValue IRDoMemberAccess(Context *context, IRValue value, StructMember *structMe
 		TypeInfo *structTypeInfo = &context->typeTable[value.typeTableIdx];
 		if (structTypeInfo->typeCategory == TYPECATEGORY_POINTER)
 		{
-			s64 structTypeInfoIdx = structTypeInfo->pointerInfo.pointedTypeTableIdx;
-			structTypeInfo = &context->typeTable[structTypeInfoIdx];
-
 			value = IRDereferenceValue(context, value);
 			value.dereference = false;
 			value.typeTableIdx = GetTypeInfoPointerOf(context, value.typeTableIdx);
 		}
 		else
-		{
-			value.dereference = false;
-			value.typeTableIdx = GetTypeInfoPointerOf(context, value.typeTableIdx);
-		}
+			value = IRPointerToValue(context, value);
 	}
 
 	IRValue result;
@@ -383,17 +381,77 @@ IRValue IRDoMemberAccess(Context *context, IRValue value, StructMember *structMe
 	return result;
 }
 
-IRValue IRDoArrayAccess(Context *context, IRValue arrayValue, IRValue indexValue, IRValue outValue,
-		s64 elementTypeIdx)
+IRValue IRInstructionFromMultiply(Context *context, IRValue leftValue, IRValue rightValue)
 {
-	IRInstruction inst = {};
-	inst.type = IRINSTRUCTIONTYPE_ARRAY_ACCESS;
-	inst.arrayAccess.array = arrayValue;
-	inst.arrayAccess.index = indexValue;
+	if (leftValue.valueType == IRVALUETYPE_IMMEDIATE_INTEGER)
+	{
+		if (leftValue.immediate == 1)
+			return rightValue;
+		else if (rightValue.valueType == IRVALUETYPE_IMMEDIATE_INTEGER)
+		{
+			leftValue.immediate *= rightValue.immediate;
+			return leftValue;
+		}
+		else if (context->typeTable[rightValue.typeTableIdx].typeCategory == TYPECATEGORY_INTEGER &&
+		((leftValue.immediate & (~(leftValue.immediate - 1))) == leftValue.immediate))
+		{
+			IRValue outValue = IRValueRegister(NewVirtualRegister(context), leftValue.typeTableIdx);
 
-	if (inst.arrayAccess.array.dereference)
-		inst.arrayAccess.array = IRPointerToValue(context, inst.arrayAccess.array);
+			unsigned long shiftAmount;
+			_BitScanForward64(&shiftAmount, leftValue.immediate);
 
+			ASSERT(1ll << shiftAmount == leftValue.immediate);
+
+			IRInstruction inst;
+			inst.type = IRINSTRUCTIONTYPE_SHIFT_LEFT;
+			inst.binaryOperation.left = rightValue;
+			inst.binaryOperation.right = IRValueImmediate(shiftAmount, TYPETABLEIDX_S64);
+			inst.binaryOperation.out = outValue;
+			*AddInstruction(context) = inst;
+
+			return outValue;
+		}
+	}
+
+	if (rightValue.valueType == IRVALUETYPE_IMMEDIATE_INTEGER)
+	{
+		if (rightValue.immediate == 1)
+			return leftValue;
+		if (context->typeTable[leftValue.typeTableIdx].typeCategory == TYPECATEGORY_INTEGER &&
+			((rightValue.immediate & (~(rightValue.immediate - 1))) == rightValue.immediate))
+		{
+			IRValue outValue = IRValueRegister(NewVirtualRegister(context), rightValue.typeTableIdx);
+
+			unsigned long shiftAmount;
+			_BitScanForward64(&shiftAmount, rightValue.immediate);
+
+			ASSERT(1ll << shiftAmount == rightValue.immediate);
+
+			IRInstruction inst;
+			inst.type = IRINSTRUCTIONTYPE_SHIFT_LEFT;
+			inst.binaryOperation.left = leftValue;
+			inst.binaryOperation.right = IRValueImmediate(shiftAmount, TYPETABLEIDX_S64);
+			inst.binaryOperation.out = outValue;
+			*AddInstruction(context) = inst;
+
+			return outValue;
+		}
+	}
+
+	IRValue outValue = IRValueRegister(NewVirtualRegister(context), leftValue.typeTableIdx);
+
+	IRInstruction inst;
+	inst.type = IRINSTRUCTIONTYPE_MULTIPLY;
+	inst.binaryOperation.left = leftValue;
+	inst.binaryOperation.right = rightValue;
+	inst.binaryOperation.out = outValue;
+	*AddInstruction(context) = inst;
+
+	return outValue;
+}
+
+IRValue IRDoArrayAccess(Context *context, IRValue arrayValue, IRValue indexValue, s64 elementTypeIdx)
+{
 	TypeInfo *arrayTypeInfo = &context->typeTable[arrayValue.typeTableIdx];
 	if (arrayTypeInfo->typeCategory == TYPECATEGORY_POINTER)
 	{
@@ -401,25 +459,47 @@ IRValue IRDoArrayAccess(Context *context, IRValue arrayValue, IRValue indexValue
 		arrayTypeInfo = &context->typeTable[pointedTypeIdx];
 	}
 
-	s64 pointerToElementTypeIdx = GetTypeInfoPointerOf(context, elementTypeIdx);
-
-	if (arrayTypeInfo->arrayInfo.count == 0)
+	s64 stringTableIdx = FindTypeInStackByName(context, {}, "String"_s);
+	if (arrayValue.typeTableIdx == stringTableIdx || arrayTypeInfo->arrayInfo.count == 0)
 	{
 		// Access the 'data' pointer
 		s64 arrayTypeTableIdx = FindTypeInStackByName(context, {}, "Array"_s);
 		TypeInfo *arrayStructTypeInfo = &context->typeTable[arrayTypeTableIdx];
 		StructMember *structMember = &arrayStructTypeInfo->structInfo.members[1];
 
-		IRValue arrayMember = IRDoMemberAccess(context, inst.arrayAccess.array, structMember);
+		IRValue arrayMember = IRDoMemberAccess(context, arrayValue, structMember);
 
-		inst.arrayAccess.array = arrayMember;
-		inst.arrayAccess.array.dereference = true;
+		arrayValue = arrayMember;
+		arrayValue.dereference = true;
+		arrayValue = IRDereferenceValue(context, arrayValue);
 	}
 
-	inst.arrayAccess.elementTypeTableIdx = elementTypeIdx;
-	inst.arrayAccess.out = outValue;
-	inst.arrayAccess.out.typeTableIdx = pointerToElementTypeIdx;
-	*AddInstruction(context) = inst;
+	if (arrayValue.dereference)
+	{
+		if (arrayTypeInfo->typeCategory == TYPECATEGORY_POINTER)
+		{
+			arrayValue = IRDereferenceValue(context, arrayValue);
+			arrayValue.dereference = false;
+			arrayValue.typeTableIdx = GetTypeInfoPointerOf(context, arrayValue.typeTableIdx);
+		}
+		else
+			arrayValue = IRPointerToValue(context, arrayValue);
+	}
+
+	s64 pointerToElementTypeIdx = GetTypeInfoPointerOf(context, elementTypeIdx);
+
+	s64 elementSize = context->typeTable[elementTypeIdx].size;
+
+	IRValue offsetValue = IRInstructionFromMultiply(context, indexValue,
+			IRValueImmediate(elementSize, TYPETABLEIDX_S64));
+
+	IRValue outValue = IRValueRegister(NewVirtualRegister(context), pointerToElementTypeIdx);
+	IRInstruction addOffsetInst = {};
+	addOffsetInst.type = IRINSTRUCTIONTYPE_ADD;
+	addOffsetInst.binaryOperation.left = arrayValue;
+	addOffsetInst.binaryOperation.right = offsetValue;
+	addOffsetInst.binaryOperation.out = outValue;
+	*AddInstruction(context) = addOffsetInst;
 
 	IRValue result = outValue;
 	result.typeTableIdx = elementTypeIdx;
@@ -448,7 +528,13 @@ IRValue IRInstructionFromBinaryOperation(Context *context, ASTExpression *expres
 	{
 		IRValue arrayValue = IRGenFromExpression(context, leftHand);
 		IRValue indexValue = IRGenFromExpression(context, rightHand);
-		result = IRDoArrayAccess(context, arrayValue, indexValue, result, expression->typeTableIdx);
+		result = IRDoArrayAccess(context, arrayValue, indexValue, expression->typeTableIdx);
+	}
+	else if (expression->binaryOperation.op == TOKEN_OP_MULTIPLY)
+	{
+		IRValue leftValue  = IRGenFromExpression(context, leftHand);
+		IRValue rightValue = IRGenFromExpression(context, rightHand);
+		result = IRInstructionFromMultiply(context, leftValue, rightValue);
 	}
 	else
 	{
@@ -703,7 +789,7 @@ IRValue IRGenFromExpression(Context *context, ASTExpression *expression)
 		Procedure *procedure = expression->procedureDeclaration.procedure;
 		BucketArrayInit(&procedure->instructions);
 		String returnLabel = NewLabel(context, "return"_s);
-		PushIRProcedure(context, procedure, returnLabel);
+		IRProcedureScope *currentProc = PushIRProcedure(context, procedure, returnLabel);
 
 		if (procedure->astBody)
 		{
@@ -720,6 +806,8 @@ IRValue IRGenFromExpression(Context *context, ASTExpression *expression)
 			returnInst.type = IRINSTRUCTIONTYPE_RETURN;
 			*AddInstruction(context) = returnInst;
 		}
+
+		procedure->stackSize = currentProc->stackCursor;
 
 		PopIRProcedure(context);
 	} break;
@@ -1115,12 +1203,8 @@ IRValue IRGenFromExpression(Context *context, ASTExpression *expression)
 				bufferIndexValue.valueType = IRVALUETYPE_IMMEDIATE_INTEGER;
 				bufferIndexValue.immediate = argIdx;
 
-				IRValue bufferSlotValue = {};
-				bufferSlotValue.valueType = IRVALUETYPE_REGISTER;
-				bufferSlotValue.registerIdx = NewVirtualRegister(context);
-				bufferSlotValue.typeTableIdx = anyTableIdx;
-				bufferSlotValue = IRDoArrayAccess(context, bufferIRValue, bufferIndexValue,
-						bufferSlotValue, anyTableIdx);
+				IRValue bufferSlotValue = IRDoArrayAccess(context, bufferIRValue, bufferIndexValue,
+						anyTableIdx);
 
 				IRValue rightValue = IRGenFromExpression(context, arg);
 				IRInstructionFromAssignment(context, bufferSlotValue, rightValue);

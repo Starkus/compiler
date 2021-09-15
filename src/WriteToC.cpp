@@ -42,13 +42,6 @@ String CTypeInfoToString(Context *context, s64 typeTableIdx)
 	return "???TYPE"_s;
 }
 
-s64 CCalculateTypeSize(Context *context, s64 typeTableIdx)
-{
-	ASSERT(typeTableIdx >= 0);
-	TypeInfo *typeInfo  = &context->typeTable[typeTableIdx];
-	return typeInfo->size;
-}
-
 String CIRValueToStr(Context *context, IRValue value)
 {
 	String result = "???VALUE"_s;
@@ -106,7 +99,8 @@ String CIRValueToStr(Context *context, IRValue value)
 	}
 	else if (value.valueType == IRVALUETYPE_SIZEOF)
 	{
-		result = TPrintF("%llu", CCalculateTypeSize(context, value.sizeOfTypeTableIdx));
+		TypeInfo *typeInfo  = &context->typeTable[value.sizeOfTypeTableIdx];
+		result = TPrintF("%llu", typeInfo->size);
 	}
 	else if (value.valueType == IRVALUETYPE_TYPEOF)
 	{
@@ -161,6 +155,10 @@ String OperatorToStr(IRInstruction inst)
 		return "/"_s;
 	case IRINSTRUCTIONTYPE_MODULO:
 		return "%"_s;
+	case IRINSTRUCTIONTYPE_SHIFT_LEFT:
+		return "<<"_s;
+	case IRINSTRUCTIONTYPE_SHIFT_RIGHT:
+		return ">>"_s;
 	case IRINSTRUCTIONTYPE_EQUALS:
 		return "=="_s;
 	case IRINSTRUCTIONTYPE_GREATER_THAN:
@@ -237,8 +235,6 @@ void PrintOut(Context *context, HANDLE outputFile, const char *format, ...)
 
 void WriteToC(Context *context)
 {
-	u64 stackCursor;
-
 	HANDLE outputFile = CreateFileA(
 			"out.c",
 			GENERIC_WRITE,
@@ -263,7 +259,7 @@ void WriteToC(Context *context)
 		else
 			varType = CTypeInfoToString(context, staticVar.typeTableIdx);
 
-		s64 size = CCalculateTypeSize(context, staticVar.typeTableIdx);
+		TypeInfo *typeInfo  = &context->typeTable[staticVar.typeTableIdx];
 
 		if (staticVar.initialValue.valueType == IRVALUETYPE_IMMEDIATE_STRING)
 		{
@@ -276,7 +272,7 @@ void WriteToC(Context *context)
 		}
 		else
 		{
-			PrintOut(context, outputFile, "u8 %S[%d]", staticVar.variable->name, size);
+			PrintOut(context, outputFile, "u8 %S[%d]", staticVar.variable->name, typeInfo->size);
 			if (staticVar.initialValue.valueType != IRVALUETYPE_INVALID)
 			{
 				union
@@ -292,7 +288,7 @@ void WriteToC(Context *context)
 				}
 				else if (staticVar.initialValue.valueType == IRVALUETYPE_IMMEDIATE_FLOAT)
 				{
-					if (size == 4)
+					if (typeInfo->size == 4)
 						asF32 = (f32)staticVar.initialValue.immediateFloat;
 					else
 						asF64 = staticVar.initialValue.immediateFloat;
@@ -304,7 +300,7 @@ void WriteToC(Context *context)
 
 				PrintOut(context, outputFile, " = { ");
 				s64 scan = asS64;
-				for (int i = 0; i < size; ++i)
+				for (int i = 0; i < typeInfo->size; ++i)
 				{
 					if (i)
 						PrintOut(context, outputFile, ", ");
@@ -442,22 +438,8 @@ void WriteToC(Context *context)
 		String signature = CGetProcedureSignature(context, proc);
 		PrintOut(context, outputFile, "%S {\n", signature);
 
-		u64 stackSize = 0;
-		// Dry run to know stack size
-		const u64 instructionCount = BucketArrayCount(&proc->instructions);
-		for (int instructionIdx = 0; instructionIdx < instructionCount; ++instructionIdx)
-		{
-			IRInstruction inst = proc->instructions[instructionIdx];
-			if (inst.type == IRINSTRUCTIONTYPE_VARIABLE_DECLARATION)
-			{
-				stackSize += CCalculateTypeSize(context,
-						inst.variableDeclaration.variable->typeTableIdx);
-			}
-		}
-		stackCursor = stackSize;
-
-		if (stackSize)
-			PrintOut(context, outputFile, "u8 stack[0x%x];\n", stackSize);
+		if (proc->stackSize)
+			PrintOut(context, outputFile, "u8 stack[0x%x];\n", proc->stackSize);
 
 		// Declare registers
 		if (proc->registerCount)
@@ -482,6 +464,7 @@ void WriteToC(Context *context)
 			param->stackOffset = U64_MAX; // FFFFFFFF offset means parameter @Cleanup
 		}
 
+		u64 instructionCount = BucketArrayCount(&proc->instructions);
 		for (int instructionIdx = 0; instructionIdx < instructionCount; ++instructionIdx)
 		{
 			IRInstruction inst = proc->instructions[instructionIdx];
@@ -494,12 +477,10 @@ void WriteToC(Context *context)
 			else if (inst.type == IRINSTRUCTIONTYPE_VARIABLE_DECLARATION)
 			{
 				Variable *var = inst.variableDeclaration.variable;
-				u64 size = CCalculateTypeSize(context,
-						inst.variableDeclaration.variable->typeTableIdx);
-				stackCursor -= size;
+				TypeInfo *typeInfo  = &context->typeTable[var->typeTableIdx];
 
 				PrintOut(context, outputFile, "/* Declare variable '%S' at stack + 0x%x (size %d) */\n",
-						var->name, var->stackOffset, size);
+						var->name, var->stackOffset, typeInfo->size);
 			}
 			else if (inst.type >= IRINSTRUCTIONTYPE_UNARY_BEGIN && inst.type < IRINSTRUCTIONTYPE_UNARY_END)
 			{
@@ -521,14 +502,6 @@ void WriteToC(Context *context)
 				String src = CIRValueToStr(context, inst.assignment.src);
 				String dst = CIRValueToStr(context, inst.assignment.dst);
 				PrintOut(context, outputFile, "%S = %S;\n", dst, src);
-			}
-			else if (inst.type == IRINSTRUCTIONTYPE_ARRAY_ACCESS)
-			{
-				String out = CIRValueToStr(context, inst.arrayAccess.out);
-				String array = CIRValueToStr(context, inst.arrayAccess.array);
-				String index = CIRValueToStr(context, inst.arrayAccess.index);
-				u64 elementSize = CCalculateTypeSize(context, inst.arrayAccess.elementTypeTableIdx);
-				PrintOut(context, outputFile, "%S = %S + %S * %llu;\n", out, array, index, elementSize);
 			}
 			else if (inst.type == IRINSTRUCTIONTYPE_PROCEDURE_CALL)
 			{

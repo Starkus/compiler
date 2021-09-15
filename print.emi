@@ -18,12 +18,14 @@ PrintF :: (format : String, ...args)
 			buffer : [16] u8;
 			n := num;
 			count := 0;
-			while n > 0
+			while 1
 			{
 				digit := n % 10;
 				buffer[15 - count] = cast(u8) digit + '0';
 				count += 1;
+
 				n /= 10;
+				if n <= 0 break;
 			}
 			numStr : String;
 			numStr.size = cast(u64) count;

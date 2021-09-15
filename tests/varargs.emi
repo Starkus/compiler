@@ -1,84 +1,10 @@
-Proc :: (param : Any)
-{
-	if param.typeInfo.typeKind == TypeKind_Integer
-	{
-		intInfo := cast(^TypeInfoInteger) param.typeInfo;
-		num : s64;
-		if intInfo.size == 1
-			num = @ cast(^s8) param.data;
-		else if intInfo.size == 2
-			num = @ cast(^s16) param.data;
-		else if intInfo.size == 4
-			num = @ cast(^s32) param.data;
-		else if intInfo.size == 8
-			num = @ cast(^s64) param.data;
-
-		buffer : [16] u8;
-		n := num;
-		count := 0;
-		while n > 0
-		{
-			digit := n % 10;
-			buffer[15 - count] = cast(u8) digit + '0';
-			count += 1;
-			n /= 10;
-		}
-		numStr : String;
-		numStr.size = cast(u64) count;
-		numStr.data = ^buffer[16 - count];
-		Print(numStr);
-	}
-	else if param.typeInfo.typeKind == TypeKind_Floating
-	{
-		floatInfo := cast(^TypeInfoFloating) param.typeInfo;
-		f : f64;
-		if floatInfo.size == 4
-			f = @ cast(^f32) param.data;
-		else if floatInfo.size == 8
-			f = @ cast(^f64) param.data;
-
-		// Cheat
-		buffer : [32] u8;
-		count := 0;
-
-		// Fraction
-		n : s64 = f * 10000000;
-		i := 7;
-		while i > 0
-		{
-			digit := n % 10;
-			buffer[31 - count] = cast(u8) digit + '0';
-			count += 1;
-			n /= 10;
-			i -= 1;
-		}
-		buffer[31 - count] = '.';
-		count += 1;
-
-		// Wholes
-		n = f;
-		while n > 0
-		{
-			digit := n % 10;
-			buffer[31 - count] = cast(u8) digit + '0';
-			count += 1;
-			n /= 10;
-		}
-		numStr : String;
-		numStr.size = cast(u64) count;
-		numStr.data = ^buffer[32 - count];
-		Print(numStr);
-	}
-	Print("\n");
-}
-
 Varargs :: (...args)
 {
 	i : s64 = 0;
 	while (i < cast(s64) args.size)
 	{
-		Print("An arg\n");
-		Proc(args[i]);
+		Print("An arg: ");
+		PrintF("%\n", args[i]);
 		i += 1;
 	}
 }

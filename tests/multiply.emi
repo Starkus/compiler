@@ -1,0 +1,10 @@
+Main :: () -> s64
+{
+	immediates := 4 * 5;
+	n := 6;
+	varTimesImm := n * 7;
+	replaceForShiftLeft := 4 * n;
+	replaceForShiftRight := n * 0x10000;
+
+	return 0;
+}

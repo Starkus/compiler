@@ -20,6 +20,14 @@ Main :: () -> s64
 	arrayA : [20] u8;
 	arrayB : [32] s32;
 
+	i : s64 = 0;
+	while i < 20
+	{
+		arrayA[i] = cast(u8) i;
+		PrintF("Array[%] = %\n", i, arrayA[i]);
+		i += 1;
+	}
+
 	foo : u8 = arrayA[2];
 	bar := arrayB[16];
 

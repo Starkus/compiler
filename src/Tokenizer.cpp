@@ -34,6 +34,12 @@ const String TokenTypeToString(s32 type)
 		return "< * >"_s;
 	case TOKEN_OP_DIVIDE:
 		return "< / >"_s;
+	case TOKEN_OP_MODULO:
+		return "< % >"_s;
+	case TOKEN_OP_SHIFT_LEFT:
+		return "< << >"_s;
+	case TOKEN_OP_SHIFT_RIGHT:
+		return "< >> >"_s;
 	case TOKEN_OP_POINTER_TO:
 		return "< ^ >"_s;
 	case TOKEN_OP_DEREFERENCE:
@@ -105,6 +111,8 @@ s32 GetOperatorPrecedence(s32 op)
 		case TOKEN_OP_DIVIDE:
 		case TOKEN_OP_MODULO:
 			return 6;
+		case TOKEN_OP_SHIFT_LEFT:
+		case TOKEN_OP_SHIFT_RIGHT:
 		case TOKEN_OP_AND:
 		case TOKEN_OP_OR:
 		case TOKEN_OP_BITWISE_AND:
