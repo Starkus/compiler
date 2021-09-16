@@ -65,29 +65,16 @@ String CIRValueToStr(Context *context, IRValue value)
 	}
 	else if (value.valueType == IRVALUETYPE_PARAMETER)
 	{
-		result = TPrintF("param%hhd", value.variable->parameterIndex);
+		result = TPrintF("param%hhd", value.parameterIdx);
 		printTypeMemberAccess = true;
-	}
-	else if (value.valueType == IRVALUETYPE_VARIABLE)
-	{
-		if (value.variable->isStatic)
-		{
-			result = TPrintF("%S", value.variable->name);
-		}
-		else if (value.variable->parameterIndex >= 0)
-		{
-			result = TPrintF("param%hhd", value.variable->parameterIndex);
-			printTypeMemberAccess = true; // Parameters are registers
-		}
-		else
-		{
-			result = TPrintF("/* %S */ stack + 0x%x", value.variable->name,
-					value.variable->stackOffset);
-		}
 	}
 	else if (value.valueType == IRVALUETYPE_STACK_OFFSET)
 	{
 		result = TPrintF("stack + 0x%x", value.stackOffset);
+	}
+	else if (value.valueType == IRVALUETYPE_DATA_OFFSET)
+	{
+		result = TPrintF("%S + 0x%x", value.dataOffset.variable->name, value.dataOffset.offset);
 	}
 	else if (value.valueType == IRVALUETYPE_IMMEDIATE_INTEGER)
 	{
@@ -251,7 +238,6 @@ void WriteToC(Context *context)
 	for (int staticVariableIdx = 0; staticVariableIdx < staticVariableCount; ++staticVariableIdx)
 	{
 		IRStaticVariable staticVar = context->irStaticVariables[staticVariableIdx];
-		staticVar.variable->stackOffset = U64_MAX;
 
 		String varType;
 		if (staticVar.initialValue.valueType == IRVALUETYPE_IMMEDIATE_STRING)
@@ -457,13 +443,6 @@ void WriteToC(Context *context)
 
 		PrintOut(context, outputFile, "\n");
 
-		// Add parameters to variable stack
-		for (int paramIdx = 0; paramIdx < proc->parameters.size; ++paramIdx)
-		{
-			Variable *param = proc->parameters[paramIdx].variable;
-			param->stackOffset = U64_MAX; // FFFFFFFF offset means parameter @Cleanup
-		}
-
 		u64 instructionCount = BucketArrayCount(&proc->instructions);
 		for (int instructionIdx = 0; instructionIdx < instructionCount; ++instructionIdx)
 		{
@@ -474,14 +453,6 @@ void WriteToC(Context *context)
 
 			if (inst.type == IRINSTRUCTIONTYPE_COMMENT)
 				PrintOut(context, outputFile, "// %S\n", inst.comment);
-			else if (inst.type == IRINSTRUCTIONTYPE_VARIABLE_DECLARATION)
-			{
-				Variable *var = inst.variableDeclaration.variable;
-				TypeInfo *typeInfo  = &context->typeTable[var->typeTableIdx];
-
-				PrintOut(context, outputFile, "/* Declare variable '%S' at stack + 0x%x (size %d) */\n",
-						var->name, var->stackOffset, typeInfo->size);
-			}
 			else if (inst.type >= IRINSTRUCTIONTYPE_UNARY_BEGIN && inst.type < IRINSTRUCTIONTYPE_UNARY_END)
 			{
 				String out = CIRValueToStr(context, inst.unaryOperation.out);

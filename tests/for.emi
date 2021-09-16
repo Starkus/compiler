@@ -1,0 +1,26 @@
+Main :: () -> s64
+{
+	// Range
+	for 0..4
+	{
+		foo := i;
+	}
+
+	// Array
+	array : [4] s32;
+	for array
+	{
+		foo := i;
+		bar := it;
+	}
+
+	// Dynamic array
+	dynamicArray : [] s32;
+	for dynamicArray
+	{
+		foo := i;
+		bar := it;
+	}
+
+	return 0;
+}

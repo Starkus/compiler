@@ -265,6 +265,7 @@ bool TryParseBinaryOperation(Context *context, ASTExpression leftHand, s32 prevP
 	case TOKEN_OP_SHIFT_LEFT:
 	case TOKEN_OP_SHIFT_RIGHT:
 	case TOKEN_OP_MEMBER_ACCESS:
+	case TOKEN_OP_RANGE:
 	{
 		result->leftHand = NewTreeNode(context);
 		*result->leftHand = leftHand;
@@ -332,6 +333,24 @@ ASTWhile ParseWhile(Context *context)
 	*whileNode.body = ParseStatement(context);
 
 	return whileNode;
+}
+
+ASTFor ParseFor(Context *context)
+{
+	ASSERT(context->token->type == TOKEN_KEYWORD_FOR);
+
+	ASTFor forNode = {};
+	forNode.loc = context->token->loc;
+	Advance(context);
+
+	forNode.range = NewTreeNode(context);
+	*forNode.range = ParseExpression(context, -1);
+	forNode.body = NewTreeNode(context);
+	*forNode.body = ParseStatement(context);
+
+	// @Todo: check range expression is valid?
+
+	return forNode;
 }
 
 ASTStructMemberDeclaration ParseStructMemberDeclaration(Context *context)
@@ -521,7 +540,7 @@ ASTProcedureDeclaration ParseProcedureDeclaration(Context *context)
 	Advance(context);
 	while (context->token->type != ')')
 	{
-		if (context->token->type == TOKEN_OP_VARARGS)
+		if (context->token->type == TOKEN_OP_RANGE)
 		{
 			Advance(context);
 			procedure->isVarargs = true;
@@ -836,6 +855,11 @@ ASTExpression ParseStatement(Context *context)
 	{
 		result.nodeType = ASTNODETYPE_WHILE;
 		result.whileNode = ParseWhile(context);
+	} break;
+	case TOKEN_KEYWORD_FOR:
+	{
+		result.nodeType = ASTNODETYPE_FOR;
+		result.forNode = ParseFor(context);
 	} break;
 	case TOKEN_KEYWORD_BREAK:
 	{

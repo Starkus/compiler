@@ -54,8 +54,8 @@ const String TokenTypeToString(s32 type)
 		return "< :s >"_s;
 	case TOKEN_OP_STATIC_DEF:
 		return "< :: >"_s;
-	case TOKEN_OP_VARARGS:
-		return "< ... >"_s;
+	case TOKEN_OP_RANGE:
+		return "< .. >"_s;
 
 	case TOKEN_END_OF_FILE:
 		return "<EOF>"_s;
@@ -103,6 +103,7 @@ s32 GetOperatorPrecedence(s32 op)
 		case TOKEN_OP_GREATER_THAN_OR_EQUAL:
 		case TOKEN_OP_LESS_THAN:
 		case TOKEN_OP_LESS_THAN_OR_EQUAL:
+		case TOKEN_OP_RANGE:
 			return 2;
 		case TOKEN_OP_PLUS:
 		case TOKEN_OP_MINUS:
@@ -297,6 +298,8 @@ Token ReadTokenAndAdvance(Tokenizer *tokenizer)
 			result.type = TOKEN_KEYWORD_RETURN;
 		else if (TokenIsStr(&result, "while"))
 			result.type = TOKEN_KEYWORD_WHILE;
+		else if (TokenIsStr(&result, "for"))
+			result.type = TOKEN_KEYWORD_FOR;
 		else if (TokenIsStr(&result, "break"))
 			result.type = TOKEN_KEYWORD_BREAK;
 		else if (TokenIsStr(&result, "struct"))
@@ -329,9 +332,9 @@ Token ReadTokenAndAdvance(Tokenizer *tokenizer)
 			++tokenizer->cursor;
 			ASSERT(!IsNumeric(*tokenizer->cursor));
 			if (*tokenizer->cursor == 'x' ||
-					*tokenizer->cursor == 'X' ||
-					*tokenizer->cursor == 'b' ||
-					*tokenizer->cursor == '.')
+				*tokenizer->cursor == 'X' ||
+				*tokenizer->cursor == 'b' ||
+				*tokenizer->cursor == '.')
 			{
 				done = false;
 				++result.size;
@@ -499,10 +502,10 @@ Token ReadTokenAndAdvance(Tokenizer *tokenizer)
 		} break;
 		case '.':
 		{
-			if (next == '.' && *(tokenizer->cursor + 2) == '.')
+			if (next == '.')
 			{
-				result.type = TOKEN_OP_VARARGS;
-				tokenizer->cursor += 2;
+				result.type = TOKEN_OP_RANGE;
+				++tokenizer->cursor;
 			}
 			else
 				result.type = TOKEN_OP_MEMBER_ACCESS;

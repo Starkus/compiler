@@ -166,6 +166,16 @@ struct ASTWhile : ASTBase
 	ASTExpression *body;
 };
 
+struct ASTFor : ASTBase
+{
+	ASTExpression *range;
+	ASTExpression *body;
+
+	// Type check
+	Variable *indexVariable;
+	Variable *elementVariable;
+};
+
 struct ASTReturn : ASTBase
 {
 	ASTExpression *expression;
@@ -209,6 +219,7 @@ enum ASTNodeType
 	ASTNODETYPE_PROCEDURE_CALL,
 	ASTNODETYPE_IF,
 	ASTNODETYPE_WHILE,
+	ASTNODETYPE_FOR,
 	ASTNODETYPE_BREAK,
 	ASTNODETYPE_RETURN,
 	ASTNODETYPE_DEFER,
@@ -235,6 +246,7 @@ struct ASTExpression
 		ASTProcedureCall procedureCall;
 		ASTIf ifNode;
 		ASTWhile whileNode;
+		ASTFor forNode;
 		ASTReturn returnNode;
 		ASTDefer deferNode;
 		ASTTypeOf typeOfNode;

@@ -1,4 +1,4 @@
-Varargs :: (...args)
+Varargs :: (..args)
 {
 	i : s64 = 0;
 	while (i < cast(s64) args.size)

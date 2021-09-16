@@ -9,7 +9,6 @@ enum IRValueType
 {
 	IRVALUETYPE_INVALID = -1,
 	IRVALUETYPE_REGISTER,
-	IRVALUETYPE_VARIABLE,
 	IRVALUETYPE_PARAMETER,
 	IRVALUETYPE_STACK_OFFSET,
 	IRVALUETYPE_DATA_OFFSET,
@@ -25,7 +24,7 @@ struct IRValue
 	union
 	{
 		s64 registerIdx;
-		Variable *variable;
+		s64 parameterIdx;
 		s64 stackOffset;
 		struct
 		{
@@ -131,7 +130,6 @@ enum IRInstructionType
 	IRINSTRUCTIONTYPE_RETURN,
 	IRINSTRUCTIONTYPE_PROCEDURE_CALL,
 
-	IRINSTRUCTIONTYPE_VARIABLE_DECLARATION,
 	IRINSTRUCTIONTYPE_ASSIGNMENT,
 
 	IRINSTRUCTIONTYPE_UNARY_BEGIN,
@@ -183,6 +181,7 @@ struct IRScope
 {
 	String closeLabel;
 	DynamicArray<ASTExpression *, malloc, realloc> deferredStatements;
+	s64 stackCursor;
 };
 
 struct IRProcedureScope
@@ -190,7 +189,6 @@ struct IRProcedureScope
 	Procedure *procedure;
 	s64 irStackBase;
 	String returnLabel;
-	s64 stackCursor;
 };
 
 struct IRProcedure
@@ -223,13 +221,21 @@ String NewLabel(Context *context, String prefix)
 
 void PushIRScope(Context *context)
 {
-	IRScope *newScope = DynamicArrayAdd(&context->irStack);
-	newScope->closeLabel = {};
-	DynamicArrayInit(&newScope->deferredStatements, 4);
+	IRScope newScope = {};
+	DynamicArrayInit(&newScope.deferredStatements, 4);
+
+	if (context->irStack.size)
+	{
+		IRScope *stackTop = &context->irStack[context->irStack.size - 1];
+		newScope.stackCursor = stackTop->stackCursor;
+	}
+
+	*DynamicArrayAdd(&context->irStack) = newScope;
 }
 
 void PopIRScope(Context *context)
 {
+	ASSERT(context->irStack.size);
 	--context->irStack.size;
 }
 
@@ -239,7 +245,6 @@ IRProcedureScope *PushIRProcedure(Context *context, Procedure *procedure, String
 	procScope.procedure = procedure;
 	procScope.irStackBase = context->irStack.size;
 	procScope.returnLabel = returnLabel;
-	procScope.stackCursor = 0;
 
 	IRProcedureScope *newProcScope = DynamicArrayAdd(&context->irProcedureStack);
 	*newProcScope = procScope;
@@ -600,6 +605,29 @@ IRValue IRInstructionFromBinaryOperation(Context *context, ASTExpression *expres
 	return result;
 }
 
+void IRAddComment(Context *context, String comment)
+{
+	IRInstruction result;
+	result.type = IRINSTRUCTIONTYPE_COMMENT;
+	result.comment = comment;
+	*AddInstruction(context) = result;
+}
+
+void IRAllocateVariableOnStack(Context *context, Variable *variable)
+{
+	IRScope *stackTop = &context->irStack[context->irStack.size - 1];
+	s64 varSize = context->typeTable[variable->typeTableIdx].size;
+	variable->stackOffset = stackTop->stackCursor;
+	stackTop->stackCursor += varSize;
+
+	IRAddComment(context, TPrintF("Declare variable \"%S\" on stack + 0x%llX", variable->name,
+				variable->stackOffset));
+
+	IRProcedureScope *currentProc = &context->irProcedureStack[context->irProcedureStack.size - 1];
+	if (stackTop->stackCursor > currentProc->procedure->stackSize)
+		currentProc->procedure->stackSize = stackTop->stackCursor;
+}
+
 Variable *IRAddTempVariable(Context *context, String name, s64 typeTableIdx)
 {
 	Variable *variable = BucketArrayAdd(&context->variables);
@@ -608,10 +636,7 @@ Variable *IRAddTempVariable(Context *context, String name, s64 typeTableIdx)
 	variable->parameterIndex = -1;
 	variable->typeTableIdx = typeTableIdx;
 
-	IRProcedureScope *currentProc = &context->irProcedureStack[context->irProcedureStack.size - 1];
-	s64 varSize = context->typeTable[typeTableIdx].size;
-	variable->stackOffset = currentProc->stackCursor;
-	currentProc->stackCursor += varSize;
+	IRAllocateVariableOnStack(context, variable);
 
 	return variable;
 }
@@ -659,24 +684,19 @@ void IRInstructionFromAssignment(Context *context, IRValue leftValue, IRValue ri
 			String tempVarName = TPrintF("_tempVarForAny%llu", tempVarForAnyUniqueID++);
 			Variable *tempVar = IRAddTempVariable(context, tempVarName, data.typeTableIdx);
 
-			IRInstruction varDeclInst = {};
-			varDeclInst.type = IRINSTRUCTIONTYPE_VARIABLE_DECLARATION;
-			varDeclInst.variableDeclaration.variable = tempVar;
-			*AddInstruction(context) = varDeclInst;
+			IRValue tempVarIRValue = {};
+			tempVarIRValue.valueType = IRVALUETYPE_STACK_OFFSET;
+			tempVarIRValue.stackOffset = tempVar->stackOffset;
+			tempVarIRValue.dereference = true;
+			tempVarIRValue.typeTableIdx = data.typeTableIdx;
 
 			IRInstruction dataCopyInst = {};
 			dataCopyInst.type = IRINSTRUCTIONTYPE_ASSIGNMENT;
 			dataCopyInst.assignment.src = data;
-			dataCopyInst.assignment.dst.valueType = IRVALUETYPE_VARIABLE;
-			dataCopyInst.assignment.dst.variable = tempVar;
-			dataCopyInst.assignment.dst.dereference = true;
-			dataCopyInst.assignment.dst.typeTableIdx = data.typeTableIdx;
+			dataCopyInst.assignment.dst = tempVarIRValue;
 			*AddInstruction(context) = dataCopyInst;
 
-			data = {};
-			data.valueType = IRVALUETYPE_VARIABLE;
-			data.variable = tempVar;
-			data.dereference = true;
+			data = tempVarIRValue;
 		}
 
 		// Write pointer to data to it
@@ -730,7 +750,7 @@ IRValue IRValueFromVariable(Context *context, Variable *variable)
 	if (variable->parameterIndex >= 0)
 	{
 		result.valueType = IRVALUETYPE_PARAMETER;
-		result.variable = variable;
+		result.parameterIdx = variable->parameterIndex;
 		result.dereference = false;
 
 		TypeInfo *typeInfo = &context->typeTable[variable->typeTableIdx];
@@ -746,8 +766,9 @@ IRValue IRValueFromVariable(Context *context, Variable *variable)
 	}
 	else
 	{
-		result.valueType = IRVALUETYPE_VARIABLE;
-		result.variable = variable;
+		result.valueType = IRVALUETYPE_DATA_OFFSET;
+		result.dataOffset.variable = variable;
+		result.dataOffset.offset = 0;
 		result.dereference = true; // Dereference variables by default, since they are really pointers
 	}
 	return result;
@@ -763,14 +784,6 @@ bool IRShouldReturnByCopy(Context *context, s64 returnTypeTableIdx)
 			returnTypeInfo->size != 2 &&
 			returnTypeInfo->size != 4 &&
 			returnTypeInfo->size != 8);
-}
-
-void IRAddComment(Context *context, String comment)
-{
-	IRInstruction result;
-	result.type = IRINSTRUCTIONTYPE_COMMENT;
-	result.comment = comment;
-	*AddInstruction(context) = result;
 }
 
 IRValue IRGenFromExpression(Context *context, ASTExpression *expression)
@@ -789,7 +802,8 @@ IRValue IRGenFromExpression(Context *context, ASTExpression *expression)
 		Procedure *procedure = expression->procedureDeclaration.procedure;
 		BucketArrayInit(&procedure->instructions);
 		String returnLabel = NewLabel(context, "return"_s);
-		IRProcedureScope *currentProc = PushIRProcedure(context, procedure, returnLabel);
+
+		PushIRProcedure(context, procedure, returnLabel);
 
 		if (procedure->astBody)
 		{
@@ -806,8 +820,6 @@ IRValue IRGenFromExpression(Context *context, ASTExpression *expression)
 			returnInst.type = IRINSTRUCTIONTYPE_RETURN;
 			*AddInstruction(context) = returnInst;
 		}
-
-		procedure->stackSize = currentProc->stackCursor;
 
 		PopIRProcedure(context);
 	} break;
@@ -915,15 +927,7 @@ IRValue IRGenFromExpression(Context *context, ASTExpression *expression)
 		}
 		else
 		{
-			IRInstruction inst = {};
-			inst.type = IRINSTRUCTIONTYPE_VARIABLE_DECLARATION;
-			inst.variableDeclaration.variable = variable;
-			*AddInstruction(context) = inst;
-
-			IRProcedureScope *currentProc = &context->irProcedureStack[context->irProcedureStack.size - 1];
-			s64 varSize = context->typeTable[variable->typeTableIdx].size;
-			variable->stackOffset = currentProc->stackCursor;
-			currentProc->stackCursor += varSize;
+			IRAllocateVariableOnStack(context, variable);
 
 			// Initial value
 			if (varDecl.value)
@@ -1044,18 +1048,13 @@ IRValue IRGenFromExpression(Context *context, ASTExpression *expression)
 				Variable *tempVar = IRAddTempVariable(context, tempVarName,
 						expression->typeTableIdx);
 
-				IRInstruction varDeclInst = {};
-				varDeclInst.type = IRINSTRUCTIONTYPE_VARIABLE_DECLARATION;
-				varDeclInst.variableDeclaration.variable = tempVar;
-				*AddInstruction(context) = varDeclInst;
-
 				// Turn into a register
 				IRValue reg = IRValueRegister(NewVirtualRegister(context),
 						GetTypeInfoPointerOf(context, expression->typeTableIdx));
 
 				IRValue tempVarIRValue = {};
-				tempVarIRValue.valueType = IRVALUETYPE_VARIABLE;
-				tempVarIRValue.variable = tempVar;
+				tempVarIRValue.valueType = IRVALUETYPE_STACK_OFFSET;
+				tempVarIRValue.stackOffset = tempVar->stackOffset;
 
 				IRInstruction paramIntermediateInst = {};
 				paramIntermediateInst.type = IRINSTRUCTIONTYPE_ASSIGNMENT;
@@ -1099,22 +1098,16 @@ IRValue IRGenFromExpression(Context *context, ASTExpression *expression)
 				static u64 structByCopyDeclarationUniqueID = 0;
 
 				IRAddComment(context, "Copy argument to the stack to pass as pointer"_s);
-				// Declare temporal value in the stack
+				// Allocate stack space for temp struct
 				String tempVarName = TPrintF("_valueByCopy%llu", structByCopyDeclarationUniqueID++);
 				Variable *tempVar = IRAddTempVariable(context, tempVarName,
 						argTypeTableIdx);
 
-				// Allocate stack space for temp struct
-				IRInstruction varDeclInst = {};
-				varDeclInst.type = IRINSTRUCTIONTYPE_VARIABLE_DECLARATION;
-				varDeclInst.variableDeclaration.variable = tempVar;
-				*AddInstruction(context) = varDeclInst;
-
 				s64 pointerTypeIdx = GetTypeInfoPointerOf(context, argTypeTableIdx);
 
 				IRValue tempVarIRValue = {};
-				tempVarIRValue.valueType = IRVALUETYPE_VARIABLE;
-				tempVarIRValue.variable = tempVar;
+				tempVarIRValue.valueType = IRVALUETYPE_STACK_OFFSET;
+				tempVarIRValue.stackOffset = tempVar->stackOffset;
 				tempVarIRValue.typeTableIdx = pointerTypeIdx;
 				tempVarIRValue.dereference = false;
 
@@ -1176,20 +1169,14 @@ IRValue IRGenFromExpression(Context *context, ASTExpression *expression)
 
 			s64 anyTableIdx = FindTypeInStackByName(context, {}, "Any"_s);
 
-			// Declare temporal value in the stack
+			// Allocate stack space for buffer
 			String tempVarName = TPrintF("_varargsBuffer%llu", varargsUniqueID++);
 			Variable *bufferVar = IRAddTempVariable(context, tempVarName,
 					GetTypeInfoArrayOf(context, anyTableIdx, varargsCount));
 
-			// Allocate stack space for buffer
-			IRInstruction bufferDeclInst = {};
-			bufferDeclInst.type = IRINSTRUCTIONTYPE_VARIABLE_DECLARATION;
-			bufferDeclInst.variableDeclaration.variable = bufferVar;
-			*AddInstruction(context) = bufferDeclInst;
-
 			IRValue bufferIRValue = {};
-			bufferIRValue.valueType = IRVALUETYPE_VARIABLE;
-			bufferIRValue.variable = bufferVar;
+			bufferIRValue.valueType = IRVALUETYPE_STACK_OFFSET;
+			bufferIRValue.stackOffset = bufferVar->stackOffset;
 			bufferIRValue.typeTableIdx = bufferVar->typeTableIdx;
 			bufferIRValue.dereference = true;
 
@@ -1214,20 +1201,14 @@ IRValue IRGenFromExpression(Context *context, ASTExpression *expression)
 			// Now we put it into a dynamic array struct.
 			s64 dynamicArrayTableIdx = FindTypeInStackByName(context, {}, "Array"_s);
 
-			// Declare temporal value in the stack
+			// Allocate stack space for array
 			tempVarName = TPrintF("_varargsArray%llu", varargsUniqueID++);
 			Variable *arrayVar = IRAddTempVariable(context, tempVarName,
 					dynamicArrayTableIdx);
 
-			// Allocate stack space for array
-			IRInstruction arrayDeclInst = {};
-			arrayDeclInst.type = IRINSTRUCTIONTYPE_VARIABLE_DECLARATION;
-			arrayDeclInst.variableDeclaration.variable = arrayVar;
-			*AddInstruction(context) = arrayDeclInst;
-
 			IRValue arrayIRValue = {};
-			arrayIRValue.valueType = IRVALUETYPE_VARIABLE;
-			arrayIRValue.variable = arrayVar;
+			arrayIRValue.valueType = IRVALUETYPE_STACK_OFFSET;
+			arrayIRValue.stackOffset = arrayVar->stackOffset;
 			arrayIRValue.typeTableIdx = arrayVar->typeTableIdx;
 			arrayIRValue.dereference = true;
 
@@ -1349,8 +1330,9 @@ IRValue IRGenFromExpression(Context *context, ASTExpression *expression)
 			newStaticVar.initialValue.immediateString = expression->literal.string;
 			*DynamicArrayAdd(&context->irStaticVariables) = newStaticVar;
 
-			result.valueType = IRVALUETYPE_VARIABLE;
-			result.variable = newStaticVar.variable;
+			result.valueType = IRVALUETYPE_DATA_OFFSET;
+			result.dataOffset.variable = newStaticVar.variable;
+			result.dataOffset.offset = 0;
 		} break;
 		}
 		result.typeTableIdx = expression->typeTableIdx;
@@ -1424,6 +1406,102 @@ IRValue IRGenFromExpression(Context *context, ASTExpression *expression)
 
 		breakLabelInst->type = IRINSTRUCTIONTYPE_LABEL;
 		breakLabelInst->label = breakLabel;
+	} break;
+	case ASTNODETYPE_FOR:
+	{
+		PushIRScope(context);
+
+		Variable *indexVar = expression->forNode.indexVariable;
+		IRAllocateVariableOnStack(context, indexVar);
+		IRValue indexValue = IRValueFromVariable(context, indexVar);
+
+		IRInstruction *loopLabelInst = nullptr;
+
+		TypeInfo *rangeTypeInfo = &context->typeTable[expression->forNode.range->typeTableIdx];
+
+		IRValue from = {}, to = {};
+		if (expression->forNode.range->nodeType == ASTNODETYPE_BINARY_OPERATION)
+		{
+			ASTBinaryOperation binaryOp = expression->forNode.range->binaryOperation;
+			ASSERT(binaryOp.op == TOKEN_OP_RANGE);
+
+			from = IRGenFromExpression(context, binaryOp.leftHand);
+			to =   IRGenFromExpression(context, binaryOp.rightHand);
+		}
+		else if (rangeTypeInfo->typeCategory == TYPECATEGORY_ARRAY)
+		{
+			Variable *elementVar = expression->forNode.elementVariable;
+			// Allocate 'it' variable
+			IRAllocateVariableOnStack(context, elementVar);
+
+			IRValue arrayValue = IRGenFromExpression(context, expression->forNode.range);
+
+			from = IRValueImmediate(0, indexVar->typeTableIdx);
+			if (rangeTypeInfo->arrayInfo.count == 0)
+			{
+				// Compare with size member
+				s64 arrayTableIdx = FindTypeInStackByName(context, {}, "Array"_s);
+				TypeInfo *dynamicArrayTypeInfo = &context->typeTable[arrayTableIdx];
+				to = IRDoMemberAccess(context, arrayValue, &dynamicArrayTypeInfo->structInfo.members[0]);
+			}
+			else
+				to = IRValueImmediate(rangeTypeInfo->arrayInfo.count, indexVar->typeTableIdx);
+
+			IRValue elementVarValue = IRValueFromVariable(context, elementVar);
+			IRValue elementValue = IRDoArrayAccess(context, arrayValue, indexValue,
+					rangeTypeInfo->arrayInfo.elementTypeTableIdx);
+			IRInstructionFromAssignment(context, elementVarValue, elementValue);
+		}
+		else
+			CRASH;
+
+		IRInstructionFromAssignment(context, indexValue, from);
+
+		loopLabelInst = AddInstruction(context);
+
+		IRValue condition = IRValueRegister(NewVirtualRegister(context), TYPETABLEIDX_BOOL);
+		IRInstruction compareInst = {};
+		compareInst.type = IRINSTRUCTIONTYPE_LESS_THAN;
+		compareInst.binaryOperation.left = indexValue;
+		compareInst.binaryOperation.right = to;
+		compareInst.binaryOperation.out = condition;
+		*AddInstruction(context) = compareInst;
+
+		String breakLabel = NewLabel(context, "break"_s);
+
+		String oldBreakLabel = context->currentBreakLabel;
+		context->currentBreakLabel = breakLabel;
+
+		IRInstruction *jump = AddInstruction(context);
+		IRGenFromExpression(context, expression->whileNode.body);
+
+		IRInstruction incrementInst = {};
+		incrementInst.type = IRINSTRUCTIONTYPE_ADD;
+		incrementInst.binaryOperation.left = indexValue;
+		incrementInst.binaryOperation.right = IRValueImmediate(1, indexValue.typeTableIdx);
+		incrementInst.binaryOperation.out = indexValue;
+		*AddInstruction(context) = incrementInst;
+
+		IRInstruction *loopJump = AddInstruction(context);
+		IRInstruction *breakLabelInst = AddInstruction(context);
+
+		context->currentBreakLabel = oldBreakLabel;
+
+		String loopLabel = NewLabel(context, "loop"_s);
+		loopLabelInst->type = IRINSTRUCTIONTYPE_LABEL;
+		loopLabelInst->label = loopLabel;
+
+		jump->type = IRINSTRUCTIONTYPE_JUMP_IF_ZERO;
+		jump->conditionalJump.label = breakLabel;
+		jump->conditionalJump.condition = condition;
+
+		loopJump->type = IRINSTRUCTIONTYPE_JUMP;
+		loopJump->jump.label = loopLabel;
+
+		breakLabelInst->type = IRINSTRUCTIONTYPE_LABEL;
+		breakLabelInst->label = breakLabel;
+
+		PopIRScope(context);
 	} break;
 	case ASTNODETYPE_BREAK:
 	{
@@ -1552,10 +1630,12 @@ void PrintIRValue(Context *context, IRValue value)
 			Log("$rDoRet");
 		else
 			Log("$r%d", value.registerIdx);
-	else if (value.valueType == IRVALUETYPE_VARIABLE)
-		Log("%S", value.variable->name);
+	else if (value.valueType == IRVALUETYPE_STACK_OFFSET)
+		Log("stack+0x%llx", value.stackOffset);
+	else if (value.valueType == IRVALUETYPE_DATA_OFFSET)
+		Log("%S+0x%llx", value.dataOffset.variable->name, value.dataOffset.offset);
 	else if (value.valueType == IRVALUETYPE_PARAMETER)
-		Log("param%hhd", value.variable->parameterIndex);
+		Log("param%hhd", value.parameterIdx);
 	else if (value.valueType == IRVALUETYPE_IMMEDIATE_INTEGER)
 	Log("0x%x", value.immediate);
 else if (value.valueType == IRVALUETYPE_IMMEDIATE_FLOAT)

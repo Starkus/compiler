@@ -1,4 +1,4 @@
-PrintF :: (format : String, ...args)
+PrintF :: (format : String, ..args)
 {
 	PrintArgument :: (arg : Any)
 	{

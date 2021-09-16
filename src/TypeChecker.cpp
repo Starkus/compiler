@@ -825,7 +825,10 @@ ReturnCheckResult CheckIfReturnsValue(Context *context, ASTExpression *expressio
 	{
 		return CheckIfReturnsValue(context, expression->whileNode.body);
 	}
-	// @Todo: Add For loops here once they exist!
+	case ASTNODETYPE_FOR:
+	{
+		return CheckIfReturnsValue(context, expression->forNode.body);
+	}
 	}
 	return RETURNCHECKRESULT_NEVER;
 }
@@ -1242,7 +1245,11 @@ skipInvalidIdentifierError:
 			TypeCheckExpression(context, leftHand);
 			s64 leftHandTypeIdx = leftHand->typeTableIdx;
 
-			ASSERT(rightHand->nodeType == ASTNODETYPE_IDENTIFIER);
+			if (rightHand->nodeType != ASTNODETYPE_IDENTIFIER)
+			{
+				PrintError(context, rightHand->any.loc, "Expected identifier after member access operator"_s);
+			}
+
 			rightHand->identifier.type = NAMETYPE_STRUCT_MEMBER;
 
 			TypeInfo *structTypeInfo = &context->typeTable[leftHandTypeIdx];
@@ -1379,7 +1386,46 @@ skipInvalidIdentifierError:
 		if (!CheckTypesMatch(context, TYPETABLEIDX_BOOL, conditionType))
 			PrintError(context, expression->any.loc, "While condition doesn't evaluate to a boolean"_s);
 
-		TypeCheckExpression(context, expression->ifNode.body);
+		TypeCheckExpression(context, expression->whileNode.body);
+	} break;
+	case ASTNODETYPE_FOR:
+	{
+		TypeCheckExpression(context, expression->forNode.range);
+
+		PushTCScope(context);
+
+		Variable *indexVar = BucketArrayAdd(&context->variables);
+		*indexVar = {};
+		indexVar->name = "i"_s;
+		indexVar->parameterIndex = -1;
+		indexVar->typeTableIdx = TYPETABLEIDX_S64;
+		expression->forNode.indexVariable = indexVar;
+
+		TCScope *stackTop = &context->tcStack[context->tcStack.size - 1];
+		TCScopeName newScopeName;
+		newScopeName.type = NAMETYPE_VARIABLE;
+		newScopeName.name = indexVar->name;
+		newScopeName.variable = indexVar;
+		*DynamicArrayAdd(&stackTop->names) = newScopeName;
+
+		TypeInfo *rangeTypeInfo = &context->typeTable[expression->forNode.range->typeTableIdx];
+		if (rangeTypeInfo->typeCategory == TYPECATEGORY_ARRAY)
+		{
+			Variable *elementVar = BucketArrayAdd(&context->variables);
+			*elementVar = {};
+			elementVar->name = "it"_s;
+			elementVar->parameterIndex = -1;
+			elementVar->typeTableIdx = TYPETABLEIDX_S64;
+			expression->forNode.elementVariable = elementVar;
+
+			newScopeName.name = elementVar->name;
+			newScopeName.variable = elementVar;
+			*DynamicArrayAdd(&stackTop->names) = newScopeName;
+		}
+
+		TypeCheckExpression(context, expression->forNode.body);
+
+		PopTCScope(context);
 	} break;
 	case ASTNODETYPE_BREAK:
 	{
