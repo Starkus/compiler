@@ -285,8 +285,8 @@ bool TryParseBinaryOperation(Context *context, ASTExpression leftHand, s32 prevP
 	} break;
 	default:
 	{
-		String opStr = TokenTypeToString(context->token->type);
-		PrintError(context, context->token->loc, TPrintF("Unexpected operator %S", opStr));
+		//String opStr = TokenTypeToString(context->token->type);
+		//PrintError(context, context->token->loc, TPrintF("Unexpected operator %S", opStr));
 	} break;
 	}
 

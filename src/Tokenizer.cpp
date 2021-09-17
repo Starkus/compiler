@@ -401,6 +401,11 @@ numberDone:
 				result.type = TOKEN_OP_LESS_THAN_OR_EQUAL;
 				++tokenizer->cursor;
 			}
+			else if (next == '<')
+			{
+				result.type = TOKEN_OP_SHIFT_LEFT;
+				++tokenizer->cursor;
+			}
 			else
 				result.type = TOKEN_OP_LESS_THAN;
 		} break;
@@ -409,6 +414,11 @@ numberDone:
 			if (next == '=')
 			{
 				result.type = TOKEN_OP_GREATER_THAN_OR_EQUAL;
+				++tokenizer->cursor;
+			}
+			else if (next == '>')
+			{
+				result.type = TOKEN_OP_SHIFT_RIGHT;
 				++tokenizer->cursor;
 			}
 			else

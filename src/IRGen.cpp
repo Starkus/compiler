@@ -570,6 +570,14 @@ IRValue IRInstructionFromBinaryOperation(Context *context, ASTExpression *expres
 		{
 			inst.type = IRINSTRUCTIONTYPE_MODULO;
 		} break;
+		case TOKEN_OP_SHIFT_LEFT:
+		{
+			inst.type = IRINSTRUCTIONTYPE_SHIFT_LEFT;
+		} break;
+		case TOKEN_OP_SHIFT_RIGHT:
+		{
+			inst.type = IRINSTRUCTIONTYPE_SHIFT_RIGHT;
+		} break;
 		case TOKEN_OP_EQUALS:
 		{
 			inst.type = IRINSTRUCTIONTYPE_EQUALS;
@@ -647,6 +655,7 @@ void IRInstructionFromAssignment(Context *context, IRValue leftValue, IRValue ri
 	s64 rightType = rightValue.typeTableIdx;
 	ASSERT(rightType >= 0);
 
+	// Cast to Any
 	s64 anyTableIdx = FindTypeInStackByName(context, {}, "Any"_s);
 	s64 anyPointerTableIdx = GetTypeInfoPointerOf(context, anyTableIdx);
 	if ((leftValue.typeTableIdx == anyTableIdx || leftValue.typeTableIdx == anyPointerTableIdx) &&
@@ -711,7 +720,33 @@ void IRInstructionFromAssignment(Context *context, IRValue leftValue, IRValue ri
 		return;
 	}
 
-	TypeInfo *rightTypeInfo = &context->typeTable[rightType];
+	// Cast static array to dynamic array
+	TypeInfo *leftTypeInfo  = &context->typeTable[leftValue.typeTableIdx];
+	TypeInfo *rightTypeInfo = &context->typeTable[rightValue.typeTableIdx];
+	if (leftTypeInfo->typeCategory  == TYPECATEGORY_ARRAY &&
+		rightTypeInfo->typeCategory == TYPECATEGORY_ARRAY &&
+		leftTypeInfo->arrayInfo.count  == 0 &&
+		rightTypeInfo->arrayInfo.count != 0)
+	{
+		s64 dynamicArrayTableIdx = FindTypeInStackByName(context, {}, "Array"_s);
+		TypeInfo *dynamicArrayTypeInfo = &context->typeTable[dynamicArrayTableIdx];
+
+		// Size
+		StructMember *sizeStructMember = &dynamicArrayTypeInfo->structInfo.members[0];
+		IRValue sizeMember = IRDoMemberAccess(context, leftValue, sizeStructMember);
+		IRValue sizeValue = IRValueImmediate(rightTypeInfo->arrayInfo.count, TYPETABLEIDX_U64);
+		IRInstructionFromAssignment(context, sizeMember, sizeValue);
+
+		// Data
+		StructMember *dataStructMember = &dynamicArrayTypeInfo->structInfo.members[1];
+		IRValue dataMember = IRDoMemberAccess(context, leftValue, dataStructMember);
+		IRValue dataValue = IRPointerToValue(context, rightValue);
+		IRInstructionFromAssignment(context, dataMember, dataValue);
+
+		return;
+	}
+
+	// Copy structs/arrays
 	if (rightTypeInfo->typeCategory == TYPECATEGORY_STRUCT ||
 		rightTypeInfo->typeCategory == TYPECATEGORY_ARRAY)
 	{
@@ -1057,10 +1092,7 @@ IRValue IRGenFromExpression(Context *context, ASTExpression *expression)
 				tempVarIRValue.valueType = IRVALUETYPE_STACK_OFFSET;
 				tempVarIRValue.stackOffset = tempVar->stackOffset;
 
-				IRInstruction paramIntermediateInst = {};
-				paramIntermediateInst.type = IRINSTRUCTIONTYPE_ASSIGNMENT;
-				paramIntermediateInst.assignment.src = tempVarIRValue;
-				paramIntermediateInst.assignment.dst = reg;
+				IRInstructionFromAssignment(context, reg, tempVarIRValue);
 
 				// Add register as parameter
 				*ArrayAdd(&procCallInst.procedureCall.parameters) = reg;
@@ -1215,23 +1247,20 @@ IRValue IRGenFromExpression(Context *context, ASTExpression *expression)
 
 			TypeInfo *dynamicArrayTypeInfo = &context->typeTable[dynamicArrayTableIdx];
 			// Size
-			StructMember *sizeStructMember = &dynamicArrayTypeInfo->structInfo.members[0];
-			IRValue sizeMember = IRDoMemberAccess(context, arrayIRValue, sizeStructMember);
-
-			IRValue sizeValue = {};
-			sizeValue.valueType = IRVALUETYPE_IMMEDIATE_INTEGER;
-			sizeValue.immediate = varargsCount;
-			sizeValue.typeTableIdx = TYPETABLEIDX_U64;
-
-			IRInstructionFromAssignment(context, sizeMember, sizeValue);
+			{
+				StructMember *sizeStructMember = &dynamicArrayTypeInfo->structInfo.members[0];
+				IRValue sizeMember = IRDoMemberAccess(context, arrayIRValue, sizeStructMember);
+				IRValue sizeValue = IRValueImmediate(varargsCount, TYPETABLEIDX_U64);
+				IRInstructionFromAssignment(context, sizeMember, sizeValue);
+			}
 
 			// Data
-			StructMember *dataStructMember = &dynamicArrayTypeInfo->structInfo.members[1];
-			IRValue dataMember = IRDoMemberAccess(context, arrayIRValue, dataStructMember);
-
-			IRValue dataValue = IRPointerToValue(context, bufferIRValue);
-
-			IRInstructionFromAssignment(context, dataMember, dataValue);
+			{
+				StructMember *dataStructMember = &dynamicArrayTypeInfo->structInfo.members[1];
+				IRValue dataMember = IRDoMemberAccess(context, arrayIRValue, dataStructMember);
+				IRValue dataValue = IRPointerToValue(context, bufferIRValue);
+				IRInstructionFromAssignment(context, dataMember, dataValue);
+			}
 
 			// Pass array as parameter!
 			IRValue paramReg = {};
@@ -1261,10 +1290,8 @@ IRValue IRGenFromExpression(Context *context, ASTExpression *expression)
 			IRInstruction inst = {};
 			inst.unaryOperation.in  = IRGenFromExpression(context, expression->unaryOperation.expression);
 
-			inst.unaryOperation.out = {};
-			inst.unaryOperation.out.valueType = IRVALUETYPE_REGISTER;
-			inst.unaryOperation.out.registerIdx = NewVirtualRegister(context);
-			inst.unaryOperation.out.typeTableIdx = expression->typeTableIdx;
+			inst.unaryOperation.out = IRValueRegister(NewVirtualRegister(context),
+					expression->typeTableIdx);
 
 			switch (expression->unaryOperation.op)
 			{

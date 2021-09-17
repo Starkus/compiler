@@ -531,6 +531,7 @@ void WriteToC(Context *context)
 			}
 			else
 			{
+				ASSERT(!"Didn't recognize instruction type");
 				PrintOut(context, outputFile, "???INST\n");
 			}
 		}
@@ -538,4 +539,6 @@ void WriteToC(Context *context)
 	}
 
 	CloseHandle(outputFile);
+
+
 }

@@ -404,7 +404,8 @@ TypeCheckErrorCode CheckTypesMatch(Context *context, s64 leftTableIdx, s64 right
 	} break;
 	case TYPECATEGORY_ARRAY:
 	{
-		if (left->arrayInfo.count != right->arrayInfo.count)
+		if (left->arrayInfo.count != right->arrayInfo.count &&
+			left->arrayInfo.count != 0)
 			return TYPECHECK_ARRAY_SIZE_MISMATCH;
 		return TYPECHECK_COOL;
 	} break;

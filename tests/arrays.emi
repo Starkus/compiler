@@ -17,16 +17,16 @@ returnArray :: () -> [4] s32
 
 Main :: () -> s64
 {
-	arrayA : [20] u8;
-	arrayB : [32] s32;
+	arrayA : [5] u8;
+	arrayB : [8] s32;
 
-	i : s64 = 0;
-	while i < 20
+	for 0..5
 	{
 		arrayA[i] = cast(u8) i;
 		PrintF("Array[%] = %\n", i, arrayA[i]);
-		i += 1;
 	}
+
+	for (arrayB) @it = cast(s32)(1 << i);
 
 	foo : u8 = arrayA[2];
 	bar := arrayB[16];
@@ -49,8 +49,11 @@ Main :: () -> s64
 	returnedArray := returnArray();
 
 	dynamicArray : [] s32;
-	dynamicArray.size = 16;
-	dynamicArray.data = ^arrayB;
+	dynamicArray = arrayB;
+	for dynamicArray
+	{
+		PrintF("Dynamic array[%] = %\n", i, @it);
+	}
 
 	return 0;
 }
