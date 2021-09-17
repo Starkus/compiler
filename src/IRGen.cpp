@@ -457,15 +457,16 @@ IRValue IRInstructionFromMultiply(Context *context, IRValue leftValue, IRValue r
 
 IRValue IRDoArrayAccess(Context *context, IRValue arrayValue, IRValue indexValue, s64 elementTypeIdx)
 {
-	TypeInfo *arrayTypeInfo = &context->typeTable[arrayValue.typeTableIdx];
+	s64 arrayTypeIdx = arrayValue.typeTableIdx;
+	TypeInfo *arrayTypeInfo = &context->typeTable[arrayTypeIdx];
 	if (arrayTypeInfo->typeCategory == TYPECATEGORY_POINTER)
 	{
-		s64 pointedTypeIdx = arrayTypeInfo->pointerInfo.pointedTypeTableIdx;
-		arrayTypeInfo = &context->typeTable[pointedTypeIdx];
+		arrayTypeIdx = arrayTypeInfo->pointerInfo.pointedTypeTableIdx;
+		arrayTypeInfo = &context->typeTable[arrayTypeIdx];
 	}
 
 	s64 stringTableIdx = FindTypeInStackByName(context, {}, "String"_s);
-	if (arrayValue.typeTableIdx == stringTableIdx || arrayTypeInfo->arrayInfo.count == 0)
+	if (arrayTypeIdx == stringTableIdx || arrayTypeInfo->arrayInfo.count == 0)
 	{
 		// Access the 'data' pointer
 		s64 arrayTypeTableIdx = FindTypeInStackByName(context, {}, "Array"_s);
@@ -485,7 +486,7 @@ IRValue IRDoArrayAccess(Context *context, IRValue arrayValue, IRValue indexValue
 		{
 			arrayValue = IRDereferenceValue(context, arrayValue);
 			arrayValue.dereference = false;
-			arrayValue.typeTableIdx = GetTypeInfoPointerOf(context, arrayValue.typeTableIdx);
+			arrayValue.typeTableIdx = GetTypeInfoPointerOf(context, arrayTypeIdx);
 		}
 		else
 			arrayValue = IRPointerToValue(context, arrayValue);
@@ -1419,7 +1420,7 @@ IRValue IRGenFromExpression(Context *context, ASTExpression *expression)
 
 		TypeInfo *rangeTypeInfo = &context->typeTable[expression->forNode.range->typeTableIdx];
 
-		IRValue from = {}, to = {};
+		IRValue from = {}, to = {}, arrayValue = {};
 		if (expression->forNode.range->nodeType == ASTNODETYPE_BINARY_OPERATION)
 		{
 			ASTBinaryOperation binaryOp = expression->forNode.range->binaryOperation;
@@ -1427,6 +1428,9 @@ IRValue IRGenFromExpression(Context *context, ASTExpression *expression)
 
 			from = IRGenFromExpression(context, binaryOp.leftHand);
 			to =   IRGenFromExpression(context, binaryOp.rightHand);
+
+			// Assign 'i'
+			IRInstructionFromAssignment(context, indexValue, from);
 		}
 		else if (rangeTypeInfo->typeCategory == TYPECATEGORY_ARRAY)
 		{
@@ -1434,7 +1438,7 @@ IRValue IRGenFromExpression(Context *context, ASTExpression *expression)
 			// Allocate 'it' variable
 			IRAllocateVariableOnStack(context, elementVar);
 
-			IRValue arrayValue = IRGenFromExpression(context, expression->forNode.range);
+			arrayValue = IRGenFromExpression(context, expression->forNode.range);
 
 			from = IRValueImmediate(0, indexVar->typeTableIdx);
 			if (rangeTypeInfo->arrayInfo.count == 0)
@@ -1447,15 +1451,18 @@ IRValue IRGenFromExpression(Context *context, ASTExpression *expression)
 			else
 				to = IRValueImmediate(rangeTypeInfo->arrayInfo.count, indexVar->typeTableIdx);
 
+			// Assign 'i'
+			IRInstructionFromAssignment(context, indexValue, from);
+
+			// Assign 'it'
 			IRValue elementVarValue = IRValueFromVariable(context, elementVar);
 			IRValue elementValue = IRDoArrayAccess(context, arrayValue, indexValue,
 					rangeTypeInfo->arrayInfo.elementTypeTableIdx);
+			elementValue = IRPointerToValue(context, elementValue);
 			IRInstructionFromAssignment(context, elementVarValue, elementValue);
 		}
 		else
 			CRASH;
-
-		IRInstructionFromAssignment(context, indexValue, from);
 
 		loopLabelInst = AddInstruction(context);
 
@@ -1475,12 +1482,24 @@ IRValue IRGenFromExpression(Context *context, ASTExpression *expression)
 		IRInstruction *jump = AddInstruction(context);
 		IRGenFromExpression(context, expression->whileNode.body);
 
+		// Increment 'i'
 		IRInstruction incrementInst = {};
 		incrementInst.type = IRINSTRUCTIONTYPE_ADD;
 		incrementInst.binaryOperation.left = indexValue;
 		incrementInst.binaryOperation.right = IRValueImmediate(1, indexValue.typeTableIdx);
 		incrementInst.binaryOperation.out = indexValue;
 		*AddInstruction(context) = incrementInst;
+
+		if (rangeTypeInfo->typeCategory == TYPECATEGORY_ARRAY)
+		{
+			// Update 'it'
+			Variable *elementVar = expression->forNode.elementVariable;
+			IRValue elementVarValue = IRValueFromVariable(context, elementVar);
+			IRValue elementValue = IRDoArrayAccess(context, arrayValue, indexValue,
+					rangeTypeInfo->arrayInfo.elementTypeTableIdx);
+			elementValue = IRPointerToValue(context, elementValue);
+			IRInstructionFromAssignment(context, elementVarValue, elementValue);
+		}
 
 		IRInstruction *loopJump = AddInstruction(context);
 		IRInstruction *breakLabelInst = AddInstruction(context);

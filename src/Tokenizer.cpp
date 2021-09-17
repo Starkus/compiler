@@ -324,36 +324,60 @@ Token ReadTokenAndAdvance(Tokenizer *tokenizer)
 	else if (IsNumeric(*tokenizer->cursor))
 	{
 		result.type = TOKEN_LITERAL_NUMBER;
-		bool done = false;
 		if (*tokenizer->cursor == '0')
 		{
-			done = true;
 			++result.size;
 			++tokenizer->cursor;
-			ASSERT(!IsNumeric(*tokenizer->cursor));
-			if (*tokenizer->cursor == 'x' ||
-				*tokenizer->cursor == 'X' ||
-				*tokenizer->cursor == 'b' ||
-				*tokenizer->cursor == '.')
+
+			switch (*tokenizer->cursor)
 			{
-				done = false;
+			case 'x':
+			case 'X':
+			{
 				++result.size;
 				++tokenizer->cursor;
+				while (IsNumericHex(*tokenizer->cursor))
+				{
+					++result.size;
+					++tokenizer->cursor;
+				}
+			} goto numberDone;
+			case 'b':
+			{
+				++result.size;
+				++tokenizer->cursor;
+				while (*tokenizer->cursor == '0' || *tokenizer->cursor == '1')
+				{
+					++result.size;
+					++tokenizer->cursor;
+				}
+			} goto numberDone;
 			}
 		}
-		if (!done)
+		// Normal base parsing
 		{
-			while (IsNumericHex(*tokenizer->cursor) || *tokenizer->cursor == '.')
+			bool foundADot = false;
+			while (true)
 			{
-				++result.size;
-				++tokenizer->cursor;
-			}
-			if (*tokenizer->cursor == 'f')
-			{
+				if (*tokenizer->cursor == '.')
+				{
+					if (foundADot)
+						goto numberDone;
+					else if (*(tokenizer->cursor + 1) == '.')
+						// .. is an operator
+						goto numberDone;
+
+					foundADot = true;
+				}
+				else if (!IsNumeric(*tokenizer->cursor))
+					goto numberDone;
+
 				++result.size;
 				++tokenizer->cursor;
 			}
 		}
+numberDone:
+		;
 	}
 	else if (*tokenizer->cursor >= TOKEN_ASCII_BEGIN && *tokenizer->cursor < TOKEN_ASCII_END)
 	{

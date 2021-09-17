@@ -46,14 +46,12 @@ PrintF :: (format : String, ..args)
 
 			// Fraction
 			n : s64 = f * 10000000;
-			i := 7;
-			while i > 0
+			for 0..7
 			{
 				digit := n % 10;
 				buffer[31 - count] = cast(u8) digit + '0';
 				count += 1;
 				n /= 10;
-				i -= 1;
 			}
 			buffer[31 - count] = '.';
 			count += 1;
@@ -78,11 +76,10 @@ PrintF :: (format : String, ..args)
 
 	stdOut := GetStdHandle(-11);
 	bytesWritten : s64;
-	i : s64 = 0;
 	argIdx := 0;
-	while (i < cast(s64) format.size)
+	for (0..format.size)
 	{
-		char : u8 = @(format.data + i);
+		char : u8 = format[i];
 		if char == '%'
 		{
 			PrintArgument(args[argIdx]);
@@ -92,6 +89,5 @@ PrintF :: (format : String, ..args)
 		{
 			WriteFile(stdOut, ^char, 1, ^bytesWritten, 0);
 		}
-		i += 1;
 	}
 }

@@ -1,8 +1,15 @@
 Main :: () -> s64
 {
-	str : String = "Hello, Sailor!";
+	str : String = "Hello, Sailor!\n";
 	//str = "Hello, Sailor!";
 	foo : s64 = 5 + 5;
+
+	i := 1;
+	strPtr := ^str;
+	char : u8 = str[i];
+
+	str[2] = '?';
+	Print(str);
 
 	return 0;
 }

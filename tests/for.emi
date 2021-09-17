@@ -4,23 +4,35 @@ Main :: () -> s64
 	for 0..4
 	{
 		foo := i;
+		PrintF("i = %;  ", i);
 	}
+	Print("\n");
 
 	// Array
 	array : [4] s32;
 	for array
 	{
 		foo := i;
-		bar := it;
+		bar : s32 = @it;
+		array[i] = cast(s32) (i * i);
+
+		PrintF("i = %, it = %;  ", i, @it);
 	}
+	Print("\n");
 
 	// Dynamic array
 	dynamicArray : [] s32;
+	dynamicArray.size = 4;
+	dynamicArray.data = ^array;
 	for dynamicArray
 	{
 		foo := i;
-		bar := it;
+		bar : s32 = @it;
+		array[i] = cast(s32) (i * 2);
+
+		PrintF("i = %, it = %;  ", i, @it);
 	}
+	Print("\n");
 
 	return 0;
 }

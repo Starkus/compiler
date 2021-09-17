@@ -322,33 +322,50 @@ s64 FindTypeInStackByName(Context *context, SourceLocation loc, String name)
 	return typeTableIdx;
 }
 
-bool CheckTypesMatch(Context *context, s64 leftTableIdx, s64 rightTableIdx)
+enum TypeCheckErrorCode
+{
+	TYPECHECK_COOL,
+	TYPECHECK_MISC_ERROR,
+	TYPECHECK_SIGN_MISMATCH,
+	TYPECHECK_SIZE_MISMATCH,
+	TYPECHECK_TYPE_CATEGORY_MISMATCH,
+	TYPECHECK_POINTED_TYPE_MISMATCH,
+	TYPECHECK_ARRAY_SIZE_MISMATCH,
+	TYPECHECK_STRUCT_MISMATCH,
+};
+TypeCheckErrorCode CheckTypesMatch(Context *context, s64 leftTableIdx, s64 rightTableIdx)
 {
 	if (leftTableIdx == rightTableIdx)
-		return true;
+		return TYPECHECK_COOL;
 
 	// Allow anything to cast to Any
 	s64 anyTableIdx = FindTypeInStackByName(context, {}, "Any"_s);
 	if (leftTableIdx == anyTableIdx || rightTableIdx == anyTableIdx)
-		return true;
+		return TYPECHECK_COOL;
 
 	TypeInfo *left  = &context->typeTable[leftTableIdx];
 	TypeInfo *right = &context->typeTable[rightTableIdx];
 
 	if (leftTableIdx == TYPETABLEIDX_BOOL)
 	{
-		return right->typeCategory == TYPECATEGORY_INTEGER ||
-			right->typeCategory == TYPECATEGORY_FLOATING;
+		if (right->typeCategory == TYPECATEGORY_INTEGER ||
+			right->typeCategory == TYPECATEGORY_FLOATING)
+			return TYPECHECK_COOL;
+		return TYPECHECK_TYPE_CATEGORY_MISMATCH;
 	}
 
 	if (rightTableIdx == TYPETABLEIDX_INTEGER)
 	{
-		return left->typeCategory == TYPECATEGORY_INTEGER ||
-			left->typeCategory == TYPECATEGORY_FLOATING;
+		if (left->typeCategory == TYPECATEGORY_INTEGER ||
+			left->typeCategory == TYPECATEGORY_FLOATING)
+			return TYPECHECK_COOL;
+		return TYPECHECK_TYPE_CATEGORY_MISMATCH;
 	}
 	else if (rightTableIdx == TYPETABLEIDX_FLOATING)
 	{
-		return left->typeCategory == TYPECATEGORY_FLOATING;
+		if (left->typeCategory == TYPECATEGORY_FLOATING)
+			return TYPECHECK_COOL;
+		return TYPECHECK_TYPE_CATEGORY_MISMATCH;
 	}
 
 	if (left->typeCategory != right->typeCategory)
@@ -358,15 +375,18 @@ bool CheckTypesMatch(Context *context, s64 leftTableIdx, s64 rightTableIdx)
 			left->typeCategory == TYPECATEGORY_FLOATING) &&
 			right->typeCategory == TYPECATEGORY_INTEGER ||
 			right->typeCategory == TYPECATEGORY_FLOATING)
-			return true;
+			return TYPECHECK_COOL;
 
+		// Allow ptr = int? Confusing.
+#if 1
 		if ((left->typeCategory == TYPECATEGORY_POINTER &&
 			right->typeCategory == TYPECATEGORY_INTEGER) ||
 			(right->typeCategory == TYPECATEGORY_POINTER &&
 			left->typeCategory == TYPECATEGORY_INTEGER))
-			return true;
+			return TYPECHECK_COOL;
+#endif
 
-		return false;
+		return TYPECHECK_TYPE_CATEGORY_MISMATCH;
 	}
 
 	switch (left->typeCategory)
@@ -375,46 +395,45 @@ bool CheckTypesMatch(Context *context, s64 leftTableIdx, s64 rightTableIdx)
 	{
 		// Cast any pointer to void pointer
 		if (left->pointerInfo.pointedTypeTableIdx == TYPETABLEIDX_VOID)
-			return true;
+			return TYPECHECK_COOL;
 
-		return left->pointerInfo.pointedTypeTableIdx == right->pointerInfo.pointedTypeTableIdx;
+		if (left->pointerInfo.pointedTypeTableIdx == right->pointerInfo.pointedTypeTableIdx)
+			return TYPECHECK_COOL;
+
+		return TYPECHECK_POINTED_TYPE_MISMATCH;
 	} break;
 	case TYPECATEGORY_ARRAY:
 	{
-		return left->arrayInfo.count == right->arrayInfo.count;
+		if (left->arrayInfo.count != right->arrayInfo.count)
+			return TYPECHECK_ARRAY_SIZE_MISMATCH;
+		return TYPECHECK_COOL;
 	} break;
 	case TYPECATEGORY_STRUCT:
 	{
-		return false;
+		return TYPECHECK_STRUCT_MISMATCH;
 	} break;
 	case TYPECATEGORY_INTEGER:
 	{
 		if (left->integerInfo.isSigned != right->integerInfo.isSigned)
-		{
-			Log("Signed-unsigned mismatch!\n");
-			return false;
-		}
+			return TYPECHECK_SIGN_MISMATCH;
 		if (left->size < right->size)
-		{
-			Log("Trying to fit integer of size %d into integer of size %d!\n",
-					right->size, left->size);
-			return false;
-		}
-		return true;
+			return TYPECHECK_SIZE_MISMATCH;
+		return TYPECHECK_COOL;
 	} break;
 	case TYPECATEGORY_FLOATING:
 	{
-		return true;
+		return TYPECHECK_COOL;
 	} break;
 	}
 
-	return false;
+	return TYPECHECK_MISC_ERROR;
 }
 
-bool CheckTypesMatchAndSpecialize(Context *context, s64 *leftTableIdx, s64 *rightTableIdx)
+TypeCheckErrorCode CheckTypesMatchAndSpecialize(Context *context, s64 *leftTableIdx, s64 *rightTableIdx)
 {
-	if (CheckTypesMatch(context, *leftTableIdx, *rightTableIdx))
-		return true;
+	TypeCheckErrorCode typeCheckResult = CheckTypesMatch(context, *leftTableIdx, *rightTableIdx);
+	if (typeCheckResult == TYPECHECK_COOL)
+		return TYPECHECK_COOL;
 
 	TypeInfo *left  = &context->typeTable[*leftTableIdx];
 	TypeInfo *right = &context->typeTable[*rightTableIdx];
@@ -423,27 +442,58 @@ bool CheckTypesMatchAndSpecialize(Context *context, s64 *leftTableIdx, s64 *righ
 				right->typeCategory == TYPECATEGORY_POINTER))
 	{
 		*rightTableIdx = *leftTableIdx;
-		return true;
+		return TYPECHECK_COOL;
 	}
 	if (*rightTableIdx == TYPETABLEIDX_INTEGER && (left->typeCategory == TYPECATEGORY_INTEGER ||
 				left->typeCategory == TYPECATEGORY_POINTER))
 	{
 		*leftTableIdx = *rightTableIdx;
-		return true;
+		return TYPECHECK_COOL;
 	}
 
 	if (*leftTableIdx == TYPETABLEIDX_FLOATING && right->typeCategory == TYPECATEGORY_FLOATING)
 	{
 		*rightTableIdx = *leftTableIdx;
-		return true;
+		return TYPECHECK_COOL;
 	}
 	if (*rightTableIdx == TYPETABLEIDX_FLOATING && left->typeCategory == TYPECATEGORY_FLOATING)
 	{
 		*leftTableIdx = *rightTableIdx;
-		return true;
+		return TYPECHECK_COOL;
 	}
 
-	return false;
+	return TYPECHECK_MISC_ERROR;
+}
+
+void ReportTypeCheckError(Context *context, TypeCheckErrorCode errorCode, SourceLocation sourceLoc,
+		s64 leftTableIdx, s64 rightTableIdx)
+{
+	String leftStr  = TypeInfoToString(context, leftTableIdx);
+	String rightStr = TypeInfoToString(context, rightTableIdx);
+	switch (errorCode)
+	{
+	case TYPECHECK_SIGN_MISMATCH:
+		PrintError(context, sourceLoc, TPrintF(
+			"Integer sign mismatch! (left is %S and right is %S)", leftStr, rightStr));
+	case TYPECHECK_SIZE_MISMATCH:
+		PrintError(context, sourceLoc, TPrintF(
+			"Integer size mismatch! (left is %S and right is %S)", leftStr, rightStr));
+	case TYPECHECK_TYPE_CATEGORY_MISMATCH:
+		PrintError(context, sourceLoc, TPrintF(
+			"Expression type mismatch! (left is %S and right is %S)", leftStr, rightStr));
+	case TYPECHECK_POINTED_TYPE_MISMATCH:
+		PrintError(context, sourceLoc, TPrintF(
+			"Unrelated pointed types! (left is %S and right is %S)", leftStr, rightStr));
+	case TYPECHECK_ARRAY_SIZE_MISMATCH:
+		PrintError(context, sourceLoc, TPrintF(
+			"Size of arrays are different! (left is %S and right is %S)", leftStr, rightStr));
+	case TYPECHECK_STRUCT_MISMATCH:
+		PrintError(context, sourceLoc, TPrintF(
+			"Expressions evaluate to different structs! (left is %S and right is %S)", leftStr, rightStr));
+	case TYPECHECK_MISC_ERROR:
+		PrintError(context, sourceLoc, TPrintF(
+			"Expression type mismatch! (left is %S and right is %S)", leftStr, rightStr));
+	}
 }
 
 bool AreTypeInfosEqual(TypeInfo *a, TypeInfo *b)
@@ -753,13 +803,11 @@ void TypeCheckVariableDeclaration(Context *context, ASTVariableDeclaration varDe
 
 		if (varDecl.astType)
 		{
-			if (!CheckTypesMatch(context, *varType, valueType))
+			TypeCheckErrorCode typeCheckResult = CheckTypesMatch(context, *varType, valueType);
+			if (typeCheckResult != TYPECHECK_COOL)
 			{
-				String varTypeStr = TypeInfoToString(context, *varType);
-				String valueTypeStr = TypeInfoToString(context, valueType);
-				PrintError(context, varDecl.loc, TPrintF(
-							"Variable declaration type and initial type don't match (variable "
-							"is %S and initial value is %S", varTypeStr, valueTypeStr));
+				LogError("Variable declaration type and initial type don't match");
+				ReportTypeCheckError(context, typeCheckResult, varDecl.loc, *varType, valueType);
 			}
 		}
 		else
@@ -1059,7 +1107,9 @@ void TypeCheckExpression(Context *context, ASTExpression *expression)
 	{
 		TypeCheckExpression(context, expression->returnNode.expression);
 		u64 typeTableIdx = expression->returnNode.expression->typeTableIdx;
-		if (!CheckTypesMatch(context, context->tcCurrentReturnType, typeTableIdx))
+		TypeCheckErrorCode typeCheckResult = CheckTypesMatch(context, context->tcCurrentReturnType,
+				typeTableIdx);
+		if (typeCheckResult != TYPECHECK_COOL)
 			PrintError(context, expression->any.loc, "Incorrect return type"_s);
 	} break;
 	case ASTNODETYPE_DEFER:
@@ -1192,7 +1242,10 @@ skipInvalidIdentifierError:
 		{
 			ASTExpression *arg = &expression->procedureCall.arguments[argIdx];
 			Variable *param = procedure->parameters[argIdx].variable;
-			if (!CheckTypesMatchAndSpecialize(context, &param->typeTableIdx, &arg->typeTableIdx))
+			TypeCheckErrorCode typeCheckResult = CheckTypesMatchAndSpecialize(context,
+					&param->typeTableIdx, &arg->typeTableIdx);
+
+			if (typeCheckResult != TYPECHECK_COOL)
 			{
 				String paramStr =  TypeInfoToString(context, param->typeTableIdx);
 				String givenStr = TypeInfoToString(context, arg->typeTableIdx);
@@ -1210,7 +1263,9 @@ skipInvalidIdentifierError:
 		{
 		case TOKEN_OP_NOT:
 		{
-			if (!CheckTypesMatch(context, TYPETABLEIDX_BOOL, expressionType))
+			TypeCheckErrorCode typeCheckResult = CheckTypesMatch(context, TYPETABLEIDX_BOOL,
+					expressionType);
+			if (typeCheckResult != TYPECHECK_COOL)
 				PrintError(context, expression->any.loc, "Expression can't be cast to boolean"_s);
 			expression->typeTableIdx = TYPETABLEIDX_BOOL;
 		} break;
@@ -1299,6 +1354,7 @@ skipInvalidIdentifierError:
 			if (arrayTypeInfo->typeCategory == TYPECATEGORY_POINTER)
 			{
 				s64 pointedTypeIdx = arrayTypeInfo->pointerInfo.pointedTypeTableIdx;
+				arrayType = pointedTypeIdx;
 				arrayTypeInfo = &context->typeTable[pointedTypeIdx];
 			}
 
@@ -1320,8 +1376,10 @@ skipInvalidIdentifierError:
 			TypeCheckExpression(context, leftHand);
 			TypeCheckExpression(context, rightHand);
 
-			if (!CheckTypesMatchAndSpecialize(context, &leftHand->typeTableIdx,
-						&rightHand->typeTableIdx))
+			TypeCheckErrorCode typeCheckResult = CheckTypesMatchAndSpecialize(context,
+					&leftHand->typeTableIdx, &rightHand->typeTableIdx);
+
+			if (typeCheckResult != TYPECHECK_COOL)
 			{
 				String leftStr =  TypeInfoToString(context, leftHand->typeTableIdx);
 				String rightStr = TypeInfoToString(context, rightHand->typeTableIdx);
@@ -1371,7 +1429,9 @@ skipInvalidIdentifierError:
 	{
 		TypeCheckExpression(context, expression->ifNode.condition);
 		s64 conditionType = expression->ifNode.condition->typeTableIdx;
-		if (!CheckTypesMatch(context, TYPETABLEIDX_BOOL, conditionType))
+		TypeCheckErrorCode typeCheckResult = CheckTypesMatch(context, TYPETABLEIDX_BOOL,
+				conditionType);
+		if (typeCheckResult != TYPECHECK_COOL)
 			PrintError(context, expression->any.loc, "If condition doesn't evaluate to a boolean"_s);
 
 		TypeCheckExpression(context, expression->ifNode.body);
@@ -1383,7 +1443,9 @@ skipInvalidIdentifierError:
 	{
 		TypeCheckExpression(context, expression->whileNode.condition);
 		s64 conditionType = expression->whileNode.condition->typeTableIdx;
-		if (!CheckTypesMatch(context, TYPETABLEIDX_BOOL, conditionType))
+		TypeCheckErrorCode typeCheckResult = CheckTypesMatch(context, TYPETABLEIDX_BOOL,
+				conditionType);
+		if (typeCheckResult != TYPECHECK_COOL)
 			PrintError(context, expression->any.loc, "While condition doesn't evaluate to a boolean"_s);
 
 		TypeCheckExpression(context, expression->whileNode.body);
@@ -1411,11 +1473,14 @@ skipInvalidIdentifierError:
 		TypeInfo *rangeTypeInfo = &context->typeTable[expression->forNode.range->typeTableIdx];
 		if (rangeTypeInfo->typeCategory == TYPECATEGORY_ARRAY)
 		{
+			s64 pointerToElementTypeTableIdx = GetTypeInfoPointerOf(context,
+					rangeTypeInfo->arrayInfo.elementTypeTableIdx);
+
 			Variable *elementVar = BucketArrayAdd(&context->variables);
 			*elementVar = {};
 			elementVar->name = "it"_s;
 			elementVar->parameterIndex = -1;
-			elementVar->typeTableIdx = TYPETABLEIDX_S64;
+			elementVar->typeTableIdx = pointerToElementTypeTableIdx;
 			expression->forNode.elementVariable = elementVar;
 
 			newScopeName.name = elementVar->name;
