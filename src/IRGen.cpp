@@ -189,6 +189,7 @@ struct IRProcedureScope
 	Procedure *procedure;
 	s64 irStackBase;
 	String returnLabel;
+	u64 currentRegisterId;
 };
 
 struct IRProcedure
@@ -211,7 +212,8 @@ struct IRStaticVariable
 
 s64 NewVirtualRegister(Context *context)
 {
-	return context->currentRegisterId++;
+	IRProcedureScope *currentProc = &context->irProcedureStack[context->irProcedureStack.size - 1];
+	return currentProc->currentRegisterId++;
 }
 
 String NewLabel(Context *context, String prefix)
@@ -245,6 +247,7 @@ IRProcedureScope *PushIRProcedure(Context *context, Procedure *procedure, String
 	procScope.procedure = procedure;
 	procScope.irStackBase = context->irStack.size;
 	procScope.returnLabel = returnLabel;
+	procScope.currentRegisterId = 0;
 
 	IRProcedureScope *newProcScope = DynamicArrayAdd(&context->irProcedureStack);
 	*newProcScope = procScope;
@@ -398,7 +401,7 @@ IRValue IRInstructionFromMultiply(Context *context, IRValue leftValue, IRValue r
 			return leftValue;
 		}
 		else if (context->typeTable[rightValue.typeTableIdx].typeCategory == TYPECATEGORY_INTEGER &&
-		((leftValue.immediate & (~(leftValue.immediate - 1))) == leftValue.immediate))
+				IsPowerOf2(leftValue.immediate))
 		{
 			IRValue outValue = IRValueRegister(NewVirtualRegister(context), leftValue.typeTableIdx);
 
@@ -423,7 +426,7 @@ IRValue IRInstructionFromMultiply(Context *context, IRValue leftValue, IRValue r
 		if (rightValue.immediate == 1)
 			return leftValue;
 		if (context->typeTable[leftValue.typeTableIdx].typeCategory == TYPECATEGORY_INTEGER &&
-			((rightValue.immediate & (~(rightValue.immediate - 1))) == rightValue.immediate))
+			IsPowerOf2(rightValue.immediate))
 		{
 			IRValue outValue = IRValueRegister(NewVirtualRegister(context), rightValue.typeTableIdx);
 
@@ -839,13 +842,12 @@ IRValue IRGenFromExpression(Context *context, ASTExpression *expression)
 		BucketArrayInit(&procedure->instructions);
 		String returnLabel = NewLabel(context, "return"_s);
 
-		PushIRProcedure(context, procedure, returnLabel);
+		IRProcedureScope *currentProc = PushIRProcedure(context, procedure, returnLabel);
 
 		if (procedure->astBody)
 		{
-			context->currentRegisterId = 0;
 			IRGenFromExpression(context, procedure->astBody);
-			procedure->registerCount = context->currentRegisterId;
+			procedure->registerCount = currentProc->currentRegisterId;
 
 			IRInstruction *returnLabelInst = AddInstruction(context);
 			returnLabelInst->type = IRINSTRUCTIONTYPE_LABEL;
@@ -1014,8 +1016,7 @@ IRValue IRGenFromExpression(Context *context, ASTExpression *expression)
 				}
 				else
 				{
-					left.dereference = false;
-					left.typeTableIdx = GetTypeInfoPointerOf(context, left.typeTableIdx);
+					left = IRPointerToValue(context, left);
 				}
 			}
 
@@ -1023,21 +1024,10 @@ IRValue IRGenFromExpression(Context *context, ASTExpression *expression)
 			{
 				StructMember *structMember = expression->identifier.structMemberInfo.offsets[i];
 
-#if 0
-				IRInstruction inst;
-				inst.type = IRINSTRUCTIONTYPE_MEMBER_ACCESS;
-				inst.memberAccess.in = left;
-				inst.memberAccess.structMember = structMember;
-				inst.memberAccess.out = IRValueRegister(NewVirtualRegister(context),
-						GetTypeInfoPointerOf(context, structMember->typeTableIdx));
-				*AddInstruction(context) = inst;
-#endif
-
 				IRValue memberValue = IRDoMemberAccess(context, left, structMember);
 
 				// Set left for next one
-				left = memberValue;
-				left.typeTableIdx = GetTypeInfoPointerOf(context, structMember->typeTableIdx);
+				left = IRPointerToValue(context, memberValue);
 
 				result = memberValue;
 				result.typeTableIdx = structMember->typeTableIdx;
@@ -1153,7 +1143,6 @@ IRValue IRGenFromExpression(Context *context, ASTExpression *expression)
 				IRInstructionFromAssignment(context, paramReg, rightValue);
 
 				// Add register as parameter
-				//paramReg.dereference = false;
 				*ArrayAdd(&procCallInst.procedureCall.parameters) = paramReg;
 			}
 			else
@@ -1746,7 +1735,6 @@ void IRGenMain(Context *context)
 	DynamicArrayInit(&context->irStaticVariables, 64);
 	DynamicArrayInit(&context->irStack, 64);
 	DynamicArrayInit(&context->irProcedureStack, 8);
-	context->currentRegisterId = 0;
 	context->currentLabelId = 1;
 
 	PushIRScope(context);

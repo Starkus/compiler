@@ -154,13 +154,10 @@ bool TryParseUnaryOperation(Context *context, s32 prevPrecedence, ASTUnaryOperat
 		Advance(context);
 
 		s32 precedence = GetOperatorPrecedence(op);
-		//if (precedence > prevPrecedence) // @Check: ??
-		{
-			result->expression = NewTreeNode(context);
-			*result->expression = ParseExpression(context, precedence);
+		result->expression = NewTreeNode(context);
+		*result->expression = ParseExpression(context, precedence);
 
-			return true;
-		}
+		return true;
 	} break;
 	}
 

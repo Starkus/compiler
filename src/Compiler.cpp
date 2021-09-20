@@ -110,7 +110,6 @@ struct Context
 	DynamicArray<IRStaticVariable, malloc, realloc> irStaticVariables;
 	DynamicArray<IRScope, malloc, realloc> irStack;
 	DynamicArray<IRProcedureScope, malloc, realloc> irProcedureStack;
-	u64 currentRegisterId;
 	u64 currentLabelId;
 	String currentBreakLabel;
 };

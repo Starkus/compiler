@@ -1,0 +1,7 @@
+Main :: () -> s64
+{
+	// Range expression outside For loop
+	foo := 4..16;
+
+	return 0;
+}

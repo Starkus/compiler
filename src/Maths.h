@@ -58,6 +58,11 @@ inline u64 LastPowerOf264(u64 n)
 	return 0x8000000000000000 >> Nlz64(n);
 }
 
+inline bool IsPowerOf2(s64 n)
+{
+	return ((n & (~(n - 1))) == n);
+}
+
 inline bool EqualWithEpsilon(f32 a, f32 b, f32 epsilon)
 {
 	return a > b - epsilon && a < b + epsilon;
