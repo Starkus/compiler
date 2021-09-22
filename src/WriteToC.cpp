@@ -146,6 +146,16 @@ String OperatorToStr(IRInstruction inst)
 		return "<<"_s;
 	case IRINSTRUCTIONTYPE_SHIFT_RIGHT:
 		return ">>"_s;
+	case IRINSTRUCTIONTYPE_OR:
+		return "||"_s;
+	case IRINSTRUCTIONTYPE_AND:
+		return "&&"_s;
+	case IRINSTRUCTIONTYPE_BITWISE_OR:
+		return "|"_s;
+	case IRINSTRUCTIONTYPE_BITWISE_XOR:
+		return "^"_s;
+	case IRINSTRUCTIONTYPE_BITWISE_AND:
+		return "&"_s;
 	case IRINSTRUCTIONTYPE_EQUALS:
 		return "=="_s;
 	case IRINSTRUCTIONTYPE_GREATER_THAN:
@@ -158,7 +168,10 @@ String OperatorToStr(IRInstruction inst)
 		return "<="_s;
 	case IRINSTRUCTIONTYPE_NOT:
 		return "!"_s;
+	case IRINSTRUCTIONTYPE_BITWISE_NOT:
+		return "!"_s;
 	default:
+		ASSERT(!"Unrecognized operator");
 		return "<?>"_s;
 	}
 }

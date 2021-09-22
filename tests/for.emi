@@ -34,5 +34,13 @@ Main :: () -> s64
 	}
 	Print("\n");
 
+	// Complex expression that evaluates to an array
+	arrayHolder : struct { ptrToArray : ^[] s32; };
+	arrayHolder.ptrToArray = ^dynamicArray;
+	for (@arrayHolder.ptrToArray)
+	{
+		PrintF("i = %, it = %;  ", i, @it);
+	}
+
 	return 0;
 }

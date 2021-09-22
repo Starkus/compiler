@@ -134,6 +134,7 @@ enum IRInstructionType
 
 	IRINSTRUCTIONTYPE_UNARY_BEGIN,
 	IRINSTRUCTIONTYPE_NOT = IRINSTRUCTIONTYPE_UNARY_BEGIN,
+	IRINSTRUCTIONTYPE_BITWISE_NOT,
 	IRINSTRUCTIONTYPE_SUBTRACT_UNARY,
 	IRINSTRUCTIONTYPE_UNARY_END,
 
@@ -145,6 +146,11 @@ enum IRInstructionType
 	IRINSTRUCTIONTYPE_MODULO,
 	IRINSTRUCTIONTYPE_SHIFT_LEFT,
 	IRINSTRUCTIONTYPE_SHIFT_RIGHT,
+	IRINSTRUCTIONTYPE_OR,
+	IRINSTRUCTIONTYPE_AND,
+	IRINSTRUCTIONTYPE_BITWISE_OR,
+	IRINSTRUCTIONTYPE_BITWISE_XOR,
+	IRINSTRUCTIONTYPE_BITWISE_AND,
 	IRINSTRUCTIONTYPE_EQUALS,
 	IRINSTRUCTIONTYPE_GREATER_THAN,
 	IRINSTRUCTIONTYPE_GREATER_THAN_OR_EQUALS,
@@ -516,107 +522,6 @@ IRValue IRDoArrayAccess(Context *context, IRValue arrayValue, IRValue indexValue
 	return result;
 }
 
-IRValue IRInstructionFromBinaryOperation(Context *context, ASTExpression *expression)
-{
-	IRValue result = {};
-
-	ASTExpression *rightHand = expression->binaryOperation.rightHand;
-	ASTExpression *leftHand  = expression->binaryOperation.leftHand;
-
-	if (expression->binaryOperation.op == TOKEN_OP_MEMBER_ACCESS)
-	{
-		IRValue value = IRGenFromExpression(context, leftHand);
-
-		ASSERT(rightHand->nodeType == ASTNODETYPE_IDENTIFIER);
-		ASSERT(rightHand->identifier.type == NAMETYPE_STRUCT_MEMBER);
-		StructMember *structMember = rightHand->identifier.structMemberInfo.offsets[0];
-
-		result = IRDoMemberAccess(context, value, structMember);
-	}
-	else if (expression->binaryOperation.op == TOKEN_OP_ARRAY_ACCESS)
-	{
-		IRValue arrayValue = IRGenFromExpression(context, leftHand);
-		IRValue indexValue = IRGenFromExpression(context, rightHand);
-		result = IRDoArrayAccess(context, arrayValue, indexValue, expression->typeTableIdx);
-	}
-	else if (expression->binaryOperation.op == TOKEN_OP_MULTIPLY)
-	{
-		IRValue leftValue  = IRGenFromExpression(context, leftHand);
-		IRValue rightValue = IRGenFromExpression(context, rightHand);
-		result = IRInstructionFromMultiply(context, leftValue, rightValue);
-	}
-	else
-	{
-		IRInstruction inst = {};
-		inst.binaryOperation.left  = IRGenFromExpression(context, leftHand);
-		inst.binaryOperation.right = IRGenFromExpression(context, rightHand);
-
-		switch (expression->binaryOperation.op)
-		{
-		case TOKEN_OP_PLUS:
-		{
-			inst.type = IRINSTRUCTIONTYPE_ADD;
-		} break;
-		case TOKEN_OP_MINUS:
-		{
-			inst.type = IRINSTRUCTIONTYPE_SUBTRACT;
-		} break;
-		case TOKEN_OP_MULTIPLY:
-		{
-			inst.type = IRINSTRUCTIONTYPE_MULTIPLY;
-		} break;
-		case TOKEN_OP_DIVIDE:
-		{
-			inst.type = IRINSTRUCTIONTYPE_DIVIDE;
-		} break;
-		case TOKEN_OP_MODULO:
-		{
-			inst.type = IRINSTRUCTIONTYPE_MODULO;
-		} break;
-		case TOKEN_OP_SHIFT_LEFT:
-		{
-			inst.type = IRINSTRUCTIONTYPE_SHIFT_LEFT;
-		} break;
-		case TOKEN_OP_SHIFT_RIGHT:
-		{
-			inst.type = IRINSTRUCTIONTYPE_SHIFT_RIGHT;
-		} break;
-		case TOKEN_OP_EQUALS:
-		{
-			inst.type = IRINSTRUCTIONTYPE_EQUALS;
-		} break;
-		case TOKEN_OP_GREATER_THAN:
-		{
-			inst.type = IRINSTRUCTIONTYPE_GREATER_THAN;
-		} break;
-		case TOKEN_OP_GREATER_THAN_OR_EQUAL:
-		{
-			inst.type = IRINSTRUCTIONTYPE_GREATER_THAN_OR_EQUALS;
-		} break;
-		case TOKEN_OP_LESS_THAN:
-		{
-			inst.type = IRINSTRUCTIONTYPE_LESS_THAN;
-		} break;
-		case TOKEN_OP_LESS_THAN_OR_EQUAL:
-		{
-			inst.type = IRINSTRUCTIONTYPE_LESS_THAN_OR_EQUALS;
-		} break;
-		default:
-		{
-			inst.type = IRINSTRUCTIONTYPE_INVALID;
-		} break;
-		}
-
-		IRValue outValue = IRValueRegister(NewVirtualRegister(context), leftHand->typeTableIdx);
-		inst.binaryOperation.out = outValue;
-		*AddInstruction(context) = inst;
-
-		result = outValue;
-	}
-
-	return result;
-}
-
 void IRAddComment(Context *context, String comment)
 {
 	IRInstruction result;
@@ -779,6 +684,150 @@ void IRInstructionFromAssignment(Context *context, IRValue leftValue, IRValue ri
 
 		*AddInstruction(context) = inst;
 	}
+}
+
+IRValue IRInstructionFromBinaryOperation(Context *context, ASTExpression *expression)
+{
+	IRValue result = {};
+
+	ASTExpression *rightHand = expression->binaryOperation.rightHand;
+	ASTExpression *leftHand  = expression->binaryOperation.leftHand;
+
+	if (expression->binaryOperation.op == TOKEN_OP_MEMBER_ACCESS)
+	{
+		IRValue value = IRGenFromExpression(context, leftHand);
+
+		ASSERT(rightHand->nodeType == ASTNODETYPE_IDENTIFIER);
+		ASSERT(rightHand->identifier.type == NAMETYPE_STRUCT_MEMBER);
+		StructMember *structMember = rightHand->identifier.structMemberInfo.offsets[0];
+
+		result = IRDoMemberAccess(context, value, structMember);
+	}
+	else if (expression->binaryOperation.op == TOKEN_OP_ARRAY_ACCESS)
+	{
+		IRValue arrayValue = IRGenFromExpression(context, leftHand);
+		IRValue indexValue = IRGenFromExpression(context, rightHand);
+		result = IRDoArrayAccess(context, arrayValue, indexValue, expression->typeTableIdx);
+	}
+	else if (expression->binaryOperation.op == TOKEN_OP_MULTIPLY)
+	{
+		IRValue leftValue  = IRGenFromExpression(context, leftHand);
+		IRValue rightValue = IRGenFromExpression(context, rightHand);
+		result = IRInstructionFromMultiply(context, leftValue, rightValue);
+	}
+	else
+	{
+		IRInstruction inst = {};
+		inst.binaryOperation.left  = IRGenFromExpression(context, leftHand);
+		inst.binaryOperation.right = IRGenFromExpression(context, rightHand);
+
+		switch (expression->binaryOperation.op)
+		{
+		case TOKEN_OP_PLUS:
+		case TOKEN_OP_ASSIGNMENT_PLUS:
+		{
+			inst.type = IRINSTRUCTIONTYPE_ADD;
+		} break;
+		case TOKEN_OP_MINUS:
+		case TOKEN_OP_ASSIGNMENT_MINUS:
+		{
+			inst.type = IRINSTRUCTIONTYPE_SUBTRACT;
+		} break;
+		case TOKEN_OP_MULTIPLY:
+		case TOKEN_OP_ASSIGNMENT_MULTIPLY:
+		{
+			inst.type = IRINSTRUCTIONTYPE_MULTIPLY;
+		} break;
+		case TOKEN_OP_DIVIDE:
+		case TOKEN_OP_ASSIGNMENT_DIVIDE:
+		{
+			inst.type = IRINSTRUCTIONTYPE_DIVIDE;
+		} break;
+		case TOKEN_OP_MODULO:
+		case TOKEN_OP_ASSIGNMENT_MODULO:
+		{
+			inst.type = IRINSTRUCTIONTYPE_MODULO;
+		} break;
+		case TOKEN_OP_SHIFT_LEFT:
+		case TOKEN_OP_ASSIGNMENT_SHIFT_LEFT:
+		{
+			inst.type = IRINSTRUCTIONTYPE_SHIFT_LEFT;
+		} break;
+		case TOKEN_OP_SHIFT_RIGHT:
+		case TOKEN_OP_ASSIGNMENT_SHIFT_RIGHT:
+		{
+			inst.type = IRINSTRUCTIONTYPE_SHIFT_RIGHT;
+		} break;
+		case TOKEN_OP_AND:
+		case TOKEN_OP_ASSIGNMENT_AND:
+		{
+			inst.type = IRINSTRUCTIONTYPE_AND;
+		} break;
+		case TOKEN_OP_OR:
+		case TOKEN_OP_ASSIGNMENT_OR:
+		{
+			inst.type = IRINSTRUCTIONTYPE_OR;
+		} break;
+		case TOKEN_OP_BITWISE_AND:
+		case TOKEN_OP_ASSIGNMENT_BITWISE_AND:
+		{
+			inst.type = IRINSTRUCTIONTYPE_BITWISE_AND;
+		} break;
+		case TOKEN_OP_BITWISE_OR:
+		case TOKEN_OP_ASSIGNMENT_BITWISE_OR:
+		{
+			inst.type = IRINSTRUCTIONTYPE_BITWISE_OR;
+		} break;
+		case TOKEN_OP_BITWISE_XOR:
+		case TOKEN_OP_ASSIGNMENT_BITWISE_XOR:
+		{
+			inst.type = IRINSTRUCTIONTYPE_BITWISE_XOR;
+		} break;
+		case TOKEN_OP_EQUALS:
+		{
+			inst.type = IRINSTRUCTIONTYPE_EQUALS;
+		} break;
+		case TOKEN_OP_GREATER_THAN:
+		{
+			inst.type = IRINSTRUCTIONTYPE_GREATER_THAN;
+		} break;
+		case TOKEN_OP_GREATER_THAN_OR_EQUAL:
+		{
+			inst.type = IRINSTRUCTIONTYPE_GREATER_THAN_OR_EQUALS;
+		} break;
+		case TOKEN_OP_LESS_THAN:
+		{
+			inst.type = IRINSTRUCTIONTYPE_LESS_THAN;
+		} break;
+		case TOKEN_OP_LESS_THAN_OR_EQUAL:
+		{
+			inst.type = IRINSTRUCTIONTYPE_LESS_THAN_OR_EQUALS;
+		} break;
+		case TOKEN_OP_RANGE:
+		{
+			PrintError(context, expression->any.loc, "Range operator used in invalid context"_s);
+		} break;
+		default:
+		{
+			PrintError(context, expression->any.loc, "Binary operator unrecognized during IR generation"_s);
+		} break;
+		}
+
+		IRValue outValue = IRValueRegister(NewVirtualRegister(context), leftHand->typeTableIdx);
+		inst.binaryOperation.out = outValue;
+		*AddInstruction(context) = inst;
+
+		if (expression->binaryOperation.op >= TOKEN_OP_ASSIGNMENT_Begin &&
+			expression->binaryOperation.op <= TOKEN_OP_ASSIGNMENT_End)
+		{
+			IRInstructionFromAssignment(context, inst.binaryOperation.left, outValue);
+			result = inst.binaryOperation.left;
+		}
+		else
+			result = outValue;
+	}
+
+	return result;
 }
 
 IRValue IRValueFromVariable(Context *context, Variable *variable)
@@ -1288,6 +1337,10 @@ IRValue IRGenFromExpression(Context *context, ASTExpression *expression)
 			{
 				inst.type = IRINSTRUCTIONTYPE_NOT;
 			} break;
+			case TOKEN_OP_BITWISE_NOT:
+			{
+				inst.type = IRINSTRUCTIONTYPE_BITWISE_NOT;
+			} break;
 			case TOKEN_OP_MINUS:
 			{
 				inst.type = IRINSTRUCTIONTYPE_SUBTRACT_UNARY;
@@ -1650,6 +1703,7 @@ IRValue IRGenFromExpression(Context *context, ASTExpression *expression)
 	{
 	} break;
 	}
+
 	return result;
 }
 
@@ -1679,6 +1733,8 @@ else if (value.valueType == IRVALUETYPE_IMMEDIATE_FLOAT)
 		Log("%S", value.immediateString);
 	else if (value.valueType == IRVALUETYPE_SIZEOF)
 		Log("sizeof(%lld)", value.sizeOfTypeTableIdx);
+	else if (value.valueType == IRVALUETYPE_TYPEOF)
+		Log("typeof(%lld)", value.sizeOfTypeTableIdx);
 	else
 		Log("???");
 
@@ -1706,6 +1762,27 @@ void PrintIRInstructionOperator(IRInstruction inst)
 		break;
 	case IRINSTRUCTIONTYPE_MODULO:
 		Log("%");
+		break;
+	case IRINSTRUCTIONTYPE_SHIFT_LEFT:
+		Log("<<");
+		break;
+	case IRINSTRUCTIONTYPE_SHIFT_RIGHT:
+		Log(">>");
+		break;
+	case IRINSTRUCTIONTYPE_OR:
+		Log("||");
+		break;
+	case IRINSTRUCTIONTYPE_AND:
+		Log("&&");
+		break;
+	case IRINSTRUCTIONTYPE_BITWISE_OR:
+		Log("|");
+		break;
+	case IRINSTRUCTIONTYPE_BITWISE_XOR:
+		Log("^");
+		break;
+	case IRINSTRUCTIONTYPE_BITWISE_AND:
+		Log("&");
 		break;
 	case IRINSTRUCTIONTYPE_EQUALS:
 		Log("==");

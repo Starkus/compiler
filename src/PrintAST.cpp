@@ -14,6 +14,30 @@ String OperatorToString(s32 op)
 	{
 		case TOKEN_OP_ASSIGNMENT:
 			return "="_s;
+		case TOKEN_OP_ASSIGNMENT_PLUS:
+			return "+="_s;
+		case TOKEN_OP_ASSIGNMENT_MINUS:
+			return "-="_s;
+		case TOKEN_OP_ASSIGNMENT_MULTIPLY:
+			return "*="_s;
+		case TOKEN_OP_ASSIGNMENT_DIVIDE:
+			return "/="_s;
+		case TOKEN_OP_ASSIGNMENT_MODULO:
+			return "%="_s;
+		case TOKEN_OP_ASSIGNMENT_SHIFT_LEFT:
+			return "<<="_s;
+		case TOKEN_OP_ASSIGNMENT_SHIFT_RIGHT:
+			return ">>="_s;
+		case TOKEN_OP_ASSIGNMENT_OR:
+			return "||="_s;
+		case TOKEN_OP_ASSIGNMENT_AND:
+			return "&&="_s;
+		case TOKEN_OP_ASSIGNMENT_BITWISE_OR:
+			return "|="_s;
+		case TOKEN_OP_ASSIGNMENT_BITWISE_XOR:
+			return "^="_s;
+		case TOKEN_OP_ASSIGNMENT_BITWISE_AND:
+			return "&="_s;
 		case TOKEN_OP_EQUALS:
 			return "=="_s;
 		case TOKEN_OP_GREATER_THAN:
@@ -44,8 +68,8 @@ String OperatorToString(s32 op)
 			return ":"_s;
 		case TOKEN_OP_STATIC_DEF:
 			return "::"_s;
-		case TOKEN_OP_VARARGS:
-			return "..."_s;
+		case TOKEN_OP_RANGE:
+			return ".."_s;
 		case TOKEN_OP_AND:
 			return "&&"_s;
 		case TOKEN_OP_OR:
@@ -398,6 +422,18 @@ void PrintExpression(PrintContext *context, ASTExpression *e)
 		PrintExpression(context, e->whileNode.body);
 		--context->indentLevels;
 	} break;
+	case ASTNODETYPE_FOR:
+	{
+		Log("For");
+
+		PrintSourceLocation(context, e->any.loc);
+		Log("\n");
+
+		++context->indentLevels;
+		PrintExpression(context, e->forNode.range);
+		PrintExpression(context, e->forNode.body);
+		--context->indentLevels;
+	} break;
 	case ASTNODETYPE_RETURN:
 	{
 		Log("Return");
@@ -461,6 +497,14 @@ void PrintExpression(PrintContext *context, ASTExpression *e)
 		Log("Type\n");
 		++context->indentLevels;
 		PrintASTType(context, &e->astType);
+		--context->indentLevels;
+	} break;
+	case ASTNODETYPE_CAST:
+	{
+		Log("Cast\n");
+		++context->indentLevels;
+		PrintASTType(context, &e->castNode.astType);
+		PrintExpression(context, e->castNode.expression);
 		--context->indentLevels;
 	} break;
 	default:

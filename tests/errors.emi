@@ -1,7 +1,30 @@
 Main :: () -> s64
 {
 	// Range expression outside For loop
+	/*
 	foo := 4..16;
+	*/
+
+	// Statement inside if
+	/*
+	if (while 1 {}) {}
+	foo1 := for (1..10) {}
+	while (if 1 == 1 {}) {}
+	*/
+
+	// Random expression inside for
+	/*
+	for 2 + 2 {}
+	*/
+
+	// Non-array expression inside for
+	/*
+	n := 1;
+	for n {}
+	*/
+
+	// Pointers to things not in memory
+	//foo2 := ^2;
 
 	return 0;
 }

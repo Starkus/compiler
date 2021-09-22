@@ -147,6 +147,7 @@ bool TryParseUnaryOperation(Context *context, s32 prevPrecedence, ASTUnaryOperat
 	case TOKEN_OP_POINTER_TO:
 	case TOKEN_OP_DEREFERENCE:
 	case TOKEN_OP_NOT:
+	case TOKEN_OP_BITWISE_NOT:
 	case TOKEN_OP_MINUS:
 	{
 		enum TokenType op = context->token->type;
@@ -179,55 +180,6 @@ bool TryParseBinaryOperation(Context *context, ASTExpression leftHand, s32 prevP
 
 	switch (context->token->type)
 	{
-	case TOKEN_OP_PLUS_EQUALS:
-	case TOKEN_OP_MINUS_EQUALS:
-	case TOKEN_OP_MULTIPLY_EQUALS:
-	case TOKEN_OP_DIVIDE_EQUALS:
-	{
-		// Replace directly for x = x + y
-		enum TokenType op;
-		switch (context->token->type)
-		{
-		case TOKEN_OP_PLUS_EQUALS:
-			op = TOKEN_OP_PLUS; break;
-		case TOKEN_OP_MINUS_EQUALS:
-			op = TOKEN_OP_MINUS; break;
-		case TOKEN_OP_MULTIPLY_EQUALS:
-			op = TOKEN_OP_MULTIPLY; break;
-		case TOKEN_OP_DIVIDE_EQUALS:
-			op = TOKEN_OP_DIVIDE; break;
-		case TOKEN_OP_MODULO_EQUALS:
-			op = TOKEN_OP_MODULO; break;
-		default:
-			op = TOKEN_END_OF_FILE;
-			CRASH;
-		}
-		Advance(context);
-
-		result->op = TOKEN_OP_ASSIGNMENT;
-		s32 precedence = GetOperatorPrecedence(TOKEN_OP_ASSIGNMENT);
-		if (precedence > prevPrecedence)
-		{
-			result->leftHand = NewTreeNode(context);
-			*result->leftHand = leftHand;
-
-			result->rightHand = NewTreeNode(context);
-			result->rightHand->any.loc = result->loc;
-			result->rightHand->nodeType = ASTNODETYPE_BINARY_OPERATION;
-
-			// NOTE! Tree branch referenced twice here! The tree is now a graph D:
-			// Consider copying if there's a problem with this.
-			result->rightHand->binaryOperation.leftHand = NewTreeNode(context);
-			*result->rightHand->binaryOperation.leftHand = leftHand;
-
-			result->rightHand->binaryOperation.rightHand = NewTreeNode(context);
-			*result->rightHand->binaryOperation.rightHand = ParseExpression(context, precedence);
-
-			result->rightHand->binaryOperation.op = op;
-
-			return true;
-		}
-	} break;
 	case TOKEN_OP_ARRAY_ACCESS:
 	{
 		result->leftHand = NewTreeNode(context);
@@ -249,6 +201,18 @@ bool TryParseBinaryOperation(Context *context, ASTExpression leftHand, s32 prevP
 		}
 	} break;
 	case TOKEN_OP_ASSIGNMENT:
+	case TOKEN_OP_ASSIGNMENT_PLUS:
+	case TOKEN_OP_ASSIGNMENT_MINUS:
+	case TOKEN_OP_ASSIGNMENT_MULTIPLY:
+	case TOKEN_OP_ASSIGNMENT_DIVIDE:
+	case TOKEN_OP_ASSIGNMENT_MODULO:
+	case TOKEN_OP_ASSIGNMENT_SHIFT_LEFT:
+	case TOKEN_OP_ASSIGNMENT_SHIFT_RIGHT:
+	case TOKEN_OP_ASSIGNMENT_OR:
+	case TOKEN_OP_ASSIGNMENT_AND:
+	case TOKEN_OP_ASSIGNMENT_BITWISE_OR:
+	case TOKEN_OP_ASSIGNMENT_BITWISE_XOR:
+	case TOKEN_OP_ASSIGNMENT_BITWISE_AND:
 	case TOKEN_OP_EQUALS:
 	case TOKEN_OP_GREATER_THAN:
 	case TOKEN_OP_GREATER_THAN_OR_EQUAL:
@@ -261,6 +225,11 @@ bool TryParseBinaryOperation(Context *context, ASTExpression leftHand, s32 prevP
 	case TOKEN_OP_MODULO:
 	case TOKEN_OP_SHIFT_LEFT:
 	case TOKEN_OP_SHIFT_RIGHT:
+	case TOKEN_OP_AND:
+	case TOKEN_OP_OR:
+	case TOKEN_OP_BITWISE_AND:
+	case TOKEN_OP_BITWISE_OR:
+	case TOKEN_OP_BITWISE_XOR:
 	case TOKEN_OP_MEMBER_ACCESS:
 	case TOKEN_OP_RANGE:
 	{
@@ -282,8 +251,8 @@ bool TryParseBinaryOperation(Context *context, ASTExpression leftHand, s32 prevP
 	} break;
 	default:
 	{
-		//String opStr = TokenTypeToString(context->token->type);
-		//PrintError(context, context->token->loc, TPrintF("Unexpected operator %S", opStr));
+		String opStr = TokenTypeToString(context->token->type);
+		PrintError(context, context->token->loc, TPrintF("Unexpected operator %S", opStr));
 	} break;
 	}
 
@@ -301,7 +270,16 @@ ASTIf ParseIf(Context *context)
 	ifNode.loc = context->token->loc;
 
 	ifNode.condition = NewTreeNode(context);
-	*ifNode.condition = ParseExpression(context, -1);
+	if (context->token->type == '(')
+	{
+		// If there are parenthesis, grab _only_ the expression inside.
+		Advance(context);
+		*ifNode.condition = ParseExpression(context, -1);
+		AssertToken(context, context->token, ')');
+		Advance(context);
+	}
+	else
+		*ifNode.condition = ParseExpression(context, -1);
 
 	ifNode.body = NewTreeNode(context);
 	*ifNode.body = ParseStatement(context);
@@ -325,7 +303,17 @@ ASTWhile ParseWhile(Context *context)
 	Advance(context);
 
 	whileNode.condition = NewTreeNode(context);
-	*whileNode.condition = ParseExpression(context, -1);
+	if (context->token->type == '(')
+	{
+		// If there are parenthesis, grab _only_ the expression inside.
+		Advance(context);
+		*whileNode.condition = ParseExpression(context, -1);
+		AssertToken(context, context->token, ')');
+		Advance(context);
+	}
+	else
+		*whileNode.condition = ParseExpression(context, -1);
+
 	whileNode.body = NewTreeNode(context);
 	*whileNode.body = ParseStatement(context);
 
@@ -341,11 +329,25 @@ ASTFor ParseFor(Context *context)
 	Advance(context);
 
 	forNode.range = NewTreeNode(context);
-	*forNode.range = ParseExpression(context, -1);
+	if (context->token->type == '(')
+	{
+		// If there are parenthesis, grab _only_ the expression inside.
+		Advance(context);
+		*forNode.range = ParseExpression(context, -1);
+		AssertToken(context, context->token, ')');
+		Advance(context);
+	}
+	else
+		*forNode.range = ParseExpression(context, -1);
+
 	forNode.body = NewTreeNode(context);
 	*forNode.body = ParseStatement(context);
 
-	// @Todo: check range expression is valid?
+	if (forNode.range->nodeType == ASTNODETYPE_BINARY_OPERATION)
+	{
+		if (forNode.range->binaryOperation.op != TOKEN_OP_RANGE)
+			PrintError(context, forNode.range->any.loc, "Invalid expression in 'for' range"_s);
+	}
 
 	return forNode;
 }
@@ -475,12 +477,6 @@ ASTVariableDeclaration ParseVariableDeclaration(Context *context)
 	ASTVariableDeclaration varDecl = {};
 	varDecl.loc = context->token->loc;
 
-	if (context->token->type == TOKEN_KEYWORD_USING)
-	{
-		varDecl.isUsing = true;
-		Advance(context);
-	}
-
 	varDecl.variable = BucketArrayAdd(&context->variables);
 	*varDecl.variable = {};
 	varDecl.variable->parameterIndex = -1;
@@ -553,8 +549,15 @@ ASTProcedureDeclaration ParseProcedureDeclaration(Context *context)
 			break;
 		}
 
+		bool isUsing = false;
+		if (context->token->type == TOKEN_KEYWORD_USING)
+		{
+			isUsing = true;
+			Advance(context);
+		}
 		// @Improve: separate node type for procedure parameter?
 		ASTVariableDeclaration astVarDecl = ParseVariableDeclaration(context);
+		astVarDecl.isUsing = isUsing;
 		ASSERT(procDecl.astParameters.size <= S8_MAX);
 		astVarDecl.variable->parameterIndex = (s8)procDecl.astParameters.size;
 
@@ -733,9 +736,30 @@ ASTExpression ParseExpression(Context *context, s32 precedence)
 		result.castNode.expression = NewTreeNode(context);
 		*result.castNode.expression = ParseExpression(context, -1);
 	}
+	else if (context->token->type == TOKEN_KEYWORD_IF)
+	{
+		PrintError(context, context->token->loc, "'if' only valid at statement level!"_s);
+	}
+	else if (context->token->type == TOKEN_KEYWORD_WHILE)
+	{
+		PrintError(context, context->token->loc, "'while' only valid at statement level!"_s);
+	}
+	else if (context->token->type == TOKEN_KEYWORD_FOR)
+	{
+		PrintError(context, context->token->loc, "'for' only valid at statement level!"_s);
+	}
+	else if (context->token->type == TOKEN_KEYWORD_DEFER)
+	{
+		PrintError(context, context->token->loc, "'defer' only valid at statement level!"_s);
+	}
+	else if (context->token->type == TOKEN_KEYWORD_RETURN)
+	{
+		PrintError(context, context->token->loc, "'return' only valid at statement level!"_s);
+	}
 	else if (IsTokenOperator(context->token))
 	{
-		// Page intentionally left blank!
+		// This is just to avoid falling into the else below. Operators will be handled by the
+		// binary expression loop at the bottom.
 	}
 	else
 	{

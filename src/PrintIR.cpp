@@ -35,16 +35,22 @@ void PrintIRInstructions(Context *context)
 			if (inst.type == IRINSTRUCTIONTYPE_LABEL)
 			{
 				Log("%S: ", inst.label);
-				for (s64 i = inst.label.size + 2; i < padding; ++i)
-					Log(" ");
 
 				IRInstruction nextInst = proc->instructions[instructionIdx + 1];
 				if (nextInst.type != IRINSTRUCTIONTYPE_LABEL)
 				{
+					for (s64 i = inst.label.size + 2; i < padding; ++i)
+						Log(" ");
+
 					++instructionIdx;
 					if (instructionIdx >= instructionCount)
 						break;
 					inst = proc->instructions[instructionIdx];
+				}
+				else
+				{
+					Log("\n");
+					continue;
 				}
 			}
 			else
@@ -53,7 +59,11 @@ void PrintIRInstructions(Context *context)
 					Log(" ");
 			}
 
-			if (inst.type == IRINSTRUCTIONTYPE_JUMP)
+			if (inst.type == IRINSTRUCTIONTYPE_COMMENT)
+			{
+				Log("// \"%S\"", inst.comment);
+			}
+			else if (inst.type == IRINSTRUCTIONTYPE_JUMP)
 			{
 				Log("jump \"%S\"", inst.jump.label);
 			}
@@ -76,53 +86,11 @@ void PrintIRInstructions(Context *context)
 			{
 				Log("return");
 			}
-			else if (inst.type == IRINSTRUCTIONTYPE_VARIABLE_DECLARATION)
-			{
-				Variable *var = inst.variableDeclaration.variable;
-				String typeStr = TypeInfoToString(context, var->typeTableIdx);
-				Log("variable %S : %S", var->name, typeStr);
-			}
 			else if (inst.type == IRINSTRUCTIONTYPE_ASSIGNMENT)
 			{
 				PrintIRValue(context, inst.assignment.dst);
 				Log(" = ");
 				PrintIRValue(context, inst.assignment.src);
-			}
-			else if (inst.type == IRINSTRUCTIONTYPE_MEMBER_ACCESS)
-			{
-				PrintIRValue(context, inst.memberAccess.out);
-				Log(" = ");
-				PrintIRValue(context, inst.memberAccess.in);
-
-				TypeInfo *structTypeInfo = &context->typeTable[inst.memberAccess.in.typeTableIdx];
-				if (structTypeInfo->typeCategory == TYPECATEGORY_POINTER)
-				{
-					s64 structTypeInfoIdx = structTypeInfo->pointerInfo.pointedTypeTableIdx;
-					structTypeInfo = &context->typeTable[structTypeInfoIdx];
-				}
-				if (structTypeInfo->typeCategory == TYPECATEGORY_ARRAY)
-				{
-					s64 arrayTypeTableIdx = FindTypeInStackByName(context, {}, "Array"_s);
-					structTypeInfo = &context->typeTable[arrayTypeTableIdx];
-				}
-				ASSERT(structTypeInfo->typeCategory == TYPECATEGORY_STRUCT);
-
-				String structName = "<struct>"_s;
-				StaticDefinition *staticDefStruct = FindStaticDefinitionByTypeTableIdx(context,
-						inst.memberAccess.in.typeTableIdx);
-				if (staticDefStruct)
-					structName = staticDefStruct->name;
-				String memberName = inst.memberAccess.structMember->name;
-
-				Log(" + offset(%S::%S)", structName, memberName);
-			}
-			else if (inst.type == IRINSTRUCTIONTYPE_ARRAY_ACCESS)
-			{
-				PrintIRValue(context, inst.arrayAccess.out);
-				Log(" = ");
-				PrintIRValue(context, inst.arrayAccess.array);
-				Log(" + ");
-				PrintIRValue(context, inst.arrayAccess.index);
 			}
 			else if (inst.type >= IRINSTRUCTIONTYPE_UNARY_BEGIN && inst.type < IRINSTRUCTIONTYPE_UNARY_END)
 			{

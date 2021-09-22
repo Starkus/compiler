@@ -24,5 +24,8 @@ Main :: () -> s64
 
 	argByPointer(^foo);
 
+	aStruct : struct { a : s32; };
+	ptrToMember := ^aStruct.a;
+
 	return 0;
 }

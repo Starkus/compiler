@@ -24,10 +24,31 @@ operatorPrecedence :: (arg1 : u32, arg2 : u64 = 4) -> s32
 	flag = !foo;
 	//notAFlag : f32 = bar == foo;
 
+	baz = 1 + 1;
+	baz = 1 - 1;
+	baz = 1 * 1;
+	baz = 1 / 1;
+	baz = 1 % 1;
+	baz = 1 && 1;
+	baz = 1 || 1;
+	baz = 1 & 1;
+	baz = 1 | 1;
+	baz = 1 ^ 1;
+	baz = -1;
+	baz = ~1;
+
 	baz += 16;
 	baz -= 16;
 	baz *= 16;
 	baz /= 16;
+	baz %= 16;
+	baz <<= 1;
+	baz >>= 1;
+	baz ||= 0;
+	baz &&= 1;
+	baz |= 0;
+	baz &= 1;
+	baz ^= 1;
 
 	asd := 1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1;
 

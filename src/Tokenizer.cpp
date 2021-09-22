@@ -16,6 +16,24 @@ const String TokenTypeToString(s32 type)
 
 	case TOKEN_OP_ASSIGNMENT:
 		return "< = >"_s;
+	case TOKEN_OP_ASSIGNMENT_PLUS:
+		return "< += >"_s;
+	case TOKEN_OP_ASSIGNMENT_MINUS:
+		return "< -= >"_s;
+	case TOKEN_OP_ASSIGNMENT_MULTIPLY:
+		return "< *= >"_s;
+	case TOKEN_OP_ASSIGNMENT_DIVIDE:
+		return "< /= >"_s;
+	case TOKEN_OP_ASSIGNMENT_MODULO:
+		return "< %= >"_s;
+	case TOKEN_OP_ASSIGNMENT_SHIFT_LEFT:
+		return "< <<= >"_s;
+	case TOKEN_OP_ASSIGNMENT_SHIFT_RIGHT:
+		return "< >>= >"_s;
+	case TOKEN_OP_ASSIGNMENT_OR:
+		return "< ||= >"_s;
+	case TOKEN_OP_ASSIGNMENT_AND:
+		return "< &&= >"_s;
 	case TOKEN_OP_EQUALS:
 		return "< == >"_s;
 	case TOKEN_OP_GREATER_THAN:
@@ -61,9 +79,9 @@ const String TokenTypeToString(s32 type)
 		return "<EOF>"_s;
 	}
 
-	if (type >= TOKEN_KEYWORD_BEGIN && type < TOKEN_KEYWORD_END)
+	if (type >= TOKEN_KEYWORD_Begin && type <= TOKEN_KEYWORD_End)
 		return "<Keyword>"_s;
-	if (type >= TOKEN_OP_BEGIN && type < TOKEN_OP_END)
+	if (type >= TOKEN_OP_Begin && type <= TOKEN_OP_End)
 		return "<Operator>"_s;
 
 	char *str = (char *)FrameAlloc(5);
@@ -74,7 +92,7 @@ const String TokenTypeToString(s32 type)
 
 const String TokenToString(Token *token)
 {
-	if (token->type >= TOKEN_KEYWORD_BEGIN && token->type < TOKEN_KEYWORD_END)
+	if (token->type >= TOKEN_KEYWORD_Begin && token->type <= TOKEN_KEYWORD_End)
 		return token->string;
 
 	return TokenTypeToString(token->type);
@@ -82,12 +100,12 @@ const String TokenToString(Token *token)
 
 inline bool IsTokenKeyword(Token *token)
 {
-	return token->type >= TOKEN_KEYWORD_BEGIN && token->type < TOKEN_KEYWORD_END;
+	return token->type >= TOKEN_KEYWORD_Begin && token->type <= TOKEN_KEYWORD_End;
 }
 
 inline bool IsTokenOperator(Token *token)
 {
-	return token->type >= TOKEN_OP_BEGIN && token->type < TOKEN_OP_END;
+	return token->type >= TOKEN_OP_Begin && token->type <= TOKEN_OP_End;
 }
 
 s32 GetOperatorPrecedence(s32 op)
@@ -379,7 +397,7 @@ Token ReadTokenAndAdvance(Tokenizer *tokenizer)
 numberDone:
 		;
 	}
-	else if (*tokenizer->cursor >= TOKEN_ASCII_BEGIN && *tokenizer->cursor < TOKEN_ASCII_END)
+	else if (*tokenizer->cursor >= TOKEN_ASCII_Begin && *tokenizer->cursor <= TOKEN_ASCII_End)
 	{
 		char next = *(tokenizer->cursor + 1);
 		switch (*tokenizer->cursor)
@@ -403,8 +421,16 @@ numberDone:
 			}
 			else if (next == '<')
 			{
-				result.type = TOKEN_OP_SHIFT_LEFT;
-				++tokenizer->cursor;
+				if (*(tokenizer->cursor + 2) == '=')
+				{
+					result.type = TOKEN_OP_ASSIGNMENT_SHIFT_LEFT;
+					tokenizer->cursor += 2;
+				}
+				else
+				{
+					result.type = TOKEN_OP_SHIFT_LEFT;
+					++tokenizer->cursor;
+				}
 			}
 			else
 				result.type = TOKEN_OP_LESS_THAN;
@@ -418,8 +444,16 @@ numberDone:
 			}
 			else if (next == '>')
 			{
-				result.type = TOKEN_OP_SHIFT_RIGHT;
-				++tokenizer->cursor;
+				if (*(tokenizer->cursor + 2) == '=')
+				{
+					result.type = TOKEN_OP_ASSIGNMENT_SHIFT_RIGHT;
+					tokenizer->cursor += 2;
+				}
+				else
+				{
+					result.type = TOKEN_OP_SHIFT_RIGHT;
+					++tokenizer->cursor;
+				}
 			}
 			else
 				result.type = TOKEN_OP_GREATER_THAN;
@@ -443,7 +477,7 @@ numberDone:
 		{
 			if (next == '=')
 			{
-				result.type = TOKEN_OP_PLUS_EQUALS;
+				result.type = TOKEN_OP_ASSIGNMENT_PLUS;
 				++tokenizer->cursor;
 			}
 			else
@@ -453,7 +487,7 @@ numberDone:
 		{
 			if (next == '=')
 			{
-				result.type = TOKEN_OP_MINUS_EQUALS;
+				result.type = TOKEN_OP_ASSIGNMENT_MINUS;
 				++tokenizer->cursor;
 			}
 			else if (next == '>')
@@ -468,7 +502,7 @@ numberDone:
 		{
 			if (next == '=')
 			{
-				result.type = TOKEN_OP_MULTIPLY_EQUALS;
+				result.type = TOKEN_OP_ASSIGNMENT_MULTIPLY;
 				++tokenizer->cursor;
 			}
 			else
@@ -478,7 +512,7 @@ numberDone:
 		{
 			if (next == '=')
 			{
-				result.type = TOKEN_OP_DIVIDE_EQUALS;
+				result.type = TOKEN_OP_ASSIGNMENT_DIVIDE;
 				++tokenizer->cursor;
 			}
 			else
@@ -488,35 +522,67 @@ numberDone:
 		{
 			if (next == '=')
 			{
-				result.type = TOKEN_OP_MODULO_EQUALS;
+				result.type = TOKEN_OP_ASSIGNMENT_MODULO;
 				++tokenizer->cursor;
 			}
 			else
 				result.type = TOKEN_OP_MODULO;
 		} break;
-		case '&':
-		{
-			if (next == '&')
-			{
-				result.type = TOKEN_OP_AND;
-				++tokenizer->cursor;
-			}
-			else
-				result.type = TOKEN_OP_BITWISE_AND;
-		} break;
 		case '|':
 		{
 			if (next == '|')
 			{
-				result.type = TOKEN_OP_OR;
+				if (*(tokenizer->cursor + 2) == '=')
+				{
+					result.type = TOKEN_OP_ASSIGNMENT_OR;
+					tokenizer->cursor += 2;
+				}
+				else
+				{
+					result.type = TOKEN_OP_OR;
+					++tokenizer->cursor;
+				}
+			}
+			else if (next == '=')
+			{
+				result.type = TOKEN_OP_ASSIGNMENT_BITWISE_OR;
 				++tokenizer->cursor;
 			}
 			else
 				result.type = TOKEN_OP_BITWISE_OR;
 		} break;
+		case '&':
+		{
+			if (next == '&')
+			{
+				if (*(tokenizer->cursor + 2) == '=')
+				{
+					result.type = TOKEN_OP_ASSIGNMENT_AND;
+					tokenizer->cursor += 2;
+				}
+				else
+				{
+					result.type = TOKEN_OP_AND;
+					++tokenizer->cursor;
+				}
+			}
+			else if (next == '=')
+			{
+				result.type = TOKEN_OP_ASSIGNMENT_BITWISE_AND;
+				++tokenizer->cursor;
+			}
+			else
+				result.type = TOKEN_OP_BITWISE_AND;
+		} break;
 		case '^':
 		{
-			result.type = TOKEN_OP_POINTER_TO;
+			if (next == '=')
+			{
+				result.type = TOKEN_OP_ASSIGNMENT_BITWISE_XOR;
+				++tokenizer->cursor;
+			}
+			else
+				result.type = TOKEN_OP_POINTER_TO;
 		} break;
 		case '@':
 		{

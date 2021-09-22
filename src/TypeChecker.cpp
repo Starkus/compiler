@@ -698,9 +698,9 @@ bool IsTemporalValue(ASTExpression *expression)
 			return expression->identifier.type == NAMETYPE_STATIC_DEFINITION;
 		case ASTNODETYPE_BINARY_OPERATION:
 			if (expression->binaryOperation.op == TOKEN_OP_MEMBER_ACCESS)
-				return false;
+				return IsTemporalValue(expression->binaryOperation.leftHand);
 			if (expression->binaryOperation.op == TOKEN_OP_ARRAY_ACCESS)
-				return false;
+				return IsTemporalValue(expression->binaryOperation.leftHand);
 			break;
 	}
 	return true;
@@ -1471,9 +1471,13 @@ skipInvalidIdentifierError:
 		newScopeName.variable = indexVar;
 		*DynamicArrayAdd(&stackTop->names) = newScopeName;
 
-		TypeInfo *rangeTypeInfo = &context->typeTable[expression->forNode.range->typeTableIdx];
-		if (rangeTypeInfo->typeCategory == TYPECATEGORY_ARRAY)
+		if (expression->forNode.range->nodeType != ASTNODETYPE_BINARY_OPERATION)
 		{
+			TypeInfo *rangeTypeInfo = &context->typeTable[expression->forNode.range->typeTableIdx];
+			if (rangeTypeInfo->typeCategory != TYPECATEGORY_ARRAY)
+				PrintError(context, expression->forNode.range->any.loc, "'for' range expression does"
+						"not evaluate to an array nor is it a number range (..)"_s);
+
 			s64 pointerToElementTypeTableIdx = GetTypeInfoPointerOf(context,
 					rangeTypeInfo->arrayInfo.elementTypeTableIdx);
 
