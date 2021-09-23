@@ -120,6 +120,7 @@ struct TCScopeName
 {
 	NameType type;
 	String name;
+	SourceLocation loc;
 	union
 	{
 		Variable *variable;
@@ -301,7 +302,7 @@ s64 FindTypeInStackByName(Context *context, SourceLocation loc, String name)
 				if (StringEquals(name, currentName.name))
 				{
 					if (currentName.type != NAMETYPE_STATIC_DEFINITION)
-						PrintError(context, loc, TPrintF("\"%S\" is not a type!",
+						LogError(context, loc, TPrintF("\"%S\" is not a type!",
 									name));
 
 					staticDef = currentName.staticDefinition;
@@ -310,14 +311,14 @@ s64 FindTypeInStackByName(Context *context, SourceLocation loc, String name)
 			}
 		}
 		if (staticDef == nullptr)
-			PrintError(context, loc, TPrintF("Type \"%S\" not in scope!", name));
+			LogError(context, loc, TPrintF("Type \"%S\" not in scope!", name));
 		else if (staticDef->definitionType != STATICDEFINITIONTYPE_TYPE)
-			PrintError(context, loc, TPrintF("\"%S\" is not a type!", name));
+			LogError(context, loc, TPrintF("\"%S\" is not a type!", name));
 		typeTableIdx = staticDef->type.typeTableIdx;
 	}
 
 	if (typeTableIdx < 0)
-		PrintError(context, loc, TPrintF("Type \"%S\" not in scope!", name));
+		LogError(context, loc, TPrintF("Type \"%S\" not in scope!", name));
 
 	return typeTableIdx;
 }
@@ -474,25 +475,25 @@ void ReportTypeCheckError(Context *context, TypeCheckErrorCode errorCode, Source
 	switch (errorCode)
 	{
 	case TYPECHECK_SIGN_MISMATCH:
-		PrintError(context, sourceLoc, TPrintF(
+		LogError(context, sourceLoc, TPrintF(
 			"Integer sign mismatch! (left is %S and right is %S)", leftStr, rightStr));
 	case TYPECHECK_SIZE_MISMATCH:
-		PrintError(context, sourceLoc, TPrintF(
+		LogError(context, sourceLoc, TPrintF(
 			"Integer size mismatch! (left is %S and right is %S)", leftStr, rightStr));
 	case TYPECHECK_TYPE_CATEGORY_MISMATCH:
-		PrintError(context, sourceLoc, TPrintF(
+		LogError(context, sourceLoc, TPrintF(
 			"Expression type mismatch! (left is %S and right is %S)", leftStr, rightStr));
 	case TYPECHECK_POINTED_TYPE_MISMATCH:
-		PrintError(context, sourceLoc, TPrintF(
+		LogError(context, sourceLoc, TPrintF(
 			"Unrelated pointed types! (left is %S and right is %S)", leftStr, rightStr));
 	case TYPECHECK_ARRAY_SIZE_MISMATCH:
-		PrintError(context, sourceLoc, TPrintF(
+		LogError(context, sourceLoc, TPrintF(
 			"Size of arrays are different! (left is %S and right is %S)", leftStr, rightStr));
 	case TYPECHECK_STRUCT_MISMATCH:
-		PrintError(context, sourceLoc, TPrintF(
+		LogError(context, sourceLoc, TPrintF(
 			"Expressions evaluate to different structs! (left is %S and right is %S)", leftStr, rightStr));
 	case TYPECHECK_MISC_ERROR:
-		PrintError(context, sourceLoc, TPrintF(
+		LogError(context, sourceLoc, TPrintF(
 			"Expression type mismatch! (left is %S and right is %S)", leftStr, rightStr));
 	}
 }
@@ -640,7 +641,7 @@ s64 TypeCheckType(Context *context, SourceLocation loc, ASTType *astType)
 
 			if (t.enumInfo.typeTableIdx < TYPETABLEIDX_PRIMITIVE_BEGIN ||
 				t.enumInfo.typeTableIdx > TYPETABLEIDX_PRIMITIVE_END)
-				PrintError(context, astTypeLoc, "Only primitive types are allowed as enum field types"_s);
+				LogError(context, astTypeLoc, "Only primitive types are allowed as enum field types"_s);
 		}
 
 		t.size = context->typeTable[t.enumInfo.typeTableIdx].size;
@@ -663,7 +664,7 @@ s64 TypeCheckType(Context *context, SourceLocation loc, ASTType *astType)
 				if (astMember.value->nodeType != ASTNODETYPE_LITERAL)
 				{
 					// @Todo: Somehow execute constant expressions and bake them?
-					PrintError(context, astType->loc, "Non literal initial values for enum values not yet supported"_s);
+					LogError(context, astType->loc, "Non literal initial values for enum values not yet supported"_s);
 				}
 				currentValue = astMember.value->literal.integer;
 			}
@@ -744,7 +745,7 @@ void AddStructMembersToScope(Context *context, SourceLocation loc, Variable *bas
 					for (int j = 0; j < offsetStack->size; ++j)
 						fullMemberName = TPrintF("%S.%S", fullMemberName, (*offsetStack)[j]->name);
 
-					PrintError(context, loc, TPrintF("Failed to pull name \"%S\" into scope because "
+					LogError(context, loc, TPrintF("Failed to pull name \"%S\" into scope because "
 								"name \"%S\" is already used", fullMemberName, member->name));
 				}
 			}
@@ -784,7 +785,9 @@ void TypeCheckVariableDeclaration(Context *context, ASTVariableDeclaration varDe
 			TCScopeName currentName = stackTop->names[i];
 			if (StringEquals(varName, currentName.name))
 			{
-				PrintError(context, varDecl.loc, TPrintF("Duplicate name \"%S\" in scope", varName));
+				LogErrorNoCrash(context, varDecl.loc, TPrintF("Duplicate name \"%S\" in scope", varName));
+				LogNote(context, currentName.loc, "First defined here"_s);
+				CRASH;
 			}
 		}
 	}
@@ -794,7 +797,7 @@ void TypeCheckVariableDeclaration(Context *context, ASTVariableDeclaration varDe
 		*varType = TypeCheckType(context, varDecl.loc, varDecl.astType);
 
 		if (*varType == TYPETABLEIDX_VOID)
-			PrintError(context, varDecl.loc, "Variable can't be of type void!"_s);
+			LogError(context, varDecl.loc, "Variable can't be of type void!"_s);
 	}
 
 	if (varDecl.value)
@@ -807,14 +810,14 @@ void TypeCheckVariableDeclaration(Context *context, ASTVariableDeclaration varDe
 			TypeCheckErrorCode typeCheckResult = CheckTypesMatch(context, *varType, valueType);
 			if (typeCheckResult != TYPECHECK_COOL)
 			{
-				LogError("Variable declaration type and initial type don't match");
+				Print("Variable declaration type and initial type don't match");
 				ReportTypeCheckError(context, typeCheckResult, varDecl.loc, *varType, valueType);
 			}
 		}
 		else
 		{
 			if (valueType == TYPETABLEIDX_VOID)
-				PrintError(context, varDecl.loc, "Variable can't be of type void!"_s);
+				LogError(context, varDecl.loc, "Variable can't be of type void!"_s);
 
 			*varType = InferType(valueType);
 		}
@@ -826,6 +829,7 @@ void TypeCheckVariableDeclaration(Context *context, ASTVariableDeclaration varDe
 		newScopeName.type = NAMETYPE_VARIABLE;
 		newScopeName.name = varDecl.variable->name;
 		newScopeName.variable = varDecl.variable;
+		newScopeName.loc = varDecl.loc;
 		*DynamicArrayAdd(&stackTop->names) = newScopeName;
 	}
 }
@@ -925,7 +929,7 @@ void TypeCheckExpression(Context *context, ASTExpression *expression)
 		{
 			TypeInfo *typeInfo = &context->typeTable[expression->typeTableIdx];
 			if (typeInfo->typeCategory != TYPECATEGORY_STRUCT)
-				PrintError(context, expression->any.loc, "Using keyword only accepts structs!"_s);
+				LogError(context, expression->any.loc, "Using keyword only accepts structs!"_s);
 
 			DynamicArray<StructMember *, malloc, realloc> offsetStack;
 			DynamicArrayInit(&offsetStack, 8);
@@ -938,7 +942,7 @@ void TypeCheckExpression(Context *context, ASTExpression *expression)
 			// Anonymous struct!
 			TypeInfo *typeInfo = &context->typeTable[expression->typeTableIdx];
 			if (typeInfo->typeCategory != TYPECATEGORY_STRUCT)
-				PrintError(context, expression->any.loc, "Anonymous variable has to be a struct!"_s);
+				LogError(context, expression->any.loc, "Anonymous variable has to be a struct!"_s);
 
 			DynamicArray<StructMember *, malloc, realloc> offsetStack;
 			DynamicArrayInit(&offsetStack, 8);
@@ -960,8 +964,9 @@ void TypeCheckExpression(Context *context, ASTExpression *expression)
 			TCScopeName currentName = stackTop->names[i];
 			if (StringEquals(staticDefinition.name, currentName.name))
 			{
-				PrintError(context, expression->any.loc,
+				LogErrorNoCrash(context, expression->any.loc,
 						TPrintF("Duplicate static definition \"%S\"", staticDefinition.name));
+				LogNote(context, currentName.loc, "First defined here"_s);
 			}
 		}
 
@@ -1046,7 +1051,7 @@ void TypeCheckExpression(Context *context, ASTExpression *expression)
 			if (!astVarDecl.value)
 			{
 				if (beginOptionalParameters)
-					PrintError(context, astVarDecl.loc, "Non-optional parameter after optional parameter found!"_s);
+					LogError(context, astVarDecl.loc, "Non-optional parameter after optional parameter found!"_s);
 
 				++procedure->requiredParameterCount;
 			}
@@ -1099,9 +1104,9 @@ void TypeCheckExpression(Context *context, ASTExpression *expression)
 		{
 			ReturnCheckResult result = CheckIfReturnsValue(context, procedure->astBody);
 			if (result == RETURNCHECKRESULT_SOMETIMES)
-				PrintError(context, expression->any.loc, "Procedure doesn't always return a value"_s);
+				LogError(context, expression->any.loc, "Procedure doesn't always return a value"_s);
 			else if (result == RETURNCHECKRESULT_NEVER)
-				PrintError(context, expression->any.loc, "Procedure has to return a value"_s);
+				LogError(context, expression->any.loc, "Procedure has to return a value"_s);
 		}
 	} break;
 	case ASTNODETYPE_RETURN:
@@ -1111,7 +1116,7 @@ void TypeCheckExpression(Context *context, ASTExpression *expression)
 		TypeCheckErrorCode typeCheckResult = CheckTypesMatch(context, context->tcCurrentReturnType,
 				typeTableIdx);
 		if (typeCheckResult != TYPECHECK_COOL)
-			PrintError(context, expression->any.loc, "Incorrect return type"_s);
+			LogError(context, expression->any.loc, "Incorrect return type"_s);
 	} break;
 	case ASTNODETYPE_DEFER:
 	{
@@ -1158,18 +1163,18 @@ void TypeCheckExpression(Context *context, ASTExpression *expression)
 				}
 			}
 		}
-		PrintError(context, expression->any.loc, TPrintF("Invalid variable \"%S\" referenced", string));
+		LogError(context, expression->any.loc, TPrintF("Invalid variable \"%S\" referenced", string));
 
 skipInvalidIdentifierError:
 		if (expression->identifier.isUsing)
 		{
 			if (expression->identifier.type != NAMETYPE_VARIABLE)
-				PrintError(context, expression->any.loc,
+				LogError(context, expression->any.loc,
 						"Expression after 'using' does not evaluate to a variable"_s);
 
 			TypeInfo *typeInfo = &context->typeTable[expression->typeTableIdx];
 			if (typeInfo->typeCategory != TYPECATEGORY_STRUCT)
-				PrintError(context, expression->any.loc, "Using keyword only accepts structs!"_s);
+				LogError(context, expression->any.loc, "Using keyword only accepts structs!"_s);
 
 			Variable *base = expression->identifier.variable;
 
@@ -1194,7 +1199,7 @@ skipInvalidIdentifierError:
 				{
 					if (currentName.type != NAMETYPE_STATIC_DEFINITION ||
 						currentName.staticDefinition->definitionType != STATICDEFINITIONTYPE_PROCEDURE)
-						PrintError(context, expression->any.loc, "Calling a non-procedure"_s);
+						LogError(context, expression->any.loc, "Calling a non-procedure"_s);
 
 					procedure = currentName.staticDefinition->procedure.procedure;
 					break;
@@ -1203,7 +1208,7 @@ skipInvalidIdentifierError:
 		}
 
 		if (!procedure)
-			PrintError(context, expression->any.loc, TPrintF("Invalid procedure \"%S\" called", procName));
+			LogError(context, expression->any.loc, TPrintF("Invalid procedure \"%S\" called", procName));
 
 		expression->procedureCall.procedure = procedure;
 		expression->typeTableIdx = procedure->returnTypeTableIdx;
@@ -1215,19 +1220,19 @@ skipInvalidIdentifierError:
 		if (procedure->isVarargs)
 		{
 			if (requiredArguments > givenArguments)
-				PrintError(context, expression->any.loc,
+				LogError(context, expression->any.loc,
 						TPrintF("Procedure \"%S\" needs at least %d arguments but only %d were given",
 							procName, requiredArguments, givenArguments));
 		}
 		else
 		{
 			if (requiredArguments > givenArguments)
-				PrintError(context, expression->any.loc,
+				LogError(context, expression->any.loc,
 						TPrintF("Procedure \"%S\" needs at least %d arguments but only %d were given",
 						procName, requiredArguments, givenArguments));
 
 			if (givenArguments > totalArguments)
-				PrintError(context, expression->any.loc,
+				LogError(context, expression->any.loc,
 						TPrintF("Procedure \"%S\" needs %d arguments but %d were given",
 						procName, totalArguments, givenArguments));
 		}
@@ -1250,7 +1255,7 @@ skipInvalidIdentifierError:
 			{
 				String paramStr =  TypeInfoToString(context, param->typeTableIdx);
 				String givenStr = TypeInfoToString(context, arg->typeTableIdx);
-				PrintError(context, arg->any.loc, TPrintF("When calling procedure \"%S\": type of "
+				LogError(context, arg->any.loc, TPrintF("When calling procedure \"%S\": type of "
 							"parameter #%d didn't match (parameter is %S but %S was given)",
 							procName, argIdx, paramStr, givenStr));
 			}
@@ -1267,14 +1272,14 @@ skipInvalidIdentifierError:
 			TypeCheckErrorCode typeCheckResult = CheckTypesMatch(context, TYPETABLEIDX_BOOL,
 					expressionType);
 			if (typeCheckResult != TYPECHECK_COOL)
-				PrintError(context, expression->any.loc, "Expression can't be cast to boolean"_s);
+				LogError(context, expression->any.loc, "Expression can't be cast to boolean"_s);
 			expression->typeTableIdx = TYPETABLEIDX_BOOL;
 		} break;
 		case TOKEN_OP_POINTER_TO:
 		{
 			// Forbid pointer to temporal values
 			if (IsTemporalValue(expression->unaryOperation.expression))
-				PrintError(context, expression->any.loc, "Trying to get pointer to temporal value"_s);
+				LogError(context, expression->any.loc, "Trying to get pointer to temporal value"_s);
 
 			expression->typeTableIdx = GetTypeInfoPointerOf(context, expressionType);
 		} break;
@@ -1282,7 +1287,7 @@ skipInvalidIdentifierError:
 		{
 			TypeInfo *expressionTypeInfo = &context->typeTable[expressionType];
 			if (expressionTypeInfo->typeCategory != TYPECATEGORY_POINTER)
-				PrintError(context, expression->any.loc, "Trying to dereference a non pointer"_s);
+				LogError(context, expression->any.loc, "Trying to dereference a non pointer"_s);
 			expression->typeTableIdx = expressionTypeInfo->pointerInfo.pointedTypeTableIdx;
 		} break;
 		default:
@@ -1303,7 +1308,7 @@ skipInvalidIdentifierError:
 
 			if (rightHand->nodeType != ASTNODETYPE_IDENTIFIER)
 			{
-				PrintError(context, rightHand->any.loc, "Expected identifier after member access operator"_s);
+				LogError(context, rightHand->any.loc, "Expected identifier after member access operator"_s);
 			}
 
 			rightHand->identifier.type = NAMETYPE_STRUCT_MEMBER;
@@ -1319,14 +1324,14 @@ skipInvalidIdentifierError:
 			{
 				// This is only for dynamic size arrays!
 				if (structTypeInfo->arrayInfo.count != 0)
-					PrintError(context, expression->any.loc, "Array left of '.' has to be of dynamic size! ([])"_s);
+					LogError(context, expression->any.loc, "Array left of '.' has to be of dynamic size! ([])"_s);
 
 				s64 arrayTypeTableIdx = FindTypeInStackByName(context, {}, "Array"_s);
 				structTypeInfo = &context->typeTable[arrayTypeTableIdx];
 			}
 			else if (structTypeInfo->typeCategory != TYPECATEGORY_STRUCT)
 			{
-				PrintError(context, expression->any.loc, "Left of '.' has to be a struct"_s);
+				LogError(context, expression->any.loc, "Left of '.' has to be a struct"_s);
 			}
 
 			String memberName = rightHand->identifier.string;
@@ -1342,7 +1347,7 @@ skipInvalidIdentifierError:
 				return;
 			}
 
-			PrintError(context, expression->any.loc, TPrintF("\"%S\" is not a member of \"%S\"",
+			LogError(context, expression->any.loc, TPrintF("\"%S\" is not a member of \"%S\"",
 						memberName, TypeInfoToString(context, leftHandTypeIdx)));
 		}
 		else if (expression->binaryOperation.op == TOKEN_OP_ARRAY_ACCESS)
@@ -1367,7 +1372,7 @@ skipInvalidIdentifierError:
 			else
 			{
 				if (arrayTypeInfo->typeCategory != TYPECATEGORY_ARRAY)
-					PrintError(context, leftHand->any.loc,
+					LogError(context, leftHand->any.loc,
 							"Expression does not evaluate to an array"_s);
 				expression->typeTableIdx = arrayTypeInfo->arrayInfo.elementTypeTableIdx;
 			}
@@ -1384,7 +1389,7 @@ skipInvalidIdentifierError:
 			{
 				String leftStr =  TypeInfoToString(context, leftHand->typeTableIdx);
 				String rightStr = TypeInfoToString(context, rightHand->typeTableIdx);
-				PrintError(context, expression->any.loc, TPrintF("Type mismatch! (%S and %S)",
+				LogError(context, expression->any.loc, TPrintF("Type mismatch! (%S and %S)",
 							leftStr, rightStr));
 			}
 
@@ -1433,7 +1438,7 @@ skipInvalidIdentifierError:
 		TypeCheckErrorCode typeCheckResult = CheckTypesMatch(context, TYPETABLEIDX_BOOL,
 				conditionType);
 		if (typeCheckResult != TYPECHECK_COOL)
-			PrintError(context, expression->any.loc, "If condition doesn't evaluate to a boolean"_s);
+			LogError(context, expression->any.loc, "If condition doesn't evaluate to a boolean"_s);
 
 		TypeCheckExpression(context, expression->ifNode.body);
 
@@ -1447,7 +1452,7 @@ skipInvalidIdentifierError:
 		TypeCheckErrorCode typeCheckResult = CheckTypesMatch(context, TYPETABLEIDX_BOOL,
 				conditionType);
 		if (typeCheckResult != TYPECHECK_COOL)
-			PrintError(context, expression->any.loc, "While condition doesn't evaluate to a boolean"_s);
+			LogError(context, expression->any.loc, "While condition doesn't evaluate to a boolean"_s);
 
 		TypeCheckExpression(context, expression->whileNode.body);
 	} break;
@@ -1475,7 +1480,7 @@ skipInvalidIdentifierError:
 		{
 			TypeInfo *rangeTypeInfo = &context->typeTable[expression->forNode.range->typeTableIdx];
 			if (rangeTypeInfo->typeCategory != TYPECATEGORY_ARRAY)
-				PrintError(context, expression->forNode.range->any.loc, "'for' range expression does"
+				LogError(context, expression->forNode.range->any.loc, "'for' range expression does"
 						"not evaluate to an array nor is it a number range (..)"_s);
 
 			s64 pointerToElementTypeTableIdx = GetTypeInfoPointerOf(context,
@@ -1518,8 +1523,7 @@ skipInvalidIdentifierError:
 	} break;
 	default:
 	{
-		Log("COMPILER ERROR! Unknown expression type on type checking\n");
-		CRASH;
+		LogError(context, expression->any.loc, "COMPILER ERROR! Unknown expression type on type checking"_s);
 	} break;
 	}
 }

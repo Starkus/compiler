@@ -16,7 +16,7 @@ void *FrameAlloc(u64 size)
 }
 void *FrameRealloc(void *ptr, u64 newSize)
 {
-	//Log("WARNING: FRAME REALLOC\n");
+	//Print("WARNING: FRAME REALLOC\n");
 
 	void *newBlock = FrameAlloc(newSize);
 	memcpy(newBlock, ptr, newSize);

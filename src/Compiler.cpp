@@ -4,7 +4,7 @@
 #define STB_SPRINTF_IMPLEMENTATION
 #include "stb/stb_sprintf.h"
 
-void Log(const char *format, ...);
+void Print(const char *format, ...);
 
 #include "General.h"
 #include "Config.h"
@@ -17,7 +17,7 @@ Memory *g_memory;
 HANDLE g_hStdout;
 HANDLE g_hStderr;
 
-void Log(const char *format, ...)
+void Print(const char *format, ...)
 {
 	char *buffer = (char *)g_memory->framePtr;
 
@@ -30,20 +30,6 @@ void Log(const char *format, ...)
 	// Stdout
 	DWORD bytesWritten;
 	WriteFile(g_hStdout, buffer, (DWORD)strlen(buffer), &bytesWritten, nullptr);
-
-	va_end(args);
-}
-
-void LogError(const char *format, ...)
-{
-	char *buffer = (char *)g_memory->framePtr;
-
-	va_list args;
-	va_start(args, format);
-
-	stbsp_vsprintf(buffer, format, args);
-	DWORD bytesWritten;
-	WriteFile(g_hStderr, buffer, (DWORD)strlen(buffer), &bytesWritten, nullptr);
 
 	va_end(args);
 }
@@ -116,9 +102,9 @@ struct Context
 
 #include "Tokenizer.cpp"
 
-inline void PrintError(Context *context, SourceLocation loc, const String errorStr)
+void Log(Context *context, SourceLocation loc, String str)
 {
-	LogError("ERROR! %S %d:%d\n... %S\n", loc.file, loc.line, loc.character, errorStr);
+	Print("%S %d:%d %S\n", loc.file, loc.line, loc.character, str);
 
 	// Print line
 	const char *beginningOfLine = nullptr;
@@ -142,7 +128,7 @@ inline void PrintError(Context *context, SourceLocation loc, const String errorS
 			++size;
 		}
 	}
-	LogError("... %.*s\n... ", size, beginningOfLine);
+	Print("... %.*s\n... ", size, beginningOfLine);
 
 	int shift = 0;
 	for (int i = 0; i < loc.character; ++i)
@@ -154,18 +140,27 @@ inline void PrintError(Context *context, SourceLocation loc, const String errorS
 	}
 
 	for (int i = 0; i < shift; ++i)
-		LogError(" ");
+		Print(" ");
 	for (int i = 0; i < loc.size; ++i)
-		LogError("^");
-	LogError("\n");
-
-	//exit(1);
-	CRASH;
+		Print("^");
+	Print("\n");
 }
 
-inline void PrintWarning(SourceLocation loc, const String errorStr)
+inline void LogErrorNoCrash(Context *context, SourceLocation loc, String errorStr)
 {
-	Log("WARNING! %s:%d\n... %S\n", loc.file, loc.line, errorStr);
+	Log(context, loc, StringConcat("ERROR: "_s, errorStr));
+}
+
+#define LogError(context, loc, str) do { LogErrorNoCrash(context, loc, str); CRASH; } while(0)
+
+inline void LogWarning(Context *context, SourceLocation loc, String str)
+{
+	Log(context, loc, StringConcat("WARNING: "_s, str));
+}
+
+inline void LogNote(Context *context, SourceLocation loc, String str)
+{
+	Log(context, loc, StringConcat("NOTE: "_s, str));
 }
 
 void AssertToken(Context *context, Token *token, int type)
@@ -176,7 +171,7 @@ void AssertToken(Context *context, Token *token, int type)
 		const String tokenTypeExp = TokenTypeToString(type);
 		const String errorStr = TPrintF("Expected token of type %S but got %S",
 				tokenTypeExp, tokenTypeGot);
-		PrintError(context, token->loc, errorStr);
+		LogError(context, token->loc, errorStr);
 	}
 }
 
@@ -184,7 +179,7 @@ void UnexpectedTokenError(Context *context, Token *token)
 {
 	const String tokenType = TokenTypeToString(token->type);
 	const String errorStr = TPrintF("Unexpected token of type %S", tokenType);
-	PrintError(context, token->loc, errorStr);
+	LogError(context, token->loc, errorStr);
 }
 
 #include "Parser.cpp"
@@ -304,6 +299,6 @@ int main(int argc, char **argv)
 
 	WriteToC(&context);
 
-	Log("Compilation success\n");
+	Print("Compilation success\n");
 	return 0;
 }

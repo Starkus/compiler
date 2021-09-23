@@ -805,11 +805,11 @@ IRValue IRInstructionFromBinaryOperation(Context *context, ASTExpression *expres
 		} break;
 		case TOKEN_OP_RANGE:
 		{
-			PrintError(context, expression->any.loc, "Range operator used in invalid context"_s);
+			LogError(context, expression->any.loc, "Range operator used in invalid context"_s);
 		} break;
 		default:
 		{
-			PrintError(context, expression->any.loc, "Binary operator unrecognized during IR generation"_s);
+			LogError(context, expression->any.loc, "Binary operator unrecognized during IR generation"_s);
 		} break;
 		}
 
@@ -984,7 +984,7 @@ IRValue IRGenFromExpression(Context *context, ASTExpression *expression)
 
 		bool isGlobalScope = context->irProcedureStack.size == 0;
 		if (isGlobalScope && !varDecl.variable->isStatic)
-			PrintError(context, expression->any.loc, "Global variables have to be static"_s);
+			LogError(context, expression->any.loc, "Global variables have to be static"_s);
 
 		if (variable->isStatic)
 		{
@@ -999,7 +999,7 @@ IRValue IRGenFromExpression(Context *context, ASTExpression *expression)
 				if (varDecl.value->nodeType != ASTNODETYPE_LITERAL)
 				{
 					// @Todo: Somehow execute constant expressions and bake them?
-					PrintError(context, expression->any.loc, "Non literal initial values for global variables not yet supported"_s);
+					LogError(context, expression->any.loc, "Non literal initial values for global variables not yet supported"_s);
 				}
 				else if (varDecl.value->literal.type == LITERALTYPE_STRING)
 				{
@@ -1710,38 +1710,38 @@ IRValue IRGenFromExpression(Context *context, ASTExpression *expression)
 void PrintIRValue(Context *context, IRValue value)
 {
 	if (value.dereference)
-		Log("[");
+		Print("[");
 
 	if (value.valueType == IRVALUETYPE_REGISTER)
 		if (value.registerIdx == IRSPECIALREGISTER_RETURN)
-			Log("$rRet");
+			Print("$rRet");
 		else if (value.registerIdx == IRSPECIALREGISTER_SHOULD_RETURN)
-			Log("$rDoRet");
+			Print("$rDoRet");
 		else
-			Log("$r%d", value.registerIdx);
+			Print("$r%d", value.registerIdx);
 	else if (value.valueType == IRVALUETYPE_STACK_OFFSET)
-		Log("stack+0x%llx", value.stackOffset);
+		Print("stack+0x%llx", value.stackOffset);
 	else if (value.valueType == IRVALUETYPE_DATA_OFFSET)
-		Log("%S+0x%llx", value.dataOffset.variable->name, value.dataOffset.offset);
+		Print("%S+0x%llx", value.dataOffset.variable->name, value.dataOffset.offset);
 	else if (value.valueType == IRVALUETYPE_PARAMETER)
-		Log("param%hhd", value.parameterIdx);
+		Print("param%hhd", value.parameterIdx);
 	else if (value.valueType == IRVALUETYPE_IMMEDIATE_INTEGER)
-	Log("0x%x", value.immediate);
+	Print("0x%x", value.immediate);
 else if (value.valueType == IRVALUETYPE_IMMEDIATE_FLOAT)
-		Log("%f", value.immediateFloat);
+		Print("%f", value.immediateFloat);
 	else if (value.valueType == IRVALUETYPE_IMMEDIATE_STRING)
-		Log("%S", value.immediateString);
+		Print("%S", value.immediateString);
 	else if (value.valueType == IRVALUETYPE_SIZEOF)
-		Log("sizeof(%lld)", value.sizeOfTypeTableIdx);
+		Print("sizeof(%lld)", value.sizeOfTypeTableIdx);
 	else if (value.valueType == IRVALUETYPE_TYPEOF)
-		Log("typeof(%lld)", value.sizeOfTypeTableIdx);
+		Print("typeof(%lld)", value.sizeOfTypeTableIdx);
 	else
-		Log("???");
+		Print("???");
 
 	if (value.dereference)
-		Log("]");
+		Print("]");
 
-	Log(" : %S", TypeInfoToString(context, value.typeTableIdx));
+	Print(" : %S", TypeInfoToString(context, value.typeTableIdx));
 }
 
 void PrintIRInstructionOperator(IRInstruction inst)
@@ -1749,61 +1749,61 @@ void PrintIRInstructionOperator(IRInstruction inst)
 	switch (inst.type)
 	{
 	case IRINSTRUCTIONTYPE_ADD:
-		Log("+");
+		Print("+");
 		break;
 	case IRINSTRUCTIONTYPE_SUBTRACT:
-		Log("-");
+		Print("-");
 		break;
 	case IRINSTRUCTIONTYPE_MULTIPLY:
-		Log("*");
+		Print("*");
 		break;
 	case IRINSTRUCTIONTYPE_DIVIDE:
-		Log("/");
+		Print("/");
 		break;
 	case IRINSTRUCTIONTYPE_MODULO:
-		Log("%");
+		Print("%");
 		break;
 	case IRINSTRUCTIONTYPE_SHIFT_LEFT:
-		Log("<<");
+		Print("<<");
 		break;
 	case IRINSTRUCTIONTYPE_SHIFT_RIGHT:
-		Log(">>");
+		Print(">>");
 		break;
 	case IRINSTRUCTIONTYPE_OR:
-		Log("||");
+		Print("||");
 		break;
 	case IRINSTRUCTIONTYPE_AND:
-		Log("&&");
+		Print("&&");
 		break;
 	case IRINSTRUCTIONTYPE_BITWISE_OR:
-		Log("|");
+		Print("|");
 		break;
 	case IRINSTRUCTIONTYPE_BITWISE_XOR:
-		Log("^");
+		Print("^");
 		break;
 	case IRINSTRUCTIONTYPE_BITWISE_AND:
-		Log("&");
+		Print("&");
 		break;
 	case IRINSTRUCTIONTYPE_EQUALS:
-		Log("==");
+		Print("==");
 		break;
 	case IRINSTRUCTIONTYPE_GREATER_THAN:
-		Log(">");
+		Print(">");
 		break;
 	case IRINSTRUCTIONTYPE_GREATER_THAN_OR_EQUALS:
-		Log(">=");
+		Print(">=");
 		break;
 	case IRINSTRUCTIONTYPE_LESS_THAN:
-		Log("<");
+		Print("<");
 		break;
 	case IRINSTRUCTIONTYPE_LESS_THAN_OR_EQUALS:
-		Log("<=");
+		Print("<=");
 		break;
 	case IRINSTRUCTIONTYPE_NOT:
-		Log("!");
+		Print("!");
 		break;
 	default:
-		Log("<?>");
+		Print("<?>");
 	}
 }
 

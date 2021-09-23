@@ -1,5 +1,7 @@
 Main :: () -> s64
 {
+	bar : s64;
+
 	// Range expression outside For loop
 	/*
 	foo := 4..16;
@@ -24,7 +26,19 @@ Main :: () -> s64
 	*/
 
 	// Pointers to things not in memory
-	//foo2 := ^2;
+	/*
+	foo2 := ^2;
+	foo3 := ^Print("Something");
+	*/
+
+	// Grab return value from void-returning procedure
+	/*
+	foo4 := Print("Something");
+	foo5 : s64 = Print("Something");
+	*/
+
+	// Variable declared twice
+	bar := 4.5;
 
 	return 0;
 }

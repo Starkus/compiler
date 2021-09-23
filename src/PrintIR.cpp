@@ -13,20 +13,20 @@ void PrintIRInstructions(Context *context)
 
 		StaticDefinition *staticDef = FindStaticDefinitionByProcedure(context, proc);
 		if (staticDef)
-			Log("proc %S(", staticDef->name);
+			Print("proc %S(", staticDef->name);
 		else
-			Log("proc 0x%X(", proc);
+			Print("proc 0x%X(", proc);
 
 		for (int paramIdx = 0; paramIdx < proc->parameters.size; ++paramIdx)
 		{
-			if (paramIdx) Log(", ");
+			if (paramIdx) Print(", ");
 			String typeStr = TypeInfoToString(context, proc->parameters[paramIdx].variable->typeTableIdx);
-			Log("param%d : %S", paramIdx, typeStr);
+			Print("param%d : %S", paramIdx, typeStr);
 		}
-		Log(")");
+		Print(")");
 		if (proc->returnTypeTableIdx != TYPETABLEIDX_VOID)
-			Log(" -> %S", returnTypeStr);
-		Log("\n");
+			Print(" -> %S", returnTypeStr);
+		Print("\n");
 
 		const u64 instructionCount = BucketArrayCount(&proc->instructions);
 		for (int instructionIdx = 0; instructionIdx < instructionCount; ++instructionIdx)
@@ -34,13 +34,13 @@ void PrintIRInstructions(Context *context)
 			IRInstruction inst = proc->instructions[instructionIdx];
 			if (inst.type == IRINSTRUCTIONTYPE_LABEL)
 			{
-				Log("%S: ", inst.label);
+				Print("%S: ", inst.label);
 
 				IRInstruction nextInst = proc->instructions[instructionIdx + 1];
 				if (nextInst.type != IRINSTRUCTIONTYPE_LABEL)
 				{
 					for (s64 i = inst.label.size + 2; i < padding; ++i)
-						Log(" ");
+						Print(" ");
 
 					++instructionIdx;
 					if (instructionIdx >= instructionCount)
@@ -49,83 +49,83 @@ void PrintIRInstructions(Context *context)
 				}
 				else
 				{
-					Log("\n");
+					Print("\n");
 					continue;
 				}
 			}
 			else
 			{
 				for (s64 i = 0; i < padding; ++i)
-					Log(" ");
+					Print(" ");
 			}
 
 			if (inst.type == IRINSTRUCTIONTYPE_COMMENT)
 			{
-				Log("// \"%S\"", inst.comment);
+				Print("// \"%S\"", inst.comment);
 			}
 			else if (inst.type == IRINSTRUCTIONTYPE_JUMP)
 			{
-				Log("jump \"%S\"", inst.jump.label);
+				Print("jump \"%S\"", inst.jump.label);
 			}
 			else if (inst.type == IRINSTRUCTIONTYPE_JUMP_IF_ZERO)
 			{
-				Log("if !");
+				Print("if !");
 				PrintIRValue(context, inst.conditionalJump.condition);
-				Log(" jump %S", inst.conditionalJump.label);
+				Print(" jump %S", inst.conditionalJump.label);
 			}
 			else if (inst.type == IRINSTRUCTIONTYPE_PROCEDURE_CALL)
 			{
 				StaticDefinition *procStaticDef = FindStaticDefinitionByProcedure(context,
 						inst.procedureCall.procedure);
 				if (procStaticDef)
-					Log("call %S", procStaticDef->name);
+					Print("call %S", procStaticDef->name);
 				else
-					Log("call 0x%X", inst.procedureCall.procedure);
+					Print("call 0x%X", inst.procedureCall.procedure);
 			}
 			else if (inst.type == IRINSTRUCTIONTYPE_RETURN)
 			{
-				Log("return");
+				Print("return");
 			}
 			else if (inst.type == IRINSTRUCTIONTYPE_ASSIGNMENT)
 			{
 				PrintIRValue(context, inst.assignment.dst);
-				Log(" = ");
+				Print(" = ");
 				PrintIRValue(context, inst.assignment.src);
 			}
 			else if (inst.type >= IRINSTRUCTIONTYPE_UNARY_BEGIN && inst.type < IRINSTRUCTIONTYPE_UNARY_END)
 			{
 				PrintIRValue(context, inst.unaryOperation.out);
-				Log(" := ");
+				Print(" := ");
 				PrintIRInstructionOperator(inst);
 				PrintIRValue(context, inst.unaryOperation.in);
 			}
 			else if (inst.type >= IRINSTRUCTIONTYPE_BINARY_BEGIN && inst.type < IRINSTRUCTIONTYPE_BINARY_END)
 			{
 				PrintIRValue(context, inst.binaryOperation.out);
-				Log(" := ");
+				Print(" := ");
 				PrintIRValue(context, inst.binaryOperation.left);
-				Log(" ");
+				Print(" ");
 				PrintIRInstructionOperator(inst);
-				Log(" ");
+				Print(" ");
 				PrintIRValue(context, inst.binaryOperation.right);
 			}
 			else if (inst.type == IRINSTRUCTIONTYPE_INTRINSIC_MEMCPY)
 			{
-				Log("memcpy(");
+				Print("memcpy(");
 				PrintIRValue(context, inst.memcpy.dst);
-				Log(", ");
+				Print(", ");
 				PrintIRValue(context, inst.memcpy.src);
-				Log(", ");
+				Print(", ");
 				PrintIRValue(context, inst.memcpy.size);
-				Log(")");
+				Print(")");
 			}
 			else
 			{
-				Log("???INST");
+				Print("???INST");
 			}
-			Log("\n");
+			Print("\n");
 		}
 	}
-	Log("\n");
+	Print("\n");
 }
 #endif

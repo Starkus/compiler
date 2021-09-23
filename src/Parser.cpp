@@ -252,7 +252,7 @@ bool TryParseBinaryOperation(Context *context, ASTExpression leftHand, s32 prevP
 	default:
 	{
 		String opStr = TokenTypeToString(context->token->type);
-		PrintError(context, context->token->loc, TPrintF("Unexpected operator %S", opStr));
+		LogError(context, context->token->loc, TPrintF("Unexpected operator %S", opStr));
 	} break;
 	}
 
@@ -346,7 +346,7 @@ ASTFor ParseFor(Context *context)
 	if (forNode.range->nodeType == ASTNODETYPE_BINARY_OPERATION)
 	{
 		if (forNode.range->binaryOperation.op != TOKEN_OP_RANGE)
-			PrintError(context, forNode.range->any.loc, "Invalid expression in 'for' range"_s);
+			LogError(context, forNode.range->any.loc, "Invalid expression in 'for' range"_s);
 	}
 
 	return forNode;
@@ -383,7 +383,7 @@ ASTStructMemberDeclaration ParseStructMemberDeclaration(Context *context)
 		structMem.astType = NewASTType(context);
 		*structMem.astType = ParseType(context);
 		if (structMem.astType->nodeType == ASTTYPENODETYPE_INVALID)
-			PrintError(context, context->token->loc, "Expected type"_s);
+			LogError(context, context->token->loc, "Expected type"_s);
 	}
 
 	if (context->token->type == TOKEN_OP_ASSIGNMENT)
@@ -541,7 +541,7 @@ ASTProcedureDeclaration ParseProcedureDeclaration(Context *context)
 			if (!procedure->isExternal)
 			{
 				if (context->token->type != TOKEN_IDENTIFIER)
-					PrintError(context, context->token->loc, "Name missing after varargs token (...)"_s);
+					LogError(context, context->token->loc, "Name missing after varargs token (...)"_s);
 
 				procedure->varargsName = context->token->string;
 				Advance(context);
@@ -562,7 +562,7 @@ ASTProcedureDeclaration ParseProcedureDeclaration(Context *context)
 		astVarDecl.variable->parameterIndex = (s8)procDecl.astParameters.size;
 
 		if (astVarDecl.variable->isStatic)
-			PrintError(context, context->token->loc, "Procedure parameters can't be static"_s);
+			LogError(context, context->token->loc, "Procedure parameters can't be static"_s);
 
 		*DynamicArrayAdd(&procDecl.astParameters) = astVarDecl;
 
@@ -738,23 +738,23 @@ ASTExpression ParseExpression(Context *context, s32 precedence)
 	}
 	else if (context->token->type == TOKEN_KEYWORD_IF)
 	{
-		PrintError(context, context->token->loc, "'if' only valid at statement level!"_s);
+		LogError(context, context->token->loc, "'if' only valid at statement level!"_s);
 	}
 	else if (context->token->type == TOKEN_KEYWORD_WHILE)
 	{
-		PrintError(context, context->token->loc, "'while' only valid at statement level!"_s);
+		LogError(context, context->token->loc, "'while' only valid at statement level!"_s);
 	}
 	else if (context->token->type == TOKEN_KEYWORD_FOR)
 	{
-		PrintError(context, context->token->loc, "'for' only valid at statement level!"_s);
+		LogError(context, context->token->loc, "'for' only valid at statement level!"_s);
 	}
 	else if (context->token->type == TOKEN_KEYWORD_DEFER)
 	{
-		PrintError(context, context->token->loc, "'defer' only valid at statement level!"_s);
+		LogError(context, context->token->loc, "'defer' only valid at statement level!"_s);
 	}
 	else if (context->token->type == TOKEN_KEYWORD_RETURN)
 	{
-		PrintError(context, context->token->loc, "'return' only valid at statement level!"_s);
+		LogError(context, context->token->loc, "'return' only valid at statement level!"_s);
 	}
 	else if (IsTokenOperator(context->token))
 	{
@@ -774,7 +774,7 @@ ASTExpression ParseExpression(Context *context, s32 precedence)
 			ASTUnaryOperation unaryOp = result.unaryOperation;
 			bool success = TryParseUnaryOperation(context, precedence, &unaryOp);
 			if (!success)
-				PrintError(context, context->token->loc, "Invalid expression!"_s);
+				LogError(context, context->token->loc, "Invalid expression!"_s);
 			result.nodeType = ASTNODETYPE_UNARY_OPERATION;
 			result.unaryOperation = unaryOp;
 		}
@@ -833,7 +833,7 @@ ASTStaticDefinition ParseStaticDefinition(Context *context)
 	{
 		expression = ParseExpression(context, -1);
 		if (expression.nodeType != ASTNODETYPE_LITERAL)
-			PrintError(context, context->token->loc, "Unsupported!"_s);
+			LogError(context, context->token->loc, "Unsupported!"_s);
 
 		AssertToken(context, context->token, ';');
 		Advance(context);
@@ -870,7 +870,7 @@ ASTExpression ParseStatement(Context *context)
 	} break;
 	case TOKEN_KEYWORD_ELSE:
 	{
-		PrintError(context, context->token->loc, "Invalid 'else' without matching 'if'"_s);
+		LogError(context, context->token->loc, "Invalid 'else' without matching 'if'"_s);
 	} break;
 	case TOKEN_KEYWORD_WHILE:
 	{
@@ -960,7 +960,7 @@ ASTExpression ParseStatement(Context *context)
 			result.identifier.isUsing = true;
 			break;
 		default:
-			PrintError(context, result.any.loc,
+			LogError(context, result.any.loc,
 					"Expression after 'using' should be a variable or variable declaration"_s);
 		}
 	} break;
@@ -1032,7 +1032,7 @@ ASTExpression ParseStaticStatement(Context *context)
 		}
 		else
 		{
-			PrintError(context, context->token->loc, "Invalid expression in static context"_s);
+			LogError(context, context->token->loc, "Invalid expression in static context"_s);
 			result = ParseExpression(context, -1);
 			AssertToken(context, context->token, ';');
 			Advance(context);

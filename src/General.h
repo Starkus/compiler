@@ -42,7 +42,7 @@ typedef double f64;
 #define CRASH do { *((int*)0) = 1; } while (false)
 
 #if DEBUG_BUILD
-#define ASSERT(expr) do { if (!(expr)) { Log("!!!ASSERT FAILED!!!\n>   Expression: { %s }\n>   %s:%d\n", #expr, __FILE__, __LINE__); __debugbreak(); } } while (false)
+#define ASSERT(expr) do { if (!(expr)) { Print("!!!ASSERT FAILED!!!\n>   Expression: { %s }\n>   %s:%d\n", #expr, __FILE__, __LINE__); __debugbreak(); } } while (false)
 #else
 #define ASSERT(expr)
 #endif
