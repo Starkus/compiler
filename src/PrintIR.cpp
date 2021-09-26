@@ -73,6 +73,12 @@ void PrintIRInstructions(Context *context)
 				PrintIRValue(context, inst.conditionalJump.condition);
 				Print(" jump %S", inst.conditionalJump.label);
 			}
+			else if (inst.type == IRINSTRUCTIONTYPE_JUMP_IF_NOT_ZERO)
+			{
+				Print("if ");
+				PrintIRValue(context, inst.conditionalJump.condition);
+				Print(" jump %S", inst.conditionalJump.label);
+			}
 			else if (inst.type == IRINSTRUCTIONTYPE_PROCEDURE_CALL)
 			{
 				StaticDefinition *procStaticDef = FindStaticDefinitionByProcedure(context,

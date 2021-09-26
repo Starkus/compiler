@@ -1,3 +1,4 @@
+// @Todo: replace
 String :: struct
 {
 	size : u64;
@@ -71,12 +72,12 @@ Any :: struct
 	data : ^void;
 };
 
-GetStdHandle :: external (handle : s64) -> s64;
-WriteFile :: external (handle : s64, buffer : ^void, bytesToWrite : s64, bytesWritten : ^s64,
-		overlapped : ^void) -> bool;
-Print :: (string : String)
+GetStdHandle :: external (handle: s64) -> s64;
+WriteFile :: external (handle: s64, buffer: ^void, bytesToWrite: s64, bytesWritten: ^s64,
+		overlapped: ^void) -> bool;
+Print :: (string: String)
 {
 	stdOut := GetStdHandle(-11);
-	bytesWritten : s64;
+	bytesWritten: s64;
 	WriteFile(stdOut, string.data, cast(s64) string.size, ^bytesWritten, 0);
 }

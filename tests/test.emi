@@ -46,5 +46,7 @@ Main :: () -> s64
 
 	doThings(25.5);
 
+	Print("Hello, Sailor!\n");
+
 	return 0;
 }

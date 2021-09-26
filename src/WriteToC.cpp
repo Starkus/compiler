@@ -256,9 +256,9 @@ void WriteToC(Context *context)
 		if (staticVar.initialValue.valueType == IRVALUETYPE_IMMEDIATE_STRING)
 			varType = "String"_s;
 		else
-			varType = CTypeInfoToString(context, staticVar.typeTableIdx);
+			varType = CTypeInfoToString(context, staticVar.variable->typeTableIdx);
 
-		TypeInfo *typeInfo  = &context->typeTable[staticVar.typeTableIdx];
+		TypeInfo *typeInfo  = &context->typeTable[staticVar.variable->typeTableIdx];
 
 		if (staticVar.initialValue.valueType == IRVALUETYPE_IMMEDIATE_STRING)
 		{
@@ -534,6 +534,12 @@ void WriteToC(Context *context)
 				String label = inst.conditionalJump.label;
 				String condition = CIRValueToStr(context, inst.conditionalJump.condition);
 				PrintOut(context, outputFile, "if (!%S) goto %S;\n", condition, label);
+			}
+			else if (inst.type == IRINSTRUCTIONTYPE_JUMP_IF_NOT_ZERO)
+			{
+				String label = inst.conditionalJump.label;
+				String condition = CIRValueToStr(context, inst.conditionalJump.condition);
+				PrintOut(context, outputFile, "if (%S) goto %S;\n", condition, label);
 			}
 			else if (inst.type == IRINSTRUCTIONTYPE_INTRINSIC_MEMCPY)
 			{

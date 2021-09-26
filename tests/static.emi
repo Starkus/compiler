@@ -12,5 +12,8 @@ Main :: () -> s64
 	global = 40;
 	local = 50;
 
+	f := globalFloat;
+	f2 := 2.6;
+
 	return 0;
 }
