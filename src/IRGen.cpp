@@ -41,14 +41,21 @@ struct IRValue
 	s64 typeTableIdx;
 };
 
+struct IRLabel
+{
+	String name;
+	Procedure *procedure;
+	s64 instructionIdx;
+};
+
 struct IRJump
 {
-	String label;
+	IRLabel *label;
 };
 
 struct IRConditionalJump
 {
-	String label;
+	IRLabel *label;
 	IRValue condition;
 };
 
@@ -122,6 +129,8 @@ enum IRInstructionType
 {
 	IRINSTRUCTIONTYPE_INVALID = -1,
 
+	IRINSTRUCTIONTYPE_NOP,
+
 	IRINSTRUCTIONTYPE_COMMENT,
 
 	IRINSTRUCTIONTYPE_LABEL,
@@ -167,7 +176,7 @@ struct IRInstruction
 	union
 	{
 		String comment;
-		String label;
+		IRLabel *label;
 		IRJump jump;
 		IRConditionalJump conditionalJump;
 		IRProcedureCall procedureCall;
@@ -186,7 +195,7 @@ struct IRInstruction
 
 struct IRScope
 {
-	String closeLabel;
+	IRLabel *closeLabel;
 	DynamicArray<ASTExpression *, malloc, realloc> deferredStatements;
 	s64 stackCursor;
 };
@@ -195,7 +204,7 @@ struct IRProcedureScope
 {
 	Procedure *procedure;
 	s64 irStackBase;
-	String returnLabel;
+	IRLabel *returnLabel;
 	u64 currentRegisterId;
 };
 
@@ -213,7 +222,6 @@ struct IRProcedure
 struct IRStaticVariable
 {
 	Variable *variable;
-	//s64 typeTableIdx;
 	IRValue initialValue;
 };
 
@@ -223,9 +231,20 @@ s64 NewVirtualRegister(Context *context)
 	return currentProc->currentRegisterId++;
 }
 
-String NewLabel(Context *context, String prefix)
+IRLabel *NewLabel(Context *context, String prefix)
 {
-	return TPrintF("%S%d", prefix, context->currentLabelId++);
+	static u64 currentLabelId = 0;
+
+	IRLabel result = {};
+	IRProcedureScope *currentProc = &context->irProcedureStack[context->irProcedureStack.size - 1];
+
+	result.name = TPrintF("%S%d", prefix, currentLabelId++);
+	result.procedure = currentProc->procedure;
+	result.instructionIdx = -1;
+
+	IRLabel *newLabel = BucketArrayAdd(&context->irLabels);
+	*newLabel = result;
+	return newLabel;
 }
 
 void PushIRScope(Context *context)
@@ -248,12 +267,11 @@ void PopIRScope(Context *context)
 	--context->irStack.size;
 }
 
-IRProcedureScope *PushIRProcedure(Context *context, Procedure *procedure, String returnLabel)
+IRProcedureScope *PushIRProcedure(Context *context, Procedure *procedure)
 {
 	IRProcedureScope procScope;
 	procScope.procedure = procedure;
 	procScope.irStackBase = context->irStack.size;
-	procScope.returnLabel = returnLabel;
 	procScope.currentRegisterId = 0;
 
 	IRProcedureScope *newProcScope = DynamicArrayAdd(&context->irProcedureStack);
@@ -275,6 +293,26 @@ inline IRInstruction *AddInstruction(Context *context)
 	return BucketArrayAdd(&currentProc->procedure->instructions);
 }
 
+IRValue IRValueImmediate(s64 immediate, s64 typeTableIdx = TYPETABLEIDX_S64)
+{
+	IRValue result;
+	result.valueType = IRVALUETYPE_IMMEDIATE_INTEGER;
+	result.immediate = immediate;
+	result.typeTableIdx = typeTableIdx;
+	result.dereference = false;
+	return result;
+}
+
+IRValue IRValueRegister(s64 registerIdx, s64 typeTableIdx = TYPETABLEIDX_S64)
+{
+	IRValue result;
+	result.valueType = IRVALUETYPE_REGISTER;
+	result.registerIdx = registerIdx;
+	result.typeTableIdx = typeTableIdx;
+	result.dereference = false;
+	return result;
+}
+
 IRValue IRGenFromExpression(Context *context, ASTExpression *expression);
 
 IRValue IRDereferenceValue(Context *context, IRValue in)
@@ -291,18 +329,13 @@ IRValue IRDereferenceValue(Context *context, IRValue in)
 	}
 	else
 	{
-		IRValue reg = {};
-		reg.valueType = IRVALUETYPE_REGISTER;
-		reg.registerIdx = NewVirtualRegister(context);
-		reg.typeTableIdx = in.typeTableIdx;
-
 		IRInstruction inst = {};
 		inst.type = IRINSTRUCTIONTYPE_ASSIGNMENT;
-		inst.assignment.dst = reg;
+		inst.assignment.dst = IRValueRegister(NewVirtualRegister(context), in.typeTableIdx);
 		inst.assignment.src = result;
 		*AddInstruction(context) = inst;
 
-		result = reg;
+		result = inst.assignment.dst;
 		result.dereference = true;
 		result.typeTableIdx = pointerTypeInfo->pointerInfo.pointedTypeTableIdx;
 	}
@@ -316,26 +349,6 @@ IRValue IRPointerToValue(Context *context, IRValue in)
 	IRValue result = in;
 	result.dereference = false;
 	result.typeTableIdx = GetTypeInfoPointerOf(context, in.typeTableIdx);
-	return result;
-}
-
-IRValue IRValueImmediate(s64 immediate, s64 typeTableIdx = TYPETABLEIDX_S64)
-{
-	IRValue result;
-	result.valueType = IRVALUETYPE_IMMEDIATE_INTEGER;
-	result.immediate = immediate;
-	result.typeTableIdx = typeTableIdx;
-	result.dereference = false;
-	return result;
-}
-
-IRValue IRValueRegister(s64 registerIdx, s64 typeTableIdx)
-{
-	IRValue result;
-	result.valueType = IRVALUETYPE_REGISTER;
-	result.registerIdx = registerIdx;
-	result.typeTableIdx = typeTableIdx;
-	result.dereference = false;
 	return result;
 }
 
@@ -360,7 +373,7 @@ IRValue IRDoMemberAccess(Context *context, IRValue value, StructMember *structMe
 	case IRVALUETYPE_STACK_OFFSET:
 	{
 		result = value;
-		result.stackOffset += structMember->offset;
+		result.stackOffset -= structMember->offset;
 	} break;
 	case IRVALUETYPE_DATA_OFFSET:
 	{
@@ -536,6 +549,7 @@ void IRAllocateVariableOnStack(Context *context, Variable *variable)
 	IRScope *stackTop = &context->irStack[context->irStack.size - 1];
 	s64 varSize = context->typeTable[variable->typeTableIdx].size;
 	stackTop->stackCursor += varSize;
+	variable->isRegister = false;
 	variable->stackOffset = stackTop->stackCursor;
 
 	IRAddComment(context, TPrintF("Declare variable \"%S\" on stack + 0x%llX", variable->name,
@@ -548,10 +562,7 @@ void IRAllocateVariableOnStack(Context *context, Variable *variable)
 
 Variable *IRAddTempVariable(Context *context, String name, s64 typeTableIdx)
 {
-	Variable *variable = BucketArrayAdd(&context->variables);
-	*variable = {};
-	variable->name = name;
-	variable->parameterIndex = -1;
+	Variable *variable = NewVariable(context, name);
 	variable->typeTableIdx = typeTableIdx;
 
 	IRAllocateVariableOnStack(context, variable);
@@ -718,7 +729,7 @@ IRValue IRInstructionFromBinaryOperation(Context *context, ASTExpression *expres
 	}
 	else if (expression->binaryOperation.op == TOKEN_OP_AND)
 	{
-		String assignZeroLabel = NewLabel(context, "assignZero"_s);
+		IRLabel *assignZeroLabel = NewLabel(context, "assignZero"_s);
 
 		IRValue leftValue  = IRGenFromExpression(context, leftHand);
 
@@ -737,26 +748,30 @@ IRValue IRInstructionFromBinaryOperation(Context *context, ASTExpression *expres
 		IRValue outValue = IRValueRegister(NewVirtualRegister(context), leftHand->typeTableIdx);
 		IRInstructionFromAssignment(context, outValue, IRValueImmediate(1));
 
-		String skipAssignZeroLabel = NewLabel(context, "skipAssignZero"_s);
+		IRLabel *skipAssignZeroLabel = NewLabel(context, "skipAssignZero"_s);
 
 		IRInstruction *jumpToEndInst = AddInstruction(context);
 		jumpToEndInst->type = IRINSTRUCTIONTYPE_JUMP;
 		jumpToEndInst->jump.label = skipAssignZeroLabel;
 
 		IRInstruction *assignZeroLabelInst = AddInstruction(context);
+		assignZeroLabel->instructionIdx =
+			BucketArrayCount(&assignZeroLabel->procedure->instructions) - 1;
 		assignZeroLabelInst->type = IRINSTRUCTIONTYPE_LABEL;
 		assignZeroLabelInst->label = assignZeroLabel;
 
 		IRInstructionFromAssignment(context, outValue, IRValueImmediate(0));
 
 		IRInstruction *endLabelInst = AddInstruction(context);
+		skipAssignZeroLabel->instructionIdx =
+			BucketArrayCount(&skipAssignZeroLabel->procedure->instructions) - 1;
 		endLabelInst->type = IRINSTRUCTIONTYPE_LABEL;
 		endLabelInst->label = skipAssignZeroLabel;
 	}
 	else if (expression->binaryOperation.op == TOKEN_OP_OR)
 	{
-		String assignZeroLabel = NewLabel(context, "assignZero"_s);
-		String skipRightLabel = NewLabel(context, "skipRight"_s);
+		IRLabel *assignZeroLabel = NewLabel(context, "assignZero"_s);
+		IRLabel *skipRightLabel = NewLabel(context, "skipRight"_s);
 
 		IRValue leftValue  = IRGenFromExpression(context, leftHand);
 
@@ -773,31 +788,37 @@ IRValue IRInstructionFromBinaryOperation(Context *context, ASTExpression *expres
 		jumpIfZeroInst2->conditionalJump.condition = rightValue;
 
 		IRInstruction *skipRightLabelInst = AddInstruction(context);
+		skipRightLabel->instructionIdx =
+			BucketArrayCount(&skipRightLabel->procedure->instructions) - 1;
 		skipRightLabelInst->type = IRINSTRUCTIONTYPE_LABEL;
 		skipRightLabelInst->label = skipRightLabel;
 
 		IRValue outValue = IRValueRegister(NewVirtualRegister(context), leftHand->typeTableIdx);
 		IRInstructionFromAssignment(context, outValue, IRValueImmediate(1));
 
-		String skipAssignZeroLabel = NewLabel(context, "skipAssignZero"_s);
+		IRLabel *skipAssignZeroLabel = NewLabel(context, "skipAssignZero"_s);
 
 		IRInstruction *jumpToEndInst = AddInstruction(context);
 		jumpToEndInst->type = IRINSTRUCTIONTYPE_JUMP;
 		jumpToEndInst->jump.label = skipAssignZeroLabel;
 
 		IRInstruction *assignZeroLabelInst = AddInstruction(context);
+		assignZeroLabel->instructionIdx =
+			BucketArrayCount(&assignZeroLabel->procedure->instructions) - 1;
 		assignZeroLabelInst->type = IRINSTRUCTIONTYPE_LABEL;
 		assignZeroLabelInst->label = assignZeroLabel;
 
 		IRInstructionFromAssignment(context, outValue, IRValueImmediate(0));
 
 		IRInstruction *endLabelInst = AddInstruction(context);
+		skipAssignZeroLabel->instructionIdx =
+			BucketArrayCount(&skipAssignZeroLabel->procedure->instructions) - 1;
 		endLabelInst->type = IRINSTRUCTIONTYPE_LABEL;
 		endLabelInst->label = skipAssignZeroLabel;
 	}
 	else if (expression->binaryOperation.op == TOKEN_OP_ASSIGNMENT_AND)
 	{
-		String skipAssignZeroLabel = NewLabel(context, "skipAssignZero"_s);
+		IRLabel *skipAssignZeroLabel = NewLabel(context, "skipAssignZero"_s);
 
 		IRValue leftValue  = IRGenFromExpression(context, leftHand);
 
@@ -816,12 +837,14 @@ IRValue IRInstructionFromBinaryOperation(Context *context, ASTExpression *expres
 		IRInstructionFromAssignment(context, leftValue, IRValueImmediate(0));
 
 		IRInstruction *skipAssignZeroLabelInst = AddInstruction(context);
+		skipAssignZeroLabel->instructionIdx =
+			BucketArrayCount(&skipAssignZeroLabel->procedure->instructions) - 1;
 		skipAssignZeroLabelInst->type = IRINSTRUCTIONTYPE_LABEL;
 		skipAssignZeroLabelInst->label = skipAssignZeroLabel;
 	}
 	else if (expression->binaryOperation.op == TOKEN_OP_ASSIGNMENT_OR)
 	{
-		String skipAssignOneLabel = NewLabel(context, "skipAssignOne"_s);
+		IRLabel *skipAssignOneLabel = NewLabel(context, "skipAssignOne"_s);
 
 		IRValue leftValue  = IRGenFromExpression(context, leftHand);
 
@@ -840,6 +863,8 @@ IRValue IRInstructionFromBinaryOperation(Context *context, ASTExpression *expres
 		IRInstructionFromAssignment(context, leftValue, IRValueImmediate(1));
 
 		IRInstruction *skipAssignOneLabelInst = AddInstruction(context);
+		skipAssignOneLabel->instructionIdx =
+			BucketArrayCount(&skipAssignOneLabel->procedure->instructions) - 1;
 		skipAssignOneLabelInst->type = IRINSTRUCTIONTYPE_LABEL;
 		skipAssignOneLabelInst->label = skipAssignOneLabel;
 	}
@@ -966,9 +991,14 @@ IRValue IRValueFromVariable(Context *context, Variable *variable)
 	}
 	else if (!variable->isStatic)
 	{
-		result.valueType = IRVALUETYPE_STACK_OFFSET;
-		result.stackOffset = variable->stackOffset;
-		result.dereference = true;
+		if (variable->isRegister)
+			result = IRValueRegister(variable->registerIdx, variable->typeTableIdx);
+		else
+		{
+			result.valueType = IRVALUETYPE_STACK_OFFSET;
+			result.stackOffset = variable->stackOffset;
+			result.dereference = true;
+		}
 	}
 	else
 	{
@@ -1007,9 +1037,10 @@ IRValue IRGenFromExpression(Context *context, ASTExpression *expression)
 	{
 		Procedure *procedure = expression->procedureDeclaration.procedure;
 		BucketArrayInit(&procedure->instructions);
-		String returnLabel = NewLabel(context, "return"_s);
 
-		IRProcedureScope *currentProc = PushIRProcedure(context, procedure, returnLabel);
+		IRProcedureScope *currentProc = PushIRProcedure(context, procedure);
+		IRLabel *returnLabel = NewLabel(context, "return"_s);
+		currentProc->returnLabel = returnLabel;
 
 		if (procedure->astBody)
 		{
@@ -1017,6 +1048,7 @@ IRValue IRGenFromExpression(Context *context, ASTExpression *expression)
 			procedure->registerCount = currentProc->currentRegisterId;
 
 			IRInstruction *returnLabelInst = AddInstruction(context);
+			returnLabel->instructionIdx = BucketArrayCount(&procedure->instructions) - 1;
 			returnLabelInst->type = IRINSTRUCTIONTYPE_LABEL;
 			returnLabelInst->label = returnLabel;
 
@@ -1073,7 +1105,7 @@ IRValue IRGenFromExpression(Context *context, ASTExpression *expression)
 			// If should-return register is set, return
 			if ((s64)(context->irStack.size - 2) != currentProc->irStackBase)
 			{
-				String skipLabel = NewLabel(context, "skipReturn"_s);
+				IRLabel *skipLabel = NewLabel(context, "skipReturn"_s);
 
 				IRInstruction jumpIfShouldntReturnInst;
 				jumpIfShouldntReturnInst.type = IRINSTRUCTIONTYPE_JUMP_IF_ZERO;
@@ -1088,6 +1120,7 @@ IRValue IRGenFromExpression(Context *context, ASTExpression *expression)
 				*AddInstruction(context) = jumpInst;
 
 				IRInstruction *skipLabelInst = AddInstruction(context);
+				skipLabel->instructionIdx = BucketArrayCount(&skipLabel->procedure->instructions) - 1;
 				skipLabelInst->type = IRINSTRUCTIONTYPE_LABEL;
 				skipLabelInst->label = skipLabel;
 			}
@@ -1136,7 +1169,18 @@ IRValue IRGenFromExpression(Context *context, ASTExpression *expression)
 		}
 		else
 		{
-			IRAllocateVariableOnStack(context, variable);
+#if 1
+			TypeInfo *varTypeInfo = &context->typeTable[variable->typeTableIdx];
+			if (variable->canBeRegister && varTypeInfo->size <= 8 && IsPowerOf2(varTypeInfo->size))
+			{
+				variable->isRegister = true;
+				variable->registerIdx = NewVirtualRegister(context);
+			}
+			else
+#endif
+			{
+				IRAllocateVariableOnStack(context, variable);
+			}
 
 			// Initial value
 			if (varDecl.value)
@@ -1511,8 +1555,8 @@ IRValue IRGenFromExpression(Context *context, ASTExpression *expression)
 			static u64 floatStaticVarUniqueID = 0;
 
 			IRStaticVariable newStaticVar = {};
-			newStaticVar.variable = BucketArrayAdd(&context->variables);
-			newStaticVar.variable->name = TPrintF("staticFloat%d", floatStaticVarUniqueID++);
+			newStaticVar.variable = NewVariable(context, TPrintF("staticFloat%d",
+						floatStaticVarUniqueID++));
 			newStaticVar.variable->typeTableIdx = TYPETABLEIDX_F64;
 			newStaticVar.initialValue.valueType = IRVALUETYPE_IMMEDIATE_FLOAT;
 			newStaticVar.initialValue.immediateFloat = expression->literal.floating;
@@ -1528,8 +1572,8 @@ IRValue IRGenFromExpression(Context *context, ASTExpression *expression)
 			static u64 stringStaticVarUniqueID = 0;
 
 			IRStaticVariable newStaticVar = {};
-			newStaticVar.variable = BucketArrayAdd(&context->variables);
-			newStaticVar.variable->name = TPrintF("staticString%d", stringStaticVarUniqueID++);
+			newStaticVar.variable = NewVariable(context, TPrintF("staticString%d",
+						stringStaticVarUniqueID++));
 			newStaticVar.variable->typeTableIdx = FindTypeInStackByName(context, {}, "String"_s);
 			newStaticVar.initialValue.valueType = IRVALUETYPE_IMMEDIATE_STRING;
 			newStaticVar.initialValue.immediateString = expression->literal.string;
@@ -1545,7 +1589,13 @@ IRValue IRGenFromExpression(Context *context, ASTExpression *expression)
 	case ASTNODETYPE_IF:
 	{
 		IRValue conditionResult = IRGenFromExpression(context, expression->ifNode.condition);
+
+		IRLabel *skipLabel = NewLabel(context, "skipIf"_s);
+
 		IRInstruction *jump = AddInstruction(context);
+		jump->type = IRINSTRUCTIONTYPE_JUMP_IF_ZERO;
+		jump->conditionalJump.label = skipLabel;
+		jump->conditionalJump.condition = conditionResult;
 
 		// Body!
 		IRGenFromExpression(context, expression->ifNode.body);
@@ -1556,16 +1606,11 @@ IRValue IRGenFromExpression(Context *context, ASTExpression *expression)
 			jumpAfterElse = AddInstruction(context);
 
 		IRInstruction *skipLabelInst = AddInstruction(context);
-
-		String skipLabel = NewLabel(context, "skipIf"_s);
-		String afterElseLabel = NewLabel(context, "afterElse"_s);
-
-		jump->type = IRINSTRUCTIONTYPE_JUMP_IF_ZERO;
-		jump->conditionalJump.label = skipLabel;
-		jump->conditionalJump.condition = conditionResult;
-
+		skipLabel->instructionIdx = BucketArrayCount(&skipLabel->procedure->instructions) - 1;
 		skipLabelInst->type = IRINSTRUCTIONTYPE_LABEL;
 		skipLabelInst->label = skipLabel;
+
+		IRLabel *afterElseLabel = NewLabel(context, "afterElse"_s);
 
 		if (expression->ifNode.elseBody)
 		{
@@ -1575,6 +1620,8 @@ IRValue IRGenFromExpression(Context *context, ASTExpression *expression)
 			IRGenFromExpression(context, expression->ifNode.elseBody);
 
 			IRInstruction *afterElseLabelInst = AddInstruction(context);
+			afterElseLabel->instructionIdx =
+				BucketArrayCount(&afterElseLabel->procedure->instructions) - 1;
 			afterElseLabelInst->type = IRINSTRUCTIONTYPE_LABEL;
 			afterElseLabelInst->label = afterElseLabel;
 		}
@@ -1583,24 +1630,28 @@ IRValue IRGenFromExpression(Context *context, ASTExpression *expression)
 	case ASTNODETYPE_WHILE:
 	{
 		IRInstruction *loopLabelInst = AddInstruction(context);
+		IRLabel *loopLabel = NewLabel(context, "loop"_s);
+		loopLabel->instructionIdx = BucketArrayCount(&loopLabel->procedure->instructions) - 1;
+		loopLabelInst->type = IRINSTRUCTIONTYPE_LABEL;
+		loopLabelInst->label = loopLabel;
 
 		IRValue condition = IRGenFromExpression(context, expression->whileNode.condition);
 
-		String breakLabel = NewLabel(context, "break"_s);
+		IRLabel *breakLabel = NewLabel(context, "break"_s);
 
-		String oldBreakLabel = context->currentBreakLabel;
+		IRLabel *oldBreakLabel = context->currentBreakLabel;
 		context->currentBreakLabel = breakLabel;
 
 		IRInstruction *jump = AddInstruction(context);
 		IRGenFromExpression(context, expression->whileNode.body);
 		IRInstruction *loopJump = AddInstruction(context);
+
 		IRInstruction *breakLabelInst = AddInstruction(context);
+		breakLabel->instructionIdx = BucketArrayCount(&breakLabel->procedure->instructions) - 1;
+		breakLabelInst->type = IRINSTRUCTIONTYPE_LABEL;
+		breakLabelInst->label = breakLabel;
 
 		context->currentBreakLabel = oldBreakLabel;
-
-		String loopLabel = NewLabel(context, "loop"_s);
-		loopLabelInst->type = IRINSTRUCTIONTYPE_LABEL;
-		loopLabelInst->label = loopLabel;
 
 		jump->type = IRINSTRUCTIONTYPE_JUMP_IF_ZERO;
 		jump->conditionalJump.label = breakLabel;
@@ -1608,9 +1659,6 @@ IRValue IRGenFromExpression(Context *context, ASTExpression *expression)
 
 		loopJump->type = IRINSTRUCTIONTYPE_JUMP;
 		loopJump->jump.label = loopLabel;
-
-		breakLabelInst->type = IRINSTRUCTIONTYPE_LABEL;
-		breakLabelInst->label = breakLabel;
 	} break;
 	case ASTNODETYPE_FOR:
 	{
@@ -1669,6 +1717,10 @@ IRValue IRGenFromExpression(Context *context, ASTExpression *expression)
 			CRASH;
 
 		loopLabelInst = AddInstruction(context);
+		IRLabel *loopLabel = NewLabel(context, "loop"_s);
+		loopLabel->instructionIdx = BucketArrayCount(&loopLabel->procedure->instructions) - 1;
+		loopLabelInst->type = IRINSTRUCTIONTYPE_LABEL;
+		loopLabelInst->label = loopLabel;
 
 		IRValue condition = IRValueRegister(NewVirtualRegister(context), TYPETABLEIDX_BOOL);
 		IRInstruction compareInst = {};
@@ -1678,9 +1730,9 @@ IRValue IRGenFromExpression(Context *context, ASTExpression *expression)
 		compareInst.binaryOperation.out = condition;
 		*AddInstruction(context) = compareInst;
 
-		String breakLabel = NewLabel(context, "break"_s);
+		IRLabel *breakLabel = NewLabel(context, "break"_s);
 
-		String oldBreakLabel = context->currentBreakLabel;
+		IRLabel *oldBreakLabel = context->currentBreakLabel;
 		context->currentBreakLabel = breakLabel;
 
 		IRInstruction *jump = AddInstruction(context);
@@ -1707,12 +1759,12 @@ IRValue IRGenFromExpression(Context *context, ASTExpression *expression)
 
 		IRInstruction *loopJump = AddInstruction(context);
 		IRInstruction *breakLabelInst = AddInstruction(context);
+		breakLabel->instructionIdx = BucketArrayCount(&breakLabel->procedure->instructions) - 1;
+		breakLabelInst->type = IRINSTRUCTIONTYPE_LABEL;
+		breakLabelInst->label = breakLabel;
+
 
 		context->currentBreakLabel = oldBreakLabel;
-
-		String loopLabel = NewLabel(context, "loop"_s);
-		loopLabelInst->type = IRINSTRUCTIONTYPE_LABEL;
-		loopLabelInst->label = loopLabel;
 
 		jump->type = IRINSTRUCTIONTYPE_JUMP_IF_ZERO;
 		jump->conditionalJump.label = breakLabel;
@@ -1720,9 +1772,6 @@ IRValue IRGenFromExpression(Context *context, ASTExpression *expression)
 
 		loopJump->type = IRINSTRUCTIONTYPE_JUMP;
 		loopJump->jump.label = loopLabel;
-
-		breakLabelInst->type = IRINSTRUCTIONTYPE_LABEL;
-		breakLabelInst->label = breakLabel;
 
 		PopIRScope(context);
 	} break;
@@ -1790,16 +1839,11 @@ IRValue IRGenFromExpression(Context *context, ASTExpression *expression)
 		}
 		else
 		{
-			IRValue returnRegister;
-			returnRegister.valueType = IRVALUETYPE_REGISTER;
-			returnRegister.registerIdx = IRSPECIALREGISTER_RETURN;
-			returnRegister.typeTableIdx = returnValue.typeTableIdx;
-			returnRegister.dereference = false;
-
 			IRInstruction returnValueSaveInst;
 			returnValueSaveInst.type = IRINSTRUCTIONTYPE_ASSIGNMENT;
 			returnValueSaveInst.assignment.src = returnValue;
-			returnValueSaveInst.assignment.dst = returnRegister;
+			returnValueSaveInst.assignment.dst = IRValueRegister(IRSPECIALREGISTER_RETURN,
+					returnValue.typeTableIdx);
 			*AddInstruction(context) = returnValueSaveInst;
 		}
 
@@ -1840,43 +1884,6 @@ IRValue IRGenFromExpression(Context *context, ASTExpression *expression)
 	}
 
 	return result;
-}
-
-void PrintIRValue(Context *context, IRValue value)
-{
-	if (value.dereference)
-		Print("[");
-
-	if (value.valueType == IRVALUETYPE_REGISTER)
-		if (value.registerIdx == IRSPECIALREGISTER_RETURN)
-			Print("$rRet");
-		else if (value.registerIdx == IRSPECIALREGISTER_SHOULD_RETURN)
-			Print("$rDoRet");
-		else
-			Print("$r%d", value.registerIdx);
-	else if (value.valueType == IRVALUETYPE_STACK_OFFSET)
-		Print("stack+0x%llx", value.stackOffset);
-	else if (value.valueType == IRVALUETYPE_DATA_OFFSET)
-		Print("%S+0x%llx", value.dataOffset.variable->name, value.dataOffset.offset);
-	else if (value.valueType == IRVALUETYPE_PARAMETER)
-		Print("param%hhd", value.parameterIdx);
-	else if (value.valueType == IRVALUETYPE_IMMEDIATE_INTEGER)
-		Print("0x%x", value.immediate);
-	else if (value.valueType == IRVALUETYPE_IMMEDIATE_FLOAT)
-		Print("%f", value.immediateFloat);
-	else if (value.valueType == IRVALUETYPE_IMMEDIATE_STRING)
-		Print("%S", value.immediateString);
-	else if (value.valueType == IRVALUETYPE_SIZEOF)
-		Print("sizeof(%lld)", value.sizeOfTypeTableIdx);
-	else if (value.valueType == IRVALUETYPE_TYPEOF)
-		Print("typeof(%lld)", value.sizeOfTypeTableIdx);
-	else
-		Print("???");
-
-	if (value.dereference)
-		Print("]");
-
-	//Print(" : %S", TypeInfoToString(context, value.typeTableIdx));
 }
 
 void PrintIRInstructionOperator(IRInstruction inst)
@@ -1947,7 +1954,7 @@ void IRGenMain(Context *context)
 	DynamicArrayInit(&context->irStaticVariables, 64);
 	DynamicArrayInit(&context->irStack, 64);
 	DynamicArrayInit(&context->irProcedureStack, 8);
-	context->currentLabelId = 1;
+	BucketArrayInit(&context->irLabels);
 
 	PushIRScope(context);
 

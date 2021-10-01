@@ -70,7 +70,7 @@ String CIRValueToStr(Context *context, IRValue value)
 	}
 	else if (value.valueType == IRVALUETYPE_STACK_OFFSET)
 	{
-		result = TPrintF("stack + 0x%x", value.stackOffset);
+		result = TPrintF("stackBase - 0x%x", value.stackOffset);
 	}
 	else if (value.valueType == IRVALUETYPE_DATA_OFFSET)
 	{
@@ -438,7 +438,10 @@ void WriteToC(Context *context)
 		PrintOut(context, outputFile, "%S {\n", signature);
 
 		if (proc->stackSize)
-			PrintOut(context, outputFile, "u8 stack[0x%x];\n", proc->stackSize);
+		{
+			PrintOut(context, outputFile, "u8 stack[0x%llx];\n", proc->stackSize);
+			PrintOut(context, outputFile, "u8 *stackBase = stack + 0x%llx;\n", proc->stackSize);
+		}
 
 		// Declare registers
 		if (proc->registerCount)
@@ -464,7 +467,10 @@ void WriteToC(Context *context)
 			if (inst.type != IRINSTRUCTIONTYPE_LABEL)
 				PrintOut(context, outputFile, "\t");
 
-			if (inst.type == IRINSTRUCTIONTYPE_COMMENT)
+			if (inst.type == IRINSTRUCTIONTYPE_NOP)
+			{
+			}
+			else if (inst.type == IRINSTRUCTIONTYPE_COMMENT)
 				PrintOut(context, outputFile, "// %S\n", inst.comment);
 			else if (inst.type >= IRINSTRUCTIONTYPE_UNARY_BEGIN && inst.type < IRINSTRUCTIONTYPE_UNARY_END)
 			{
@@ -518,7 +524,7 @@ void WriteToC(Context *context)
 			}
 			else if (inst.type == IRINSTRUCTIONTYPE_LABEL)
 			{
-				String label = inst.label;
+				String label = inst.label->name;
 				PrintOut(context, outputFile, "%S:\n", label);
 				if (instructionIdx == instructionCount - 1)
 					// Label can't be right before a closing brace
@@ -526,18 +532,18 @@ void WriteToC(Context *context)
 			}
 			else if (inst.type == IRINSTRUCTIONTYPE_JUMP)
 			{
-				String label = inst.conditionalJump.label;
+				String label = inst.conditionalJump.label->name;
 				PrintOut(context, outputFile, "goto %S;\n", label);
 			}
 			else if (inst.type == IRINSTRUCTIONTYPE_JUMP_IF_ZERO)
 			{
-				String label = inst.conditionalJump.label;
+				String label = inst.conditionalJump.label->name;
 				String condition = CIRValueToStr(context, inst.conditionalJump.condition);
 				PrintOut(context, outputFile, "if (!%S) goto %S;\n", condition, label);
 			}
 			else if (inst.type == IRINSTRUCTIONTYPE_JUMP_IF_NOT_ZERO)
 			{
-				String label = inst.conditionalJump.label;
+				String label = inst.conditionalJump.label->name;
 				String condition = CIRValueToStr(context, inst.conditionalJump.condition);
 				PrintOut(context, outputFile, "if (%S) goto %S;\n", condition, label);
 			}

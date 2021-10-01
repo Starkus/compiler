@@ -7,13 +7,13 @@ struct Array
 	u64 _capacity;
 #endif
 
-	T &operator[](int idx)
+	T &operator[](s64 idx)
 	{
 		ASSERT(idx >= 0 && (u64)idx < _capacity);
 		return data[idx];
 	}
 
-	const T &operator[](int idx) const
+	const T &operator[](s64 idx) const
 	{
 		ASSERT(idx >= 0 && (u64)idx < _capacity);
 		return data[idx];
@@ -59,6 +59,7 @@ struct DynamicArray
 template <typename T, void *(*allocFunc)(u64), void *(*reallocFunc)(void *, u64)>
 void DynamicArrayInit(DynamicArray<T, allocFunc, reallocFunc> *array, u64 initialCapacity)
 {
+	ASSERT(initialCapacity);
 	array->data = (T*)allocFunc(sizeof(T) * initialCapacity);
 	array->size = 0;
 	array->capacity = initialCapacity;
@@ -90,6 +91,15 @@ T *DynamicArrayAddMany(DynamicArray<T, allocFunc, reallocFunc> *array, s64 count
 	T *first = &array->data[array->size];
 	array->size = newSize;
 	return first;
+}
+
+template <typename T, void *(*allocFunc)(u64), void *(*reallocFunc)(void *, u64)>
+void DynamicArrayCopy(DynamicArray<T, allocFunc, reallocFunc> *dst,
+		DynamicArray<T, allocFunc, reallocFunc> *src)
+{
+	ASSERT(dst->capacity >= src->size);
+	dst->size = src->size;
+	memcpy(dst->data, src->data, src->size * sizeof(T));
 }
 
 template <typename T, u64 bucketSize, void *(*allocFunc)(u64), void *(*reallocFunc)(void *, u64)>

@@ -524,6 +524,9 @@ void WriteToX64(Context *context)
 
 			switch (inst.type)
 			{
+			case IRINSTRUCTIONTYPE_NOP:
+			{
+			} break;
 			case IRINSTRUCTIONTYPE_COMMENT:
 			{
 				PrintOut(context, "; %S\n", inst.comment);
@@ -736,19 +739,19 @@ void WriteToX64(Context *context)
 			} break;
 			case IRINSTRUCTIONTYPE_JUMP:
 			{
-				String label = inst.conditionalJump.label;
+				String label = inst.conditionalJump.label->name;
 				PrintOut(context, "jmp %S\n", label);
 			} break;
 			case IRINSTRUCTIONTYPE_JUMP_IF_ZERO:
 			{
-				String label = inst.conditionalJump.label;
+				String label = inst.conditionalJump.label->name;
 				X64OutputInstruction(context, CMP, inst.conditionalJump.condition,
 						IRValueImmediate(0));
 				PrintOut(context, "je %S\n", label);
 			} break;
 			case IRINSTRUCTIONTYPE_JUMP_IF_NOT_ZERO:
 			{
-				String label = inst.conditionalJump.label;
+				String label = inst.conditionalJump.label->name;
 				String condition = X64IRValueToStr(context, inst.conditionalJump.condition);
 				X64OutputInstruction(context, CMP, inst.conditionalJump.condition,
 						IRValueImmediate(0));

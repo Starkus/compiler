@@ -1065,11 +1065,9 @@ void TypeCheckExpression(Context *context, ASTExpression *expression)
 		if (procedure->isVarargs)
 		{
 			s64 anyTableIdx = FindTypeInStackByName(context, {}, "Any"_s);
-			Variable *var = BucketArrayAdd(&context->variables);
-			*var = {};
-			var->name = procedure->varargsName;
-			var->parameterIndex = (s8)procedure->parameters.size;
+			Variable *var = NewVariable(context, procedure->varargsName);
 			var->typeTableIdx = GetTypeInfoArrayOf(context, anyTableIdx, 0);
+			var->parameterIndex = (s8)procedure->parameters.size;
 
 			ProcedureParameter *procParam = DynamicArrayAdd(&procedure->parameters);
 			procParam->variable = var;
@@ -1281,6 +1279,18 @@ skipInvalidIdentifierError:
 			if (IsTemporalValue(expression->unaryOperation.expression))
 				LogError(context, expression->any.loc, "Trying to get pointer to temporal value"_s);
 
+			ASTExpression *e = expression->unaryOperation.expression;
+			switch (e->nodeType)
+			{
+			case ASTNODETYPE_IDENTIFIER:
+			{
+				if (e->identifier.type == NAMETYPE_VARIABLE)
+				{
+					e->identifier.variable->canBeRegister = false;
+				}
+			} break;
+			}
+
 			expression->typeTableIdx = GetTypeInfoPointerOf(context, expressionType);
 		} break;
 		case TOKEN_OP_DEREFERENCE:
@@ -1462,10 +1472,7 @@ skipInvalidIdentifierError:
 
 		PushTCScope(context);
 
-		Variable *indexVar = BucketArrayAdd(&context->variables);
-		*indexVar = {};
-		indexVar->name = "i"_s;
-		indexVar->parameterIndex = -1;
+		Variable *indexVar = NewVariable(context, "i"_s);
 		indexVar->typeTableIdx = TYPETABLEIDX_S64;
 		expression->forNode.indexVariable = indexVar;
 
@@ -1486,10 +1493,7 @@ skipInvalidIdentifierError:
 			s64 pointerToElementTypeTableIdx = GetTypeInfoPointerOf(context,
 					rangeTypeInfo->arrayInfo.elementTypeTableIdx);
 
-			Variable *elementVar = BucketArrayAdd(&context->variables);
-			*elementVar = {};
-			elementVar->name = "it"_s;
-			elementVar->parameterIndex = -1;
+			Variable *elementVar = NewVariable(context, "it"_s);
 			elementVar->typeTableIdx = pointerToElementTypeTableIdx;
 			expression->forNode.elementVariable = elementVar;
 

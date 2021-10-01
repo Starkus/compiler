@@ -31,6 +31,18 @@ void Print(const char *format, ...)
 	DWORD bytesWritten;
 	WriteFile(g_hStdout, buffer, (DWORD)strlen(buffer), &bytesWritten, nullptr);
 
+	// Log file
+	static HANDLE logFileHandle = CreateFileA(
+			"log.txt",
+			GENERIC_WRITE,
+			0,
+			nullptr,
+			CREATE_ALWAYS,
+			FILE_ATTRIBUTE_NORMAL,
+			nullptr
+			);
+	WriteFile(logFileHandle, buffer, (DWORD)strlen(buffer), &bytesWritten, nullptr);
+
 	va_end(args);
 }
 
@@ -68,6 +80,9 @@ struct TCScope;
 struct IRStaticVariable;
 struct IRScope;
 struct IRProcedureScope;
+struct IRLabel;
+struct BasicBlock;
+struct InterferenceGraphNode;
 struct Context
 {
 	Config config;
@@ -96,8 +111,12 @@ struct Context
 	DynamicArray<IRStaticVariable, malloc, realloc> irStaticVariables;
 	DynamicArray<IRScope, malloc, realloc> irStack;
 	DynamicArray<IRProcedureScope, malloc, realloc> irProcedureStack;
-	u64 currentLabelId;
-	String currentBreakLabel;
+	BucketArray<IRLabel, 1024, malloc, realloc> irLabels;
+	IRLabel *currentBreakLabel;
+
+	// Optimizer
+	BucketArray<BasicBlock, 512, malloc, realloc> basicBlocks;
+	DynamicArray<InterferenceGraphNode, malloc, realloc> interferenceGraph;
 
 	// Backend
 	HANDLE outputFile;
@@ -190,6 +209,7 @@ void UnexpectedTokenError(Context *context, Token *token)
 #include "TypeChecker.cpp"
 #include "IRGen.cpp"
 #include "PrintIR.cpp"
+#include "Optimize.cpp"
 #include "WriteToC.cpp"
 #include "x64.cpp"
 
@@ -296,13 +316,16 @@ int main(int argc, char **argv)
 	TypeCheckMain(&context);
 
 	IRGenMain(&context);
+
+	OptimizerMain(&context);
+
 #if PRINT_IR
 	if (!context.config.silent)
 		PrintIRInstructions(&context);
 #endif
 
-	WriteToX64(&context);
-	//WriteToC(&context);
+	//WriteToX64(&context);
+	WriteToC(&context);
 
 	Print("Compilation success\n");
 	return 0;

@@ -7,10 +7,16 @@ struct Variable
 	String name;
 	s8 parameterIndex; // Negative if not a parameter
 	bool isStatic;
+	bool canBeRegister;
 	s64 typeTableIdx;
 
 	// IRGen
-	u64 stackOffset;
+	bool isRegister;
+	union
+	{
+		s64 registerIdx;
+		u64 stackOffset;
+	};
 };
 
 struct ProcedureParameter
@@ -74,6 +80,16 @@ ASTExpression *NewTreeNode(Context *context)
 ASTType *NewASTType(Context *context)
 {
 	return BucketArrayAdd(&context->astTypeNodes);
+}
+
+Variable *NewVariable(Context *context, String name)
+{
+	Variable *result = BucketArrayAdd(&context->variables);
+	*result = {};
+	result->name = name;
+	result->parameterIndex = -1;
+	result->canBeRegister = true;
+	return result;
 }
 
 ASTStructDeclaration ParseStructOrUnion(Context *context);
@@ -477,13 +493,11 @@ ASTVariableDeclaration ParseVariableDeclaration(Context *context)
 	ASTVariableDeclaration varDecl = {};
 	varDecl.loc = context->token->loc;
 
-	varDecl.variable = BucketArrayAdd(&context->variables);
-	*varDecl.variable = {};
-	varDecl.variable->parameterIndex = -1;
-
 	AssertToken(context, context->token, TOKEN_IDENTIFIER);
-	varDecl.variable->name = context->token->string;
+	String name = context->token->string;
 	Advance(context);
+
+	varDecl.variable = NewVariable(context, name);
 
 	if (context->token->type != TOKEN_OP_VARIABLE_DECLARATION && context->token->type !=
 			TOKEN_OP_VARIABLE_DECLARATION_STATIC)
@@ -560,6 +574,7 @@ ASTProcedureDeclaration ParseProcedureDeclaration(Context *context)
 		astVarDecl.isUsing = isUsing;
 		ASSERT(procDecl.astParameters.size <= S8_MAX);
 		astVarDecl.variable->parameterIndex = (s8)procDecl.astParameters.size;
+		astVarDecl.variable->canBeRegister = false; // @Check: ??
 
 		if (astVarDecl.variable->isStatic)
 			LogError(context, context->token->loc, "Procedure parameters can't be static"_s);
@@ -920,9 +935,7 @@ ASTExpression ParseStatement(Context *context)
 		ASTVariableDeclaration varDecl = {};
 		varDecl.loc = context->token->loc;
 
-		varDecl.variable = BucketArrayAdd(&context->variables);
-		*varDecl.variable = {};
-		varDecl.variable->parameterIndex = -1;
+		varDecl.variable = NewVariable(context, ""_s);
 
 		varDecl.astType = NewASTType(context);
 		*varDecl.astType = ParseType(context); // This will parse the struct/union declaration.
