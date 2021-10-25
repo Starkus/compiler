@@ -32,5 +32,6 @@ Main :: () -> s64
 	};
 	deep = 5;
 
+	Print("Test ok\n");
 	return 0;
 }

@@ -65,20 +65,24 @@ BasicBlock *PushBasicBlock(Context *context, BasicBlock *currentBasicBlock)
 inline bool AddIfRegister(BasicBlock *basicBlock, IRValue value,
 		DynamicArray<s64, malloc, realloc> *array)
 {
+	s64 registerIdx;
 	if (value.valueType == IRVALUETYPE_REGISTER)
-	{
-		if (value.registerIdx >= IRSPECIALREGISTER_BEGIN)
-			return false;
+		registerIdx = value.registerIdx;
+	else if (value.valueType == IRVALUETYPE_MEMORY && !value.memory.baseVariable)
+		registerIdx = value.memory.baseRegister;
+	else
+		return false;
 
-		for (int i = 0; i < array->size; ++i)
-		{
-			if ((*array)[i] == value.registerIdx)
-				return false; // No duplicates
-		}
-		*DynamicArrayAdd(array) = value.registerIdx;
-		return true;
+	if (registerIdx >= IRSPECIALREGISTER_BEGIN)
+		return false;
+
+	for (int i = 0; i < array->size; ++i)
+	{
+		if ((*array)[i] == registerIdx)
+			return false; // No duplicates
 	}
-	return false;
+	*DynamicArrayAdd(array) = registerIdx;
+	return true;
 }
 
 inline void RemoveIfRegister(BasicBlock *basicBlock, IRValue value,
@@ -86,17 +90,17 @@ inline void RemoveIfRegister(BasicBlock *basicBlock, IRValue value,
 {
 	if (value.valueType == IRVALUETYPE_REGISTER)
 	{
-		if (value.dereference)
-			// The register is actually _used_ here, and not written to. Add instead.
-			AddIfRegister(basicBlock, value, array);
-		else
+		for (int i = 0; i < array->size; ++i)
 		{
-			for (int i = 0; i < array->size; ++i)
-			{
-				if ((*array)[i] == value.registerIdx)
-					(*array)[i] = (*array)[--array->size];
-			}
+			if ((*array)[i] == value.registerIdx)
+				(*array)[i] = (*array)[--array->size];
 		}
+	}
+	else if (value.valueType == IRVALUETYPE_MEMORY && !value.memory.baseVariable)
+	{
+		// The register is actually _used_ here, and not written to. Add instead.
+		IRValue reg = IRValueRegister(value.memory.baseRegister, value.typeTableIdx);
+		AddIfRegister(basicBlock, reg, array);
 	}
 }
 
@@ -104,6 +108,8 @@ inline void ReplaceIfRegister(IRValue *value, Array<s64> registerMap)
 {
 	if (value->valueType == IRVALUETYPE_REGISTER && value->registerIdx < IRSPECIALREGISTER_BEGIN)
 		value->registerIdx = registerMap[value->registerIdx];
+	else if (value->valueType == IRVALUETYPE_MEMORY && !value->memory.baseVariable)
+		value->memory.baseRegister = registerMap[value->memory.baseRegister];
 }
 
 void DoLivenessAnalisis(Context *context, BasicBlock *basicBlock,
@@ -261,15 +267,8 @@ skipEdge:;
 #endif
 }
 
-void OptimizerMain(Context *context)
+void GenerateBasicBlocks(Context *context)
 {
-	BucketArrayInit(&context->basicBlocks);
-	DynamicArrayInit(&context->interferenceGraph, 128);
-
-	DynamicArray<BasicBlock *, malloc, realloc> leafBlocks;
-	DynamicArrayInit(&leafBlocks, 128);
-
-	// Generate basic blocks
 	const u64 procedureCount = BucketArrayCount(&context->procedures);
 	for (int procedureIdx = 0; procedureIdx < procedureCount; ++procedureIdx)
 	{
@@ -315,13 +314,12 @@ void OptimizerMain(Context *context)
 			} break;
 			case IRINSTRUCTIONTYPE_RETURN:
 			{
-				*DynamicArrayAdd(&leafBlocks) = currentBasicBlock;
+				*DynamicArrayAdd(&context->leafBasicBlocks) = currentBasicBlock;
 			} break;
 			}
 		}
 	}
 
-	// Link labels
 	const u64 basicBlockCount = BucketArrayCount(&context->basicBlocks);
 	for (int i = 0; i < basicBlockCount; ++i)
 	{
@@ -355,10 +353,136 @@ void OptimizerMain(Context *context)
 foundBlock:
 		continue;
 	}
+}
 
-	for (int leafIdx = 0; leafIdx < leafBlocks.size; ++leafIdx)
+inline void ReplaceRegisterForVariable(IRValue *value, s64 registerIdx, Variable *variable)
+{
+	if (value->valueType == IRVALUETYPE_MEMORY && !value->memory.baseVariable)
+		// Not supported yet
+		ASSERT(value->memory.baseRegister != registerIdx);
+
+	if (value->valueType != IRVALUETYPE_REGISTER)
+		return;
+	if (value->registerIdx != registerIdx)
+		return;
+	*value = IRValueMemory(variable, 0, value->typeTableIdx);
+}
+
+void SpillRegisterIntoMemory(Context *context, Procedure *procedure, s64 registerIdx)
+{
+	Variable *newVar = NewVariable(context, TPrintF("_spill_r%lld", registerIdx));
+
+#if DEBUG_OPTIMIZER
+	Print("Spilling r%lld!\n", registerIdx);
+#endif
+
+	u64 instructionCount = BucketArrayCount(&procedure->instructions);
+	for (int instructionIdx = 0; instructionIdx < instructionCount; ++instructionIdx)
 	{
-		BasicBlock *currentLeafBlock = leafBlocks[leafIdx];
+		IRInstruction *inst = &procedure->instructions[instructionIdx];
+
+		if (inst->type >= IRINSTRUCTIONTYPE_UNARY_BEGIN &&
+				inst->type < IRINSTRUCTIONTYPE_UNARY_END)
+		{
+			ReplaceRegisterForVariable(&inst->unaryOperation.in, registerIdx, newVar);
+			ReplaceRegisterForVariable(&inst->unaryOperation.out, registerIdx, newVar);
+		}
+		else if (inst->type >= IRINSTRUCTIONTYPE_BINARY_BEGIN &&
+				inst->type < IRINSTRUCTIONTYPE_BINARY_END)
+		{
+			ReplaceRegisterForVariable(&inst->binaryOperation.left, registerIdx, newVar);
+			ReplaceRegisterForVariable(&inst->binaryOperation.right, registerIdx, newVar);
+			ReplaceRegisterForVariable(&inst->binaryOperation.out, registerIdx, newVar);
+		}
+		else switch (inst->type)
+		{
+		case IRINSTRUCTIONTYPE_ASSIGNMENT:
+		{
+			ReplaceRegisterForVariable(&inst->assignment.src, registerIdx, newVar);
+			ReplaceRegisterForVariable(&inst->assignment.dst, registerIdx, newVar);
+		} break;
+		case IRINSTRUCTIONTYPE_PROCEDURE_CALL:
+		{
+			ReplaceRegisterForVariable(&inst->procedureCall.out, registerIdx, newVar);
+
+			for (int paramIdx = 0; paramIdx < inst->procedureCall.parameters.size; ++paramIdx)
+				ReplaceRegisterForVariable(&inst->procedureCall.parameters[paramIdx], registerIdx,
+						newVar);
+		} break;
+		case IRINSTRUCTIONTYPE_INTRINSIC_MEMCPY:
+		{
+			ReplaceRegisterForVariable(&inst->memcpy.src, registerIdx, newVar);
+			ReplaceRegisterForVariable(&inst->memcpy.dst, registerIdx, newVar);
+			ReplaceRegisterForVariable(&inst->memcpy.size, registerIdx, newVar);
+		} break;
+		case IRINSTRUCTIONTYPE_JUMP_IF_ZERO:
+		case IRINSTRUCTIONTYPE_JUMP_IF_NOT_ZERO:
+		{
+			ReplaceRegisterForVariable(&inst->conditionalJump.condition, registerIdx, newVar);
+		} break;
+		}
+	}
+}
+
+void ResolveStackOffsets(Context *context)
+{
+	DynamicArray<s64, malloc, realloc> stack;
+	DynamicArrayInit(&stack, 16);
+
+	const u64 procedureCount = BucketArrayCount(&context->procedures);
+	for (int procedureIdx = 0; procedureIdx < procedureCount; ++procedureIdx)
+	{
+		Procedure *proc = &context->procedures[procedureIdx];
+		s64 stackCursor = 0;
+
+		// @Speed: separate array of external procedures to avoid branching
+		if (proc->isExternal)
+			continue;
+
+		BasicBlock *currentBasicBlock = PushBasicBlock(context, nullptr);
+		currentBasicBlock->procedure = proc;
+
+		u64 instructionCount = BucketArrayCount(&proc->instructions);
+		for (int instructionIdx = 0; instructionIdx < instructionCount; ++instructionIdx)
+		{
+			IRInstruction inst = proc->instructions[instructionIdx];
+			switch (inst.type)
+			{
+			case IRINSTRUCTIONTYPE_PUSH_VARIABLE:
+			{
+				Variable *var = inst.pushVariable.variable;
+				u64 size = context->typeTable[var->typeTableIdx].size;
+				stackCursor -= size;
+				var->stackOffset = stackCursor;
+				var->isAllocated = true;
+			} break;
+			case IRINSTRUCTIONTYPE_PUSH_SCOPE:
+			{
+				*DynamicArrayAdd(&stack) = stackCursor;
+			} break;
+			case IRINSTRUCTIONTYPE_POP_SCOPE:
+			{
+				if (-stackCursor > (s64)proc->stackSize)
+					proc->stackSize = -stackCursor;
+				stackCursor = stack[--stack.size];
+			} break;
+			}
+		}
+	}
+}
+
+void OptimizerMain(Context *context)
+{
+	BucketArrayInit(&context->basicBlocks);
+	DynamicArrayInit(&context->leafBasicBlocks, 128);
+	DynamicArrayInit(&context->interferenceGraph, 128);
+
+	GenerateBasicBlocks(context);
+
+	// Do liveness analisis, starting from all leaf blocks
+	for (int leafIdx = 0; leafIdx < context->leafBasicBlocks.size; ++leafIdx)
+	{
+		BasicBlock *currentLeafBlock = context->leafBasicBlocks[leafIdx];
 
 		String procName = ""_s;
 		StaticDefinition *staticDef = FindStaticDefinitionByProcedure(context,
@@ -380,7 +504,7 @@ foundBlock:
 		for (int nodeIdx = 0; nodeIdx < context->interferenceGraph.size; ++nodeIdx)
 		{
 			InterferenceGraphNode *currentNode = &context->interferenceGraph[nodeIdx];
-			Print("Register %lld: ", currentNode->registerIdx);
+			Print("Register %lld coexists with: ", currentNode->registerIdx);
 			for (int i = 0; i < currentNode->edges.size; ++i)
 				Print("%lld, ", currentNode->edges[i]);
 			Print("\n");
@@ -388,152 +512,185 @@ foundBlock:
 #endif
 
 		int registersAvailable = 8;
-		Array<InterferenceGraphNode *> nodeStack;
-		ArrayInit(&nodeStack, context->interferenceGraph.size, malloc);
-
-		s64 highestVirtualRegister = -1;
-		for (int nodeIdx = 0; nodeIdx < context->interferenceGraph.size; ++nodeIdx)
+		bool spilledSomething = false;
+		while (true)
 		{
-			s64 currentReg = context->interferenceGraph[nodeIdx].registerIdx;
-			if (currentReg > highestVirtualRegister)
-				highestVirtualRegister = currentReg;
-		}
-		Array<s64> registerMap;
-		ArrayInit(&registerMap, highestVirtualRegister + 1, malloc);
-		registerMap.size = highestVirtualRegister + 1;
-		memset(registerMap.data, 0xFF, registerMap.size * sizeof(s64));
+			Array<InterferenceGraphNode *> nodeStack;
+			ArrayInit(&nodeStack, context->interferenceGraph.size, malloc);
 
-		while (nodeStack.size < context->interferenceGraph.size)
-		{
-			InterferenceGraphNode *nodeToRemove = nullptr;
-			int nodeToRemoveIdx = -1;
+			s64 highestVirtualRegister = -1;
 			for (int nodeIdx = 0; nodeIdx < context->interferenceGraph.size; ++nodeIdx)
 			{
-				InterferenceGraphNode *currentNode = &context->interferenceGraph[nodeIdx];
-				if (currentNode->removed)
-					continue;
-				if (currentNode->edges.size < registersAvailable)
-				{
-					nodeToRemove = currentNode;
-					nodeToRemoveIdx = nodeIdx;
-					break;
-				}
+				s64 currentReg = context->interferenceGraph[nodeIdx].registerIdx;
+				if (currentReg > highestVirtualRegister)
+					highestVirtualRegister = currentReg;
 			}
-			ASSERT(nodeToRemove || !"Spilling not yet implemented");
+			Array<s64> registerMap;
+			ArrayInit(&registerMap, highestVirtualRegister + 1, malloc);
+			registerMap.size = highestVirtualRegister + 1;
+			memset(registerMap.data, 0xFF, registerMap.size * sizeof(s64));
 
-			for (int nodeIdx = 0; nodeIdx < context->interferenceGraph.size; ++nodeIdx)
+			// Map all registers to fewer non-colliding registers
+			while (nodeStack.size < context->interferenceGraph.size)
 			{
-				InterferenceGraphNode *currentNode = &context->interferenceGraph[nodeIdx];
-				if (currentNode->removed)
-					continue;
-				for (int i = 0; i < currentNode->edges.size; ++i)
+				InterferenceGraphNode *nodeToRemove = nullptr;
+				int nodeToRemoveIdx = -1;
+				for (int nodeIdx = 0; nodeIdx < context->interferenceGraph.size; ++nodeIdx)
 				{
-					if (currentNode->edges[i] == nodeToRemove->registerIdx)
+					InterferenceGraphNode *currentNode = &context->interferenceGraph[nodeIdx];
+					if (currentNode->removed)
+						continue;
+					if (currentNode->edges.size < registersAvailable)
 					{
-						// Remove from node edges
-						currentNode->edges[i] = currentNode->edges[--currentNode->edges.size];
+						nodeToRemove = currentNode;
+						nodeToRemoveIdx = nodeIdx;
+						break;
 					}
 				}
-			}
-			nodeToRemove->removed = true;
-			*ArrayAdd(&nodeStack) = nodeToRemove;
-		}
 
-		for (int nodeIdx = (int)nodeStack.size - 1; nodeIdx >= 0; --nodeIdx)
-		{
-			InterferenceGraphNode *currentNode = nodeStack[nodeIdx];
-
-			for (int candidate = 0; candidate < registersAvailable; ++candidate)
-			{
-				for (int edgeIdx = 0; edgeIdx < currentNode->edges.size; ++edgeIdx)
+				if (!nodeToRemove)
 				{
-					s64 edgeRegister = currentNode->edges[edgeIdx];
-					if (registerMap[edgeRegister] == candidate)
-						goto skipCandidate;
+					// Choose a register to spill onto the stack
+					s64 mostEdges = -1;
+					for (int nodeIdx = 0; nodeIdx < context->interferenceGraph.size; ++nodeIdx)
+					{
+						InterferenceGraphNode *currentNode = &context->interferenceGraph[nodeIdx];
+						if (currentNode->removed)
+							continue;
+						if ((s64)currentNode->edges.size > mostEdges)
+						{
+							nodeToRemove = currentNode;
+							nodeToRemoveIdx = nodeIdx;
+							mostEdges = currentNode->edges.size;
+						}
+					}
 				}
-				registerMap[currentNode->registerIdx] = candidate;
-				break;
-	skipCandidate:;
+
+				for (int nodeIdx = 0; nodeIdx < context->interferenceGraph.size; ++nodeIdx)
+				{
+					InterferenceGraphNode *currentNode = &context->interferenceGraph[nodeIdx];
+					if (currentNode->removed)
+						continue;
+					for (int i = 0; i < currentNode->edges.size; ++i)
+					{
+						if (currentNode->edges[i] == nodeToRemove->registerIdx)
+						{
+							// Remove from node edges
+							currentNode->edges[i] = currentNode->edges[--currentNode->edges.size];
+						}
+					}
+				}
+				nodeToRemove->removed = true;
+				*ArrayAdd(&nodeStack) = nodeToRemove;
 			}
-		}
+
+			for (int nodeIdx = (int)nodeStack.size - 1; nodeIdx >= 0; --nodeIdx)
+			{
+				InterferenceGraphNode *currentNode = nodeStack[nodeIdx];
+
+				for (int candidate = 0; candidate < registersAvailable; ++candidate)
+				{
+					for (int edgeIdx = 0; edgeIdx < currentNode->edges.size; ++edgeIdx)
+					{
+						s64 edgeRegister = currentNode->edges[edgeIdx];
+						if (registerMap[edgeRegister] == candidate)
+							goto skipCandidate;
+					}
+					registerMap[currentNode->registerIdx] = candidate;
+					break;
+		skipCandidate:;
+				}
+				if (registerMap[currentNode->registerIdx] < 0)
+				{
+					// Spill!
+					SpillRegisterIntoMemory(context, currentLeafBlock->procedure,
+							currentNode->registerIdx);
+					spilledSomething = true;
+				}
+			}
 
 #if DEBUG_OPTIMIZER
-		Print("\nMappings:\n");
-		for (u64 reg = 0; reg < registerMap.size; ++reg)
-		{
-			Print("Register %lld -> %lld\n", reg, registerMap[reg]);
-		}
+			Print("\nMappings:\n");
+			for (u64 reg = 0; reg < registerMap.size; ++reg)
+			{
+				Print("Register %lld -> %lld\n", reg, registerMap[reg]);
+			}
 #endif
 
-		// Replace registers in IR code
-		Procedure *proc = currentLeafBlock->procedure;
-		u64 instructionCount = BucketArrayCount(&proc->instructions);
-		for (int instructionIdx = 0; instructionIdx < instructionCount; ++instructionIdx)
-		{
-			IRInstruction *inst = &proc->instructions[instructionIdx];
+			// Replace registers in IR code
+			Procedure *proc = currentLeafBlock->procedure;
+			u64 instructionCount = BucketArrayCount(&proc->instructions);
+			for (int instructionIdx = 0; instructionIdx < instructionCount; ++instructionIdx)
+			{
+				IRInstruction *inst = &proc->instructions[instructionIdx];
 
-			if (inst->type >= IRINSTRUCTIONTYPE_UNARY_BEGIN &&
-					inst->type < IRINSTRUCTIONTYPE_UNARY_END)
-			{
-				ReplaceIfRegister(&inst->unaryOperation.in, registerMap);
-				ReplaceIfRegister(&inst->unaryOperation.out, registerMap);
-			}
-			else if (inst->type >= IRINSTRUCTIONTYPE_BINARY_BEGIN &&
-					inst->type < IRINSTRUCTIONTYPE_BINARY_END)
-			{
-				ReplaceIfRegister(&inst->binaryOperation.left, registerMap);
-				ReplaceIfRegister(&inst->binaryOperation.right, registerMap);
-				ReplaceIfRegister(&inst->binaryOperation.out, registerMap);
-			}
-			else switch (inst->type)
-			{
-			case IRINSTRUCTIONTYPE_ASSIGNMENT:
-			{
-				IRValue *src = &inst->assignment.src;
-				IRValue *dst = &inst->assignment.dst;
-				if (dst->valueType == IRVALUETYPE_REGISTER &&
-						dst->registerIdx < IRSPECIALREGISTER_BEGIN &&
-						((u64)dst->registerIdx >= registerMap.size || registerMap[dst->registerIdx] == -1)) // @Cleanup: I hate this!
+				if (inst->type >= IRINSTRUCTIONTYPE_UNARY_BEGIN &&
+						inst->type < IRINSTRUCTIONTYPE_UNARY_END)
 				{
-					// Replace assignment to unused register for a NOP.
-					// Wanted to be specific with the '-1' here so we are more likely to see when
-					// garbage gets into the register map.
-					inst->type = IRINSTRUCTIONTYPE_NOP;
+					ReplaceIfRegister(&inst->unaryOperation.in, registerMap);
+					ReplaceIfRegister(&inst->unaryOperation.out, registerMap);
 				}
-				else
+				else if (inst->type >= IRINSTRUCTIONTYPE_BINARY_BEGIN &&
+						inst->type < IRINSTRUCTIONTYPE_BINARY_END)
 				{
-					ReplaceIfRegister(src, registerMap);
-					ReplaceIfRegister(dst, registerMap);
+					ReplaceIfRegister(&inst->binaryOperation.left, registerMap);
+					ReplaceIfRegister(&inst->binaryOperation.right, registerMap);
+					ReplaceIfRegister(&inst->binaryOperation.out, registerMap);
 				}
-			} break;
-			case IRINSTRUCTIONTYPE_PROCEDURE_CALL:
-			{
-				IRValue *out = &inst->procedureCall.out;
-				if (out->valueType == IRVALUETYPE_REGISTER &&
-						out->registerIdx < IRSPECIALREGISTER_BEGIN &&
-						registerMap[out->registerIdx] == -1)
-					// Remove unused return value.
-					// Wanted to be specific with the '-1' here so we are more likely to see when
-					// garbage gets into the register map.
-					out->valueType = IRVALUETYPE_INVALID;
-				else
-					ReplaceIfRegister(out, registerMap);
+				else switch (inst->type)
+				{
+				case IRINSTRUCTIONTYPE_ASSIGNMENT:
+				{
+					IRValue *src = &inst->assignment.src;
+					IRValue *dst = &inst->assignment.dst;
+					if (dst->valueType == IRVALUETYPE_REGISTER &&
+							dst->registerIdx < IRSPECIALREGISTER_BEGIN &&
+							((u64)dst->registerIdx >= registerMap.size || registerMap[dst->registerIdx] == -1)) // @Cleanup: I hate this!
+					{
+						// Replace assignment to unused register for a NOP.
+						// Wanted to be specific with the '-1' here so we are more likely to see when
+						// garbage gets into the register map.
+						inst->type = IRINSTRUCTIONTYPE_NOP;
+					}
+					else
+					{
+						ReplaceIfRegister(src, registerMap);
+						ReplaceIfRegister(dst, registerMap);
+					}
+				} break;
+				case IRINSTRUCTIONTYPE_PROCEDURE_CALL:
+				{
+					IRValue *out = &inst->procedureCall.out;
+					if (out->valueType == IRVALUETYPE_REGISTER &&
+							out->registerIdx < IRSPECIALREGISTER_BEGIN &&
+							registerMap[out->registerIdx] == -1)
+						// Remove unused return value.
+						// Wanted to be specific with the '-1' here so we are more likely to see when
+						// garbage gets into the register map.
+						out->valueType = IRVALUETYPE_INVALID;
+					else
+						ReplaceIfRegister(out, registerMap);
 
-				for (int paramIdx = 0; paramIdx < inst->procedureCall.parameters.size; ++paramIdx)
-					ReplaceIfRegister(&inst->procedureCall.parameters[paramIdx], registerMap);
-			} break;
-			case IRINSTRUCTIONTYPE_INTRINSIC_MEMCPY:
-			{
-				ReplaceIfRegister(&inst->memcpy.src, registerMap);
-				ReplaceIfRegister(&inst->memcpy.dst, registerMap);
-				ReplaceIfRegister(&inst->memcpy.size, registerMap);
-			} break;
-			case IRINSTRUCTIONTYPE_JUMP_IF_ZERO:
-			case IRINSTRUCTIONTYPE_JUMP_IF_NOT_ZERO:
-			{
-				ReplaceIfRegister(&inst->conditionalJump.condition, registerMap);
-			} break;
+					for (int paramIdx = 0; paramIdx < inst->procedureCall.parameters.size; ++paramIdx)
+						ReplaceIfRegister(&inst->procedureCall.parameters[paramIdx], registerMap);
+				} break;
+				case IRINSTRUCTIONTYPE_INTRINSIC_MEMCPY:
+				{
+					ReplaceIfRegister(&inst->memcpy.src, registerMap);
+					ReplaceIfRegister(&inst->memcpy.dst, registerMap);
+					ReplaceIfRegister(&inst->memcpy.size, registerMap);
+				} break;
+				case IRINSTRUCTIONTYPE_JUMP_IF_ZERO:
+				case IRINSTRUCTIONTYPE_JUMP_IF_NOT_ZERO:
+				{
+					ReplaceIfRegister(&inst->conditionalJump.condition, registerMap);
+				} break;
+				}
 			}
+			//if (!spilledSomething)
+				break;
 		}
 	}
+
+	ResolveStackOffsets(context);
 }

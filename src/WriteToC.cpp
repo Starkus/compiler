@@ -8,8 +8,10 @@ String CTypeInfoToString(Context *context, s64 typeTableIdx)
 	case TYPECATEGORY_POINTER:
 		return "ptr"_s;
 	case TYPECATEGORY_STRUCT:
+		ASSERT(!"Value can't be of struct type!");
 		return "strct"_s;
 	case TYPECATEGORY_ARRAY:
+		ASSERT(!"Value can't be of array type!");
 		return "arr"_s;
 	case TYPECATEGORY_ENUM:
 		return CTypeInfoToString(context, typeInfo->enumInfo.typeTableIdx);
@@ -42,52 +44,70 @@ String CTypeInfoToString(Context *context, s64 typeTableIdx)
 	return "???TYPE"_s;
 }
 
-String CIRValueToStr(Context *context, IRValue value)
+String CRegisterToStr(s64 registerIdx)
+{
+	switch (registerIdx)
+	{
+	case IRSPECIALREGISTER_STACK_BASE:
+		return "rBasePtr"_s;
+	case IRSPECIALREGISTER_RETURN:
+		return "rRet"_s;
+	case IRSPECIALREGISTER_SHOULD_RETURN:
+		return "rDoRet"_s;
+	default:
+		return TPrintF("r%lld", registerIdx);
+	}
+}
+
+String CIRValueToStr(Context *context, IRValue value, bool asPointer = false)
 {
 	String result = "???VALUE"_s;
-	bool printTypeMemberAccess = false;
 
 	if (value.valueType == IRVALUETYPE_REGISTER)
 	{
-		switch (value.registerIdx)
-		{
-		case IRSPECIALREGISTER_RETURN:
-			result = "rRet"_s;
-			break;
-		case IRSPECIALREGISTER_SHOULD_RETURN:
-			result = "rDoRet"_s;
-			break;
-		default:
-			result = TPrintF("r%lld", value.registerIdx);
-			break;
-		}
-		printTypeMemberAccess = true;
+		String memberName = CTypeInfoToString(context, value.typeTableIdx);
+		result = TPrintF("%S.%S_", CRegisterToStr(value.registerIdx), memberName);
 	}
 	else if (value.valueType == IRVALUETYPE_PARAMETER)
 	{
-		result = TPrintF("param%hhd", value.parameterIdx);
-		printTypeMemberAccess = true;
+		String memberName = CTypeInfoToString(context, value.typeTableIdx);
+		result = TPrintF("param%hhd.%S_", value.parameterIdx, memberName);
 	}
-	else if (value.valueType == IRVALUETYPE_STACK_OFFSET)
+	else if (value.valueType == IRVALUETYPE_MEMORY)
 	{
-		result = TPrintF("stackBase - 0x%x", value.stackOffset);
-	}
-	else if (value.valueType == IRVALUETYPE_DATA_OFFSET)
-	{
-		result = TPrintF("%S + 0x%x", value.dataOffset.variable->name, value.dataOffset.offset);
+		if (value.memory.baseVariable)
+		{
+			if (value.memory.baseVariable->isStatic)
+				result = TPrintF("%S", value.memory.baseVariable->name);
+			else
+			{
+				ASSERT(value.memory.baseVariable->isAllocated);
+				result = TPrintF("rBasePtr.ptr_-0x%llx", -value.memory.baseVariable->stackOffset);
+			}
+		}
+		else
+		{
+			result = TPrintF("%S.ptr_", CRegisterToStr(value.memory.baseRegister));
+		}
+
+		if (value.memory.offset)
+		{
+			result = TPrintF("%S+0x%llx", result, value.memory.offset);
+		}
+
+		if (!asPointer)
+		{
+			String castStr = CTypeInfoToString(context, value.typeTableIdx);
+			result = TPrintF("*(%S*)(%S)", castStr, result);
+		}
 	}
 	else if (value.valueType == IRVALUETYPE_IMMEDIATE_INTEGER)
 	{
-		result = TPrintF("0x%x", value.immediate);
+		result = TPrintF("0x%llx", value.immediate);
 	}
 	else if (value.valueType == IRVALUETYPE_IMMEDIATE_FLOAT)
 	{
 		result = TPrintF("%f", value.immediateFloat);
-	}
-	else if (value.valueType == IRVALUETYPE_SIZEOF)
-	{
-		TypeInfo *typeInfo  = &context->typeTable[value.sizeOfTypeTableIdx];
-		result = TPrintF("%llu", typeInfo->size);
 	}
 	else if (value.valueType == IRVALUETYPE_TYPEOF)
 	{
@@ -95,25 +115,6 @@ String CIRValueToStr(Context *context, IRValue value)
 	}
 	else
 		ASSERT(!"Invalid value type!");
-
-	if (printTypeMemberAccess)
-	{
-		TypeInfo *typeInfo = &context->typeTable[value.typeTableIdx];
-		bool isPointer = typeInfo->typeCategory == TYPECATEGORY_POINTER;
-
-		String castStr;
-		if (isPointer || value.dereference)
-			castStr = "ptr"_s;
-		else
-			castStr = CTypeInfoToString(context, value.typeTableIdx);
-		result = TPrintF("%S.%S_", result, castStr);
-	}
-
-	if (value.dereference)
-	{
-		String castStr = CTypeInfoToString(context, value.typeTableIdx);
-		result = TPrintF("*(%S*)(%S)", castStr, result);
-	}
 
 	return result;
 }
@@ -194,7 +195,7 @@ String CGetProcedureSignature(Context *context, Procedure *proc)
 
 	result = TPrintF("%S %S(", returnTypeStr, procLabel);
 
-	if (IRShouldReturnByCopy(context, proc->returnTypeTableIdx))
+	if (IRShouldPassByCopy(context, proc->returnTypeTableIdx))
 	{
 		if (proc->parameters.size)
 			result = StringConcat(result, "Register rRet, "_s);
@@ -204,8 +205,7 @@ String CGetProcedureSignature(Context *context, Procedure *proc)
 	for (int i = 0; i < proc->parameters.size; ++i)
 	{
 		if (i) result = StringConcat(result, ", "_s);
-		Variable *param = proc->parameters[i].variable;
-		result = TPrintF("%SRegister param%hhu", result, param->parameterIndex);
+		result = TPrintF("%SRegister param%hhu", result, i);
 	}
 	result = StringConcat(result, ")"_s);
 	return result;
@@ -439,23 +439,23 @@ void WriteToC(Context *context)
 
 		if (proc->stackSize)
 		{
-			PrintOut(context, outputFile, "u8 stack[0x%llx];\n", proc->stackSize);
-			PrintOut(context, outputFile, "u8 *stackBase = stack + 0x%llx;\n", proc->stackSize);
+			PrintOut(context, outputFile, "\tu8 stack[0x%llx];\n", proc->stackSize);
+			PrintOut(context, outputFile, "\tRegister rBasePtr; rBasePtr.ptr_ = stack + 0x%llx;\n", proc->stackSize);
 		}
 
 		// Declare registers
 		if (proc->registerCount)
 		{
-			PrintOut(context, outputFile, "Register r0");
+			PrintOut(context, outputFile, "\tRegister r0");
 			for (int regIdx = 1; regIdx < proc->registerCount; ++regIdx)
 			{
 				PrintOut(context, outputFile, ", r%d", regIdx);
 			}
 			PrintOut(context, outputFile, ";\n");
 		}
-		if (!IRShouldReturnByCopy(context, proc->returnTypeTableIdx))
-			PrintOut(context, outputFile, "Register rRet;\n");
-		PrintOut(context, outputFile, "Register rDoRet;\n");
+		if (!IRShouldPassByCopy(context, proc->returnTypeTableIdx))
+			PrintOut(context, outputFile, "\tRegister rRet;\n");
+		PrintOut(context, outputFile, "\tRegister rDoRet;\n");
 
 		PrintOut(context, outputFile, "\n");
 
@@ -464,36 +464,36 @@ void WriteToC(Context *context)
 		{
 			IRInstruction inst = proc->instructions[instructionIdx];
 
+			// Silent instructions
+			switch (inst.type)
+			{
+			case IRINSTRUCTIONTYPE_NOP:
+			case IRINSTRUCTIONTYPE_PUSH_SCOPE:
+			case IRINSTRUCTIONTYPE_POP_SCOPE:
+				continue;
+			}
+
 			if (inst.type != IRINSTRUCTIONTYPE_LABEL)
 				PrintOut(context, outputFile, "\t");
 
-			if (inst.type == IRINSTRUCTIONTYPE_NOP)
+			switch (inst.type)
 			{
-			}
-			else if (inst.type == IRINSTRUCTIONTYPE_COMMENT)
+			case IRINSTRUCTIONTYPE_PUSH_VARIABLE:
+			{
+				PrintOut(context, outputFile, "/* Push variable \"%S\" to stackBase - 0x%llx */\n",
+						inst.pushVariable.variable->name, -inst.pushVariable.variable->stackOffset);
+			} break;
+			case IRINSTRUCTIONTYPE_COMMENT:
+			{
 				PrintOut(context, outputFile, "// %S\n", inst.comment);
-			else if (inst.type >= IRINSTRUCTIONTYPE_UNARY_BEGIN && inst.type < IRINSTRUCTIONTYPE_UNARY_END)
-			{
-				String out = CIRValueToStr(context, inst.unaryOperation.out);
-				String in = CIRValueToStr(context, inst.unaryOperation.in);
-				String op = OperatorToStr(inst);
-				PrintOut(context, outputFile, "%S = %S%S;\n", out, op, in);
-			}
-			else if (inst.type >= IRINSTRUCTIONTYPE_BINARY_BEGIN && inst.type < IRINSTRUCTIONTYPE_BINARY_END)
-			{
-				String out = CIRValueToStr(context, inst.binaryOperation.out);
-				String left = CIRValueToStr(context, inst.binaryOperation.left);
-				String op = OperatorToStr(inst);
-				String right = CIRValueToStr(context, inst.binaryOperation.right);
-				PrintOut(context, outputFile, "%S = %S %S %S;\n", out, left, op, right);
-			}
-			else if (inst.type == IRINSTRUCTIONTYPE_ASSIGNMENT)
+			} break;
+			case IRINSTRUCTIONTYPE_ASSIGNMENT:
 			{
 				String src = CIRValueToStr(context, inst.assignment.src);
 				String dst = CIRValueToStr(context, inst.assignment.dst);
 				PrintOut(context, outputFile, "%S = %S;\n", dst, src);
-			}
-			else if (inst.type == IRINSTRUCTIONTYPE_PROCEDURE_CALL)
+			} break;
+			case IRINSTRUCTIONTYPE_PROCEDURE_CALL:
 			{
 				if (inst.procedureCall.out.valueType != IRVALUETYPE_INVALID)
 				{
@@ -517,47 +517,72 @@ void WriteToC(Context *context)
 					PrintOut(context, outputFile, "%S", param);
 				}
 				PrintOut(context, outputFile, ");\n");
-			}
-			else if (inst.type == IRINSTRUCTIONTYPE_RETURN)
+			} break;
+			case IRINSTRUCTIONTYPE_RETURN:
 			{
 				PrintOut(context, outputFile, "return rRet;\n");
-			}
-			else if (inst.type == IRINSTRUCTIONTYPE_LABEL)
+			} break;
+			case IRINSTRUCTIONTYPE_LABEL:
 			{
 				String label = inst.label->name;
 				PrintOut(context, outputFile, "%S:\n", label);
 				if (instructionIdx == instructionCount - 1)
 					// Label can't be right before a closing brace
 					PrintOut(context, outputFile, ";\n");
-			}
-			else if (inst.type == IRINSTRUCTIONTYPE_JUMP)
+			} break;
+			case IRINSTRUCTIONTYPE_JUMP:
 			{
 				String label = inst.conditionalJump.label->name;
 				PrintOut(context, outputFile, "goto %S;\n", label);
-			}
-			else if (inst.type == IRINSTRUCTIONTYPE_JUMP_IF_ZERO)
+			} break;
+			case IRINSTRUCTIONTYPE_JUMP_IF_ZERO:
 			{
 				String label = inst.conditionalJump.label->name;
 				String condition = CIRValueToStr(context, inst.conditionalJump.condition);
 				PrintOut(context, outputFile, "if (!%S) goto %S;\n", condition, label);
-			}
-			else if (inst.type == IRINSTRUCTIONTYPE_JUMP_IF_NOT_ZERO)
+			} break;
+			case IRINSTRUCTIONTYPE_JUMP_IF_NOT_ZERO:
 			{
 				String label = inst.conditionalJump.label->name;
 				String condition = CIRValueToStr(context, inst.conditionalJump.condition);
 				PrintOut(context, outputFile, "if (%S) goto %S;\n", condition, label);
-			}
-			else if (inst.type == IRINSTRUCTIONTYPE_INTRINSIC_MEMCPY)
+			} break;
+			case IRINSTRUCTIONTYPE_INTRINSIC_MEMCPY:
 			{
 				String src = CIRValueToStr(context, inst.memcpy.src);
 				String dst = CIRValueToStr(context, inst.memcpy.dst);
 				String size = CIRValueToStr(context, inst.memcpy.size);
 				PrintOut(context, outputFile, "memcpy(%S, %S, %S);\n", dst, src, size);
-			}
-			else
+			} break;
+			case IRINSTRUCTIONTYPE_LOAD_EFFECTIVE_ADDRESS:
 			{
-				ASSERT(!"Didn't recognize instruction type");
-				PrintOut(context, outputFile, "???INST\n");
+				String in = CIRValueToStr(context, inst.unaryOperation.in, true);
+				String out = CIRValueToStr(context, inst.unaryOperation.out);
+				PrintOut(context, outputFile, "%S = %S;\n", out, in);
+			} break;
+			default:
+			{
+				if (inst.type >= IRINSTRUCTIONTYPE_UNARY_BEGIN && inst.type < IRINSTRUCTIONTYPE_UNARY_END)
+				{
+					String out = CIRValueToStr(context, inst.unaryOperation.out);
+					String in = CIRValueToStr(context, inst.unaryOperation.in);
+					String op = OperatorToStr(inst);
+					PrintOut(context, outputFile, "%S = %S%S;\n", out, op, in);
+				}
+				else if (inst.type >= IRINSTRUCTIONTYPE_BINARY_BEGIN && inst.type < IRINSTRUCTIONTYPE_BINARY_END)
+				{
+					String out = CIRValueToStr(context, inst.binaryOperation.out);
+					String left = CIRValueToStr(context, inst.binaryOperation.left);
+					String op = OperatorToStr(inst);
+					String right = CIRValueToStr(context, inst.binaryOperation.right);
+					PrintOut(context, outputFile, "%S = %S %S %S;\n", out, left, op, right);
+				}
+				else
+				{
+					ASSERT(!"Didn't recognize instruction type");
+					PrintOut(context, outputFile, "???INST\n");
+				}
+			}
 			}
 		}
 		PrintOut(context, outputFile, "}\n\n");
@@ -565,5 +590,119 @@ void WriteToC(Context *context)
 
 	CloseHandle(outputFile);
 
+//set CommonCompilerFlags=-MTd -nologo -Gm- -GR- -Od -Oi -EHa- -W0 -wd4098 -wd4201 -wd4100 -wd4996 -wd4063 -wd4305 -FC -Z7 -I ..\external\
 
+	PWSTR programFilesPathWstr;
+	SHGetKnownFolderPath(FOLDERID_ProgramFilesX86, 0, NULL, &programFilesPathWstr);
+	String programFilesPath = StupidStrToString(programFilesPathWstr, FrameAlloc);
+
+	String visualStudioPath = TPrintF("%S\\Microsoft Visual Studio", programFilesPath);
+	{
+		String visualStudio2019Path = TPrintF("%S\\2019", visualStudioPath);
+		String visualStudio2017Path = TPrintF("%S\\2017", visualStudioPath);
+		if (GetFileAttributes(StringToCStr(visualStudio2019Path, FrameAlloc)) != INVALID_FILE_ATTRIBUTES)
+			visualStudioPath = visualStudio2019Path;
+		else if (GetFileAttributes(StringToCStr(visualStudio2017Path, FrameAlloc)) != INVALID_FILE_ATTRIBUTES)
+			visualStudioPath = visualStudio2017Path;
+		else
+		{
+			// Get anything starting with 20...
+			String wildcard = TPrintF("%S\\20*", visualStudioPath);
+			WIN32_FIND_DATAA foundData = {};
+			HANDLE foundFile = FindFirstFileA(StringToCStr(wildcard, FrameAlloc), &foundData);
+			if (foundFile != INVALID_HANDLE_VALUE)
+				visualStudioPath = TPrintF("%S\\%s", visualStudioPath, foundData.cFileName);
+		}
+	}
+
+	String msvcPath = {};
+	{
+		String buildToolsPath = TPrintF("%S\\BuildTools", visualStudioPath);
+		String enterprisePath = TPrintF("%S\\Enterprise", visualStudioPath);
+		String professionalPath = TPrintF("%S\\Professional", visualStudioPath);
+		String communityPath = TPrintF("%S\\Community", visualStudioPath);
+		if (GetFileAttributes(StringToCStr(buildToolsPath, FrameAlloc)) != INVALID_FILE_ATTRIBUTES)
+			msvcPath = buildToolsPath;
+		else if (GetFileAttributes(StringToCStr(enterprisePath, FrameAlloc)) != INVALID_FILE_ATTRIBUTES)
+			msvcPath = enterprisePath;
+		else if (GetFileAttributes(StringToCStr(professionalPath, FrameAlloc)) != INVALID_FILE_ATTRIBUTES)
+			msvcPath = professionalPath;
+		else if (GetFileAttributes(StringToCStr(communityPath, FrameAlloc)) != INVALID_FILE_ATTRIBUTES)
+			msvcPath = communityPath;
+		msvcPath = TPrintF("%S\\VC\\Tools\\MSVC", msvcPath);
+
+		String wildcard = StringConcat(msvcPath, "\\*"_s);
+		WIN32_FIND_DATAA foundData = {};
+		HANDLE findHandle = FindFirstFileA(StringToCStr(wildcard, FrameAlloc), &foundData);
+		if (findHandle != INVALID_HANDLE_VALUE)
+		{
+			while (foundData.cFileName[0] == '.')
+				FindNextFileA(findHandle, &foundData);
+			msvcPath = TPrintF("%S\\%s", msvcPath, foundData.cFileName);
+		}
+	}
+
+	String subsystemArgument;
+	if (context->config.windowsSubsystem)
+		subsystemArgument = "/subsystem:WINDOWS "_s;
+	else
+		subsystemArgument = "/subsystem:CONSOLE "_s;
+	String windowsSDKPath = "C:\\Program Files (x86)\\Windows Kits\\10"_s;
+	String windowsSDKVersion = "10.0.18362.0"_s;
+	String commandLine = TPrintF(
+			"%S\\bin\\Hostx64\\x64\\cl.exe "
+			"out.c "
+			"/nologo "
+			"/Fobin\\ "
+			"/W0 "
+			"/Z7 "
+			"/I \"%S\\include\" "
+			"/I \"%S\\include\\%S\\ucrt\" "
+			"/I \"%S\\include\\%S\\shared\" "
+			"/I \"%S\\include\\%S\\um\" "
+			"/I \"%S\\include\\%S\\winrt\" "
+			"/I \"%S\\include\\%S\\cppwinrt\" "
+			"/link "
+			"%S "
+			"User32.lib "
+			"/libpath:\"%S\\lib\\x64\" "
+			"/libpath:\"%S\\lib\\%S\\ucrt\\x64\" "
+			"/libpath:\"%S\\lib\\%S\\um\\x64\" "
+			"/out:bin/out.exe%c",
+			msvcPath,
+			msvcPath,
+			windowsSDKPath, windowsSDKVersion,
+			windowsSDKPath, windowsSDKVersion,
+			windowsSDKPath, windowsSDKVersion,
+			windowsSDKPath, windowsSDKVersion,
+			windowsSDKPath, windowsSDKVersion,
+			subsystemArgument,
+			msvcPath,
+			windowsSDKPath, windowsSDKVersion,
+			windowsSDKPath, windowsSDKVersion,
+			0
+			);
+
+	STARTUPINFO startupInfo = {};
+	PROCESS_INFORMATION processInformation = {};
+	startupInfo.cb = sizeof(STARTUPINFO);
+	if (!CreateProcessA(
+			NULL,
+			(LPSTR)commandLine.data,
+			NULL,
+			NULL,
+			false,
+			0,
+			NULL,
+			NULL,
+			&startupInfo,
+			&processInformation
+			))
+	{
+		Print("Failed to call cl.exe (%d)\n", GetLastError());
+		CRASH;
+	}
+	WaitForSingleObject(processInformation.hProcess, INFINITE);
+	CloseHandle(processInformation.hProcess);
+	CloseHandle(processInformation.hThread);
 }

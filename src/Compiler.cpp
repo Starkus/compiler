@@ -1,5 +1,7 @@
 #include <windows.h>
 #include <strsafe.h>
+#include <shlobj_core.h>
+#include <Shlobj.h>
 
 #define STB_SPRINTF_IMPLEMENTATION
 #include "stb/stb_sprintf.h"
@@ -68,6 +70,7 @@ const String TPrintF(const char *format, ...)
 struct Config
 {
 	bool silent;
+	bool windowsSubsystem;
 };
 
 struct Token;
@@ -116,6 +119,7 @@ struct Context
 
 	// Optimizer
 	BucketArray<BasicBlock, 512, malloc, realloc> basicBlocks;
+	DynamicArray<BasicBlock *, malloc, realloc> leafBasicBlocks;
 	DynamicArray<InterferenceGraphNode, malloc, realloc> interferenceGraph;
 
 	// Backend
@@ -211,7 +215,7 @@ void UnexpectedTokenError(Context *context, Token *token)
 #include "PrintIR.cpp"
 #include "Optimize.cpp"
 #include "WriteToC.cpp"
-#include "x64.cpp"
+//#include "x64.cpp"
 
 bool Win32ReadEntireFile(const char *filename, u8 **fileBuffer, u64 *fileSize, void *(*allocFunc)(u64))
 {
@@ -289,6 +293,8 @@ int main(int argc, char **argv)
 		{
 			if (strcmp("-silent", arg) == 0)
 				context.config.silent = true;
+			else if (strcmp("-windowsSubsystem", arg) == 0)
+				context.config.windowsSubsystem = true;
 		}
 		else
 		{
@@ -300,7 +306,7 @@ int main(int argc, char **argv)
 	for (int i = 0; i < inputFiles.size; ++i)
 	{
 		context.filename = inputFiles[i];
-		Win32ReadEntireFile(StringToCStr(&inputFiles[i], FrameAlloc), &context.fileBuffer,
+		Win32ReadEntireFile(StringToCStr(inputFiles[i], FrameAlloc), &context.fileBuffer,
 				&context.fileSize, FrameAlloc);
 		TokenizeFile(&context);
 	}
@@ -317,11 +323,22 @@ int main(int argc, char **argv)
 
 	IRGenMain(&context);
 
+#if PRINT_IR
+	if (!context.config.silent)
+	{
+		Print("PRE-OPTIMIZING IR\n");
+		PrintIRInstructions(&context);
+	}
+#endif
+
 	OptimizerMain(&context);
 
 #if PRINT_IR
 	if (!context.config.silent)
+	{
+		Print("POST-OPTIMIZING IR\n");
 		PrintIRInstructions(&context);
+	}
 #endif
 
 	//WriteToX64(&context);

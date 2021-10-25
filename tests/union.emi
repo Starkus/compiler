@@ -16,5 +16,7 @@ Main :: () -> s64
 	asInt : s32 = test.integer;
 	a := test.a;
 	b := test.b;
+
+	Print("Test ok\n");
 	return 0;
 }

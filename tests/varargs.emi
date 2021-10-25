@@ -12,5 +12,7 @@ Varargs :: (..args)
 Main :: () -> s64
 {
 	Varargs(cast(s32) 15, 32, 98, 5.42);
+
+	Print("Test ok\n");
 	return 0;
 }

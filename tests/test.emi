@@ -48,5 +48,6 @@ Main :: () -> s64
 
 	Print("Hello, Sailor!\n");
 
+	Print("Test ok\n");
 	return 0;
 }

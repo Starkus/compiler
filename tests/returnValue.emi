@@ -31,5 +31,6 @@ AlwaysReturns :: () -> u64
 Main :: () -> s64
 {
 	anS32 := GiveS32();
+	Print("Test ok\n");
 	return 0;
 }

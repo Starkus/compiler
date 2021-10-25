@@ -17,5 +17,7 @@ Main :: () -> s64
 		result = result + 1;
 		if result > 20 break;
 	}
+
+	Print("Test ok\n");
 	return 0;
 }

@@ -16,5 +16,6 @@ Main :: () -> s64
 	defaultArg();
 	defaultArg(16);
 
+	Print("Test ok\n");
 	return 0;
 }

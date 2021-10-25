@@ -8,17 +8,29 @@ inline String StringConcat(String a, String b)
 	return result;
 }
 
-const char *StringToCStr(String *str, void *(*allocFunc)(u64))
+const char *StringToCStr(String str, void *(*allocFunc)(u64))
 {
-	char *buffer = (char *)allocFunc(str->size + 1);
-	strncpy(buffer, str->data, str->size);
-	buffer[str->size] = 0;
+	char *buffer = (char *)allocFunc(str.size + 1);
+	strncpy(buffer, str.data, str.size);
+	buffer[str.size] = 0;
 	return buffer;
 }
 
 String CStrToString(const char *cstr)
 {
 	return { (s64)strlen(cstr), cstr };
+}
+
+String StupidStrToString(const wchar_t *wstr, void *(*allocFunc)(u64))
+{
+	s64 size = 0;
+	for (const wchar_t *scan = wstr; *scan; ++scan)
+		++size;
+	char *buffer = (char *)allocFunc(size);
+	char *dstScan = buffer;
+	for (const wchar_t *scan = wstr; *scan; ++scan)
+		*dstScan++ = (char)*scan;
+	return { size, buffer };
 }
 
 inline void ChangeExtension(char *buffer, const char *newExtension)

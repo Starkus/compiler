@@ -1,6 +1,6 @@
 Main :: () -> s64
 {
-	foo := 4 + 2;
+	Print("Hello, Sailor!\n");
 	Print("Test ok\n");
 	return 0;
 }

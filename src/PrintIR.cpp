@@ -1,71 +1,100 @@
+inline String PIRRegisterToString(s64 registerIdx)
+{
+	if (registerIdx == IRSPECIALREGISTER_STACK_BASE)
+		return "rBP"_s;
+	else if (registerIdx == IRSPECIALREGISTER_RETURN)
+		return "rRet"_s;
+	else if (registerIdx == IRSPECIALREGISTER_SHOULD_RETURN)
+		return "rDoRet"_s;
+	else
+		return TPrintF("r%lld", registerIdx);
+}
+
 void PrintIRValue(Context *context, IRValue value)
 {
-	if (value.dereference)
+	if (value.valueType == IRVALUETYPE_MEMORY)
+	{
 		Print("[");
-
-	if (value.valueType == IRVALUETYPE_REGISTER)
-		if (value.registerIdx == IRSPECIALREGISTER_RETURN)
-			Print("$rRet");
-		else if (value.registerIdx == IRSPECIALREGISTER_SHOULD_RETURN)
-			Print("$rDoRet");
+		if (value.memory.baseVariable)
+			Print("&%S", value.memory.baseVariable->name);
 		else
-			Print("$r%d", value.registerIdx);
-	else if (value.valueType == IRVALUETYPE_STACK_OFFSET)
-		Print("stack+0x%llx", value.stackOffset);
-	else if (value.valueType == IRVALUETYPE_DATA_OFFSET)
-		Print("%S+0x%llx", value.dataOffset.variable->name, value.dataOffset.offset);
+			Print("$%S", PIRRegisterToString(value.memory.baseRegister));
+
+		if (value.memory.offset)
+			Print("+0x%llx", value.memory.offset);
+		Print("]");
+	}
+	else if (value.valueType == IRVALUETYPE_REGISTER)
+		Print("$%S", PIRRegisterToString(value.registerIdx));
 	else if (value.valueType == IRVALUETYPE_PARAMETER)
 		Print("param%hhd", value.parameterIdx);
 	else if (value.valueType == IRVALUETYPE_IMMEDIATE_INTEGER)
-		Print("0x%x", value.immediate);
+		Print("0x%llx", value.immediate);
 	else if (value.valueType == IRVALUETYPE_IMMEDIATE_FLOAT)
 		Print("%f", value.immediateFloat);
 	else if (value.valueType == IRVALUETYPE_IMMEDIATE_STRING)
 		Print("%S", value.immediateString);
-	else if (value.valueType == IRVALUETYPE_SIZEOF)
-		Print("sizeof(%lld)", value.sizeOfTypeTableIdx);
 	else if (value.valueType == IRVALUETYPE_TYPEOF)
-		Print("typeof(%lld)", value.sizeOfTypeTableIdx);
+		Print("typeof(%lld)", value.typeOfTypeTableIdx);
 	else
 		Print("???");
 
-	if (value.dereference)
-		Print("]");
 
 	//Print(" : %S", TypeInfoToString(context, value.typeTableIdx));
 }
 
 void PrintIRInstruction(Context *context, IRInstruction inst)
 {
-	if (inst.type == IRINSTRUCTIONTYPE_LABEL)
+	if (inst.type >= IRINSTRUCTIONTYPE_UNARY_BEGIN && inst.type < IRINSTRUCTIONTYPE_UNARY_END)
 	{
-		Print("%S: ", inst.label);
+		PrintIRValue(context, inst.unaryOperation.out);
+		Print(" := ");
+		PrintIRInstructionOperator(inst);
+		PrintIRValue(context, inst.unaryOperation.in);
+		Print("\n");
 	}
-	else if (inst.type == IRINSTRUCTIONTYPE_NOP)
+	else if (inst.type >= IRINSTRUCTIONTYPE_BINARY_BEGIN && inst.type < IRINSTRUCTIONTYPE_BINARY_END)
 	{
-		Print("NOP", inst.comment);
+		PrintIRValue(context, inst.binaryOperation.out);
+		Print(" := ");
+		PrintIRValue(context, inst.binaryOperation.left);
+		Print(" ");
+		PrintIRInstructionOperator(inst);
+		Print(" ");
+		PrintIRValue(context, inst.binaryOperation.right);
+		Print("\n");
 	}
-	else if (inst.type == IRINSTRUCTIONTYPE_COMMENT)
+	else switch (inst.type)
 	{
-		Print("// \"%S\"", inst.comment);
-	}
-	else if (inst.type == IRINSTRUCTIONTYPE_JUMP)
+	case IRINSTRUCTIONTYPE_LABEL:
 	{
-		Print("jump \"%S\"", inst.jump.label);
-	}
-	else if (inst.type == IRINSTRUCTIONTYPE_JUMP_IF_ZERO)
+		Print("%S:\n", inst.label);
+	} break;
+	case IRINSTRUCTIONTYPE_NOP:
+	{
+		Print("NOP\n", inst.comment);
+	} break;
+	case IRINSTRUCTIONTYPE_COMMENT:
+	{
+		Print("// \"%S\"\n", inst.comment);
+	} break;
+	case IRINSTRUCTIONTYPE_JUMP:
+	{
+		Print("jump \"%S\"\n", inst.jump.label);
+	} break;
+	case IRINSTRUCTIONTYPE_JUMP_IF_ZERO:
 	{
 		Print("if !");
 		PrintIRValue(context, inst.conditionalJump.condition);
-		Print(" jump %S", inst.conditionalJump.label);
-	}
-	else if (inst.type == IRINSTRUCTIONTYPE_JUMP_IF_NOT_ZERO)
+		Print(" jump %S\n", inst.conditionalJump.label);
+	} break;
+	case IRINSTRUCTIONTYPE_JUMP_IF_NOT_ZERO:
 	{
 		Print("if ");
 		PrintIRValue(context, inst.conditionalJump.condition);
-		Print(" jump %S", inst.conditionalJump.label);
-	}
-	else if (inst.type == IRINSTRUCTIONTYPE_PROCEDURE_CALL)
+		Print(" jump %S\n", inst.conditionalJump.label);
+	} break;
+	case IRINSTRUCTIONTYPE_PROCEDURE_CALL:
 	{
 		StaticDefinition *procStaticDef = FindStaticDefinitionByProcedure(context,
 				inst.procedureCall.procedure);
@@ -79,36 +108,32 @@ void PrintIRInstruction(Context *context, IRInstruction inst)
 			if (i) Print(", ");
 			PrintIRValue(context, inst.procedureCall.parameters[i]);
 		}
-		Print(")");
-	}
-	else if (inst.type == IRINSTRUCTIONTYPE_RETURN)
+		Print(")\n");
+	} break;
+	case IRINSTRUCTIONTYPE_PUSH_VARIABLE:
 	{
-		Print("return");
-	}
-	else if (inst.type == IRINSTRUCTIONTYPE_ASSIGNMENT)
+		Print("push variable %S\n", inst.pushVariable.variable->name);
+	} break;
+	case IRINSTRUCTIONTYPE_PUSH_SCOPE:
+	{
+		Print("push scope\n");
+	} break;
+	case IRINSTRUCTIONTYPE_POP_SCOPE:
+	{
+		Print("pop scope\n");
+	} break;
+	case IRINSTRUCTIONTYPE_RETURN:
+	{
+		Print("return\n");
+	} break;
+	case IRINSTRUCTIONTYPE_ASSIGNMENT:
 	{
 		PrintIRValue(context, inst.assignment.dst);
 		Print(" = ");
 		PrintIRValue(context, inst.assignment.src);
-	}
-	else if (inst.type >= IRINSTRUCTIONTYPE_UNARY_BEGIN && inst.type < IRINSTRUCTIONTYPE_UNARY_END)
-	{
-		PrintIRValue(context, inst.unaryOperation.out);
-		Print(" := ");
-		PrintIRInstructionOperator(inst);
-		PrintIRValue(context, inst.unaryOperation.in);
-	}
-	else if (inst.type >= IRINSTRUCTIONTYPE_BINARY_BEGIN && inst.type < IRINSTRUCTIONTYPE_BINARY_END)
-	{
-		PrintIRValue(context, inst.binaryOperation.out);
-		Print(" := ");
-		PrintIRValue(context, inst.binaryOperation.left);
-		Print(" ");
-		PrintIRInstructionOperator(inst);
-		Print(" ");
-		PrintIRValue(context, inst.binaryOperation.right);
-	}
-	else if (inst.type == IRINSTRUCTIONTYPE_INTRINSIC_MEMCPY)
+		Print("\n");
+	} break;
+	case IRINSTRUCTIONTYPE_INTRINSIC_MEMCPY:
 	{
 		Print("memcpy(");
 		PrintIRValue(context, inst.memcpy.dst);
@@ -116,13 +141,13 @@ void PrintIRInstruction(Context *context, IRInstruction inst)
 		PrintIRValue(context, inst.memcpy.src);
 		Print(", ");
 		PrintIRValue(context, inst.memcpy.size);
-		Print(")");
-	}
-	else
+		Print(")\n");
+	} break;
+	default:
 	{
-		Print("???INST");
+		Print("???INST\n");
 	}
-	Print("\n");
+	}
 }
 
 #if PRINT_IR
@@ -165,7 +190,10 @@ void PrintIRInstructions(Context *context)
 				Print("%S: ", inst.label->name);
 
 				IRInstruction nextInst = proc->instructions[instructionIdx + 1];
-				if (nextInst.type != IRINSTRUCTIONTYPE_LABEL)
+				if (nextInst.type != IRINSTRUCTIONTYPE_LABEL &&
+					nextInst.type != IRINSTRUCTIONTYPE_PUSH_SCOPE &&
+					nextInst.type != IRINSTRUCTIONTYPE_POP_SCOPE &&
+					nextInst.type != IRINSTRUCTIONTYPE_NOP)
 				{
 					for (s64 i = inst.label->name.size + 2; i < padding; ++i)
 						Print(" ");
@@ -181,6 +209,10 @@ void PrintIRInstructions(Context *context)
 					continue;
 				}
 			}
+			else if (inst.type == IRINSTRUCTIONTYPE_PUSH_SCOPE ||
+					 inst.type == IRINSTRUCTIONTYPE_POP_SCOPE ||
+					 inst.type == IRINSTRUCTIONTYPE_NOP)
+				continue;
 			else
 			{
 				for (s64 i = 0; i < padding; ++i)

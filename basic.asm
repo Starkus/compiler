@@ -6,8 +6,8 @@ mov rax, 0
 $loop:
 cmp rax, r8
 jge $done
-mov r9b, BYTE PTR [rcx]
-mov BYTE PTR [rdx], r9b
+mov r9b, BYTE PTR [rdx]
+mov BYTE PTR [rcx], r9b
 add rax, 1
 add rcx, 1
 add rdx, 1

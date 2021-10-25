@@ -6,5 +6,7 @@ Main :: () -> s64
 	foo : s64 = constant;
 	bar : s32 = constant;
 	baz : f32 = constantFloat;
+
+	Print("Test ok\n");
 	return 0;
 }

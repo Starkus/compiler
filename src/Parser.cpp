@@ -12,16 +12,19 @@ struct Variable
 
 	// IRGen
 	bool isRegister;
+	bool isAllocated;
 	union
 	{
 		s64 registerIdx;
-		u64 stackOffset;
+		s64 stackOffset;
 	};
 };
 
 struct ProcedureParameter
 {
 	Variable *variable;
+	s64 typeTableIdx; // This type stays the same, the type of the variable itself can change, for
+					  // example if the parameter is passed by pointer because of implementation details.
 	ASTExpression *defaultValue;
 };
 struct IRInstruction;
@@ -37,8 +40,8 @@ struct Procedure
 
 	// IRGen
 	BucketArray<IRInstruction, 256, malloc, realloc> instructions;
-	s64 stackSize;
 	u64 registerCount;
+	u64 stackSize;
 };
 
 void Advance(Context *context)
@@ -89,6 +92,17 @@ Variable *NewVariable(Context *context, String name)
 	result->name = name;
 	result->parameterIndex = -1;
 	result->canBeRegister = true;
+	return result;
+}
+
+Variable *NewVariable(Context *context, String name, s64 typeTableIdx)
+{
+	Variable *result = BucketArrayAdd(&context->variables);
+	*result = {};
+	result->name = name;
+	result->parameterIndex = -1;
+	result->canBeRegister = true;
+	result->typeTableIdx = typeTableIdx;
 	return result;
 }
 
@@ -847,8 +861,6 @@ ASTStaticDefinition ParseStaticDefinition(Context *context)
 	else
 	{
 		expression = ParseExpression(context, -1);
-		if (expression.nodeType != ASTNODETYPE_LITERAL)
-			LogError(context, context->token->loc, "Unsupported!"_s);
 
 		AssertToken(context, context->token, ';');
 		Advance(context);

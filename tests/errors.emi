@@ -42,5 +42,6 @@ Main :: () -> s64
 	bar := 4.5;
 	*/
 
+	Print("Test ok\n");
 	return 0;
 }

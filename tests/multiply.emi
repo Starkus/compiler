@@ -6,5 +6,6 @@ Main :: () -> s64
 	replaceForShiftLeft := 4 * n;
 	replaceForShiftRight := n * 0x10000;
 
+	Print("Test ok\n");
 	return 0;
 }

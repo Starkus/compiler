@@ -5,6 +5,7 @@ let g:debug_command =  "remedybg.exe compiler.rdbg"
 
 command! CompileC :call term_sendkeys("terminal", "compileCOutput.bat\<CR>") | call ShowTerminal()
 command! Assemble :call term_sendkeys("terminal", "assembleOutput.bat\<CR>") | call ShowTerminal()
+command! Test :call term_sendkeys("terminal", "bin\\out.exe\<CR>") | call ShowTerminal()
 
 " Ignore build folder in wildcards
 set wildignore+=*/build/*

@@ -30,5 +30,6 @@ Main :: () -> s64
 
 	asd := makeStruct();
 
+	Print("Test ok\n");
 	return 0;
 }

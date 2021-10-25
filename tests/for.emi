@@ -42,5 +42,6 @@ Main :: () -> s64
 		PrintF("i = %, it = %;  ", i, @it);
 	}
 
+	Print("Test ok\n");
 	return 0;
 }

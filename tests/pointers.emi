@@ -27,5 +27,6 @@ Main :: () -> s64
 	aStruct : struct { a : s32; };
 	ptrToMember := ^aStruct.a;
 
+	Print("Test ok\n");
 	return 0;
 }

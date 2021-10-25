@@ -9,5 +9,6 @@ Main :: () -> s64
 	message := "Hello, Sailor!\0";
 	OutputDebugStringA(message.data);
 
+	Print("Test ok\n");
 	return 0;
 }

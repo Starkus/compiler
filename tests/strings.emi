@@ -11,5 +11,6 @@ Main :: () -> s64
 	str[2] = '?';
 	Print(str);
 
+	Print("Test ok\n");
 	return 0;
 }

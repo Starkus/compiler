@@ -34,5 +34,6 @@ Main :: () -> s64
 
 	//using augmentedStruct.s; //@Todo: this doesn't work!
 
+	Print("Test ok\n");
 	return 0;
 }

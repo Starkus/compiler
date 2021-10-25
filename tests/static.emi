@@ -15,5 +15,6 @@ Main :: () -> s64
 	f := globalFloat;
 	f2 := 2.6;
 
+	Print("Test ok\n");
 	return 0;
 }

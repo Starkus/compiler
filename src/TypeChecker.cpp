@@ -82,37 +82,36 @@ struct TypeInfo
 	};
 };
 
+enum ConstantType
+{
+	CONSTANTTYPE_INTEGER,
+	CONSTANTTYPE_FLOATING
+};
+struct Constant
+{
+	ConstantType type;
+	union
+	{
+		s64 valueAsInt;
+		f64 valueAsFloat;
+	};
+};
+
 enum StaticDefinitionType
 {
 	STATICDEFINITIONTYPE_TYPE,
 	STATICDEFINITIONTYPE_PROCEDURE,
-	STATICDEFINITIONTYPE_CONSTANT_INTEGER,
-	STATICDEFINITIONTYPE_CONSTANT_FLOATING
+	STATICDEFINITIONTYPE_CONSTANT
 };
 struct StaticDefinition
 {
 	String name;
 	StaticDefinitionType definitionType;
+	s64 typeTableIdx;
 	union
 	{
-		struct
-		{
-			s64 typeTableIdx;
-		} type;
-		struct
-		{
-			Procedure *procedure;
-		} procedure;
-		struct
-		{
-			s64 value;
-			s64 typeTableIdx;
-		} constantInteger;
-		struct
-		{
-			f64 value;
-			s64 typeTableIdx;
-		} constantFloating;
+		Procedure *procedure;
+		Constant constant;
 	};
 };
 
@@ -138,20 +137,6 @@ struct TCScope
 	DynamicArray<s64, malloc, realloc> typeIndices;
 };
 
-s64 GetStaticDefinitionTypeTableIdx(StaticDefinition def)
-{
-	switch (def.definitionType)
-	{
-	case STATICDEFINITIONTYPE_TYPE:
-		return def.type.typeTableIdx;
-	case STATICDEFINITIONTYPE_CONSTANT_INTEGER:
-		return def.constantInteger.typeTableIdx;
-	case STATICDEFINITIONTYPE_CONSTANT_FLOATING:
-		return def.constantFloating.typeTableIdx;
-	}
-	return -1;
-}
-
 StaticDefinition *FindStaticDefinitionByName(Context *context, String name)
 {
 	u64 count = BucketArrayCount(&context->staticDefinitions);
@@ -171,7 +156,7 @@ StaticDefinition *FindStaticDefinitionByTypeTableIdx(Context *context, s64 typeT
 	{
 		StaticDefinition *currentDef = &context->staticDefinitions[i];
 		if (currentDef->definitionType == STATICDEFINITIONTYPE_TYPE &&
-				currentDef->type.typeTableIdx == typeTableIdx)
+				currentDef->typeTableIdx == typeTableIdx)
 			return currentDef;
 	}
 	return nullptr;
@@ -184,7 +169,7 @@ StaticDefinition *FindStaticDefinitionByProcedure(Context *context, Procedure *p
 	{
 		StaticDefinition *currentDef = &context->staticDefinitions[i];
 		if (currentDef->definitionType == STATICDEFINITIONTYPE_PROCEDURE &&
-				currentDef->procedure.procedure == procedure)
+				currentDef->procedure == procedure)
 			return currentDef;
 	}
 	return nullptr;
@@ -314,7 +299,7 @@ s64 FindTypeInStackByName(Context *context, SourceLocation loc, String name)
 			LogError(context, loc, TPrintF("Type \"%S\" not in scope!", name));
 		else if (staticDef->definitionType != STATICDEFINITIONTYPE_TYPE)
 			LogError(context, loc, TPrintF("\"%S\" is not a type!", name));
-		typeTableIdx = staticDef->type.typeTableIdx;
+		typeTableIdx = staticDef->typeTableIdx;
 	}
 
 	if (typeTableIdx < 0)
@@ -657,7 +642,8 @@ s64 TypeCheckType(Context *context, SourceLocation loc, ASTType *astType)
 
 			StaticDefinition staticDefinition = {};
 			staticDefinition.name = astMember.name;
-			staticDefinition.definitionType = STATICDEFINITIONTYPE_CONSTANT_INTEGER;
+			staticDefinition.definitionType = STATICDEFINITIONTYPE_CONSTANT;
+			staticDefinition.typeTableIdx = typeTableIdx;
 
 			if (astMember.value)
 			{
@@ -668,8 +654,7 @@ s64 TypeCheckType(Context *context, SourceLocation loc, ASTType *astType)
 				}
 				currentValue = astMember.value->literal.integer;
 			}
-			staticDefinition.constantInteger.value = currentValue++;
-			staticDefinition.constantInteger.typeTableIdx = typeTableIdx;
+			staticDefinition.constant.valueAsInt = currentValue++;
 
 			StaticDefinition *newStaticDef = BucketArrayAdd(&context->staticDefinitions);
 			*newStaticDef = staticDefinition;
@@ -749,6 +734,10 @@ void AddStructMembersToScope(Context *context, SourceLocation loc, Variable *bas
 								"name \"%S\" is already used", fullMemberName, member->name));
 				}
 			}
+
+			// This variable can't be a register
+			base->canBeRegister = false;
+			ASSERT(!base->isRegister);
 
 			TCScopeName newScopeName;
 			newScopeName.type = NAMETYPE_STRUCT_MEMBER;
@@ -906,6 +895,168 @@ StructMember *FindStructMemberByName(Context *context, TypeInfo *structTypeInfo,
 	return nullptr;
 }
 
+Constant EvaluateConstant(Context *context, ASTExpression *expression)
+{
+	Constant result;
+	result.type = CONSTANTTYPE_INTEGER;
+	result.valueAsInt = 0xFA11FA11FA11FA11;
+
+	switch (expression->nodeType)
+	{
+	case ASTNODETYPE_LITERAL:
+	{
+		switch (expression->literal.type)
+		{
+		case LITERALTYPE_INTEGER:
+		case LITERALTYPE_CHARACTER:
+			result.valueAsInt = expression->literal.integer;
+			break;
+		case LITERALTYPE_FLOATING:
+			result.valueAsFloat = expression->literal.floating;
+			break;
+		}
+	} break;
+	case ASTNODETYPE_UNARY_OPERATION:
+	{
+		ASTExpression *in = expression->unaryOperation.expression;
+		Constant inValue  = EvaluateConstant(context, in);
+
+		bool isFloat = inValue.type == CONSTANTTYPE_FLOATING;
+		result.type = inValue.type;
+
+		switch (expression->unaryOperation.op)
+		{
+		case TOKEN_OP_MINUS:
+		{
+			if (isFloat)
+				result.valueAsFloat = -inValue.valueAsFloat;
+			else
+				result.valueAsInt = -inValue.valueAsInt;
+		} break;
+		case TOKEN_OP_NOT:
+		{
+			if (isFloat)
+				result.valueAsFloat = !inValue.valueAsFloat;
+			else
+				result.valueAsInt = !inValue.valueAsInt;
+		} break;
+		case TOKEN_OP_BITWISE_NOT:
+		{
+			ASSERT(!isFloat);
+			result.valueAsInt = ~inValue.valueAsInt;
+		} break;
+		}
+	} break;
+	case ASTNODETYPE_BINARY_OPERATION:
+	{
+		ASTExpression *rightHand = expression->binaryOperation.rightHand;
+		ASTExpression *leftHand  = expression->binaryOperation.leftHand;
+		Constant leftValue  = EvaluateConstant(context, leftHand);
+		Constant rightValue = EvaluateConstant(context, rightHand);
+
+		bool isFloat = false;
+		if (leftValue.type == CONSTANTTYPE_INTEGER)
+		{
+			if (rightValue.type == CONSTANTTYPE_FLOATING)
+			{
+				rightValue.type = CONSTANTTYPE_INTEGER;
+				rightValue.valueAsInt = (s64)rightValue.valueAsFloat;
+			}
+			result.type = CONSTANTTYPE_INTEGER;
+		}
+		if (leftValue.type == CONSTANTTYPE_FLOATING)
+		{
+			isFloat = true;
+			if (rightValue.type == CONSTANTTYPE_INTEGER)
+			{
+				rightValue.type = CONSTANTTYPE_FLOATING;
+				rightValue.valueAsFloat = (f64)rightValue.valueAsInt;
+			}
+			result.type = CONSTANTTYPE_FLOATING;
+		}
+
+		switch (expression->binaryOperation.op)
+		{
+		case TOKEN_OP_PLUS:
+		{
+			if (isFloat)
+				result.valueAsFloat = leftValue.valueAsFloat + rightValue.valueAsFloat;
+			else
+				result.valueAsInt = leftValue.valueAsInt + rightValue.valueAsInt;
+		} break;
+		case TOKEN_OP_MINUS:
+		{
+			if (isFloat)
+				result.valueAsFloat = leftValue.valueAsFloat - rightValue.valueAsFloat;
+			else
+				result.valueAsInt = leftValue.valueAsInt - rightValue.valueAsInt;
+		} break;
+		case TOKEN_OP_MULTIPLY:
+		{
+			if (isFloat)
+				result.valueAsFloat = leftValue.valueAsFloat * rightValue.valueAsFloat;
+			else
+				result.valueAsInt = leftValue.valueAsInt * rightValue.valueAsInt;
+		} break;
+		case TOKEN_OP_DIVIDE:
+		{
+			if (isFloat)
+				result.valueAsFloat = leftValue.valueAsFloat / rightValue.valueAsFloat;
+			else
+				result.valueAsInt = leftValue.valueAsInt / rightValue.valueAsInt;
+		} break;
+		case TOKEN_OP_MODULO:
+		{
+			if (isFloat)
+				result.valueAsFloat = fmod(leftValue.valueAsFloat, rightValue.valueAsFloat);
+			else
+				result.valueAsInt = leftValue.valueAsInt % rightValue.valueAsInt;
+		} break;
+		case TOKEN_OP_SHIFT_LEFT:
+		{
+			ASSERT(!isFloat);
+			result.valueAsInt = leftValue.valueAsInt << rightValue.valueAsInt;
+		} break;
+		case TOKEN_OP_SHIFT_RIGHT:
+		{
+			ASSERT(!isFloat);
+			result.valueAsInt = leftValue.valueAsInt >> rightValue.valueAsInt;
+		} break;
+		case TOKEN_OP_AND:
+		{
+			if (isFloat)
+				result.valueAsFloat = leftValue.valueAsFloat && rightValue.valueAsFloat;
+			else
+				result.valueAsInt = leftValue.valueAsInt && rightValue.valueAsInt;
+		} break;
+		case TOKEN_OP_OR:
+		{
+			if (isFloat)
+				result.valueAsFloat = leftValue.valueAsFloat || rightValue.valueAsFloat;
+			else
+				result.valueAsInt = leftValue.valueAsInt || rightValue.valueAsInt;
+		} break;
+		case TOKEN_OP_BITWISE_AND:
+		{
+			ASSERT(!isFloat);
+			result.valueAsInt = leftValue.valueAsInt & rightValue.valueAsInt;
+		} break;
+		case TOKEN_OP_BITWISE_OR:
+		{
+			ASSERT(!isFloat);
+			result.valueAsInt = leftValue.valueAsInt | rightValue.valueAsInt;
+		} break;
+		case TOKEN_OP_BITWISE_XOR:
+		{
+			ASSERT(!isFloat);
+			result.valueAsInt = leftValue.valueAsInt ^ rightValue.valueAsInt;
+		} break;
+		}
+	} break;
+	}
+	return result;
+}
+
 void TypeCheckExpression(Context *context, ASTExpression *expression)
 {
 	switch (expression->nodeType)
@@ -971,44 +1122,21 @@ void TypeCheckExpression(Context *context, ASTExpression *expression)
 		}
 
 		TypeCheckExpression(context, astStaticDef.expression);
+		staticDefinition.typeTableIdx = astStaticDef.expression->typeTableIdx;
 		if (astStaticDef.expression->nodeType == ASTNODETYPE_PROCEDURE_DECLARATION)
 		{
 			staticDefinition.definitionType = STATICDEFINITIONTYPE_PROCEDURE;
-			staticDefinition.procedure.procedure =
-				astStaticDef.expression->procedureDeclaration.procedure;
+			staticDefinition.procedure = astStaticDef.expression->procedureDeclaration.procedure;
 		}
 		else if (astStaticDef.expression->nodeType == ASTNODETYPE_TYPE)
 		{
 			staticDefinition.definitionType = STATICDEFINITIONTYPE_TYPE;
-			staticDefinition.type.typeTableIdx = astStaticDef.expression->typeTableIdx;
-		}
-		else if (astStaticDef.expression->nodeType == ASTNODETYPE_LITERAL)
-		{
-			ASTLiteral astLiteral = astStaticDef.expression->literal;
-			switch (astLiteral.type)
-			{
-			case LITERALTYPE_INTEGER:
-			{
-				staticDefinition.definitionType = STATICDEFINITIONTYPE_CONSTANT_INTEGER;
-				staticDefinition.constantInteger.value = astLiteral.integer;
-				staticDefinition.constantInteger.typeTableIdx = astStaticDef.expression->typeTableIdx;
-			} break;
-			case LITERALTYPE_FLOATING:
-			{
-				staticDefinition.definitionType = STATICDEFINITIONTYPE_CONSTANT_FLOATING;
-				staticDefinition.constantFloating.value = astLiteral.floating;
-				staticDefinition.constantFloating.typeTableIdx = astStaticDef.expression->typeTableIdx;
-			} break;
-			case LITERALTYPE_CHARACTER:
-			{
-				staticDefinition.definitionType = STATICDEFINITIONTYPE_CONSTANT_INTEGER;
-				staticDefinition.constantFloating.value = astLiteral.character;
-				staticDefinition.constantFloating.typeTableIdx = astStaticDef.expression->typeTableIdx;
-			} break;
-			}
 		}
 		else
-			CRASH;
+		{
+			staticDefinition.definitionType = STATICDEFINITIONTYPE_CONSTANT;
+			staticDefinition.constant = EvaluateConstant(context, astStaticDef.expression);
+		}
 
 		StaticDefinition *newStaticDef = BucketArrayAdd(&context->staticDefinitions);
 		*newStaticDef = staticDefinition;
@@ -1038,6 +1166,7 @@ void TypeCheckExpression(Context *context, ASTExpression *expression)
 			TypeCheckVariableDeclaration(context, astVarDecl);
 			ProcedureParameter *procParam = DynamicArrayAdd(&procedure->parameters);
 			procParam->variable = astVarDecl.variable;
+			procParam->typeTableIdx = astVarDecl.variable->typeTableIdx;
 			procParam->defaultValue = astVarDecl.value;
 
 			if (astVarDecl.isUsing)
@@ -1071,6 +1200,7 @@ void TypeCheckExpression(Context *context, ASTExpression *expression)
 
 			ProcedureParameter *procParam = DynamicArrayAdd(&procedure->parameters);
 			procParam->variable = var;
+			procParam->typeTableIdx = var->typeTableIdx;
 			procParam->defaultValue = nullptr;
 
 			TCScope *stackTop = &context->tcStack[context->tcStack.size - 1];
@@ -1153,8 +1283,7 @@ void TypeCheckExpression(Context *context, ASTExpression *expression)
 					case NAMETYPE_STATIC_DEFINITION:
 					{
 						expression->identifier.staticDefinition = currentName.staticDefinition;
-						expression->typeTableIdx =
-							GetStaticDefinitionTypeTableIdx(*currentName.staticDefinition);
+						expression->typeTableIdx = currentName.staticDefinition->typeTableIdx;
 					} break;
 					}
 					goto skipInvalidIdentifierError;
@@ -1199,7 +1328,7 @@ skipInvalidIdentifierError:
 						currentName.staticDefinition->definitionType != STATICDEFINITIONTYPE_PROCEDURE)
 						LogError(context, expression->any.loc, "Calling a non-procedure"_s);
 
-					procedure = currentName.staticDefinition->procedure.procedure;
+					procedure = currentName.staticDefinition->procedure;
 					break;
 				}
 			}

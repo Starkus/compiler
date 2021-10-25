@@ -22,5 +22,6 @@ PrintAllMembers :: ()
 Main :: () -> s64
 {
 	PrintAllMembers();
+	Print("Test ok\n");
 	return 0;
 }

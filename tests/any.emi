@@ -26,5 +26,6 @@ Main :: () -> s64
 
 	Proc(12345.6789);
 
+	Print("Test ok\n");
 	return 0;
 }

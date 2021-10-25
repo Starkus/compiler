@@ -13,5 +13,6 @@ Main :: () -> s64
 	}
 	//outOfScope : ScopedType;
 
+	Print("Test ok\n");
 	return 0;
 }

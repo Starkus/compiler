@@ -55,5 +55,6 @@ Main :: () -> s64
 		PrintF("Dynamic array[%] = %\n", i, @it);
 	}
 
+	Print("Test ok\n");
 	return 0;
 }

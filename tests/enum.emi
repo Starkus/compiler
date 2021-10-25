@@ -7,5 +7,7 @@ Color :: enum : s8 {
 Main :: () -> s64
 {
 	color : Color = COLOR_RED;
+
+	Print("Test ok\n");
 	return 0;
 }

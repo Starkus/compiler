@@ -7,20 +7,27 @@ enum AcceptedOperandFlags
 	ACCEPTEDOPERANDS_ALL       = 7,
 };
 
+enum InstructionFlags
+{
+	INSTRUCTIONFLAGS_IGNORE_SIZE_DIFFERENCE   = 1,
+	INSTRUCTIONFLAGS_DONT_CALCULATE_ADDRESSES = 2,
+};
+
 struct X64InstructionInfo
 {
 	String mnemonic;
 	u8 acceptedOperandsLeft;
 	u8 acceptedOperandsRight;
-	u8 ignoreSizeDifference;
+	u8 flags;
 };
 
-const X64InstructionInfo MOV    = { "mov"_s,    ACCEPTEDOPERANDS_REGMEM, ACCEPTEDOPERANDS_ALL,    false };
-const X64InstructionInfo MOVSX  = { "movsx"_s,  ACCEPTEDOPERANDS_REGMEM, ACCEPTEDOPERANDS_REGMEM, true };
-const X64InstructionInfo MOVSXD = { "movsxd"_s, ACCEPTEDOPERANDS_REGMEM, ACCEPTEDOPERANDS_REGMEM, true };
-const X64InstructionInfo CMP    = { "cmp"_s,    ACCEPTEDOPERANDS_REGMEM, ACCEPTEDOPERANDS_ALL,    false };
-const X64InstructionInfo ADD    = { "add"_s,    ACCEPTEDOPERANDS_REGMEM, ACCEPTEDOPERANDS_ALL,    false };
-const X64InstructionInfo SUB    = { "sub"_s,    ACCEPTEDOPERANDS_REGMEM, ACCEPTEDOPERANDS_ALL,    false };
+const X64InstructionInfo MOV    = { "mov"_s,    ACCEPTEDOPERANDS_REGMEM,   ACCEPTEDOPERANDS_ALL,    0 };
+const X64InstructionInfo MOVSX  = { "movsx"_s,  ACCEPTEDOPERANDS_REGMEM,   ACCEPTEDOPERANDS_REGMEM, INSTRUCTIONFLAGS_IGNORE_SIZE_DIFFERENCE };
+const X64InstructionInfo MOVSXD = { "movsxd"_s, ACCEPTEDOPERANDS_REGMEM,   ACCEPTEDOPERANDS_REGMEM, INSTRUCTIONFLAGS_IGNORE_SIZE_DIFFERENCE };
+const X64InstructionInfo LEA    = { "lea"_s,    ACCEPTEDOPERANDS_REGISTER, ACCEPTEDOPERANDS_MEMORY, INSTRUCTIONFLAGS_DONT_CALCULATE_ADDRESSES };
+const X64InstructionInfo CMP    = { "cmp"_s,    ACCEPTEDOPERANDS_REGMEM,   ACCEPTEDOPERANDS_ALL,    0};
+const X64InstructionInfo ADD    = { "add"_s,    ACCEPTEDOPERANDS_REGMEM,   ACCEPTEDOPERANDS_ALL,    0};
+const X64InstructionInfo SUB    = { "sub"_s,    ACCEPTEDOPERANDS_REGMEM,   ACCEPTEDOPERANDS_ALL,    0};
 
 const s64 registerIndexBegin = 0x4000000000000000;
 const s64 RAX_idx = registerIndexBegin + 0;
@@ -93,7 +100,6 @@ inline u8 IRValueTypeToFlags(IRValueType type)
 	case IRVALUETYPE_TYPEOF:
 		return ACCEPTEDOPERANDS_MEMORY;
 	case IRVALUETYPE_IMMEDIATE_INTEGER:
-	case IRVALUETYPE_SIZEOF:
 		return ACCEPTEDOPERANDS_IMMEDIATE;
 	}
 	ASSERT(!"Couldn't convert IRValueType to a kind of x64 operand");
@@ -110,10 +116,45 @@ String X64IRValueToStr(Context *context, IRValue value)
 
 	if (value.valueType == IRVALUETYPE_REGISTER)
 	{
+		s64 reg = value.registerIdx;
+		// Map temporal registers
+		switch (reg)
+		{
+		case 0:
+			reg = RBX_idx;
+			break;
+		case 1:
+			reg = R10_idx;
+			break;
+		case 2:
+			reg = R11_idx;
+			break;
+		case 3:
+			reg = R12_idx;
+			break;
+		case 4:
+			reg = R13_idx;
+			break;
+		case 5:
+			reg = R14_idx;
+			break;
+		case 6:
+			reg = R15_idx;
+			break;
+		case 7:
+			reg = RSI_idx;
+			break;
+		case 8:
+			reg = RDI_idx;
+			break;
+		default:
+			ASSERT(value.registerIdx >= RAX_idx || !"Out of temporal registers");
+		}
+
 		switch (size)
 		{
 			case 8:
-				switch (value.registerIdx)
+				switch (reg)
 				{
 				case RAX_idx: result = "rax"_s; break;
 				case RCX_idx: result = "rcx"_s; break;
@@ -135,13 +176,14 @@ String X64IRValueToStr(Context *context, IRValue value)
 					result = "r12"_s;
 					break;
 				case IRSPECIALREGISTER_RETURN:
-				default:
 					result = "rax"_s;
 					break;
+				default:
+					result = "???REG"_s;
 				}
 				break;
 			case 4:
-				switch (value.registerIdx)
+				switch (reg)
 				{
 				case RAX_idx: result = "eax"_s; break;
 				case RCX_idx: result = "ecx"_s; break;
@@ -163,13 +205,14 @@ String X64IRValueToStr(Context *context, IRValue value)
 					result = "r12d"_s;
 					break;
 				case IRSPECIALREGISTER_RETURN:
-				default:
 					result = "eax"_s;
 					break;
+				default:
+					result = "???REG"_s;
 				}
 				break;
 			case 2:
-				switch (value.registerIdx)
+				switch (reg)
 				{
 				case RAX_idx: result = "ax"_s; break;
 				case RCX_idx: result = "cx"_s; break;
@@ -191,13 +234,14 @@ String X64IRValueToStr(Context *context, IRValue value)
 					result = "r12w"_s;
 					break;
 				case IRSPECIALREGISTER_RETURN:
-				default:
 					result = "ax"_s;
 					break;
+				default:
+					result = "???REG"_s;
 				}
 				break;
 			case 1:
-				switch (value.registerIdx)
+				switch (reg)
 				{
 				case RAX_idx: result = "al"_s; break;
 				case RCX_idx: result = "cl"_s; break;
@@ -219,9 +263,10 @@ String X64IRValueToStr(Context *context, IRValue value)
 					result = "r12b"_s;
 					break;
 				case IRSPECIALREGISTER_RETURN:
-				default:
 					result = "al"_s;
 					break;
+				default:
+					result = "???REG"_s;
 				}
 				break;
 		}
@@ -253,15 +298,14 @@ String X64IRValueToStr(Context *context, IRValue value)
 	}
 	else if (value.valueType == IRVALUETYPE_DATA_OFFSET)
 	{
-		result = TPrintF("%S+%llu", value.dataOffset.variable->name, value.dataOffset.offset);
+		if (!value.dereference)
+			result = TPrintF("OFFSET %S+%llu", value.dataOffset.variable->name, value.dataOffset.offset);
+		else
+			result = TPrintF("%S+%llu", value.dataOffset.variable->name, value.dataOffset.offset);
 	}
 	else if (value.valueType == IRVALUETYPE_IMMEDIATE_INTEGER)
 	{
 		result = TPrintF("%lld", value.immediate);
-	}
-	else if (value.valueType == IRVALUETYPE_SIZEOF)
-	{
-		result = TPrintF("%llu", size);
 	}
 	else if (value.valueType == IRVALUETYPE_TYPEOF)
 	{
@@ -291,27 +335,6 @@ String X64IRValueToStr(Context *context, IRValue value)
 			//ASSERT(!"Invalid size!");
 		}
 	}
-	else if (IRValueTypeToFlags(value.valueType) == ACCEPTEDOPERANDS_MEMORY)
-	{
-		switch (size)
-		{
-		case 1:
-			result = TPrintF("BYTE PTR %S", result);
-			break;
-		case 2:
-			result = TPrintF("WORD PTR %S", result);
-			break;
-		case 4:
-			result = TPrintF("DWORD PTR %S", result);
-			break;
-		case 8:
-		default:
-			result = TPrintF("QWORD PTR %S", result);
-			break;
-		//default:
-			//ASSERT(!"Invalid size!");
-		}
-	}
 
 	return result;
 }
@@ -336,13 +359,15 @@ void X64OutputInstruction(Context *context, X64InstructionInfo instInfo, IRValue
 		second = RCX;
 	}
 
+#if 0
 	// Do memory offset manually if not used as pointer
-	if (first.valueType == IRVALUETYPE_STACK_OFFSET && !first.dereference)
+	if (instInfo.flags & INSTRUCTIONFLAGS_DONT_CALCULATE_ADDRESSES &&
+			first.valueType == IRVALUETYPE_STACK_OFFSET && !first.dereference)
 	{
-		X64OutputInstruction(context, MOV, RBX, RBP);
-		X64OutputInstruction(context, SUB, RBX, RBP);
+		X64OutputInstruction(context, LEA, RBX, first);
 		first = RBX;
 	}
+#endif
 
 	String firstStr;
 	if (instInfo.acceptedOperandsLeft & IRValueTypeToFlags(first.valueType))
@@ -354,17 +379,15 @@ void X64OutputInstruction(Context *context, X64InstructionInfo instInfo, IRValue
 		firstStr = "rbx"_s;
 	}
 
-	if (!instInfo.ignoreSizeDifference)
-	{
-	}
-
+#if 0
 	// Do memory offset manually if not used as pointer
-	if (second.valueType == IRVALUETYPE_STACK_OFFSET && !second.dereference)
+	if (instInfo.flags & INSTRUCTIONFLAGS_DONT_CALCULATE_ADDRESSES &&
+			second.valueType == IRVALUETYPE_STACK_OFFSET && !second.dereference)
 	{
-		X64OutputInstruction(context, MOV, RCX, RBP);
-		X64OutputInstruction(context, SUB, RCX, RBP);
+		X64OutputInstruction(context, LEA, RCX, second);
 		second = RCX;
 	}
+#endif
 
 	String secondStr;
 	if (instInfo.acceptedOperandsRight & IRValueTypeToFlags(second.valueType))
@@ -705,6 +728,14 @@ void WriteToX64(Context *context)
 				X64OutputInstruction(context, MOV, inst.unaryOperation.out, inst.unaryOperation.in);
 				PrintOut(context, "neg %S\n", out);
 			} break;
+			case IRINSTRUCTIONTYPE_LOAD_EFFECTIVE_ADDRESS:
+			{
+				IRValue pointer = inst.unaryOperation.in;
+				pointer.dereference = true;
+				String in = X64IRValueToStr(context, pointer);
+				String out = X64IRValueToStr(context, inst.unaryOperation.out);
+				X64OutputInstruction(context, LEA, inst.unaryOperation.out, inst.unaryOperation.in);
+			} break;
 			case IRINSTRUCTIONTYPE_PROCEDURE_CALL:
 			{
 				for (int i = 0; i < inst.procedureCall.parameters.size; ++i)
@@ -729,6 +760,12 @@ void WriteToX64(Context *context)
 
 				String callProcLabel = X64ProcedureToLabel(context, inst.procedureCall.procedure);
 				PrintOut(context, "call %S\n", callProcLabel);
+
+				if (inst.procedureCall.out.valueType != IRVALUETYPE_INVALID)
+				{
+					// @Improve: this is weird, just expect result to be at RAX instead of Out value
+					X64OutputInstruction(context, MOV, inst.procedureCall.out, RAX);
+				}
 			} break;
 			case IRINSTRUCTIONTYPE_RETURN:
 			{

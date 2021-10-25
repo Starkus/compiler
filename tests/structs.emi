@@ -56,5 +56,6 @@ Main :: () -> s64
 	pointerToBAge : ^s32 = ^b.age;
 	@pointerToBAge = 1;
 
+	Print("Test ok\n");
 	return 0;
 }

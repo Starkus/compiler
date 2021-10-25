@@ -15,5 +15,7 @@ fibonacci :: (i : s64) -> s64
 Main :: () -> s64
 {
 	fibonacci(8);
+
+	Print("Test ok\n");
 	return 0;
 }

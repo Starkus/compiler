@@ -29,5 +29,7 @@ Main :: () -> s64
 	}
 
 	Print("Program finishing\n");
+
+	Print("Test ok\n");
 	return 0;
 }

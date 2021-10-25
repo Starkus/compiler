@@ -66,5 +66,6 @@ Main :: () -> s64
 	// Default argument
 	//operatorPrecedence(var);
 
+	Print("Test ok\n");
 	return 0;
 }
