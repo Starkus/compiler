@@ -107,9 +107,110 @@ inline void RemoveIfRegister(BasicBlock *basicBlock, IRValue value,
 inline void ReplaceIfRegister(IRValue *value, Array<s64> registerMap)
 {
 	if (value->valueType == IRVALUETYPE_REGISTER && value->registerIdx < IRSPECIALREGISTER_BEGIN)
-		value->registerIdx = registerMap[value->registerIdx];
+	{
+		if (value->registerIdx < (s64)registerMap.size)
+			value->registerIdx = registerMap[value->registerIdx];
+	}
 	else if (value->valueType == IRVALUETYPE_MEMORY && !value->memory.baseVariable)
-		value->memory.baseRegister = registerMap[value->memory.baseRegister];
+	{
+		if (value->memory.baseRegister < (s64)registerMap.size)
+			value->memory.baseRegister = registerMap[value->memory.baseRegister];
+	}
+}
+
+void DoLivenessAnalisisOnInstruction(Context *context, BasicBlock *basicBlock, IRInstruction inst,
+		DynamicArray<s64, malloc, realloc> *liveRegisters)
+{
+	if (inst.type >= IRINSTRUCTIONTYPE_UNARY_BEGIN && inst.type < IRINSTRUCTIONTYPE_UNARY_END)
+	{
+		RemoveIfRegister(basicBlock, inst.unaryOperation.out, liveRegisters);
+		AddIfRegister(basicBlock, inst.unaryOperation.in, liveRegisters);
+	}
+	else if (inst.type >= IRINSTRUCTIONTYPE_BINARY_BEGIN && inst.type < IRINSTRUCTIONTYPE_BINARY_END)
+	{
+		RemoveIfRegister(basicBlock, inst.binaryOperation.out, liveRegisters);
+		AddIfRegister(basicBlock, inst.binaryOperation.left, liveRegisters);
+		AddIfRegister(basicBlock, inst.binaryOperation.right, liveRegisters);
+	}
+	else switch (inst.type)
+	{
+	case IRINSTRUCTIONTYPE_ASSIGNMENT:
+	{
+		RemoveIfRegister(basicBlock, inst.assignment.dst, liveRegisters);
+		AddIfRegister(basicBlock, inst.assignment.src, liveRegisters);
+	} break;
+	case IRINSTRUCTIONTYPE_PROCEDURE_CALL:
+	{
+		RemoveIfRegister(basicBlock, inst.procedureCall.out, liveRegisters);
+		for (int paramIdx = 0; paramIdx < inst.procedureCall.parameters.size; ++paramIdx)
+			AddIfRegister(basicBlock, inst.procedureCall.parameters[paramIdx], liveRegisters);
+	} break;
+	case IRINSTRUCTIONTYPE_INTRINSIC_MEMCPY:
+	{
+		AddIfRegister(basicBlock, inst.memcpy.src, liveRegisters);
+		AddIfRegister(basicBlock, inst.memcpy.dst, liveRegisters);
+		AddIfRegister(basicBlock, inst.memcpy.size, liveRegisters);
+	} break;
+	case IRINSTRUCTIONTYPE_JUMP_IF_ZERO:
+	case IRINSTRUCTIONTYPE_JUMP_IF_NOT_ZERO:
+	{
+		AddIfRegister(basicBlock, inst.conditionalJump.condition, liveRegisters);
+	} break;
+	case IRINSTRUCTIONTYPE_RETURN:
+	{
+		AddIfRegister(basicBlock, IRValueRegister(IRSPECIALREGISTER_RETURN),
+				liveRegisters);
+	} break;
+	case IRINSTRUCTIONTYPE_PATCH:
+	{
+		DoLivenessAnalisisOnInstruction(context, basicBlock, *inst.patch.second, liveRegisters);
+		DoLivenessAnalisisOnInstruction(context, basicBlock, *inst.patch.first,  liveRegisters);
+		return;
+	} break;
+	}
+
+#if DEBUG_OPTIMIZER
+	Print(">\t");
+	PrintIRInstruction(context, inst);
+	Print("Live registers: ");
+	for (int i = 0; i < liveRegisters->size; ++i)
+		Print("%d, ", (*liveRegisters)[i]);
+	Print("\n");
+#endif
+
+	// Add edges to graph
+	for (int i = 0; i < liveRegisters->size; ++i)
+	{
+		s64 reg = (*liveRegisters)[i];
+		InterferenceGraphNode *node = nullptr;
+		for (int nodeIdx = 0; nodeIdx < context->interferenceGraph.size; ++nodeIdx)
+		{
+			InterferenceGraphNode *currentNode = &context->interferenceGraph[nodeIdx];
+			if (currentNode->registerIdx == reg)
+			{
+				node = currentNode;
+				goto nodeFound;
+			}
+		}
+		node = DynamicArrayAdd(&context->interferenceGraph);
+		*node = {};
+		node->registerIdx = reg;
+		DynamicArrayInit(&node->edges, 8);
+nodeFound:
+		ASSERT(node);
+		for (int j = 0; j < liveRegisters->size; ++j)
+		{
+			if (i == j) continue;
+			s64 edge = (*liveRegisters)[j];
+			for (int k = 0; k < node->edges.size; ++k)
+			{
+				if (node->edges[k] == edge)
+					goto skipEdge;
+			}
+			*DynamicArrayAdd(&node->edges) = edge;
+skipEdge:;
+		}
+	}
 }
 
 void DoLivenessAnalisis(Context *context, BasicBlock *basicBlock,
@@ -140,91 +241,7 @@ void DoLivenessAnalisis(Context *context, BasicBlock *basicBlock,
 			--instructionIdx)
 	{
 		IRInstruction inst = basicBlock->procedure->instructions[instructionIdx];
-
-		if (inst.type >= IRINSTRUCTIONTYPE_UNARY_BEGIN && inst.type < IRINSTRUCTIONTYPE_UNARY_END)
-		{
-			RemoveIfRegister(basicBlock, inst.unaryOperation.out, liveRegisters);
-			AddIfRegister(basicBlock, inst.unaryOperation.in, liveRegisters);
-		}
-		else if (inst.type >= IRINSTRUCTIONTYPE_BINARY_BEGIN && inst.type < IRINSTRUCTIONTYPE_BINARY_END)
-		{
-			RemoveIfRegister(basicBlock, inst.binaryOperation.out, liveRegisters);
-			AddIfRegister(basicBlock, inst.binaryOperation.left, liveRegisters);
-			AddIfRegister(basicBlock, inst.binaryOperation.right, liveRegisters);
-		}
-		else switch (inst.type)
-		{
-		case IRINSTRUCTIONTYPE_ASSIGNMENT:
-		{
-			RemoveIfRegister(basicBlock, inst.assignment.dst, liveRegisters);
-			AddIfRegister(basicBlock, inst.assignment.src, liveRegisters);
-		} break;
-		case IRINSTRUCTIONTYPE_PROCEDURE_CALL:
-		{
-			RemoveIfRegister(basicBlock, inst.procedureCall.out, liveRegisters);
-			for (int paramIdx = 0; paramIdx < inst.procedureCall.parameters.size; ++paramIdx)
-				AddIfRegister(basicBlock, inst.procedureCall.parameters[paramIdx], liveRegisters);
-		} break;
-		case IRINSTRUCTIONTYPE_INTRINSIC_MEMCPY:
-		{
-			AddIfRegister(basicBlock, inst.memcpy.src, liveRegisters);
-			AddIfRegister(basicBlock, inst.memcpy.dst, liveRegisters);
-			AddIfRegister(basicBlock, inst.memcpy.size, liveRegisters);
-		} break;
-		case IRINSTRUCTIONTYPE_JUMP_IF_ZERO:
-		case IRINSTRUCTIONTYPE_JUMP_IF_NOT_ZERO:
-		{
-			AddIfRegister(basicBlock, inst.conditionalJump.condition, liveRegisters);
-		} break;
-		case IRINSTRUCTIONTYPE_RETURN:
-		{
-			AddIfRegister(basicBlock, IRValueRegister(IRSPECIALREGISTER_RETURN),
-					liveRegisters);
-		} break;
-		}
-
-#if DEBUG_OPTIMIZER
-		Print(">\t");
-		PrintIRInstruction(context, inst);
-		Print("Live registers: ");
-		for (int i = 0; i < liveRegisters->size; ++i)
-			Print("%d, ", (*liveRegisters)[i]);
-		Print("\n");
-#endif
-
-		// Add edges to graph
-		for (int i = 0; i < liveRegisters->size; ++i)
-		{
-			s64 reg = (*liveRegisters)[i];
-			InterferenceGraphNode *node = nullptr;
-			for (int nodeIdx = 0; nodeIdx < context->interferenceGraph.size; ++nodeIdx)
-			{
-				InterferenceGraphNode *currentNode = &context->interferenceGraph[nodeIdx];
-				if (currentNode->registerIdx == reg)
-				{
-					node = currentNode;
-					goto nodeFound;
-				}
-			}
-			node = DynamicArrayAdd(&context->interferenceGraph);
-			*node = {};
-			node->registerIdx = reg;
-			DynamicArrayInit(&node->edges, 8);
-nodeFound:
-			ASSERT(node);
-			for (int j = 0; j < liveRegisters->size; ++j)
-			{
-				if (i == j) continue;
-				s64 edge = (*liveRegisters)[j];
-				for (int k = 0; k < node->edges.size; ++k)
-				{
-					if (node->edges[k] == edge)
-						goto skipEdge;
-				}
-				*DynamicArrayAdd(&node->edges) = edge;
-skipEdge:;
-			}
-		}
+		DoLivenessAnalisisOnInstruction(context, basicBlock, inst, liveRegisters);
 	}
 
 	bool somethingChanged = false;
@@ -355,72 +372,141 @@ foundBlock:
 	}
 }
 
-inline void ReplaceRegisterForVariable(IRValue *value, s64 registerIdx, Variable *variable)
+inline void ReplaceRegisterForVariable(Context *context, Procedure *procedure,
+		IRInstruction *instruction, IRValue *value, s64 registerIdx, Variable *variable)
 {
-	if (value->valueType == IRVALUETYPE_MEMORY && !value->memory.baseVariable)
-		// Not supported yet
-		ASSERT(value->memory.baseRegister != registerIdx);
+	if (value->valueType == IRVALUETYPE_MEMORY && !value->memory.baseVariable &&
+			value->memory.baseRegister == registerIdx)
+	{
+		s64 newVirtualRegister = procedure->registerCount++;
+		IRValue tmp = IRValueRegister(newVirtualRegister, value->typeTableIdx);
 
-	if (value->valueType != IRVALUETYPE_REGISTER)
-		return;
-	if (value->registerIdx != registerIdx)
-		return;
-	*value = IRValueMemory(variable, 0, value->typeTableIdx);
+		IRInstruction *newInst1 = BucketArrayAdd(&context->patchedInstructions);
+		newInst1->type = IRINSTRUCTIONTYPE_ASSIGNMENT;
+		newInst1->assignment.dst = tmp;
+		newInst1->assignment.src = IRValueMemory(variable, 0, value->typeTableIdx);
+
+		*value = IRValueMemory(tmp.registerIdx, value->memory.offset, value->typeTableIdx);
+
+		IRInstruction *newInst2 = BucketArrayAdd(&context->patchedInstructions);
+		*newInst2 = *instruction;
+
+		IRInstruction patchInstruction;
+		patchInstruction.type = IRINSTRUCTIONTYPE_PATCH;
+		patchInstruction.patch.first = newInst1;
+		patchInstruction.patch.second = newInst2;
+		*instruction = patchInstruction;
+	}
+	else if (value->valueType == IRVALUETYPE_REGISTER && value->registerIdx == registerIdx)
+		*value = IRValueMemory(variable, 0, value->typeTableIdx);
+}
+
+void SpillRegisterIntoMemoryInstruction(Context *context, Variable *newVar, IRInstruction *inst,
+		Procedure *procedure, s64 registerIdx)
+{
+	if (inst->type >= IRINSTRUCTIONTYPE_UNARY_BEGIN &&
+			inst->type < IRINSTRUCTIONTYPE_UNARY_END)
+	{
+		ReplaceRegisterForVariable(context, procedure, inst, &inst->unaryOperation.in, registerIdx, newVar);
+		ReplaceRegisterForVariable(context, procedure, inst, &inst->unaryOperation.out, registerIdx, newVar);
+	}
+	else if (inst->type >= IRINSTRUCTIONTYPE_BINARY_BEGIN &&
+			inst->type < IRINSTRUCTIONTYPE_BINARY_END)
+	{
+		ReplaceRegisterForVariable(context, procedure, inst, &inst->binaryOperation.left, registerIdx, newVar);
+		ReplaceRegisterForVariable(context, procedure, inst, &inst->binaryOperation.right, registerIdx, newVar);
+		ReplaceRegisterForVariable(context, procedure, inst, &inst->binaryOperation.out, registerIdx, newVar);
+	}
+	else switch (inst->type)
+	{
+	case IRINSTRUCTIONTYPE_ASSIGNMENT:
+	{
+		ReplaceRegisterForVariable(context, procedure, inst, &inst->assignment.src, registerIdx, newVar);
+		ReplaceRegisterForVariable(context, procedure, inst, &inst->assignment.dst, registerIdx, newVar);
+	} break;
+	case IRINSTRUCTIONTYPE_PROCEDURE_CALL:
+	{
+		ReplaceRegisterForVariable(context, procedure, inst, &inst->procedureCall.out, registerIdx, newVar);
+
+		for (int paramIdx = 0; paramIdx < inst->procedureCall.parameters.size; ++paramIdx)
+			ReplaceRegisterForVariable(context, procedure, inst, &inst->procedureCall.parameters[paramIdx], registerIdx, newVar);
+	} break;
+	case IRINSTRUCTIONTYPE_INTRINSIC_MEMCPY:
+	{
+		ReplaceRegisterForVariable(context, procedure, inst, &inst->memcpy.src, registerIdx, newVar);
+		ReplaceRegisterForVariable(context, procedure, inst, &inst->memcpy.dst, registerIdx, newVar);
+		ReplaceRegisterForVariable(context, procedure, inst, &inst->memcpy.size, registerIdx, newVar);
+	} break;
+	case IRINSTRUCTIONTYPE_JUMP_IF_ZERO:
+	case IRINSTRUCTIONTYPE_JUMP_IF_NOT_ZERO:
+	{
+		ReplaceRegisterForVariable(context, procedure, inst, &inst->conditionalJump.condition, registerIdx, newVar);
+	} break;
+	case IRINSTRUCTIONTYPE_PATCH:
+	{
+		SpillRegisterIntoMemoryInstruction(context, newVar, inst->patch.first,  procedure, registerIdx);
+		SpillRegisterIntoMemoryInstruction(context, newVar, inst->patch.second, procedure, registerIdx);
+	} break;
+	}
 }
 
 void SpillRegisterIntoMemory(Context *context, Procedure *procedure, s64 registerIdx)
 {
-	Variable *newVar = NewVariable(context, TPrintF("_spill_r%lld", registerIdx));
-
 #if DEBUG_OPTIMIZER
 	Print("Spilling r%lld!\n", registerIdx);
 #endif
+
+	Variable *newVar = NewVariable(context, TPrintF("_spill_r%lld", registerIdx), TYPETABLEIDX_S64);
+
+	IRInstruction *newInst1 = BucketArrayAdd(&context->patchedInstructions);
+	newInst1->type = IRINSTRUCTIONTYPE_PUSH_VARIABLE;
+	newInst1->pushVariable.variable = newVar;
+
+	IRInstruction *newInst2 = BucketArrayAdd(&context->patchedInstructions);
+	*newInst2 = procedure->instructions[0];
+
+	IRInstruction patchInst;
+	patchInst.type = IRINSTRUCTIONTYPE_PATCH;
+	patchInst.patch.first = newInst1;
+	patchInst.patch.second = newInst2;
+	procedure->instructions[0] = patchInst;
 
 	u64 instructionCount = BucketArrayCount(&procedure->instructions);
 	for (int instructionIdx = 0; instructionIdx < instructionCount; ++instructionIdx)
 	{
 		IRInstruction *inst = &procedure->instructions[instructionIdx];
+		SpillRegisterIntoMemoryInstruction(context, newVar, inst, procedure, registerIdx);
+	}
+}
 
-		if (inst->type >= IRINSTRUCTIONTYPE_UNARY_BEGIN &&
-				inst->type < IRINSTRUCTIONTYPE_UNARY_END)
-		{
-			ReplaceRegisterForVariable(&inst->unaryOperation.in, registerIdx, newVar);
-			ReplaceRegisterForVariable(&inst->unaryOperation.out, registerIdx, newVar);
-		}
-		else if (inst->type >= IRINSTRUCTIONTYPE_BINARY_BEGIN &&
-				inst->type < IRINSTRUCTIONTYPE_BINARY_END)
-		{
-			ReplaceRegisterForVariable(&inst->binaryOperation.left, registerIdx, newVar);
-			ReplaceRegisterForVariable(&inst->binaryOperation.right, registerIdx, newVar);
-			ReplaceRegisterForVariable(&inst->binaryOperation.out, registerIdx, newVar);
-		}
-		else switch (inst->type)
-		{
-		case IRINSTRUCTIONTYPE_ASSIGNMENT:
-		{
-			ReplaceRegisterForVariable(&inst->assignment.src, registerIdx, newVar);
-			ReplaceRegisterForVariable(&inst->assignment.dst, registerIdx, newVar);
-		} break;
-		case IRINSTRUCTIONTYPE_PROCEDURE_CALL:
-		{
-			ReplaceRegisterForVariable(&inst->procedureCall.out, registerIdx, newVar);
-
-			for (int paramIdx = 0; paramIdx < inst->procedureCall.parameters.size; ++paramIdx)
-				ReplaceRegisterForVariable(&inst->procedureCall.parameters[paramIdx], registerIdx,
-						newVar);
-		} break;
-		case IRINSTRUCTIONTYPE_INTRINSIC_MEMCPY:
-		{
-			ReplaceRegisterForVariable(&inst->memcpy.src, registerIdx, newVar);
-			ReplaceRegisterForVariable(&inst->memcpy.dst, registerIdx, newVar);
-			ReplaceRegisterForVariable(&inst->memcpy.size, registerIdx, newVar);
-		} break;
-		case IRINSTRUCTIONTYPE_JUMP_IF_ZERO:
-		case IRINSTRUCTIONTYPE_JUMP_IF_NOT_ZERO:
-		{
-			ReplaceRegisterForVariable(&inst->conditionalJump.condition, registerIdx, newVar);
-		} break;
-		}
+void ResolveInstructionStackOffsets(Context *context, IRInstruction inst,
+	DynamicArray<s64, malloc, realloc> *stack, s64 *stackCursor, u64 *stackSize)
+{
+	switch (inst.type)
+	{
+	case IRINSTRUCTIONTYPE_PUSH_VARIABLE:
+	{
+		Variable *var = inst.pushVariable.variable;
+		u64 size = context->typeTable[var->typeTableIdx].size;
+		*stackCursor -= size;
+		var->stackOffset = *stackCursor;
+		var->isAllocated = true;
+	} break;
+	case IRINSTRUCTIONTYPE_PUSH_SCOPE:
+	{
+		*DynamicArrayAdd(stack) = *stackCursor;
+	} break;
+	case IRINSTRUCTIONTYPE_POP_SCOPE:
+	{
+		if (-*stackCursor > (s64)*stackSize)
+			*stackSize = -*stackCursor;
+		*stackCursor = (*stack)[--stack->size];
+	} break;
+	case IRINSTRUCTIONTYPE_PATCH:
+	{
+		ResolveInstructionStackOffsets(context, *inst.patch.first,  stack, stackCursor, stackSize);
+		ResolveInstructionStackOffsets(context, *inst.patch.second, stack, stackCursor, stackSize);
+	} break;
 	}
 }
 
@@ -446,28 +532,82 @@ void ResolveStackOffsets(Context *context)
 		for (int instructionIdx = 0; instructionIdx < instructionCount; ++instructionIdx)
 		{
 			IRInstruction inst = proc->instructions[instructionIdx];
-			switch (inst.type)
+			ResolveInstructionStackOffsets(context, inst, &stack, &stackCursor, &proc->stackSize);
+		}
+	}
+}
+
+void ReplaceRegistersInInstruction(IRInstruction *inst, Array<s64> registerMap)
+{
+	if (inst->type >= IRINSTRUCTIONTYPE_UNARY_BEGIN &&
+			inst->type < IRINSTRUCTIONTYPE_UNARY_END)
+	{
+		ReplaceIfRegister(&inst->unaryOperation.in, registerMap);
+		ReplaceIfRegister(&inst->unaryOperation.out, registerMap);
+	}
+	else if (inst->type >= IRINSTRUCTIONTYPE_BINARY_BEGIN &&
+			inst->type < IRINSTRUCTIONTYPE_BINARY_END)
+	{
+		ReplaceIfRegister(&inst->binaryOperation.left, registerMap);
+		ReplaceIfRegister(&inst->binaryOperation.right, registerMap);
+		ReplaceIfRegister(&inst->binaryOperation.out, registerMap);
+	}
+	else switch (inst->type)
+	{
+	case IRINSTRUCTIONTYPE_ASSIGNMENT:
+	{
+		IRValue *src = &inst->assignment.src;
+		IRValue *dst = &inst->assignment.dst;
+		if (dst->valueType == IRVALUETYPE_REGISTER && dst->registerIdx < IRSPECIALREGISTER_BEGIN)
+		{
+			if ((u64)dst->registerIdx >= registerMap.size)
 			{
-			case IRINSTRUCTIONTYPE_PUSH_VARIABLE:
+				return;
+			}
+			else if (registerMap[dst->registerIdx] == -1) // @Cleanup: I hate this!
 			{
-				Variable *var = inst.pushVariable.variable;
-				u64 size = context->typeTable[var->typeTableIdx].size;
-				stackCursor -= size;
-				var->stackOffset = stackCursor;
-				var->isAllocated = true;
-			} break;
-			case IRINSTRUCTIONTYPE_PUSH_SCOPE:
-			{
-				*DynamicArrayAdd(&stack) = stackCursor;
-			} break;
-			case IRINSTRUCTIONTYPE_POP_SCOPE:
-			{
-				if (-stackCursor > (s64)proc->stackSize)
-					proc->stackSize = -stackCursor;
-				stackCursor = stack[--stack.size];
-			} break;
+				// Replace assignment to unused register for a NOP.
+				// Wanted to be specific with the '-1' here so we are more likely to see when
+				// garbage gets into the register map.
+				inst->type = IRINSTRUCTIONTYPE_NOP;
+				return;
 			}
 		}
+		ReplaceIfRegister(src, registerMap);
+		ReplaceIfRegister(dst, registerMap);
+	} break;
+	case IRINSTRUCTIONTYPE_PROCEDURE_CALL:
+	{
+		IRValue *out = &inst->procedureCall.out;
+		if (out->valueType == IRVALUETYPE_REGISTER &&
+				out->registerIdx < IRSPECIALREGISTER_BEGIN &&
+				registerMap[out->registerIdx] == -1)
+			// Remove unused return value.
+			// Wanted to be specific with the '-1' here so we are more likely to see when
+			// garbage gets into the register map.
+			out->valueType = IRVALUETYPE_INVALID;
+		else
+			ReplaceIfRegister(out, registerMap);
+
+		for (int paramIdx = 0; paramIdx < inst->procedureCall.parameters.size; ++paramIdx)
+			ReplaceIfRegister(&inst->procedureCall.parameters[paramIdx], registerMap);
+	} break;
+	case IRINSTRUCTIONTYPE_INTRINSIC_MEMCPY:
+	{
+		ReplaceIfRegister(&inst->memcpy.src, registerMap);
+		ReplaceIfRegister(&inst->memcpy.dst, registerMap);
+		ReplaceIfRegister(&inst->memcpy.size, registerMap);
+	} break;
+	case IRINSTRUCTIONTYPE_JUMP_IF_ZERO:
+	case IRINSTRUCTIONTYPE_JUMP_IF_NOT_ZERO:
+	{
+		ReplaceIfRegister(&inst->conditionalJump.condition, registerMap);
+	} break;
+	case IRINSTRUCTIONTYPE_PATCH:
+	{
+		ReplaceRegistersInInstruction(inst->patch.first,  registerMap);
+		ReplaceRegistersInInstruction(inst->patch.second, registerMap);
+	} break;
 	}
 }
 
@@ -476,6 +616,7 @@ void OptimizerMain(Context *context)
 	BucketArrayInit(&context->basicBlocks);
 	DynamicArrayInit(&context->leafBasicBlocks, 128);
 	DynamicArrayInit(&context->interferenceGraph, 128);
+	BucketArrayInit(&context->patchedInstructions);
 
 	GenerateBasicBlocks(context);
 
@@ -493,28 +634,29 @@ void OptimizerMain(Context *context)
 		Print("--------------- New procedure: %S\n", procName);
 #endif
 
-		context->interferenceGraph.size = 0;
-
-		// @Todo: iterative instead of recursive?
-		DynamicArray<s64, malloc, realloc> liveRegisters;
-		DynamicArrayInit(&liveRegisters, 16);
-		DoLivenessAnalisis(context, currentLeafBlock, &liveRegisters);
-
-#if DEBUG_OPTIMIZER
-		for (int nodeIdx = 0; nodeIdx < context->interferenceGraph.size; ++nodeIdx)
-		{
-			InterferenceGraphNode *currentNode = &context->interferenceGraph[nodeIdx];
-			Print("Register %lld coexists with: ", currentNode->registerIdx);
-			for (int i = 0; i < currentNode->edges.size; ++i)
-				Print("%lld, ", currentNode->edges[i]);
-			Print("\n");
-		}
-#endif
-
-		int registersAvailable = 8;
-		bool spilledSomething = false;
+		// Assign real registers to virtual registers
+		int availableRegisters = 8;
 		while (true)
 		{
+			bool spilledSomething = false;
+			context->interferenceGraph.size = 0;
+
+			// @Todo: iterative instead of recursive?
+			DynamicArray<s64, malloc, realloc> liveRegisters;
+			DynamicArrayInit(&liveRegisters, 16);
+			DoLivenessAnalisis(context, currentLeafBlock, &liveRegisters);
+
+#if DEBUG_OPTIMIZER
+			for (int nodeIdx = 0; nodeIdx < context->interferenceGraph.size; ++nodeIdx)
+			{
+				InterferenceGraphNode *currentNode = &context->interferenceGraph[nodeIdx];
+				Print("Register %lld coexists with: ", currentNode->registerIdx);
+				for (int i = 0; i < currentNode->edges.size; ++i)
+					Print("%lld, ", currentNode->edges[i]);
+				Print("\n");
+			}
+#endif
+
 			Array<InterferenceGraphNode *> nodeStack;
 			ArrayInit(&nodeStack, context->interferenceGraph.size, malloc);
 
@@ -540,7 +682,7 @@ void OptimizerMain(Context *context)
 					InterferenceGraphNode *currentNode = &context->interferenceGraph[nodeIdx];
 					if (currentNode->removed)
 						continue;
-					if (currentNode->edges.size < registersAvailable)
+					if (currentNode->edges.size < availableRegisters)
 					{
 						nodeToRemove = currentNode;
 						nodeToRemoveIdx = nodeIdx;
@@ -550,7 +692,8 @@ void OptimizerMain(Context *context)
 
 				if (!nodeToRemove)
 				{
-					// Choose a register to spill onto the stack
+					// Choose a register to spill onto the stack.
+					// This heuristic is very arbitrary and sub-optimal.
 					s64 mostEdges = -1;
 					for (int nodeIdx = 0; nodeIdx < context->interferenceGraph.size; ++nodeIdx)
 					{
@@ -562,6 +705,14 @@ void OptimizerMain(Context *context)
 							nodeToRemove = currentNode;
 							nodeToRemoveIdx = nodeIdx;
 							mostEdges = currentNode->edges.size;
+						}
+						else if ((s64)currentNode->edges.size == mostEdges)
+						{
+							if (currentNode->registerIdx < nodeToRemove->registerIdx)
+							{
+								nodeToRemove = currentNode;
+								nodeToRemoveIdx = nodeIdx;
+							}
 						}
 					}
 				}
@@ -588,7 +739,7 @@ void OptimizerMain(Context *context)
 			{
 				InterferenceGraphNode *currentNode = nodeStack[nodeIdx];
 
-				for (int candidate = 0; candidate < registersAvailable; ++candidate)
+				for (int candidate = 0; candidate < availableRegisters; ++candidate)
 				{
 					for (int edgeIdx = 0; edgeIdx < currentNode->edges.size; ++edgeIdx)
 					{
@@ -623,71 +774,22 @@ void OptimizerMain(Context *context)
 			for (int instructionIdx = 0; instructionIdx < instructionCount; ++instructionIdx)
 			{
 				IRInstruction *inst = &proc->instructions[instructionIdx];
+				ReplaceRegistersInInstruction(inst, registerMap);
+			}
 
-				if (inst->type >= IRINSTRUCTIONTYPE_UNARY_BEGIN &&
-						inst->type < IRINSTRUCTIONTYPE_UNARY_END)
+			if (spilledSomething)
+			{
+				// Clear 'liveness analized once' flag from all blocks
+				u64 basicBlockCount = BucketArrayCount(&context->basicBlocks);
+				for (int i = 0; i < basicBlockCount; ++i)
 				{
-					ReplaceIfRegister(&inst->unaryOperation.in, registerMap);
-					ReplaceIfRegister(&inst->unaryOperation.out, registerMap);
-				}
-				else if (inst->type >= IRINSTRUCTIONTYPE_BINARY_BEGIN &&
-						inst->type < IRINSTRUCTIONTYPE_BINARY_END)
-				{
-					ReplaceIfRegister(&inst->binaryOperation.left, registerMap);
-					ReplaceIfRegister(&inst->binaryOperation.right, registerMap);
-					ReplaceIfRegister(&inst->binaryOperation.out, registerMap);
-				}
-				else switch (inst->type)
-				{
-				case IRINSTRUCTIONTYPE_ASSIGNMENT:
-				{
-					IRValue *src = &inst->assignment.src;
-					IRValue *dst = &inst->assignment.dst;
-					if (dst->valueType == IRVALUETYPE_REGISTER &&
-							dst->registerIdx < IRSPECIALREGISTER_BEGIN &&
-							((u64)dst->registerIdx >= registerMap.size || registerMap[dst->registerIdx] == -1)) // @Cleanup: I hate this!
-					{
-						// Replace assignment to unused register for a NOP.
-						// Wanted to be specific with the '-1' here so we are more likely to see when
-						// garbage gets into the register map.
-						inst->type = IRINSTRUCTIONTYPE_NOP;
-					}
-					else
-					{
-						ReplaceIfRegister(src, registerMap);
-						ReplaceIfRegister(dst, registerMap);
-					}
-				} break;
-				case IRINSTRUCTIONTYPE_PROCEDURE_CALL:
-				{
-					IRValue *out = &inst->procedureCall.out;
-					if (out->valueType == IRVALUETYPE_REGISTER &&
-							out->registerIdx < IRSPECIALREGISTER_BEGIN &&
-							registerMap[out->registerIdx] == -1)
-						// Remove unused return value.
-						// Wanted to be specific with the '-1' here so we are more likely to see when
-						// garbage gets into the register map.
-						out->valueType = IRVALUETYPE_INVALID;
-					else
-						ReplaceIfRegister(out, registerMap);
-
-					for (int paramIdx = 0; paramIdx < inst->procedureCall.parameters.size; ++paramIdx)
-						ReplaceIfRegister(&inst->procedureCall.parameters[paramIdx], registerMap);
-				} break;
-				case IRINSTRUCTIONTYPE_INTRINSIC_MEMCPY:
-				{
-					ReplaceIfRegister(&inst->memcpy.src, registerMap);
-					ReplaceIfRegister(&inst->memcpy.dst, registerMap);
-					ReplaceIfRegister(&inst->memcpy.size, registerMap);
-				} break;
-				case IRINSTRUCTIONTYPE_JUMP_IF_ZERO:
-				case IRINSTRUCTIONTYPE_JUMP_IF_NOT_ZERO:
-				{
-					ReplaceIfRegister(&inst->conditionalJump.condition, registerMap);
-				} break;
+					BasicBlock *basicBlock = &context->basicBlocks[i];
+					basicBlock->livenessAnalizedOnce = false;
+					basicBlock->liveRegistersAtInput.size = 0;
+					basicBlock->liveRegistersAtOutput.size = 0;
 				}
 			}
-			//if (!spilledSomething)
+			else
 				break;
 		}
 	}

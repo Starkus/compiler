@@ -84,6 +84,7 @@ struct IRStaticVariable;
 struct IRScope;
 struct IRProcedureScope;
 struct IRLabel;
+struct IRInstruction;
 struct BasicBlock;
 struct InterferenceGraphNode;
 struct Context
@@ -121,6 +122,7 @@ struct Context
 	BucketArray<BasicBlock, 512, malloc, realloc> basicBlocks;
 	DynamicArray<BasicBlock *, malloc, realloc> leafBasicBlocks;
 	DynamicArray<InterferenceGraphNode, malloc, realloc> interferenceGraph;
+	BucketArray<IRInstruction, 128, malloc, realloc> patchedInstructions;
 
 	// Backend
 	HANDLE outputFile;

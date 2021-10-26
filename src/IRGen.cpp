@@ -17,6 +17,18 @@ enum IRValueType
 	IRVALUETYPE_IMMEDIATE_STRING,
 	IRVALUETYPE_TYPEOF
 };
+#if 0
+@Todo
+enum IRValueSubType
+{
+	IRVALUETYPE_INVALID = -1,
+	IRVALUETYPE_MEMORY_REGISTER,
+	IRVALUETYPE_MEMORY_VARIABLE,
+	IRVALUETYPE_IMMEDIATE_INTEGER,
+	IRVALUETYPE_IMMEDIATE_FLOAT,
+	IRVALUETYPE_IMMEDIATE_STRING,
+};
+#endif
 struct IRValue
 {
 	IRValueType valueType;
@@ -128,6 +140,12 @@ struct IRIntrinsicMemcpy
 	IRValue size;
 };
 
+struct IRPatchInstruction
+{
+	IRInstruction *first;
+	IRInstruction *second;
+};
+
 enum IRInstructionType
 {
 	IRINSTRUCTIONTYPE_INVALID = -1,
@@ -175,7 +193,9 @@ enum IRInstructionType
 	IRINSTRUCTIONTYPE_LESS_THAN_OR_EQUALS,
 	IRINSTRUCTIONTYPE_BINARY_END,
 
-	IRINSTRUCTIONTYPE_INTRINSIC_MEMCPY
+	IRINSTRUCTIONTYPE_INTRINSIC_MEMCPY,
+
+	IRINSTRUCTIONTYPE_PATCH
 };
 struct IRInstruction
 {
@@ -196,6 +216,8 @@ struct IRInstruction
 		IRArrayAccess arrayAccess;
 		IRUnaryOperation unaryOperation;
 		IRBinaryOperation binaryOperation;
+
+		IRPatchInstruction patch;
 
 		IRIntrinsicMemcpy memcpy;
 	};

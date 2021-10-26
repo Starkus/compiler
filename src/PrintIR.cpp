@@ -133,6 +133,13 @@ void PrintIRInstruction(Context *context, IRInstruction inst)
 		PrintIRValue(context, inst.assignment.src);
 		Print("\n");
 	} break;
+	case IRINSTRUCTIONTYPE_LOAD_EFFECTIVE_ADDRESS:
+	{
+		PrintIRValue(context, inst.assignment.dst);
+		Print(" = ^");
+		PrintIRValue(context, inst.assignment.src);
+		Print("\n");
+	} break;
 	case IRINSTRUCTIONTYPE_INTRINSIC_MEMCPY:
 	{
 		Print("memcpy(");
@@ -142,6 +149,11 @@ void PrintIRInstruction(Context *context, IRInstruction inst)
 		Print(", ");
 		PrintIRValue(context, inst.memcpy.size);
 		Print(")\n");
+	} break;
+	case IRINSTRUCTIONTYPE_PATCH:
+	{
+		PrintIRInstruction(context, *inst.patch.first);
+		PrintIRInstruction(context, *inst.patch.second);
 	} break;
 	default:
 	{

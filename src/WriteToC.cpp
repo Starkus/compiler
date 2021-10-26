@@ -55,6 +55,7 @@ String CRegisterToStr(s64 registerIdx)
 	case IRSPECIALREGISTER_SHOULD_RETURN:
 		return "rDoRet"_s;
 	default:
+		ASSERT(registerIdx >= 0);
 		return TPrintF("r%lld", registerIdx);
 	}
 }
@@ -75,6 +76,7 @@ String CIRValueToStr(Context *context, IRValue value, bool asPointer = false)
 	}
 	else if (value.valueType == IRVALUETYPE_MEMORY)
 	{
+		s64 offset = value.memory.offset;
 		if (value.memory.baseVariable)
 		{
 			if (value.memory.baseVariable->isStatic)
@@ -82,7 +84,8 @@ String CIRValueToStr(Context *context, IRValue value, bool asPointer = false)
 			else
 			{
 				ASSERT(value.memory.baseVariable->isAllocated);
-				result = TPrintF("rBasePtr.ptr_-0x%llx", -value.memory.baseVariable->stackOffset);
+				result = "rBasePtr.ptr_"_s;
+				offset += value.memory.baseVariable->stackOffset;
 			}
 		}
 		else
@@ -90,9 +93,12 @@ String CIRValueToStr(Context *context, IRValue value, bool asPointer = false)
 			result = TPrintF("%S.ptr_", CRegisterToStr(value.memory.baseRegister));
 		}
 
-		if (value.memory.offset)
+		if (offset)
 		{
-			result = TPrintF("%S+0x%llx", result, value.memory.offset);
+			if (offset > 0)
+				result = TPrintF("%S+0x%llx", result, offset);
+			else
+				result = TPrintF("%S-0x%llx", result, -offset);
 		}
 
 		if (!asPointer)
@@ -231,6 +237,146 @@ void PrintOut(Context *context, HANDLE outputFile, const char *format, ...)
 	WriteFile(outputFile, buffer, (DWORD)strlen(buffer), &bytesWritten, nullptr);
 
 	va_end(args);
+}
+
+void CPrintOutInstruction(Context *context, HANDLE outputFile, IRInstruction inst)
+{
+	// Silent instructions
+	switch (inst.type)
+	{
+	case IRINSTRUCTIONTYPE_NOP:
+	case IRINSTRUCTIONTYPE_PUSH_SCOPE:
+	case IRINSTRUCTIONTYPE_POP_SCOPE:
+		return;
+	}
+
+	if (inst.type != IRINSTRUCTIONTYPE_LABEL)
+		PrintOut(context, outputFile, "\t");
+
+	switch (inst.type)
+	{
+	case IRINSTRUCTIONTYPE_PUSH_VARIABLE:
+	{
+		PrintOut(context, outputFile, "/* Push variable \"%S\" to stackBase - 0x%llx */\n",
+				inst.pushVariable.variable->name, -inst.pushVariable.variable->stackOffset);
+	} break;
+	case IRINSTRUCTIONTYPE_COMMENT:
+	{
+		PrintOut(context, outputFile, "// %S\n", inst.comment);
+	} break;
+	case IRINSTRUCTIONTYPE_ASSIGNMENT:
+	{
+		String src = CIRValueToStr(context, inst.assignment.src);
+		String dst = CIRValueToStr(context, inst.assignment.dst);
+		PrintOut(context, outputFile, "%S = %S;\n", dst, src);
+	} break;
+	case IRINSTRUCTIONTYPE_PROCEDURE_CALL:
+	{
+		PrintOut(context, outputFile, "{\n");
+		for (s64 i = 0; i < (s64)inst.procedureCall.parameters.size; ++i)
+		{
+			String param = CIRValueToStr(context, inst.procedureCall.parameters[i]);
+			String memberName = CTypeInfoToString(context, inst.procedureCall.parameters[i].typeTableIdx);
+			PrintOut(context, outputFile, "\t\tRegister param%lld; param%lld.%S_ = %S;\n", i, i, memberName, param);
+		}
+
+		PrintOut(context, outputFile, "\t\t");
+		if (inst.procedureCall.out.valueType != IRVALUETYPE_INVALID)
+		{
+			String out;
+			if (inst.procedureCall.procedure->isExternal)
+				out = CIRValueToStr(context, inst.procedureCall.out);
+			else
+				out = CIRValueToStrAsRegister(context, inst.procedureCall.out);
+			PrintOut(context, outputFile, "%S = ", out);
+		}
+		String procLabel = CProcedureToLabel(context, inst.procedureCall.procedure);
+		PrintOut(context, outputFile, "%S(", procLabel);
+		for (s64 i = 0; i < (s64)inst.procedureCall.parameters.size; ++i)
+		{
+			if (i > 0) PrintOut(context, outputFile, ", ");
+
+			if (inst.procedureCall.procedure->isExternal)
+			{
+				String memberName = CTypeInfoToString(context, inst.procedureCall.parameters[i].typeTableIdx);
+				PrintOut(context, outputFile, "param%lld.%S_", i, memberName);
+			}
+			else
+				PrintOut(context, outputFile, "param%lld", i);
+		}
+		PrintOut(context, outputFile, ");\n\t}\n");
+	} break;
+	case IRINSTRUCTIONTYPE_RETURN:
+	{
+		PrintOut(context, outputFile, "return rRet;\n");
+	} break;
+	case IRINSTRUCTIONTYPE_LABEL:
+	{
+		String label = inst.label->name;
+		PrintOut(context, outputFile, "%S:;\n", label);
+		//if (instructionIdx == instructionCount - 1) // @Fix
+			// Label can't be right before a closing brace
+			//PrintOut(context, outputFile, ";\n");
+	} break;
+	case IRINSTRUCTIONTYPE_JUMP:
+	{
+		String label = inst.conditionalJump.label->name;
+		PrintOut(context, outputFile, "goto %S;\n", label);
+	} break;
+	case IRINSTRUCTIONTYPE_JUMP_IF_ZERO:
+	{
+		String label = inst.conditionalJump.label->name;
+		String condition = CIRValueToStr(context, inst.conditionalJump.condition);
+		PrintOut(context, outputFile, "if (!%S) goto %S;\n", condition, label);
+	} break;
+	case IRINSTRUCTIONTYPE_JUMP_IF_NOT_ZERO:
+	{
+		String label = inst.conditionalJump.label->name;
+		String condition = CIRValueToStr(context, inst.conditionalJump.condition);
+		PrintOut(context, outputFile, "if (%S) goto %S;\n", condition, label);
+	} break;
+	case IRINSTRUCTIONTYPE_INTRINSIC_MEMCPY:
+	{
+		String src = CIRValueToStr(context, inst.memcpy.src);
+		String dst = CIRValueToStr(context, inst.memcpy.dst);
+		String size = CIRValueToStr(context, inst.memcpy.size);
+		PrintOut(context, outputFile, "memcpy(%S, %S, %S);\n", dst, src, size);
+	} break;
+	case IRINSTRUCTIONTYPE_LOAD_EFFECTIVE_ADDRESS:
+	{
+		String in = CIRValueToStr(context, inst.unaryOperation.in, true);
+		String out = CIRValueToStr(context, inst.unaryOperation.out);
+		PrintOut(context, outputFile, "%S = %S;\n", out, in);
+	} break;
+	case IRINSTRUCTIONTYPE_PATCH:
+	{
+		CPrintOutInstruction(context, outputFile, *inst.patch.first);
+		CPrintOutInstruction(context, outputFile, *inst.patch.second);
+	} break;
+	default:
+	{
+		if (inst.type >= IRINSTRUCTIONTYPE_UNARY_BEGIN && inst.type < IRINSTRUCTIONTYPE_UNARY_END)
+		{
+			String out = CIRValueToStr(context, inst.unaryOperation.out);
+			String in = CIRValueToStr(context, inst.unaryOperation.in);
+			String op = OperatorToStr(inst);
+			PrintOut(context, outputFile, "%S = %S%S;\n", out, op, in);
+		}
+		else if (inst.type >= IRINSTRUCTIONTYPE_BINARY_BEGIN && inst.type < IRINSTRUCTIONTYPE_BINARY_END)
+		{
+			String out = CIRValueToStr(context, inst.binaryOperation.out);
+			String left = CIRValueToStr(context, inst.binaryOperation.left);
+			String op = OperatorToStr(inst);
+			String right = CIRValueToStr(context, inst.binaryOperation.right);
+			PrintOut(context, outputFile, "%S = %S %S %S;\n", out, left, op, right);
+		}
+		else
+		{
+			ASSERT(!"Didn't recognize instruction type");
+			PrintOut(context, outputFile, "???INST\n");
+		}
+	}
+	}
 }
 
 void WriteToC(Context *context)
@@ -464,126 +610,7 @@ void WriteToC(Context *context)
 		{
 			IRInstruction inst = proc->instructions[instructionIdx];
 
-			// Silent instructions
-			switch (inst.type)
-			{
-			case IRINSTRUCTIONTYPE_NOP:
-			case IRINSTRUCTIONTYPE_PUSH_SCOPE:
-			case IRINSTRUCTIONTYPE_POP_SCOPE:
-				continue;
-			}
-
-			if (inst.type != IRINSTRUCTIONTYPE_LABEL)
-				PrintOut(context, outputFile, "\t");
-
-			switch (inst.type)
-			{
-			case IRINSTRUCTIONTYPE_PUSH_VARIABLE:
-			{
-				PrintOut(context, outputFile, "/* Push variable \"%S\" to stackBase - 0x%llx */\n",
-						inst.pushVariable.variable->name, -inst.pushVariable.variable->stackOffset);
-			} break;
-			case IRINSTRUCTIONTYPE_COMMENT:
-			{
-				PrintOut(context, outputFile, "// %S\n", inst.comment);
-			} break;
-			case IRINSTRUCTIONTYPE_ASSIGNMENT:
-			{
-				String src = CIRValueToStr(context, inst.assignment.src);
-				String dst = CIRValueToStr(context, inst.assignment.dst);
-				PrintOut(context, outputFile, "%S = %S;\n", dst, src);
-			} break;
-			case IRINSTRUCTIONTYPE_PROCEDURE_CALL:
-			{
-				if (inst.procedureCall.out.valueType != IRVALUETYPE_INVALID)
-				{
-					String out;
-					if (inst.procedureCall.procedure->isExternal)
-						out = CIRValueToStr(context, inst.procedureCall.out);
-					else
-						out = CIRValueToStrAsRegister(context, inst.procedureCall.out);
-					PrintOut(context, outputFile, "%S = ", out);
-				}
-				String procLabel = CProcedureToLabel(context, inst.procedureCall.procedure);
-				PrintOut(context, outputFile, "%S(", procLabel);
-				for (int i = 0; i < inst.procedureCall.parameters.size; ++i)
-				{
-					String param;
-					if (inst.procedureCall.procedure->isExternal)
-						param = CIRValueToStr(context, inst.procedureCall.parameters[i]);
-					else
-						param = CIRValueToStrAsRegister(context, inst.procedureCall.parameters[i]);
-					if (i > 0) PrintOut(context, outputFile, ", ");
-					PrintOut(context, outputFile, "%S", param);
-				}
-				PrintOut(context, outputFile, ");\n");
-			} break;
-			case IRINSTRUCTIONTYPE_RETURN:
-			{
-				PrintOut(context, outputFile, "return rRet;\n");
-			} break;
-			case IRINSTRUCTIONTYPE_LABEL:
-			{
-				String label = inst.label->name;
-				PrintOut(context, outputFile, "%S:\n", label);
-				if (instructionIdx == instructionCount - 1)
-					// Label can't be right before a closing brace
-					PrintOut(context, outputFile, ";\n");
-			} break;
-			case IRINSTRUCTIONTYPE_JUMP:
-			{
-				String label = inst.conditionalJump.label->name;
-				PrintOut(context, outputFile, "goto %S;\n", label);
-			} break;
-			case IRINSTRUCTIONTYPE_JUMP_IF_ZERO:
-			{
-				String label = inst.conditionalJump.label->name;
-				String condition = CIRValueToStr(context, inst.conditionalJump.condition);
-				PrintOut(context, outputFile, "if (!%S) goto %S;\n", condition, label);
-			} break;
-			case IRINSTRUCTIONTYPE_JUMP_IF_NOT_ZERO:
-			{
-				String label = inst.conditionalJump.label->name;
-				String condition = CIRValueToStr(context, inst.conditionalJump.condition);
-				PrintOut(context, outputFile, "if (%S) goto %S;\n", condition, label);
-			} break;
-			case IRINSTRUCTIONTYPE_INTRINSIC_MEMCPY:
-			{
-				String src = CIRValueToStr(context, inst.memcpy.src);
-				String dst = CIRValueToStr(context, inst.memcpy.dst);
-				String size = CIRValueToStr(context, inst.memcpy.size);
-				PrintOut(context, outputFile, "memcpy(%S, %S, %S);\n", dst, src, size);
-			} break;
-			case IRINSTRUCTIONTYPE_LOAD_EFFECTIVE_ADDRESS:
-			{
-				String in = CIRValueToStr(context, inst.unaryOperation.in, true);
-				String out = CIRValueToStr(context, inst.unaryOperation.out);
-				PrintOut(context, outputFile, "%S = %S;\n", out, in);
-			} break;
-			default:
-			{
-				if (inst.type >= IRINSTRUCTIONTYPE_UNARY_BEGIN && inst.type < IRINSTRUCTIONTYPE_UNARY_END)
-				{
-					String out = CIRValueToStr(context, inst.unaryOperation.out);
-					String in = CIRValueToStr(context, inst.unaryOperation.in);
-					String op = OperatorToStr(inst);
-					PrintOut(context, outputFile, "%S = %S%S;\n", out, op, in);
-				}
-				else if (inst.type >= IRINSTRUCTIONTYPE_BINARY_BEGIN && inst.type < IRINSTRUCTIONTYPE_BINARY_END)
-				{
-					String out = CIRValueToStr(context, inst.binaryOperation.out);
-					String left = CIRValueToStr(context, inst.binaryOperation.left);
-					String op = OperatorToStr(inst);
-					String right = CIRValueToStr(context, inst.binaryOperation.right);
-					PrintOut(context, outputFile, "%S = %S %S %S;\n", out, left, op, right);
-				}
-				else
-				{
-					ASSERT(!"Didn't recognize instruction type");
-					PrintOut(context, outputFile, "???INST\n");
-				}
-			}
-			}
+			CPrintOutInstruction(context, outputFile, inst);
 		}
 		PrintOut(context, outputFile, "}\n\n");
 	}
