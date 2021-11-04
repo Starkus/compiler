@@ -10,40 +10,29 @@ enum IRValueType
 {
 	IRVALUETYPE_INVALID = -1,
 	IRVALUETYPE_REGISTER,
-	IRVALUETYPE_PARAMETER,
-	IRVALUETYPE_MEMORY,
-	IRVALUETYPE_IMMEDIATE_INTEGER,
-	IRVALUETYPE_IMMEDIATE_FLOAT,
-	IRVALUETYPE_IMMEDIATE_STRING,
-	IRVALUETYPE_TYPEOF
-};
-#if 0
-@Todo
-enum IRValueSubType
-{
-	IRVALUETYPE_INVALID = -1,
 	IRVALUETYPE_MEMORY_REGISTER,
 	IRVALUETYPE_MEMORY_VARIABLE,
 	IRVALUETYPE_IMMEDIATE_INTEGER,
 	IRVALUETYPE_IMMEDIATE_FLOAT,
 	IRVALUETYPE_IMMEDIATE_STRING,
+	IRVALUETYPE_TYPEOF
 };
-#endif
 struct IRValue
 {
 	IRValueType valueType;
 	union
 	{
 		s64 registerIdx;
-		s64 parameterIdx;
 		s64 immediate;
 		f64 immediateFloat;
 		String immediateString;
 		struct
 		{
-			// @Todo: Better packing here?
-			s64 baseRegister;
-			Variable *baseVariable;
+			union
+			{
+				s64 baseRegister;
+				Variable *baseVariable;
+			};
 			s64 offset;
 		} memory;
 		s64 typeOfTypeTableIdx;
@@ -118,13 +107,7 @@ struct IRBinaryOperation
 
 struct IRGetParameter
 {
-	IRValue out;
-	s64 parameterIdx;
-};
-
-struct IRSetParameter
-{
-	IRValue in;
+	IRValue dst;
 	s64 parameterIdx;
 };
 
@@ -160,6 +143,7 @@ enum IRInstructionType
 	IRINSTRUCTIONTYPE_JUMP_IF_NOT_ZERO,
 	IRINSTRUCTIONTYPE_RETURN,
 	IRINSTRUCTIONTYPE_PROCEDURE_CALL,
+	IRINSTRUCTIONTYPE_GET_PARAMETER,
 	IRINSTRUCTIONTYPE_PUSH_VARIABLE,
 	IRINSTRUCTIONTYPE_PUSH_SCOPE,
 	IRINSTRUCTIONTYPE_POP_SCOPE,
@@ -209,7 +193,6 @@ struct IRInstruction
 		IRProcedureCall procedureCall;
 		IRPushVariable pushVariable;
 		IRGetParameter getParameter;
-		IRSetParameter setParameter;
 		IRVariableDeclaration variableDeclaration;
 		IRAssignment assignment;
 		IRMemberAccess memberAccess;
@@ -338,7 +321,7 @@ IRValue IRValueRegister(s64 registerIdx, s64 typeTableIdx = TYPETABLEIDX_S64)
 IRValue IRValueMemory(s64 baseRegister, s64 offset, s64 typeTableIdx)
 {
 	IRValue result = {};
-	result.valueType = IRVALUETYPE_MEMORY;
+	result.valueType = IRVALUETYPE_MEMORY_REGISTER;
 	result.memory.baseRegister = baseRegister;
 	result.memory.offset = offset;
 	result.typeTableIdx = typeTableIdx;
@@ -348,7 +331,7 @@ IRValue IRValueMemory(s64 baseRegister, s64 offset, s64 typeTableIdx)
 IRValue IRValueMemory(Variable *baseVariable, s64 offset, s64 typeTableIdx)
 {
 	IRValue result = {};
-	result.valueType = IRVALUETYPE_MEMORY;
+	result.valueType = IRVALUETYPE_MEMORY_VARIABLE;
 	result.memory.baseVariable = baseVariable;
 	result.memory.offset = offset;
 	result.typeTableIdx = typeTableIdx;
@@ -368,7 +351,8 @@ IRValue IRDereferenceValue(Context *context, IRValue in)
 		IRValue result = IRValueMemory(in.registerIdx, 0, pointedTypeIdx);
 		return result;
 	}
-	else if (in.valueType == IRVALUETYPE_MEMORY)
+	else if (in.valueType == IRVALUETYPE_MEMORY_REGISTER ||
+			 in.valueType == IRVALUETYPE_MEMORY_VARIABLE)
 	{
 		IRValue reg = IRValueRegister(NewVirtualRegister(context), in.typeTableIdx);
 
@@ -387,7 +371,8 @@ IRValue IRDereferenceValue(Context *context, IRValue in)
 
 IRValue IRPointerToValue(Context *context, IRValue in)
 {
-	ASSERT(in.valueType == IRVALUETYPE_MEMORY);
+	ASSERT(in.valueType == IRVALUETYPE_MEMORY_REGISTER ||
+		   in.valueType == IRVALUETYPE_MEMORY_VARIABLE);
 	s64 pointerTypeIdx = GetTypeInfoPointerOf(context, in.typeTableIdx);
 
 	if (in.memory.baseVariable == nullptr && in.memory.offset == 0)
@@ -485,7 +470,8 @@ IRValue IRDoMemberAccess(Context *context, IRValue structValue, StructMember *st
 		typeInfo = &context->typeTable[structValue.typeTableIdx];
 	}
 
-	ASSERT(structValue.valueType == IRVALUETYPE_MEMORY);
+	ASSERT(structValue.valueType == IRVALUETYPE_MEMORY_REGISTER ||
+		   structValue.valueType == IRVALUETYPE_MEMORY_VARIABLE);
 	IRValue result = structValue;
 	result.typeTableIdx = structMember->typeTableIdx;
 	result.memory.offset += structMember->offset;
@@ -515,7 +501,8 @@ IRValue IRDoArrayAccess(Context *context, IRValue arrayValue, IRValue indexValue
 		arrayValue = IRDereferenceValue(context, arrayValue);
 	}
 
-	ASSERT(arrayValue.valueType == IRVALUETYPE_MEMORY);
+	ASSERT(arrayValue.valueType == IRVALUETYPE_MEMORY_REGISTER ||
+		   arrayValue.valueType == IRVALUETYPE_MEMORY_VARIABLE);
 	s64 elementSize = context->typeTable[elementTypeIdx].size;
 
 	IRValue offsetValue = IRInstructionFromMultiply(context, indexValue,
@@ -577,18 +564,13 @@ IRValue IRValueFromVariable(Context *context, Variable *variable)
 	IRValue result = {};
 	result.typeTableIdx = variable->typeTableIdx;
 
-	if (variable->parameterIndex >= 0)
-	{
-		result.valueType = IRVALUETYPE_PARAMETER;
-		result.parameterIdx = variable->parameterIndex;
-		if (IRShouldPassByCopy(context, variable->typeTableIdx))
-			result.typeTableIdx = GetTypeInfoPointerOf(context, variable->typeTableIdx);
-	}
-	else if (variable->isRegister)
+	if (variable->isRegister)
 		result = IRValueRegister(variable->registerIdx, variable->typeTableIdx);
 	else
 	{
 		result = IRValueMemory(variable, 0, variable->typeTableIdx);
+		if (variable->parameterIndex >= 0 && IRShouldPassByCopy(context, variable->typeTableIdx))
+			result.typeTableIdx = GetTypeInfoPointerOf(context, variable->typeTableIdx);
 	}
 	return result;
 }
@@ -625,7 +607,8 @@ void IRInstructionFromAssignment(Context *context, IRValue leftValue, IRValue ri
 		IRValue dataValue = rightValue;
 
 		// If data isn't in memory, copy to a variable
-		if (dataValue.valueType != IRVALUETYPE_MEMORY)
+		if (dataValue.valueType != IRVALUETYPE_MEMORY_REGISTER ||
+			dataValue.valueType != IRVALUETYPE_MEMORY_VARIABLE)
 		{
 			static u64 tempVarForAnyUniqueID = 0;
 			String tempVarName = TPrintF("_tempVarForAny%llu", tempVarForAnyUniqueID++);
@@ -1011,12 +994,23 @@ IRValue IRGenFromExpression(Context *context, ASTExpression *expression)
 			IRValue paramValue = IRValueFromVariable(context, paramVar);
 
 			ASSERT(paramVar->parameterIndex >= 0);
+#if 0
 			IRPushVariableIntoStack(context, paramVar);
 			paramVar->parameterIndex = -1;
 			paramVar->canBeRegister = true;
+#else
+			paramVar->parameterIndex = -1;
+			paramVar->canBeRegister = true;
+			paramVar->isRegister = true;
+			paramVar->registerIdx = NewVirtualRegister(context);
+#endif
 
 			IRValue varValue = IRValueFromVariable(context, paramVar);
-			IRInstructionFromAssignment(context, varValue, paramValue);
+
+			IRInstruction *getParamInst = AddInstruction(context);
+			getParamInst->type = IRINSTRUCTIONTYPE_GET_PARAMETER;
+			getParamInst->getParameter.dst = varValue;
+			getParamInst->getParameter.parameterIdx = i;
 		}
 
 		if (procedure->astBody)
@@ -1234,6 +1228,11 @@ IRValue IRGenFromExpression(Context *context, ASTExpression *expression)
 		s32 callParamCount = (s32)astProcCall->arguments.size;
 		s32 paramCount = Max(totalParamCount, callParamCount) + isReturnByCopy;
 		ArrayInit(&procCallInst.procedureCall.parameters, paramCount, malloc);
+
+		// Remember parameter count because we need space for them in the stack
+		IRProcedureScope *currentProc = &context->irProcedureStack[context->irProcedureStack.size - 1];
+		if (currentProc->procedure->allocatedParameterCount < paramCount)
+			currentProc->procedure->allocatedParameterCount = paramCount;
 
 		// Return value
 		procCallInst.procedureCall.out.valueType = IRVALUETYPE_INVALID;

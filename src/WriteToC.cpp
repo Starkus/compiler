@@ -64,20 +64,18 @@ String CIRValueToStr(Context *context, IRValue value, bool asPointer = false)
 {
 	String result = "???VALUE"_s;
 
-	if (value.valueType == IRVALUETYPE_REGISTER)
+	switch (value.valueType)
+	{
+	case IRVALUETYPE_REGISTER:
 	{
 		String memberName = CTypeInfoToString(context, value.typeTableIdx);
 		result = TPrintF("%S.%S_", CRegisterToStr(value.registerIdx), memberName);
-	}
-	else if (value.valueType == IRVALUETYPE_PARAMETER)
-	{
-		String memberName = CTypeInfoToString(context, value.typeTableIdx);
-		result = TPrintF("param%hhd.%S_", value.parameterIdx, memberName);
-	}
-	else if (value.valueType == IRVALUETYPE_MEMORY)
+	} break;
+	case IRVALUETYPE_MEMORY_REGISTER:
+	case IRVALUETYPE_MEMORY_VARIABLE:
 	{
 		s64 offset = value.memory.offset;
-		if (value.memory.baseVariable)
+		if (value.valueType == IRVALUETYPE_MEMORY_VARIABLE)
 		{
 			if (value.memory.baseVariable->isStatic)
 				result = TPrintF("%S", value.memory.baseVariable->name);
@@ -89,9 +87,7 @@ String CIRValueToStr(Context *context, IRValue value, bool asPointer = false)
 			}
 		}
 		else
-		{
 			result = TPrintF("%S.ptr_", CRegisterToStr(value.memory.baseRegister));
-		}
 
 		if (offset)
 		{
@@ -106,21 +102,22 @@ String CIRValueToStr(Context *context, IRValue value, bool asPointer = false)
 			String castStr = CTypeInfoToString(context, value.typeTableIdx);
 			result = TPrintF("*(%S*)(%S)", castStr, result);
 		}
-	}
-	else if (value.valueType == IRVALUETYPE_IMMEDIATE_INTEGER)
+	} break;
+	case IRVALUETYPE_IMMEDIATE_INTEGER:
 	{
 		result = TPrintF("0x%llx", value.immediate);
-	}
-	else if (value.valueType == IRVALUETYPE_IMMEDIATE_FLOAT)
+	} break;
+	case IRVALUETYPE_IMMEDIATE_FLOAT:
 	{
 		result = TPrintF("%f", value.immediateFloat);
-	}
-	else if (value.valueType == IRVALUETYPE_TYPEOF)
+	} break;
+	case IRVALUETYPE_TYPEOF:
 	{
 		result = TPrintF("&_typeInfo%lld", value.typeOfTypeTableIdx);
-	}
-	else
+	} break;
+	default:
 		ASSERT(!"Invalid value type!");
+	}
 
 	return result;
 }
@@ -305,6 +302,12 @@ void CPrintOutInstruction(Context *context, HANDLE outputFile, IRInstruction ins
 				PrintOut(context, outputFile, "param%lld", i);
 		}
 		PrintOut(context, outputFile, ");\n\t}\n");
+	} break;
+	case IRINSTRUCTIONTYPE_GET_PARAMETER:
+	{
+		String dst = CIRValueToStr(context, inst.getParameter.dst);
+		String memberName = CTypeInfoToString(context, inst.getParameter.dst.typeTableIdx);
+		PrintOut(context, outputFile, "%S = param%lld.%S_;\n", dst, inst.getParameter.parameterIdx, memberName);
 	} break;
 	case IRINSTRUCTIONTYPE_RETURN:
 	{

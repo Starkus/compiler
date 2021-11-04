@@ -1105,47 +1105,44 @@ void TypeCheckExpression(Context *context, ASTExpression *expression)
 	{
 		ASTStaticDefinition astStaticDef = expression->staticDefinition;
 
-		StaticDefinition staticDefinition = {};
-		staticDefinition.name = astStaticDef.name;
-
 		// Check if already exists
 		TCScope *stackTop = &context->tcStack[context->tcStack.size - 1];
 		for (s64 i = 0; i < (s64)stackTop->names.size; ++i)
 		{
 			TCScopeName currentName = stackTop->names[i];
-			if (StringEquals(staticDefinition.name, currentName.name))
+			if (StringEquals(astStaticDef.name, currentName.name))
 			{
 				LogErrorNoCrash(context, expression->any.loc,
-						TPrintF("Duplicate static definition \"%S\"", staticDefinition.name));
+						TPrintF("Duplicate static definition \"%S\"", astStaticDef.name));
 				LogNote(context, currentName.loc, "First defined here"_s);
 			}
 		}
 
-		TypeCheckExpression(context, astStaticDef.expression);
-		staticDefinition.typeTableIdx = astStaticDef.expression->typeTableIdx;
-		if (astStaticDef.expression->nodeType == ASTNODETYPE_PROCEDURE_DECLARATION)
-		{
-			staticDefinition.definitionType = STATICDEFINITIONTYPE_PROCEDURE;
-			staticDefinition.procedure = astStaticDef.expression->procedureDeclaration.procedure;
-		}
-		else if (astStaticDef.expression->nodeType == ASTNODETYPE_TYPE)
-		{
-			staticDefinition.definitionType = STATICDEFINITIONTYPE_TYPE;
-		}
-		else
-		{
-			staticDefinition.definitionType = STATICDEFINITIONTYPE_CONSTANT;
-			staticDefinition.constant = EvaluateConstant(context, astStaticDef.expression);
-		}
-
 		StaticDefinition *newStaticDef = BucketArrayAdd(&context->staticDefinitions);
-		*newStaticDef = staticDefinition;
+		newStaticDef->name = astStaticDef.name;
 
 		TCScopeName newScopeName;
 		newScopeName.type = NAMETYPE_STATIC_DEFINITION;
 		newScopeName.name = astStaticDef.name;
 		newScopeName.staticDefinition = newStaticDef;
 		*DynamicArrayAdd(&stackTop->names) = newScopeName;
+
+		if (astStaticDef.expression->nodeType == ASTNODETYPE_PROCEDURE_DECLARATION)
+		{
+			newStaticDef->definitionType = STATICDEFINITIONTYPE_PROCEDURE;
+			newStaticDef->procedure = astStaticDef.expression->procedureDeclaration.procedure;
+		}
+		else if (astStaticDef.expression->nodeType == ASTNODETYPE_TYPE)
+		{
+			newStaticDef->definitionType = STATICDEFINITIONTYPE_TYPE;
+		}
+		else
+		{
+			newStaticDef->definitionType = STATICDEFINITIONTYPE_CONSTANT;
+			newStaticDef->constant = EvaluateConstant(context, astStaticDef.expression);
+		}
+		TypeCheckExpression(context, astStaticDef.expression);
+		newStaticDef->typeTableIdx = astStaticDef.expression->typeTableIdx;
 	} break;
 	case ASTNODETYPE_PROCEDURE_DECLARATION:
 	{

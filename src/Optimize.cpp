@@ -68,7 +68,7 @@ inline bool AddIfRegister(BasicBlock *basicBlock, IRValue value,
 	s64 registerIdx;
 	if (value.valueType == IRVALUETYPE_REGISTER)
 		registerIdx = value.registerIdx;
-	else if (value.valueType == IRVALUETYPE_MEMORY && !value.memory.baseVariable)
+	else if (value.valueType == IRVALUETYPE_MEMORY_REGISTER)
 		registerIdx = value.memory.baseRegister;
 	else
 		return false;
@@ -96,7 +96,7 @@ inline void RemoveIfRegister(BasicBlock *basicBlock, IRValue value,
 				(*array)[i] = (*array)[--array->size];
 		}
 	}
-	else if (value.valueType == IRVALUETYPE_MEMORY && !value.memory.baseVariable)
+	else if (value.valueType == IRVALUETYPE_MEMORY_REGISTER)
 	{
 		// The register is actually _used_ here, and not written to. Add instead.
 		IRValue reg = IRValueRegister(value.memory.baseRegister, value.typeTableIdx);
@@ -111,7 +111,7 @@ inline void ReplaceIfRegister(IRValue *value, Array<s64> registerMap)
 		if (value->registerIdx < (s64)registerMap.size)
 			value->registerIdx = registerMap[value->registerIdx];
 	}
-	else if (value->valueType == IRVALUETYPE_MEMORY && !value->memory.baseVariable)
+	else if (value->valueType == IRVALUETYPE_MEMORY_REGISTER)
 	{
 		if (value->memory.baseRegister < (s64)registerMap.size)
 			value->memory.baseRegister = registerMap[value->memory.baseRegister];
@@ -375,8 +375,8 @@ foundBlock:
 inline void ReplaceRegisterForVariable(Context *context, Procedure *procedure,
 		IRInstruction *instruction, IRValue *value, s64 registerIdx, Variable *variable)
 {
-	if (value->valueType == IRVALUETYPE_MEMORY && !value->memory.baseVariable &&
-			value->memory.baseRegister == registerIdx)
+	if (value->valueType == IRVALUETYPE_MEMORY_REGISTER &&
+		value->memory.baseRegister == registerIdx)
 	{
 		s64 newVirtualRegister = procedure->registerCount++;
 		IRValue tmp = IRValueRegister(newVirtualRegister, value->typeTableIdx);
@@ -525,8 +525,11 @@ void ResolveStackOffsets(Context *context)
 		if (proc->isExternal)
 			continue;
 
-		BasicBlock *currentBasicBlock = PushBasicBlock(context, nullptr);
-		currentBasicBlock->procedure = proc;
+		// @Incomplete: implement calling conventions other than MS ABI
+		s64 allocParameters = proc->allocatedParameterCount;
+		if (allocParameters < 4) allocParameters = 4;
+		else if (allocParameters & 1) ++allocParameters;
+		stackCursor -= allocParameters * 8;
 
 		u64 instructionCount = BucketArrayCount(&proc->instructions);
 		for (int instructionIdx = 0; instructionIdx < instructionCount; ++instructionIdx)

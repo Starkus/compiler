@@ -216,8 +216,8 @@ void UnexpectedTokenError(Context *context, Token *token)
 #include "IRGen.cpp"
 #include "PrintIR.cpp"
 #include "Optimize.cpp"
-#include "WriteToC.cpp"
-//#include "x64.cpp"
+//#include "WriteToC.cpp"
+#include "x64.cpp"
 
 bool Win32ReadEntireFile(const char *filename, u8 **fileBuffer, u64 *fileSize, void *(*allocFunc)(u64))
 {
@@ -343,8 +343,8 @@ int main(int argc, char **argv)
 	}
 #endif
 
-	//WriteToX64(&context);
-	WriteToC(&context);
+	WriteToX64(&context);
+	//WriteToC(&context);
 
 	Print("Compilation success\n");
 	return 0;

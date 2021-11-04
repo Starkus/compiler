@@ -12,22 +12,22 @@ inline String PIRRegisterToString(s64 registerIdx)
 
 void PrintIRValue(Context *context, IRValue value)
 {
-	if (value.valueType == IRVALUETYPE_MEMORY)
+	if (value.valueType == IRVALUETYPE_MEMORY_REGISTER)
 	{
-		Print("[");
-		if (value.memory.baseVariable)
-			Print("&%S", value.memory.baseVariable->name);
-		else
-			Print("$%S", PIRRegisterToString(value.memory.baseRegister));
-
+		Print("[$%S", PIRRegisterToString(value.memory.baseRegister));
+		if (value.memory.offset)
+			Print("+0x%llx", value.memory.offset);
+		Print("]");
+	}
+	else if (value.valueType == IRVALUETYPE_MEMORY_VARIABLE)
+	{
+		Print("[&%S", value.memory.baseVariable->name);
 		if (value.memory.offset)
 			Print("+0x%llx", value.memory.offset);
 		Print("]");
 	}
 	else if (value.valueType == IRVALUETYPE_REGISTER)
 		Print("$%S", PIRRegisterToString(value.registerIdx));
-	else if (value.valueType == IRVALUETYPE_PARAMETER)
-		Print("param%hhd", value.parameterIdx);
 	else if (value.valueType == IRVALUETYPE_IMMEDIATE_INTEGER)
 		Print("0x%llx", value.immediate);
 	else if (value.valueType == IRVALUETYPE_IMMEDIATE_FLOAT)
@@ -96,6 +96,11 @@ void PrintIRInstruction(Context *context, IRInstruction inst)
 	} break;
 	case IRINSTRUCTIONTYPE_PROCEDURE_CALL:
 	{
+		if (inst.procedureCall.out.valueType != IRVALUETYPE_INVALID)
+		{
+			PrintIRValue(context, inst.procedureCall.out);
+			Print(" := ");
+		}
 		StaticDefinition *procStaticDef = FindStaticDefinitionByProcedure(context,
 				inst.procedureCall.procedure);
 		if (procStaticDef)
