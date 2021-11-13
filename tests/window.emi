@@ -1,0 +1,50 @@
+AttachConsole :: external (handle : ^void);
+ATTACH_PARENT_PROCESS :: -1;
+
+CreateWindowExA :: external (
+		dwExStyle : u32,
+		lpClassName : ^u8,
+		lpWindowName : ^u8,
+		dwStyle : u32,
+		x : s64,
+		y : s64,
+		nWidth : s64,
+		nHeight : s64,
+		hWndParent : ^void,
+		hMenu : ^void,
+		hInstance : ^void,
+		lpParam : ^void
+	) -> ^void;
+WS_CLIPCHILDREN :: 0x02000000;
+WS_CLIPSIBLINGS :: 0x04000000;
+
+WinMain :: (hInstance : ^void, hPrevInstance : ^void, lpCmdLine : ^u8, showCmd : s64) -> s64
+{
+	AttachConsole(ATTACH_PARENT_PROCESS);
+	Print("Hello\n");
+
+	windowClass := "window\0";
+	windowTitle := "Hello, Sailor!\0";
+
+	windowClass : WNDCLASSEX;
+	windowClass.cbSize = sizeof(windowClass);
+	windowClass.style = CS_HREDRAW | CS_VREDRAW | CS_OWNDC;
+	windowClass.lpfnWndProc = Win32WindowCallback;
+	windowClass.hInstance = context->hInstance;
+	windowClass.lpszClassName = "window";
+	context->windowClass = windowClass;
+
+	bool success = RegisterClassEx(&context->windowClass);
+
+	window := CreateWindowExA(0, windowClass.data, windowTitle.data, WS_CLIPSIBLINGS | WS_CLIPCHILDREN,
+			0, 0, 1, 1, 0, 0, hInstance, 0);
+
+	Print("Test ok\n");
+	return 0;
+}
+
+Main :: () -> s64
+{
+	Print("Sailor\n");
+	return 0;
+}

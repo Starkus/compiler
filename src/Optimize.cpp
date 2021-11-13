@@ -135,9 +135,18 @@ void DoLivenessAnalisisOnInstruction(Context *context, BasicBlock *basicBlock, I
 	else switch (inst.type)
 	{
 	case IRINSTRUCTIONTYPE_ASSIGNMENT:
+	case IRINSTRUCTIONTYPE_ASSIGNMENT_ZERO_EXTEND:
 	{
 		RemoveIfRegister(basicBlock, inst.assignment.dst, liveRegisters);
 		AddIfRegister(basicBlock, inst.assignment.src, liveRegisters);
+	} break;
+	case IRINSTRUCTIONTYPE_GET_TYPE_INFO:
+	{
+		RemoveIfRegister(basicBlock, inst.getTypeInfo.out, liveRegisters);
+	} break;
+	case IRINSTRUCTIONTYPE_GET_PARAMETER:
+	{
+		RemoveIfRegister(basicBlock, inst.getParameter.dst, liveRegisters);
 	} break;
 	case IRINSTRUCTIONTYPE_PROCEDURE_CALL:
 	{
@@ -420,9 +429,18 @@ void SpillRegisterIntoMemoryInstruction(Context *context, Variable *newVar, IRIn
 	else switch (inst->type)
 	{
 	case IRINSTRUCTIONTYPE_ASSIGNMENT:
+	case IRINSTRUCTIONTYPE_ASSIGNMENT_ZERO_EXTEND:
 	{
 		ReplaceRegisterForVariable(context, procedure, inst, &inst->assignment.src, registerIdx, newVar);
 		ReplaceRegisterForVariable(context, procedure, inst, &inst->assignment.dst, registerIdx, newVar);
+	} break;
+	case IRINSTRUCTIONTYPE_GET_TYPE_INFO:
+	{
+		ReplaceRegisterForVariable(context, procedure, inst, &inst->getTypeInfo.out, registerIdx, newVar);
+	} break;
+	case IRINSTRUCTIONTYPE_GET_PARAMETER:
+	{
+		ReplaceRegisterForVariable(context, procedure, inst, &inst->getParameter.dst, registerIdx, newVar);
 	} break;
 	case IRINSTRUCTIONTYPE_PROCEDURE_CALL:
 	{
@@ -488,9 +506,13 @@ void ResolveInstructionStackOffsets(Context *context, IRInstruction inst,
 	{
 		Variable *var = inst.pushVariable.variable;
 		u64 size = context->typeTable[var->typeTableIdx].size;
-		*stackCursor -= size;
+		//s64 alignment = size > 8 ? 8 : NextPowerOf2(size);
+		s64 alignment = 8; //@Fix: hardcoded alignment because we use 8 byte operands everywhere
+		if (*stackCursor & (alignment - 1))
+			*stackCursor = (*stackCursor + alignment) & ~(alignment - 1);
 		var->stackOffset = *stackCursor;
 		var->isAllocated = true;
+		*stackCursor += size;
 	} break;
 	case IRINSTRUCTIONTYPE_PUSH_SCOPE:
 	{
@@ -498,8 +520,8 @@ void ResolveInstructionStackOffsets(Context *context, IRInstruction inst,
 	} break;
 	case IRINSTRUCTIONTYPE_POP_SCOPE:
 	{
-		if (-*stackCursor > (s64)*stackSize)
-			*stackSize = -*stackCursor;
+		if (*stackCursor > (s64)*stackSize)
+			*stackSize = *stackCursor;
 		*stackCursor = (*stack)[--stack->size];
 	} break;
 	case IRINSTRUCTIONTYPE_PATCH:
@@ -529,7 +551,10 @@ void ResolveStackOffsets(Context *context)
 		s64 allocParameters = proc->allocatedParameterCount;
 		if (allocParameters < 4) allocParameters = 4;
 		else if (allocParameters & 1) ++allocParameters;
-		stackCursor -= allocParameters * 8;
+		stackCursor += allocParameters * 8;
+		proc->stackSize += allocParameters * 8;
+		if (proc->stackSize & 15)
+			proc->stackSize = (proc->stackSize + 16) & (~15);
 
 		u64 instructionCount = BucketArrayCount(&proc->instructions);
 		for (int instructionIdx = 0; instructionIdx < instructionCount; ++instructionIdx)
@@ -558,6 +583,7 @@ void ReplaceRegistersInInstruction(IRInstruction *inst, Array<s64> registerMap)
 	else switch (inst->type)
 	{
 	case IRINSTRUCTIONTYPE_ASSIGNMENT:
+	case IRINSTRUCTIONTYPE_ASSIGNMENT_ZERO_EXTEND:
 	{
 		IRValue *src = &inst->assignment.src;
 		IRValue *dst = &inst->assignment.dst;
@@ -578,6 +604,14 @@ void ReplaceRegistersInInstruction(IRInstruction *inst, Array<s64> registerMap)
 		}
 		ReplaceIfRegister(src, registerMap);
 		ReplaceIfRegister(dst, registerMap);
+	} break;
+	case IRINSTRUCTIONTYPE_GET_TYPE_INFO:
+	{
+		ReplaceIfRegister(&inst->getTypeInfo.out, registerMap);
+	} break;
+	case IRINSTRUCTIONTYPE_GET_PARAMETER:
+	{
+		ReplaceIfRegister(&inst->getParameter.dst, registerMap);
 	} break;
 	case IRINSTRUCTIONTYPE_PROCEDURE_CALL:
 	{

@@ -34,13 +34,11 @@ void PrintIRValue(Context *context, IRValue value)
 		Print("%f", value.immediateFloat);
 	else if (value.valueType == IRVALUETYPE_IMMEDIATE_STRING)
 		Print("%S", value.immediateString);
-	else if (value.valueType == IRVALUETYPE_TYPEOF)
-		Print("typeof(%lld)", value.typeOfTypeTableIdx);
 	else
 		Print("???");
 
 
-	//Print(" : %S", TypeInfoToString(context, value.typeTableIdx));
+	Print(" : %S", TypeInfoToString(context, value.typeTableIdx));
 }
 
 void PrintIRInstruction(Context *context, IRInstruction inst)
@@ -137,6 +135,16 @@ void PrintIRInstruction(Context *context, IRInstruction inst)
 		Print(" = ");
 		PrintIRValue(context, inst.assignment.src);
 		Print("\n");
+	} break;
+	case IRINSTRUCTIONTYPE_GET_PARAMETER:
+	{
+		PrintIRValue(context, inst.getParameter.dst);
+		Print(" = param%lld\n", inst.getParameter.parameterIdx);
+	} break;
+	case IRINSTRUCTIONTYPE_GET_TYPE_INFO:
+	{
+		PrintIRValue(context, inst.getTypeInfo.out);
+		Print(" = &_typeInfo%lld\n", inst.getTypeInfo.typeTableIdx);
 	} break;
 	case IRINSTRUCTIONTYPE_LOAD_EFFECTIVE_ADDRESS:
 	{

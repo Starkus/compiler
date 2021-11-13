@@ -14,8 +14,7 @@ enum IRValueType
 	IRVALUETYPE_MEMORY_VARIABLE,
 	IRVALUETYPE_IMMEDIATE_INTEGER,
 	IRVALUETYPE_IMMEDIATE_FLOAT,
-	IRVALUETYPE_IMMEDIATE_STRING,
-	IRVALUETYPE_TYPEOF
+	IRVALUETYPE_IMMEDIATE_STRING
 };
 struct IRValue
 {
@@ -111,6 +110,12 @@ struct IRGetParameter
 	s64 parameterIdx;
 };
 
+struct IRGetTypeInfo
+{
+	IRValue out;
+	s64 typeTableIdx;
+};
+
 struct IRVariableDeclaration
 {
 	Variable *variable;
@@ -147,8 +152,10 @@ enum IRInstructionType
 	IRINSTRUCTIONTYPE_PUSH_VARIABLE,
 	IRINSTRUCTIONTYPE_PUSH_SCOPE,
 	IRINSTRUCTIONTYPE_POP_SCOPE,
+	IRINSTRUCTIONTYPE_GET_TYPE_INFO,
 
 	IRINSTRUCTIONTYPE_ASSIGNMENT,
+	IRINSTRUCTIONTYPE_ASSIGNMENT_ZERO_EXTEND,
 
 	IRINSTRUCTIONTYPE_UNARY_BEGIN,
 	IRINSTRUCTIONTYPE_NOT = IRINSTRUCTIONTYPE_UNARY_BEGIN,
@@ -193,6 +200,7 @@ struct IRInstruction
 		IRProcedureCall procedureCall;
 		IRPushVariable pushVariable;
 		IRGetParameter getParameter;
+		IRGetTypeInfo getTypeInfo;
 		IRVariableDeclaration variableDeclaration;
 		IRAssignment assignment;
 		IRMemberAccess memberAccess;
@@ -338,6 +346,22 @@ IRValue IRValueMemory(Variable *baseVariable, s64 offset, s64 typeTableIdx)
 	return result;
 }
 
+IRValue IRValueTypeOf(Context *context, s64 typeTableIdx)
+{
+	static s64 typeInfoTypeIdx = GetTypeInfoPointerOf(context,
+			FindTypeInStackByName(context, {}, "TypeInfo"_s));
+
+	IRValue result = IRValueRegister(NewVirtualRegister(context), typeInfoTypeIdx);
+
+	IRInstruction inst;
+	inst.type = IRINSTRUCTIONTYPE_GET_TYPE_INFO;
+	inst.getTypeInfo.typeTableIdx = typeTableIdx;
+	inst.getTypeInfo.out = result;
+	*AddInstruction(context) = inst;
+
+	return result;
+}
+
 IRValue IRGenFromExpression(Context *context, ASTExpression *expression);
 
 IRValue IRDereferenceValue(Context *context, IRValue in)
@@ -375,7 +399,7 @@ IRValue IRPointerToValue(Context *context, IRValue in)
 		   in.valueType == IRVALUETYPE_MEMORY_VARIABLE);
 	s64 pointerTypeIdx = GetTypeInfoPointerOf(context, in.typeTableIdx);
 
-	if (in.memory.baseVariable == nullptr && in.memory.offset == 0)
+	if (in.valueType == IRVALUETYPE_MEMORY_REGISTER && in.memory.offset == 0)
 		return IRValueRegister(in.memory.baseRegister, pointerTypeIdx);
 	else
 	{
@@ -458,6 +482,52 @@ IRValue IRInstructionFromMultiply(Context *context, IRValue leftValue, IRValue r
 	*AddInstruction(context) = inst;
 
 	return outValue;
+}
+
+bool AreIRValuesDependent(Context *context, IRValue left, IRValue right)
+{
+	// This procedure returns true if changing the value of one of the arguments changes the
+	// value of the other.
+	if (left.valueType == IRVALUETYPE_REGISTER)
+	{
+		if (right.valueType == IRVALUETYPE_REGISTER && left.registerIdx == right.registerIdx)
+			return true;
+		if (right.valueType == IRVALUETYPE_MEMORY_REGISTER &&
+				left.registerIdx == right.memory.baseRegister)
+			return true;
+	}
+	else if (left.valueType == IRVALUETYPE_MEMORY_REGISTER)
+	{
+		if (right.valueType == IRVALUETYPE_REGISTER && left.memory.baseRegister == right.registerIdx)
+			return true;
+		if (right.valueType == IRVALUETYPE_MEMORY_REGISTER &&
+				left.memory.baseRegister == right.memory.baseRegister)
+			return true;
+	}
+	else if (left.valueType == IRVALUETYPE_MEMORY_VARIABLE)
+	{
+		if (right.valueType == IRVALUETYPE_MEMORY_VARIABLE)
+		{
+			Variable *leftVar  = left.memory.baseVariable;
+			Variable *rightVar = right.memory.baseVariable;
+			if (leftVar == rightVar)
+				return true;
+
+			if (!leftVar->isStatic && !rightVar->isStatic)
+			{
+				// If these variables aren't allocated we can't tell if they are dependent.
+				ASSERT(leftVar->isAllocated);
+				ASSERT(rightVar->isAllocated);
+				s64 leftSize  = context->typeTable[left.typeTableIdx].size;
+				s64 rightSize = context->typeTable[right.typeTableIdx].size;
+				// Check if memory regions intersect
+				if (leftVar->stackOffset + leftSize > rightVar->stackOffset &&
+					rightVar->stackOffset + rightSize > leftVar->stackOffset)
+					return true;
+			}
+		}
+	}
+	return false;
 }
 
 IRValue IRDoMemberAccess(Context *context, IRValue structValue, StructMember *structMember)
@@ -575,7 +645,7 @@ IRValue IRValueFromVariable(Context *context, Variable *variable)
 	return result;
 }
 
-void IRInstructionFromAssignment(Context *context, IRValue leftValue, IRValue rightValue)
+void IRDoAssignment(Context *context, IRValue leftValue, IRValue rightValue)
 {
 	s64 rightType = rightValue.typeTableIdx;
 	ASSERT(rightType >= 0);
@@ -593,10 +663,7 @@ void IRInstructionFromAssignment(Context *context, IRValue leftValue, IRValue ri
 		// Write pointer to typeInfo to it
 		IRInstruction typeAssignInst = {};
 		typeAssignInst.type = IRINSTRUCTIONTYPE_ASSIGNMENT;
-		typeAssignInst.assignment.src.valueType = IRVALUETYPE_TYPEOF;
-		typeAssignInst.assignment.src.typeOfTypeTableIdx = rightValue.typeTableIdx;
-		typeAssignInst.assignment.src.typeTableIdx = GetTypeInfoPointerOf(context,
-				FindTypeInStackByName(context, {}, "TypeInfo"_s));
+		typeAssignInst.assignment.src = IRValueTypeOf(context, rightValue.typeTableIdx);
 		typeAssignInst.assignment.dst = typeInfoMember;
 		*AddInstruction(context) = typeAssignInst;
 
@@ -649,13 +716,13 @@ void IRInstructionFromAssignment(Context *context, IRValue leftValue, IRValue ri
 		StructMember *sizeStructMember = &dynamicArrayTypeInfo->structInfo.members[0];
 		IRValue sizeMember = IRDoMemberAccess(context, leftValue, sizeStructMember);
 		IRValue sizeValue = IRValueImmediate(rightTypeInfo->arrayInfo.count, TYPETABLEIDX_U64);
-		IRInstructionFromAssignment(context, sizeMember, sizeValue);
+		IRDoAssignment(context, sizeMember, sizeValue);
 
 		// Data
 		StructMember *dataStructMember = &dynamicArrayTypeInfo->structInfo.members[1];
 		IRValue dataMember = IRDoMemberAccess(context, leftValue, dataStructMember);
 		IRValue dataValue = IRPointerToValue(context, rightValue);
-		IRInstructionFromAssignment(context, dataMember, dataValue);
+		IRDoAssignment(context, dataMember, dataValue);
 
 		return;
 	}
@@ -678,7 +745,20 @@ void IRInstructionFromAssignment(Context *context, IRValue leftValue, IRValue ri
 	else
 	{
 		IRInstruction inst = {};
-		inst.type = IRINSTRUCTIONTYPE_ASSIGNMENT;
+
+		u64 sizeLeft  = leftTypeInfo->size;
+		u64 sizeRight = rightTypeInfo->size;
+		if (sizeLeft > 4 && sizeRight == 4)
+		{
+			// @Cleanup: Other architectures? This is x86-64 specific.
+			inst.type = IRINSTRUCTIONTYPE_ASSIGNMENT;
+			leftValue.typeTableIdx = TYPETABLEIDX_S32;
+		}
+		else if (sizeLeft > sizeRight)
+			inst.type = IRINSTRUCTIONTYPE_ASSIGNMENT_ZERO_EXTEND;
+		else
+			inst.type = IRINSTRUCTIONTYPE_ASSIGNMENT;
+
 		inst.assignment.src = rightValue;
 		inst.assignment.dst = leftValue;
 
@@ -734,7 +814,7 @@ IRValue IRInstructionFromBinaryOperation(Context *context, ASTExpression *expres
 		jumpIfZeroInst2->conditionalJump.condition = rightValue;
 
 		IRValue outValue = IRValueRegister(NewVirtualRegister(context), leftHand->typeTableIdx);
-		IRInstructionFromAssignment(context, outValue, IRValueImmediate(1));
+		IRDoAssignment(context, outValue, IRValueImmediate(1));
 
 		IRLabel *skipAssignZeroLabel = NewLabel(context, "skipAssignZero"_s);
 
@@ -748,7 +828,7 @@ IRValue IRInstructionFromBinaryOperation(Context *context, ASTExpression *expres
 		assignZeroLabelInst->type = IRINSTRUCTIONTYPE_LABEL;
 		assignZeroLabelInst->label = assignZeroLabel;
 
-		IRInstructionFromAssignment(context, outValue, IRValueImmediate(0));
+		IRDoAssignment(context, outValue, IRValueImmediate(0));
 
 		IRInstruction *endLabelInst = AddInstruction(context);
 		skipAssignZeroLabel->instructionIdx =
@@ -782,7 +862,7 @@ IRValue IRInstructionFromBinaryOperation(Context *context, ASTExpression *expres
 		skipRightLabelInst->label = skipRightLabel;
 
 		IRValue outValue = IRValueRegister(NewVirtualRegister(context), leftHand->typeTableIdx);
-		IRInstructionFromAssignment(context, outValue, IRValueImmediate(1));
+		IRDoAssignment(context, outValue, IRValueImmediate(1));
 
 		IRLabel *skipAssignZeroLabel = NewLabel(context, "skipAssignZero"_s);
 
@@ -796,7 +876,7 @@ IRValue IRInstructionFromBinaryOperation(Context *context, ASTExpression *expres
 		assignZeroLabelInst->type = IRINSTRUCTIONTYPE_LABEL;
 		assignZeroLabelInst->label = assignZeroLabel;
 
-		IRInstructionFromAssignment(context, outValue, IRValueImmediate(0));
+		IRDoAssignment(context, outValue, IRValueImmediate(0));
 
 		IRInstruction *endLabelInst = AddInstruction(context);
 		skipAssignZeroLabel->instructionIdx =
@@ -822,7 +902,7 @@ IRValue IRInstructionFromBinaryOperation(Context *context, ASTExpression *expres
 		jumpIfZeroInst2->conditionalJump.label = skipAssignZeroLabel;
 		jumpIfZeroInst2->conditionalJump.condition = rightValue;
 
-		IRInstructionFromAssignment(context, leftValue, IRValueImmediate(0));
+		IRDoAssignment(context, leftValue, IRValueImmediate(0));
 
 		IRInstruction *skipAssignZeroLabelInst = AddInstruction(context);
 		skipAssignZeroLabel->instructionIdx =
@@ -848,7 +928,7 @@ IRValue IRInstructionFromBinaryOperation(Context *context, ASTExpression *expres
 		jumpIfZeroInst2->conditionalJump.label = skipAssignOneLabel;
 		jumpIfZeroInst2->conditionalJump.condition = rightValue;
 
-		IRInstructionFromAssignment(context, leftValue, IRValueImmediate(1));
+		IRDoAssignment(context, leftValue, IRValueImmediate(1));
 
 		IRInstruction *skipAssignOneLabelInst = AddInstruction(context);
 		skipAssignOneLabel->instructionIdx =
@@ -951,7 +1031,7 @@ IRValue IRInstructionFromBinaryOperation(Context *context, ASTExpression *expres
 		if (expression->binaryOperation.op >= TOKEN_OP_ASSIGNMENT_Begin &&
 			expression->binaryOperation.op <= TOKEN_OP_ASSIGNMENT_End)
 		{
-			IRInstructionFromAssignment(context, inst.binaryOperation.left, outValue);
+			IRDoAssignment(context, inst.binaryOperation.left, outValue);
 			result = inst.binaryOperation.left;
 		}
 		else
@@ -1064,7 +1144,7 @@ IRValue IRGenFromExpression(Context *context, ASTExpression *expression)
 			IRValue shouldReturnRegister = IRValueRegister(IRSPECIALREGISTER_SHOULD_RETURN,
 					TYPETABLEIDX_U8);
 			IRValue zero = IRValueImmediate(0, TYPETABLEIDX_U8);
-			IRInstructionFromAssignment(context, shouldReturnRegister, zero);
+			IRDoAssignment(context, shouldReturnRegister, zero);
 
 			// Add close label
 			IRInstruction *closeScopeLabelInst = AddInstruction(context);
@@ -1163,7 +1243,7 @@ IRValue IRGenFromExpression(Context *context, ASTExpression *expression)
 			{
 				IRValue leftValue = IRValueFromVariable(context, varDecl.variable);
 				IRValue rightValue = IRGenFromExpression(context, varDecl.value);
-				IRInstructionFromAssignment(context, leftValue, rightValue);
+				IRDoAssignment(context, leftValue, rightValue);
 			}
 		}
 	} break;
@@ -1252,7 +1332,7 @@ IRValue IRGenFromExpression(Context *context, ASTExpression *expression)
 				IRValue reg = IRValueRegister(NewVirtualRegister(context),
 						GetTypeInfoPointerOf(context, expression->typeTableIdx));
 
-				IRInstructionFromAssignment(context, reg, IRPointerToValue(context, tempVarIRValue));
+				IRDoAssignment(context, reg, IRPointerToValue(context, tempVarIRValue));
 
 				// Add register as parameter
 				*ArrayAdd(&procCallInst.procedureCall.parameters) = reg;
@@ -1297,13 +1377,13 @@ IRValue IRGenFromExpression(Context *context, ASTExpression *expression)
 
 				// Copy
 				IRValue argValue = IRGenFromExpression(context, arg);
-				IRInstructionFromAssignment(context, tempVarIRValue, argValue);
+				IRDoAssignment(context, tempVarIRValue, argValue);
 
 				// Turn into a register, mainly to pass it to the procedure
 				IRValue paramReg = IRValueMemory(NewVirtualRegister(context), 0, argTypeTableIdx);
 				IRValue paramRegPtr = IRPointerToValue(context, paramReg);
 				IRValue pointerToVarValue = IRPointerToValue(context, tempVarIRValue);
-				IRInstructionFromAssignment(context, paramRegPtr, pointerToVarValue);
+				IRDoAssignment(context, paramRegPtr, pointerToVarValue);
 
 				// Add register as parameter
 				*ArrayAdd(&procCallInst.procedureCall.parameters) = paramRegPtr;
@@ -1317,7 +1397,7 @@ IRValue IRGenFromExpression(Context *context, ASTExpression *expression)
 				{
 					IRValue paramReg = IRValueRegister(NewVirtualRegister(context),
 							param.typeTableIdx);
-					IRInstructionFromAssignment(context, paramReg, param);
+					IRDoAssignment(context, paramReg, param);
 					param = paramReg;
 				}
 
@@ -1336,7 +1416,7 @@ IRValue IRGenFromExpression(Context *context, ASTExpression *expression)
 			if (param.valueType != IRVALUETYPE_REGISTER)
 			{
 				IRValue paramReg = IRValueRegister(NewVirtualRegister(context), arg->typeTableIdx);
-				IRInstructionFromAssignment(context, paramReg, param);
+				IRDoAssignment(context, paramReg, param);
 				param = paramReg;
 			}
 
@@ -1374,7 +1454,7 @@ IRValue IRGenFromExpression(Context *context, ASTExpression *expression)
 						anyTableIdx);
 
 				IRValue rightValue = IRGenFromExpression(context, arg);
-				IRInstructionFromAssignment(context, bufferSlotValue, rightValue);
+				IRDoAssignment(context, bufferSlotValue, rightValue);
 			}
 
 			// By now we should have the buffer with all the varargs as Any structs.
@@ -1393,7 +1473,7 @@ IRValue IRGenFromExpression(Context *context, ASTExpression *expression)
 				StructMember *sizeStructMember = &dynamicArrayTypeInfo->structInfo.members[0];
 				IRValue sizeMember = IRDoMemberAccess(context, arrayIRValue, sizeStructMember);
 				IRValue sizeValue = IRValueImmediate(varargsCount, TYPETABLEIDX_U64);
-				IRInstructionFromAssignment(context, sizeMember, sizeValue);
+				IRDoAssignment(context, sizeMember, sizeValue);
 			}
 
 			// Data
@@ -1401,7 +1481,7 @@ IRValue IRGenFromExpression(Context *context, ASTExpression *expression)
 				StructMember *dataStructMember = &dynamicArrayTypeInfo->structInfo.members[1];
 				IRValue dataMember = IRDoMemberAccess(context, arrayIRValue, dataStructMember);
 				IRValue dataValue = IRPointerToValue(context, bufferIRValue);
-				IRInstructionFromAssignment(context, dataMember, dataValue);
+				IRDoAssignment(context, dataMember, dataValue);
 			}
 
 			// Pass array as parameter!
@@ -1409,7 +1489,7 @@ IRValue IRGenFromExpression(Context *context, ASTExpression *expression)
 			paramReg.valueType = IRVALUETYPE_REGISTER;
 			paramReg.registerIdx = NewVirtualRegister(context);
 			paramReg.typeTableIdx = GetTypeInfoPointerOf(context, dynamicArrayTableIdx);
-			IRInstructionFromAssignment(context, paramReg, IRPointerToValue(context, arrayIRValue));
+			IRDoAssignment(context, paramReg, IRPointerToValue(context, arrayIRValue));
 			*ArrayAdd(&procCallInst.procedureCall.parameters) = paramReg;
 		}
 
@@ -1468,7 +1548,7 @@ IRValue IRGenFromExpression(Context *context, ASTExpression *expression)
 		{
 			IRValue leftValue = IRGenFromExpression(context, leftHand);
 			IRValue rightValue = IRGenFromExpression(context, rightHand);
-			IRInstructionFromAssignment(context, leftValue, rightValue);
+			IRDoAssignment(context, leftValue, rightValue);
 			result = leftValue;
 		}
 		else
@@ -1616,7 +1696,7 @@ IRValue IRGenFromExpression(Context *context, ASTExpression *expression)
 			to =   IRGenFromExpression(context, binaryOp.rightHand);
 
 			// Assign 'i'
-			IRInstructionFromAssignment(context, indexValue, from);
+			IRDoAssignment(context, indexValue, from);
 		}
 		else if (rangeTypeInfo->typeCategory == TYPECATEGORY_ARRAY)
 		{
@@ -1638,14 +1718,14 @@ IRValue IRGenFromExpression(Context *context, ASTExpression *expression)
 				to = IRValueImmediate(rangeTypeInfo->arrayInfo.count, indexVar->typeTableIdx);
 
 			// Assign 'i'
-			IRInstructionFromAssignment(context, indexValue, from);
+			IRDoAssignment(context, indexValue, from);
 
 			// Assign 'it'
 			IRValue elementVarValue = IRValueFromVariable(context, elementVar);
 			IRValue elementValue = IRDoArrayAccess(context, arrayValue, indexValue,
 					rangeTypeInfo->arrayInfo.elementTypeTableIdx);
 			elementValue = IRPointerToValue(context, elementValue);
-			IRInstructionFromAssignment(context, elementVarValue, elementValue);
+			IRDoAssignment(context, elementVarValue, elementValue);
 		}
 		else
 			CRASH;
@@ -1688,7 +1768,7 @@ IRValue IRGenFromExpression(Context *context, ASTExpression *expression)
 			IRValue elementValue = IRDoArrayAccess(context, arrayValue, indexValue,
 					rangeTypeInfo->arrayInfo.elementTypeTableIdx);
 			elementValue = IRPointerToValue(context, elementValue);
-			IRInstructionFromAssignment(context, elementVarValue, elementValue);
+			IRDoAssignment(context, elementVarValue, elementValue);
 		}
 
 		IRInstruction *loopJump = AddInstruction(context);
@@ -1737,7 +1817,7 @@ IRValue IRGenFromExpression(Context *context, ASTExpression *expression)
 			// Set should return to one
 			IRValue one = IRValueImmediate(1, TYPETABLEIDX_U8);
 			IRValue shouldReturnRegister = IRValueRegister(IRSPECIALREGISTER_SHOULD_RETURN, TYPETABLEIDX_U8);
-			IRInstructionFromAssignment(context, shouldReturnRegister, one);
+			IRDoAssignment(context, shouldReturnRegister, one);
 		}
 		else
 		{
@@ -1747,13 +1827,13 @@ IRValue IRGenFromExpression(Context *context, ASTExpression *expression)
 		if (IRShouldPassByCopy(context, returnTypeTableIdx))
 		{
 			IRValue dst = IRValueMemory(IRSPECIALREGISTER_RETURN, 0, returnTypeTableIdx);
-			IRInstructionFromAssignment(context, dst, returnValue);
+			IRDoAssignment(context, dst, returnValue);
 			returnValue = dst;
 		}
 		else
 		{
 			IRValue dst = IRValueRegister(IRSPECIALREGISTER_RETURN, returnValue.typeTableIdx);
-			IRInstructionFromAssignment(context, dst, returnValue);
+			IRDoAssignment(context, dst, returnValue);
 		}
 
 		if (isThereCleanUpToDo)
@@ -1778,9 +1858,7 @@ IRValue IRGenFromExpression(Context *context, ASTExpression *expression)
 	} break;
 	case ASTNODETYPE_TYPEOF:
 	{
-		result.valueType = IRVALUETYPE_TYPEOF;
-		result.typeOfTypeTableIdx = expression->typeOfNode.expression->typeTableIdx;
-		result.typeTableIdx = expression->typeTableIdx;
+		result = IRValueTypeOf(context, expression->typeOfNode.expression->typeTableIdx);
 	} break;
 	case ASTNODETYPE_CAST:
 	{
