@@ -62,6 +62,9 @@ struct IRProcedureCall
 	Procedure *procedure;
 	Array<IRValue> parameters;
 	IRValue out;
+
+	// Filled during register allocation
+	u64 liveRegisters;
 };
 
 struct IRPushVariable
@@ -134,6 +137,11 @@ struct IRPatchInstruction
 	IRInstruction *second;
 };
 
+struct IRPatchInstructionMany
+{
+	Array<IRInstruction> instructions;
+};
+
 enum IRInstructionType
 {
 	IRINSTRUCTIONTYPE_INVALID = -1,
@@ -186,7 +194,8 @@ enum IRInstructionType
 
 	IRINSTRUCTIONTYPE_INTRINSIC_MEMCPY,
 
-	IRINSTRUCTIONTYPE_PATCH
+	IRINSTRUCTIONTYPE_PATCH,
+	IRINSTRUCTIONTYPE_PATCH_MANY
 };
 struct IRInstruction
 {
@@ -209,6 +218,7 @@ struct IRInstruction
 		IRBinaryOperation binaryOperation;
 
 		IRPatchInstruction patch;
+		IRPatchInstructionMany patchMany;
 
 		IRIntrinsicMemcpy memcpy;
 	};

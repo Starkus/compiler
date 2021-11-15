@@ -41,8 +41,10 @@ struct Procedure
 	// IRGen
 	BucketArray<IRInstruction, 256, malloc, realloc> instructions;
 	u64 registerCount;
-	u64 stackSize;
 	s64 allocatedParameterCount;
+
+	// Register/stack allocation
+	u64 stackSize;
 };
 
 void Advance(Context *context)

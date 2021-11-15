@@ -1,8 +1,6 @@
 _TEXT SEGMENT
 CopyMemory PROC
-push rbp
-mov rbp, rsp
-mov rax, 0
+xor rax, rax
 $loop:
 cmp rax, r8
 jge $done
@@ -13,7 +11,6 @@ add rcx, 1
 add rdx, 1
 jmp $loop
 $done:
-leave
 ret
 CopyMemory ENDP
 _TEXT ENDS

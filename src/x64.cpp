@@ -437,8 +437,8 @@ void X64OutputInstruction(Context *context, HANDLE outputFile, X64InstructionInf
 	else
 	{
 		ASSERT(instInfo.acceptedOperandsLeft & ACCEPTEDOPERANDS_REGISTER);
-		X64OutputInstruction(context, outputFile, MOV, RBX, first);
-		firstStr = "rbx"_s;
+		X64OutputInstruction(context, outputFile, MOV, RAX, first);
+		firstStr = "rax"_s;
 	}
 
 	PrintOut(context, outputFile, "%S %S\n", instInfo.mnemonic, firstStr);
@@ -752,6 +752,11 @@ void X64ProcessInstruction(Context *context, HANDLE outputFile, IRInstruction in
 		X64ProcessInstruction(context, outputFile, *inst.patch.first);
 		X64ProcessInstruction(context, outputFile, *inst.patch.second);
 	} break;
+	case IRINSTRUCTIONTYPE_PATCH_MANY:
+	{
+		for (int i = 0; i < inst.patchMany.instructions.size; ++i)
+			X64ProcessInstruction(context, outputFile, inst.patchMany.instructions[i]);
+	} break;
 	default:
 	{
 		ASSERT(!"Didn't recognize instruction type");
@@ -1008,12 +1013,6 @@ void WriteToX64(Context *context)
 		PrintOut(context, outputFile, "push rbp\n");
 		PrintOut(context, outputFile, "mov rbp, rsp\n");
 
-		// @Todo: Don't use this redzone? Also save r15!
-		PrintOut(context, outputFile, "mov qword ptr [rsp+16], rbx\n");
-		PrintOut(context, outputFile, "mov qword ptr [rsp+24], r12\n");
-		PrintOut(context, outputFile, "mov qword ptr [rsp+32], r13\n");
-		PrintOut(context, outputFile, "mov qword ptr [rsp+40], r14\n");
-
 		if (proc->stackSize)
 			PrintOut(context, outputFile, "sub rsp, %llu\n", proc->stackSize);
 
@@ -1023,12 +1022,6 @@ void WriteToX64(Context *context)
 			IRInstruction inst = proc->instructions[instructionIdx];
 			X64ProcessInstruction(context, outputFile, inst);
 		}
-
-		// @Todo: Don't use this redzone? Also save r15!
-		PrintOut(context, outputFile, "mov rbx, qword ptr [rsp+%d]\n", 16 + proc->stackSize);
-		PrintOut(context, outputFile, "mov r12, qword ptr [rsp+%d]\n", 24 + proc->stackSize);
-		PrintOut(context, outputFile, "mov r13, qword ptr [rsp+%d]\n", 32 + proc->stackSize);
-		PrintOut(context, outputFile, "mov r14, qword ptr [rsp+%d]\n", 40 + proc->stackSize);
 
 		PrintOut(context, outputFile, "leave\n");
 		PrintOut(context, outputFile, "ret\n");

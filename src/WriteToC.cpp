@@ -356,6 +356,11 @@ void CPrintOutInstruction(Context *context, HANDLE outputFile, IRInstruction ins
 		CPrintOutInstruction(context, outputFile, *inst.patch.first);
 		CPrintOutInstruction(context, outputFile, *inst.patch.second);
 	} break;
+	case IRINSTRUCTIONTYPE_PATCH_MANY:
+	{
+		for (int i = 0; i < inst.patchMany.instructions.size; ++i)
+			CPrintOutInstruction(context, outputFile, inst.patchMany.instructions[i]);
+	} break;
 	default:
 	{
 		if (inst.type >= IRINSTRUCTIONTYPE_UNARY_BEGIN && inst.type < IRINSTRUCTIONTYPE_UNARY_END)

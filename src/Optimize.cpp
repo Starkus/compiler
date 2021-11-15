@@ -1,3 +1,6 @@
+const u64 calleeSaveRegisters = 0b111111001;
+const u64 callerSaveRegisters = 0b111111111 & ~calleeSaveRegisters;
+
 struct BasicBlock
 {
 	Procedure *procedure;
@@ -35,11 +38,14 @@ void PrintBasicBlock(Context *context, BasicBlock *basicBlock)
 
 BasicBlock *PushBasicBlock(Context *context, BasicBlock *currentBasicBlock)
 {
+	// @Fix: why doesn't this work?
+#if 0
 	if (currentBasicBlock && currentBasicBlock->endIdx <= currentBasicBlock->beginIdx)
 	{
 		// If current block is empty don't create a new one
-		//return currentBasicBlock;
+		return currentBasicBlock;
 	}
+#endif
 
 	Procedure *procedure = nullptr;
 	s64 endOfLastBlock = -1;
@@ -118,52 +124,60 @@ inline void ReplaceIfRegister(IRValue *value, Array<s64> registerMap)
 	}
 }
 
-void DoLivenessAnalisisOnInstruction(Context *context, BasicBlock *basicBlock, IRInstruction inst,
+void DoLivenessAnalisisOnInstruction(Context *context, BasicBlock *basicBlock, IRInstruction *inst,
 		DynamicArray<s64, malloc, realloc> *liveRegisters)
 {
-	if (inst.type >= IRINSTRUCTIONTYPE_UNARY_BEGIN && inst.type < IRINSTRUCTIONTYPE_UNARY_END)
+	if (inst->type >= IRINSTRUCTIONTYPE_UNARY_BEGIN && inst->type < IRINSTRUCTIONTYPE_UNARY_END)
 	{
-		RemoveIfRegister(basicBlock, inst.unaryOperation.out, liveRegisters);
-		AddIfRegister(basicBlock, inst.unaryOperation.in, liveRegisters);
+		RemoveIfRegister(basicBlock, inst->unaryOperation.out, liveRegisters);
+		AddIfRegister(basicBlock, inst->unaryOperation.in, liveRegisters);
 	}
-	else if (inst.type >= IRINSTRUCTIONTYPE_BINARY_BEGIN && inst.type < IRINSTRUCTIONTYPE_BINARY_END)
+	else if (inst->type >= IRINSTRUCTIONTYPE_BINARY_BEGIN && inst->type < IRINSTRUCTIONTYPE_BINARY_END)
 	{
-		RemoveIfRegister(basicBlock, inst.binaryOperation.out, liveRegisters);
-		AddIfRegister(basicBlock, inst.binaryOperation.left, liveRegisters);
-		AddIfRegister(basicBlock, inst.binaryOperation.right, liveRegisters);
+		RemoveIfRegister(basicBlock, inst->binaryOperation.out, liveRegisters);
+		AddIfRegister(basicBlock, inst->binaryOperation.left, liveRegisters);
+		AddIfRegister(basicBlock, inst->binaryOperation.right, liveRegisters);
 	}
-	else switch (inst.type)
+	else switch (inst->type)
 	{
 	case IRINSTRUCTIONTYPE_ASSIGNMENT:
 	case IRINSTRUCTIONTYPE_ASSIGNMENT_ZERO_EXTEND:
 	{
-		RemoveIfRegister(basicBlock, inst.assignment.dst, liveRegisters);
-		AddIfRegister(basicBlock, inst.assignment.src, liveRegisters);
+		RemoveIfRegister(basicBlock, inst->assignment.dst, liveRegisters);
+		AddIfRegister(basicBlock, inst->assignment.src, liveRegisters);
 	} break;
 	case IRINSTRUCTIONTYPE_GET_TYPE_INFO:
 	{
-		RemoveIfRegister(basicBlock, inst.getTypeInfo.out, liveRegisters);
+		RemoveIfRegister(basicBlock, inst->getTypeInfo.out, liveRegisters);
 	} break;
 	case IRINSTRUCTIONTYPE_GET_PARAMETER:
 	{
-		RemoveIfRegister(basicBlock, inst.getParameter.dst, liveRegisters);
+		RemoveIfRegister(basicBlock, inst->getParameter.dst, liveRegisters);
 	} break;
 	case IRINSTRUCTIONTYPE_PROCEDURE_CALL:
 	{
-		RemoveIfRegister(basicBlock, inst.procedureCall.out, liveRegisters);
-		for (int paramIdx = 0; paramIdx < inst.procedureCall.parameters.size; ++paramIdx)
-			AddIfRegister(basicBlock, inst.procedureCall.parameters[paramIdx], liveRegisters);
+		RemoveIfRegister(basicBlock, inst->procedureCall.out, liveRegisters);
+
+		// Remember live registers, in case they have to be saved before procedure call.
+		for (int i = 0; i < liveRegisters->size; ++i)
+		{
+			ASSERT((*liveRegisters)[i] < 64);
+			inst->procedureCall.liveRegisters |= (u64)1 << (*liveRegisters)[i];
+		}
+
+		for (int paramIdx = 0; paramIdx < inst->procedureCall.parameters.size; ++paramIdx)
+			AddIfRegister(basicBlock, inst->procedureCall.parameters[paramIdx], liveRegisters);
 	} break;
 	case IRINSTRUCTIONTYPE_INTRINSIC_MEMCPY:
 	{
-		AddIfRegister(basicBlock, inst.memcpy.src, liveRegisters);
-		AddIfRegister(basicBlock, inst.memcpy.dst, liveRegisters);
-		AddIfRegister(basicBlock, inst.memcpy.size, liveRegisters);
+		AddIfRegister(basicBlock, inst->memcpy.src, liveRegisters);
+		AddIfRegister(basicBlock, inst->memcpy.dst, liveRegisters);
+		AddIfRegister(basicBlock, inst->memcpy.size, liveRegisters);
 	} break;
 	case IRINSTRUCTIONTYPE_JUMP_IF_ZERO:
 	case IRINSTRUCTIONTYPE_JUMP_IF_NOT_ZERO:
 	{
-		AddIfRegister(basicBlock, inst.conditionalJump.condition, liveRegisters);
+		AddIfRegister(basicBlock, inst->conditionalJump.condition, liveRegisters);
 	} break;
 	case IRINSTRUCTIONTYPE_RETURN:
 	{
@@ -172,9 +186,13 @@ void DoLivenessAnalisisOnInstruction(Context *context, BasicBlock *basicBlock, I
 	} break;
 	case IRINSTRUCTIONTYPE_PATCH:
 	{
-		DoLivenessAnalisisOnInstruction(context, basicBlock, *inst.patch.second, liveRegisters);
-		DoLivenessAnalisisOnInstruction(context, basicBlock, *inst.patch.first,  liveRegisters);
-		return;
+		DoLivenessAnalisisOnInstruction(context, basicBlock, inst->patch.second, liveRegisters);
+		DoLivenessAnalisisOnInstruction(context, basicBlock, inst->patch.first,  liveRegisters);
+	} break;
+	case IRINSTRUCTIONTYPE_PATCH_MANY:
+	{
+		for (int i = 0; i < inst->patchMany.instructions.size; ++i)
+			DoLivenessAnalisisOnInstruction(context, basicBlock, &inst->patchMany.instructions[i], liveRegisters);
 	} break;
 	}
 
@@ -249,7 +267,7 @@ void DoLivenessAnalisis(Context *context, BasicBlock *basicBlock,
 	for (s64 instructionIdx = basicBlock->endIdx; instructionIdx >= basicBlock->beginIdx;
 			--instructionIdx)
 	{
-		IRInstruction inst = basicBlock->procedure->instructions[instructionIdx];
+		IRInstruction *inst = &basicBlock->procedure->instructions[instructionIdx];
 		DoLivenessAnalisisOnInstruction(context, basicBlock, inst, liveRegisters);
 	}
 
@@ -465,6 +483,11 @@ void SpillRegisterIntoMemoryInstruction(Context *context, Variable *newVar, IRIn
 		SpillRegisterIntoMemoryInstruction(context, newVar, inst->patch.first,  procedure, registerIdx);
 		SpillRegisterIntoMemoryInstruction(context, newVar, inst->patch.second, procedure, registerIdx);
 	} break;
+	case IRINSTRUCTIONTYPE_PATCH_MANY:
+	{
+		for (int i = 0; i < inst->patchMany.instructions.size; ++i)
+			SpillRegisterIntoMemoryInstruction(context, newVar, &inst->patchMany.instructions[i], procedure, registerIdx);
+	} break;
 	}
 }
 
@@ -528,6 +551,11 @@ void ResolveInstructionStackOffsets(Context *context, IRInstruction inst,
 	{
 		ResolveInstructionStackOffsets(context, *inst.patch.first,  stack, stackCursor, stackSize);
 		ResolveInstructionStackOffsets(context, *inst.patch.second, stack, stackCursor, stackSize);
+	} break;
+	case IRINSTRUCTIONTYPE_PATCH_MANY:
+	{
+		for (int i = 0; i < inst.patchMany.instructions.size; ++i)
+			ResolveInstructionStackOffsets(context, inst.patchMany.instructions[i], stack, stackCursor, stackSize);
 	} break;
 	}
 }
@@ -626,6 +654,17 @@ void ReplaceRegistersInInstruction(IRInstruction *inst, Array<s64> registerMap)
 		else
 			ReplaceIfRegister(out, registerMap);
 
+		// Replace live virtual registers for live logical registers
+		u64 oldRegisters = inst->procedureCall.liveRegisters;
+		inst->procedureCall.liveRegisters = 0;
+		for (int i = 0; i < 64; ++i)
+		{
+			if (oldRegisters & ((u64)1 << i))
+			{
+				inst->procedureCall.liveRegisters |= (u64)1 << registerMap[i];
+			}
+		}
+
 		for (int paramIdx = 0; paramIdx < inst->procedureCall.parameters.size; ++paramIdx)
 			ReplaceIfRegister(&inst->procedureCall.parameters[paramIdx], registerMap);
 	} break;
@@ -645,7 +684,111 @@ void ReplaceRegistersInInstruction(IRInstruction *inst, Array<s64> registerMap)
 		ReplaceRegistersInInstruction(inst->patch.first,  registerMap);
 		ReplaceRegistersInInstruction(inst->patch.second, registerMap);
 	} break;
+	case IRINSTRUCTIONTYPE_PATCH_MANY:
+	{
+		for (int i = 0; i < inst->patchMany.instructions.size; ++i)
+			ReplaceRegistersInInstruction(&inst->patchMany.instructions[i], registerMap);
+	} break;
 	}
+}
+
+inline u64 BitIfRegister(IRValue value)
+{
+	if (value.valueType == IRVALUETYPE_REGISTER && value.registerIdx < IRSPECIALREGISTER_BEGIN)
+	{
+		ASSERT(value.registerIdx < 64);
+		return 1ll << value.registerIdx;
+	}
+	else if (value.valueType == IRVALUETYPE_REGISTER &&
+			value.memory.baseRegister < IRSPECIALREGISTER_BEGIN)
+	{
+		ASSERT(value.memory.baseRegister < 64);
+		return 1ll << value.memory.baseRegister;
+	}
+	return 0;
+}
+
+u64 RegisterSavingInstruction(Context *context, IRInstruction *inst, u64 usedRegisters)
+{
+	if (inst->type >= IRINSTRUCTIONTYPE_UNARY_BEGIN && inst->type <= IRINSTRUCTIONTYPE_UNARY_END)
+		usedRegisters |= BitIfRegister(inst->unaryOperation.out);
+	else if (inst->type >= IRINSTRUCTIONTYPE_BINARY_BEGIN && inst->type <= IRINSTRUCTIONTYPE_BINARY_END)
+		usedRegisters |= BitIfRegister(inst->binaryOperation.out);
+	else switch(inst->type)
+	{
+	case IRINSTRUCTIONTYPE_ASSIGNMENT:
+	case IRINSTRUCTIONTYPE_ASSIGNMENT_ZERO_EXTEND:
+	{
+		usedRegisters |= BitIfRegister(inst->assignment.dst);
+	} break;
+	case IRINSTRUCTIONTYPE_GET_TYPE_INFO:
+	{
+		usedRegisters |= BitIfRegister(inst->getTypeInfo.out);
+	} break;
+	case IRINSTRUCTIONTYPE_GET_PARAMETER:
+	{
+		usedRegisters |= BitIfRegister(inst->getParameter.dst);
+	} break;
+	case IRINSTRUCTIONTYPE_PROCEDURE_CALL:
+	{
+		usedRegisters |= BitIfRegister(inst->procedureCall.out);
+
+		// original inst + push/pop scope + all push variables + all register movs
+		u64 liveCalleeSaveRegisters = inst->procedureCall.liveRegisters &
+			calleeSaveRegisters;
+		const s64 regCount = CountOnes(liveCalleeSaveRegisters);
+		const s64 patchCount = regCount * 3 + 3;
+
+		Array<IRInstruction> patchInstructions;
+		ArrayInit(&patchInstructions, patchCount, malloc);
+		patchInstructions.size = patchCount;
+
+		patchInstructions[0]						 = { IRINSTRUCTIONTYPE_PUSH_SCOPE };
+		patchInstructions[patchCount - 2 - regCount] = *inst;
+		patchInstructions[patchCount - 1]			 = { IRINSTRUCTIONTYPE_POP_SCOPE };
+
+		int regIdx = 0;
+		for (int i = 0; i < 64; ++i)
+		{
+			if (liveCalleeSaveRegisters & ((u64)1 << i))
+			{
+				Variable *var = NewVariable(context, "_save_reg"_s);
+
+				IRInstruction *pushInst = &patchInstructions[1 + regIdx * 2];
+				*pushInst = { IRINSTRUCTIONTYPE_PUSH_VARIABLE };
+				pushInst->pushVariable.variable = var;
+
+				IRInstruction *saveInst = &patchInstructions[2 + regIdx * 2];
+				*saveInst = { IRINSTRUCTIONTYPE_ASSIGNMENT };
+				saveInst->assignment.dst = IRValueMemory(var, 0, TYPETABLEIDX_S64);
+				saveInst->assignment.src = IRValueRegister(i, TYPETABLEIDX_S64);
+
+				IRInstruction *restoreInst = &patchInstructions[patchCount - 1 - regCount + regIdx];
+				*restoreInst = { IRINSTRUCTIONTYPE_ASSIGNMENT };
+				restoreInst->assignment.src = IRValueMemory(var, 0, TYPETABLEIDX_S64);
+				restoreInst->assignment.dst = IRValueRegister(i, TYPETABLEIDX_S64);
+
+				++regIdx;
+			}
+		}
+
+		IRInstruction patch = { IRINSTRUCTIONTYPE_PATCH_MANY };
+		patch.patchMany.instructions = patchInstructions;
+		*inst = patch;
+	} break;
+	case IRINSTRUCTIONTYPE_PATCH:
+	{
+		usedRegisters = RegisterSavingInstruction(context, inst->patch.first,  usedRegisters);
+		usedRegisters = RegisterSavingInstruction(context, inst->patch.second, usedRegisters);
+	} break;
+	case IRINSTRUCTIONTYPE_PATCH_MANY:
+	{
+		for (int i = 0; i < inst->patchMany.instructions.size; ++i)
+			usedRegisters =
+				RegisterSavingInstruction(context, &inst->patchMany.instructions[i], usedRegisters);
+	} break;
+	}
+	return usedRegisters;
 }
 
 void OptimizerMain(Context *context)
@@ -829,6 +972,59 @@ void OptimizerMain(Context *context)
 			else
 				break;
 		}
+	}
+
+	u64 usedRegisters = 0;
+	// Do register saving
+	const u64 procedureCount = BucketArrayCount(&context->procedures);
+	for (int procedureIdx = 0; procedureIdx < procedureCount; ++procedureIdx)
+	{
+		Procedure *proc = &context->procedures[procedureIdx];
+
+		// @Speed: separate array of external procedures to avoid branching
+		if (proc->isExternal)
+			continue;
+
+		u64 instructionCount = BucketArrayCount(&proc->instructions);
+		for (int instructionIdx = 0; instructionIdx < instructionCount; ++instructionIdx)
+		{
+			IRInstruction *inst = &proc->instructions[instructionIdx];
+			usedRegisters = RegisterSavingInstruction(context, inst, usedRegisters);
+		}
+
+		// Caller save registers
+		// @Todo: save only used registers
+		u64 usedCallerSaveRegisters = callerSaveRegisters & usedRegisters;
+		s64 callerSaveRegCount = CountOnes(usedCallerSaveRegisters);
+		IRInstruction patchTop =    { IRINSTRUCTIONTYPE_PATCH_MANY };
+		IRInstruction patchBottom = { IRINSTRUCTIONTYPE_PATCH_MANY };
+		ArrayInit(&patchTop.patchMany.instructions, 1 + 2 * callerSaveRegCount, malloc);
+		ArrayInit(&patchBottom.patchMany.instructions, 1 + callerSaveRegCount, malloc);
+		for (int i = 0; i < 64; ++i)
+		{
+			if (usedCallerSaveRegisters & ((u64)1 << i))
+			{
+				Variable *var = NewVariable(context, "_save_reg"_s);
+
+				IRInstruction *pushInst = ArrayAdd(&patchTop.patchMany.instructions);
+				*pushInst = { IRINSTRUCTIONTYPE_PUSH_VARIABLE };
+				pushInst->pushVariable.variable = var;
+
+				IRInstruction *saveInst = ArrayAdd(&patchTop.patchMany.instructions);
+				*saveInst = { IRINSTRUCTIONTYPE_ASSIGNMENT };
+				saveInst->assignment.dst = IRValueMemory(var, 0, TYPETABLEIDX_S64);
+				saveInst->assignment.src = IRValueRegister(i, TYPETABLEIDX_S64);
+
+				IRInstruction *restoreInst = ArrayAdd(&patchBottom.patchMany.instructions);
+				*restoreInst = { IRINSTRUCTIONTYPE_ASSIGNMENT };
+				restoreInst->assignment.dst = IRValueRegister(i, TYPETABLEIDX_S64);
+				restoreInst->assignment.src = IRValueMemory(var, 0, TYPETABLEIDX_S64);
+			}
+		}
+		*ArrayAdd(&patchTop.patchMany.instructions) = proc->instructions[0];
+		proc->instructions[0] = patchTop;
+		*ArrayAdd(&patchBottom.patchMany.instructions) = proc->instructions[instructionCount - 1];
+		proc->instructions[instructionCount - 1] = patchBottom;
 	}
 
 	ResolveStackOffsets(context);

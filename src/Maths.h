@@ -8,6 +8,11 @@ const f64 PI_64 = 3.1415926535897932384626433832795;
 const f64 HALFPI_64 = 1.5707963267948966192313216916398;
 const f64 PI2_64 = 6.283185307179586476925286766559;
 
+inline s64 CountOnes(s64 n)
+{
+	return __popcnt64(n);
+}
+
 inline u8 Nlz(u32 x)
 {
 	unsigned long i;
