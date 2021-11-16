@@ -20,20 +20,32 @@ struct X64InstructionInfo
 	u8 flags;
 };
 
-const X64InstructionInfo MOV    = { "mov"_s,    ACCEPTEDOPERANDS_REGMEM,   ACCEPTEDOPERANDS_ALL,    0 };
-const X64InstructionInfo MOVZX  = { "movzx"_s,  ACCEPTEDOPERANDS_REGMEM,   ACCEPTEDOPERANDS_ALL,    0 };
-const X64InstructionInfo MOVSX  = { "movsx"_s,  ACCEPTEDOPERANDS_REGMEM,   ACCEPTEDOPERANDS_REGMEM, 0};
-const X64InstructionInfo MOVSXD = { "movsxd"_s, ACCEPTEDOPERANDS_REGMEM,   ACCEPTEDOPERANDS_REGMEM, 0};
-const X64InstructionInfo LEA    = { "lea"_s,    ACCEPTEDOPERANDS_REGISTER, ACCEPTEDOPERANDS_MEMORY, INSTRUCTIONFLAGS_DONT_CALCULATE_ADDRESSES };
-const X64InstructionInfo CMP    = { "cmp"_s,    ACCEPTEDOPERANDS_REGMEM,   ACCEPTEDOPERANDS_ALL,    0};
-const X64InstructionInfo ADD    = { "add"_s,    ACCEPTEDOPERANDS_REGMEM,   ACCEPTEDOPERANDS_ALL,    0};
-const X64InstructionInfo SUB    = { "sub"_s,    ACCEPTEDOPERANDS_REGMEM,   ACCEPTEDOPERANDS_ALL,    0};
-const X64InstructionInfo IMUL   = { "imul"_s,   ACCEPTEDOPERANDS_REGMEM,   ACCEPTEDOPERANDS_ALL,    0};
-const X64InstructionInfo SAR    = { "sar"_s,    ACCEPTEDOPERANDS_REGMEM,   ACCEPTEDOPERANDS_ALL,    0};
-const X64InstructionInfo SAL    = { "sal"_s,    ACCEPTEDOPERANDS_REGMEM,   ACCEPTEDOPERANDS_ALL,    0};
-const X64InstructionInfo AND    = { "and"_s,    ACCEPTEDOPERANDS_REGMEM,   ACCEPTEDOPERANDS_ALL,    0};
-const X64InstructionInfo OR     = { "or"_s,     ACCEPTEDOPERANDS_REGMEM,   ACCEPTEDOPERANDS_ALL,    0};
-const X64InstructionInfo XOR    = { "xor"_s,    ACCEPTEDOPERANDS_REGMEM,   ACCEPTEDOPERANDS_ALL,    0};
+const X64InstructionInfo MOV      = { "mov"_s,       ACCEPTEDOPERANDS_REGMEM,   ACCEPTEDOPERANDS_ALL,    0 };
+const X64InstructionInfo MOVZX    = { "movzx"_s,     ACCEPTEDOPERANDS_REGMEM,   ACCEPTEDOPERANDS_ALL,    0 };
+const X64InstructionInfo MOVSX    = { "movsx"_s,     ACCEPTEDOPERANDS_REGMEM,   ACCEPTEDOPERANDS_REGMEM, 0};
+const X64InstructionInfo MOVSXD   = { "movsxd"_s,    ACCEPTEDOPERANDS_REGMEM,   ACCEPTEDOPERANDS_REGMEM, 0};
+const X64InstructionInfo LEA      = { "lea"_s,       ACCEPTEDOPERANDS_REGISTER, ACCEPTEDOPERANDS_MEMORY, INSTRUCTIONFLAGS_DONT_CALCULATE_ADDRESSES };
+const X64InstructionInfo CMP      = { "cmp"_s,       ACCEPTEDOPERANDS_REGMEM,   ACCEPTEDOPERANDS_ALL,    0};
+const X64InstructionInfo ADD      = { "add"_s,       ACCEPTEDOPERANDS_REGMEM,   ACCEPTEDOPERANDS_ALL,    0};
+const X64InstructionInfo SUB      = { "sub"_s,       ACCEPTEDOPERANDS_REGMEM,   ACCEPTEDOPERANDS_ALL,    0};
+const X64InstructionInfo IMUL     = { "imul"_s,      ACCEPTEDOPERANDS_REGMEM,   ACCEPTEDOPERANDS_ALL,    0};
+const X64InstructionInfo SAR      = { "sar"_s,       ACCEPTEDOPERANDS_REGMEM,   ACCEPTEDOPERANDS_ALL,    0};
+const X64InstructionInfo SAL      = { "sal"_s,       ACCEPTEDOPERANDS_REGMEM,   ACCEPTEDOPERANDS_ALL,    0};
+const X64InstructionInfo AND      = { "and"_s,       ACCEPTEDOPERANDS_REGMEM,   ACCEPTEDOPERANDS_ALL,    0};
+const X64InstructionInfo OR       = { "or"_s,        ACCEPTEDOPERANDS_REGMEM,   ACCEPTEDOPERANDS_ALL,    0};
+const X64InstructionInfo XOR      = { "xor"_s,       ACCEPTEDOPERANDS_REGMEM,   ACCEPTEDOPERANDS_ALL,    0};
+const X64InstructionInfo MOVSS    = { "movss"_s,     ACCEPTEDOPERANDS_REGMEM,   ACCEPTEDOPERANDS_REGMEM, 0 };
+const X64InstructionInfo ADDSS    = { "addss"_s,     ACCEPTEDOPERANDS_REGMEM,   ACCEPTEDOPERANDS_REGMEM, 0};
+const X64InstructionInfo SUBSS    = { "subss"_s,     ACCEPTEDOPERANDS_REGMEM,   ACCEPTEDOPERANDS_REGMEM, 0};
+const X64InstructionInfo MULSS    = { "mulss"_s,     ACCEPTEDOPERANDS_REGMEM,   ACCEPTEDOPERANDS_REGMEM, 0};
+const X64InstructionInfo COMISS   = { "comiss"_s,    ACCEPTEDOPERANDS_REGMEM,   ACCEPTEDOPERANDS_REGMEM, 0};
+const X64InstructionInfo COMISD   = { "comisd"_s,    ACCEPTEDOPERANDS_REGMEM,   ACCEPTEDOPERANDS_REGMEM, 0};
+const X64InstructionInfo CVTSI2SS = { "cvtsi2ss"_s,  ACCEPTEDOPERANDS_REGISTER, ACCEPTEDOPERANDS_REGMEM, 0};
+const X64InstructionInfo CVTSI2SD = { "cvtsi2sd"_s,  ACCEPTEDOPERANDS_REGISTER, ACCEPTEDOPERANDS_REGMEM, 0};
+const X64InstructionInfo CVTSS2SI = { "cvtss2si"_s,  ACCEPTEDOPERANDS_REGISTER, ACCEPTEDOPERANDS_REGMEM, 0};
+const X64InstructionInfo CVTSD2SI = { "cvtsd2si"_s,  ACCEPTEDOPERANDS_REGISTER, ACCEPTEDOPERANDS_REGMEM, 0};
+const X64InstructionInfo CVTSS2SD = { "cvtss2sd"_s,  ACCEPTEDOPERANDS_REGISTER, ACCEPTEDOPERANDS_REGMEM, 0};
+const X64InstructionInfo CVTSD2SS = { "cvtsd2ss"_s,  ACCEPTEDOPERANDS_REGISTER, ACCEPTEDOPERANDS_REGMEM, 0};
 
 const s64 registerIndexBegin = 0x4000000000000000;
 const s64 RAX_idx = registerIndexBegin + 0;
@@ -52,6 +64,14 @@ const s64 R12_idx = registerIndexBegin + 12;
 const s64 R13_idx = registerIndexBegin + 13;
 const s64 R14_idx = registerIndexBegin + 14;
 const s64 R15_idx = registerIndexBegin + 15;
+const s64 XMM0_idx = registerIndexBegin + 16;
+const s64 XMM1_idx = registerIndexBegin + 17;
+const s64 XMM2_idx = registerIndexBegin + 18;
+const s64 XMM3_idx = registerIndexBegin + 19;
+const s64 XMM4_idx = registerIndexBegin + 20;
+const s64 XMM5_idx = registerIndexBegin + 21;
+const s64 XMM6_idx = registerIndexBegin + 22;
+const s64 XMM7_idx = registerIndexBegin + 23;
 
 const IRValue RAX = { IRVALUETYPE_REGISTER, RAX_idx, TYPETABLEIDX_S64 };
 const IRValue RCX = { IRVALUETYPE_REGISTER, RCX_idx, TYPETABLEIDX_S64 };
@@ -159,145 +179,179 @@ inline u8 IRValueTypeToFlags(IRValueType valueType)
 	}
 }
 
-String X64RegisterToStr(s64 registerIdx, s64 size)
+String X64RegisterToStr(s64 registerIdx, s64 size, bool floating)
 {
-	// Map virtual registers to logical registers
-	switch (registerIdx)
-	{
-	case 0: registerIdx = RBX_idx; break;
-	case 1: registerIdx = R10_idx; break;
-	case 2: registerIdx = R11_idx; break;
-	case 3: registerIdx = R12_idx; break;
-	case 4: registerIdx = R13_idx; break;
-	case 5: registerIdx = R14_idx; break;
-	case 6: registerIdx = R15_idx; break;
-	case 7: registerIdx = RSI_idx; break;
-	case 8: registerIdx = RDI_idx; break;
-	default:
-		ASSERT(registerIdx >= RAX_idx || !"Out of temporal registers");
-	}
-
 	String result = "???REG"_s;
-	switch (size)
+	if (!floating)
 	{
-	case 8:
+		// Map virtual registers to logical registers
 		switch (registerIdx)
 		{
-		case RAX_idx: result = "rax"_s; break;
-		case RCX_idx: result = "rcx"_s; break;
-		case RDX_idx: result = "rdx"_s; break;
-		case RBX_idx: result = "rbx"_s; break;
-		case RSI_idx: result = "rsi"_s; break;
-		case RDI_idx: result = "rdi"_s; break;
-		case RSP_idx: result = "rsp"_s; break;
-		case RBP_idx: result = "rbp"_s; break;
-		case R8_idx:  result = "r8"_s;  break;
-		case R9_idx:  result = "r9"_s;  break;
-		case R10_idx: result = "r10"_s; break;
-		case R11_idx: result = "r11"_s; break;
-		case R12_idx: result = "r12"_s; break;
-		case R13_idx: result = "r13"_s; break;
-		case R14_idx: result = "r14"_s; break;
-		case R15_idx: result = "r15"_s; break;
-		case IRSPECIALREGISTER_SHOULD_RETURN:
-			result = "r12"_s;
+		case 0: registerIdx = RBX_idx; break;
+		case 1: registerIdx = R10_idx; break;
+		case 2: registerIdx = R11_idx; break;
+		case 3: registerIdx = R12_idx; break;
+		case 4: registerIdx = R13_idx; break;
+		case 5: registerIdx = R14_idx; break;
+		case 6: registerIdx = R15_idx; break;
+		case 7: registerIdx = RSI_idx; break;
+		case 8: registerIdx = RDI_idx; break;
+		default:
+			ASSERT(registerIdx >= RAX_idx || !"Out of temporal registers");
+		}
+
+		switch (size)
+		{
+		case 8:
+			switch (registerIdx)
+			{
+			case RAX_idx: result = "rax"_s; break;
+			case RCX_idx: result = "rcx"_s; break;
+			case RDX_idx: result = "rdx"_s; break;
+			case RBX_idx: result = "rbx"_s; break;
+			case RSI_idx: result = "rsi"_s; break;
+			case RDI_idx: result = "rdi"_s; break;
+			case RSP_idx: result = "rsp"_s; break;
+			case RBP_idx: result = "rbp"_s; break;
+			case R8_idx:  result = "r8"_s;  break;
+			case R9_idx:  result = "r9"_s;  break;
+			case R10_idx: result = "r10"_s; break;
+			case R11_idx: result = "r11"_s; break;
+			case R12_idx: result = "r12"_s; break;
+			case R13_idx: result = "r13"_s; break;
+			case R14_idx: result = "r14"_s; break;
+			case R15_idx: result = "r15"_s; break;
+			case IRSPECIALREGISTER_SHOULD_RETURN:
+				result = "r12"_s;
+				break;
+			case IRSPECIALREGISTER_RETURN:
+				result = "rax"_s;
+				break;
+			default:
+				result = "???REG"_s;
+			}
 			break;
-		case IRSPECIALREGISTER_RETURN:
-			result = "rax"_s;
+		case 4:
+			switch (registerIdx)
+			{
+			case RAX_idx: result = "eax"_s; break;
+			case RCX_idx: result = "ecx"_s; break;
+			case RDX_idx: result = "edx"_s; break;
+			case RBX_idx: result = "ebx"_s; break;
+			case RSI_idx: result = "esi"_s; break;
+			case RDI_idx: result = "edi"_s; break;
+			case RSP_idx: result = "esp"_s; break;
+			case RBP_idx: result = "ebp"_s; break;
+			case R8_idx:  result = "r8d"_s;  break;
+			case R9_idx:  result = "r9d"_s;  break;
+			case R10_idx: result = "r10d"_s; break;
+			case R11_idx: result = "r11d"_s; break;
+			case R12_idx: result = "r12d"_s; break;
+			case R13_idx: result = "r13d"_s; break;
+			case R14_idx: result = "r14d"_s; break;
+			case R15_idx: result = "r15d"_s; break;
+			case IRSPECIALREGISTER_SHOULD_RETURN:
+				result = "r12d"_s;
+				break;
+			case IRSPECIALREGISTER_RETURN:
+				result = "eax"_s;
+				break;
+			default:
+				result = "???REG"_s;
+			}
 			break;
+		case 2:
+			switch (registerIdx)
+			{
+			case RAX_idx: result = "ax"_s; break;
+			case RCX_idx: result = "cx"_s; break;
+			case RDX_idx: result = "dx"_s; break;
+			case RBX_idx: result = "bx"_s; break;
+			case RSI_idx: result = "si"_s; break;
+			case RDI_idx: result = "di"_s; break;
+			case RSP_idx: result = "sp"_s; break;
+			case RBP_idx: result = "bp"_s; break;
+			case R8_idx:  result = "r8w"_s;  break;
+			case R9_idx:  result = "r9w"_s;  break;
+			case R10_idx: result = "r10w"_s; break;
+			case R11_idx: result = "r11w"_s; break;
+			case R12_idx: result = "r12w"_s; break;
+			case R13_idx: result = "r13w"_s; break;
+			case R14_idx: result = "r14w"_s; break;
+			case R15_idx: result = "r15w"_s; break;
+			case IRSPECIALREGISTER_SHOULD_RETURN:
+				result = "r12w"_s;
+				break;
+			case IRSPECIALREGISTER_RETURN:
+				result = "ax"_s;
+				break;
+			default:
+				result = "???REG"_s;
+			}
+			break;
+		case 1:
+			switch (registerIdx)
+			{
+			case RAX_idx: result = "al"_s; break;
+			case RCX_idx: result = "cl"_s; break;
+			case RDX_idx: result = "dl"_s; break;
+			case RBX_idx: result = "bl"_s; break;
+			case RSI_idx: result = "sil"_s; break;
+			case RDI_idx: result = "dil"_s; break;
+			case RSP_idx: result = "spl"_s; break;
+			case RBP_idx: result = "bpl"_s; break;
+			case R8_idx:  result = "r8b"_s;  break;
+			case R9_idx:  result = "r9b"_s;  break;
+			case R10_idx: result = "r10b"_s; break;
+			case R11_idx: result = "r11b"_s; break;
+			case R12_idx: result = "r12b"_s; break;
+			case R13_idx: result = "r13b"_s; break;
+			case R14_idx: result = "r14b"_s; break;
+			case R15_idx: result = "r15b"_s; break;
+			case IRSPECIALREGISTER_SHOULD_RETURN:
+				result = "r12b"_s;
+				break;
+			case IRSPECIALREGISTER_RETURN:
+				result = "al"_s;
+				break;
+			default:
+				result = "???REG"_s;
+			}
+			break;
+		default:
+			ASSERT(!"Invalid size for a register!");
+		}
+	}
+	else
+	{
+		// Map virtual registers to logical registers
+		switch (registerIdx)
+		{
+		case 0: registerIdx = XMM0_idx; break;
+		case 1: registerIdx = XMM1_idx; break;
+		case 2: registerIdx = XMM2_idx; break;
+		case 3: registerIdx = XMM3_idx; break;
+		case 4: registerIdx = XMM4_idx; break;
+		case 5: registerIdx = XMM5_idx; break;
+		case 6: registerIdx = XMM6_idx; break;
+		case 7: registerIdx = XMM7_idx; break;
+		default:
+			ASSERT(registerIdx >= RAX_idx || !"Out of temporal registers");
+		}
+
+		switch (registerIdx)
+		{
+		case XMM0_idx: result = "xmm0"_s; break;
+		case XMM1_idx: result = "xmm1"_s; break;
+		case XMM2_idx: result = "xmm2"_s; break;
+		case XMM3_idx: result = "xmm3"_s; break;
+		case XMM4_idx: result = "xmm4"_s; break;
+		case XMM5_idx: result = "xmm5"_s; break;
+		case XMM6_idx: result = "xmm6"_s; break;
+		case XMM7_idx: result = "xmm7"_s; break;
 		default:
 			result = "???REG"_s;
 		}
-		break;
-	case 4:
-		switch (registerIdx)
-		{
-		case RAX_idx: result = "eax"_s; break;
-		case RCX_idx: result = "ecx"_s; break;
-		case RDX_idx: result = "edx"_s; break;
-		case RBX_idx: result = "ebx"_s; break;
-		case RSI_idx: result = "esi"_s; break;
-		case RDI_idx: result = "edi"_s; break;
-		case RSP_idx: result = "esp"_s; break;
-		case RBP_idx: result = "ebp"_s; break;
-		case R8_idx:  result = "r8d"_s;  break;
-		case R9_idx:  result = "r9d"_s;  break;
-		case R10_idx: result = "r10d"_s; break;
-		case R11_idx: result = "r11d"_s; break;
-		case R12_idx: result = "r12d"_s; break;
-		case R13_idx: result = "r13d"_s; break;
-		case R14_idx: result = "r14d"_s; break;
-		case R15_idx: result = "r15d"_s; break;
-		case IRSPECIALREGISTER_SHOULD_RETURN:
-			result = "r12d"_s;
-			break;
-		case IRSPECIALREGISTER_RETURN:
-			result = "eax"_s;
-			break;
-		default:
-			result = "???REG"_s;
-		}
-		break;
-	case 2:
-		switch (registerIdx)
-		{
-		case RAX_idx: result = "ax"_s; break;
-		case RCX_idx: result = "cx"_s; break;
-		case RDX_idx: result = "dx"_s; break;
-		case RBX_idx: result = "bx"_s; break;
-		case RSI_idx: result = "si"_s; break;
-		case RDI_idx: result = "di"_s; break;
-		case RSP_idx: result = "sp"_s; break;
-		case RBP_idx: result = "bp"_s; break;
-		case R8_idx:  result = "r8w"_s;  break;
-		case R9_idx:  result = "r9w"_s;  break;
-		case R10_idx: result = "r10w"_s; break;
-		case R11_idx: result = "r11w"_s; break;
-		case R12_idx: result = "r12w"_s; break;
-		case R13_idx: result = "r13w"_s; break;
-		case R14_idx: result = "r14w"_s; break;
-		case R15_idx: result = "r15w"_s; break;
-		case IRSPECIALREGISTER_SHOULD_RETURN:
-			result = "r12w"_s;
-			break;
-		case IRSPECIALREGISTER_RETURN:
-			result = "ax"_s;
-			break;
-		default:
-			result = "???REG"_s;
-		}
-		break;
-	case 1:
-		switch (registerIdx)
-		{
-		case RAX_idx: result = "al"_s; break;
-		case RCX_idx: result = "cl"_s; break;
-		case RDX_idx: result = "dl"_s; break;
-		case RBX_idx: result = "bl"_s; break;
-		case RSI_idx: result = "sil"_s; break;
-		case RDI_idx: result = "dil"_s; break;
-		case RSP_idx: result = "spl"_s; break;
-		case RBP_idx: result = "bpl"_s; break;
-		case R8_idx:  result = "r8b"_s;  break;
-		case R9_idx:  result = "r9b"_s;  break;
-		case R10_idx: result = "r10b"_s; break;
-		case R11_idx: result = "r11b"_s; break;
-		case R12_idx: result = "r12b"_s; break;
-		case R13_idx: result = "r13b"_s; break;
-		case R14_idx: result = "r14b"_s; break;
-		case R15_idx: result = "r15b"_s; break;
-		case IRSPECIALREGISTER_SHOULD_RETURN:
-			result = "r12b"_s;
-			break;
-		case IRSPECIALREGISTER_RETURN:
-			result = "al"_s;
-			break;
-		default:
-			result = "???REG"_s;
-		}
-		break;
-	default:
-		ASSERT(!"Invalid size for a register!");
 	}
 	return result;
 }
@@ -308,15 +362,15 @@ String X64IRValueToStr(Context *context, IRValue value)
 
 	TypeInfo *typeInfo = &context->typeTable[value.typeTableIdx];
 	u64 size = typeInfo->size;
-	//size = 8;
+	bool floating = typeInfo->typeCategory == TYPECATEGORY_FLOATING;
 
 	if (value.valueType == IRVALUETYPE_REGISTER)
 	{
-		result = X64RegisterToStr(value.registerIdx, size);
+		result = X64RegisterToStr(value.registerIdx, size, floating);
 	}
 	else if (value.valueType == IRVALUETYPE_MEMORY_REGISTER)
 	{
-		result = X64RegisterToStr(value.memory.baseRegister, 8);
+		result = X64RegisterToStr(value.memory.baseRegister, 8, false);
 		if (value.memory.offset)
 			if (value.memory.offset > 0)
 				result = TPrintF("%S+%llu", result, value.memory.offset);
@@ -331,7 +385,7 @@ String X64IRValueToStr(Context *context, IRValue value)
 			result = TPrintF("%S", value.memory.baseVariable->name);
 		else
 		{
-			result = X64RegisterToStr(RSP_idx, 8);
+			result = X64RegisterToStr(RSP_idx, 8, false);
 			ASSERT(value.memory.baseVariable->isAllocated);
 			offset += value.memory.baseVariable->stackOffset;
 		}
@@ -386,44 +440,11 @@ String X64ProcedureToLabel(Context *context, Procedure *proc)
 void X64OutputInstruction(Context *context, HANDLE outputFile, X64InstructionInfo instInfo,
 		IRValue first, IRValue second)
 {
-	// No memory - memory
-	if ((first.valueType  == IRVALUETYPE_MEMORY_REGISTER || first.valueType  == IRVALUETYPE_MEMORY_VARIABLE) &&
-		(second.valueType == IRVALUETYPE_MEMORY_REGISTER || second.valueType == IRVALUETYPE_MEMORY_VARIABLE))
-	{
-		IRValue sizedRCX = IRValueRegister(RCX_idx, second.typeTableIdx);
-		X64OutputInstruction(context, outputFile, MOV, sizedRCX, second);
-		second = sizedRCX;
-	}
+	ASSERT(instInfo.acceptedOperandsLeft & IRValueTypeToFlags(first.valueType));
+	String firstStr = X64IRValueToStr(context, first);
 
-	String firstStr;
-	if (instInfo.acceptedOperandsLeft & IRValueTypeToFlags(first.valueType))
-	{
-		// Type of operator allowed
-		firstStr = X64IRValueToStr(context, first);
-	}
-	else
-	{
-		// Type of operator not allowed, copy to register
-		ASSERT(instInfo.acceptedOperandsLeft & ACCEPTEDOPERANDS_REGISTER);
-		IRValue sizedRSI = IRValueRegister(RSI_idx, first.typeTableIdx);
-		X64OutputInstruction(context, outputFile, MOV, sizedRSI, first);
-		firstStr = X64RegisterToStr(RSI_idx, context->typeTable[first.typeTableIdx].size);
-	}
-
-	String secondStr;
-	if (instInfo.acceptedOperandsRight & IRValueTypeToFlags(second.valueType))
-	{
-		// Type of operator allowed
-		secondStr = X64IRValueToStr(context, second);
-	}
-	else
-	{
-		// Type of operator not allowed, copy to register
-		ASSERT(instInfo.acceptedOperandsRight & ACCEPTEDOPERANDS_REGISTER);
-		IRValue sizedRDI = IRValueRegister(RDI_idx, second.typeTableIdx);
-		X64OutputInstruction(context, outputFile, MOV, sizedRDI, second);
-		secondStr = X64RegisterToStr(RDI_idx, context->typeTable[second.typeTableIdx].size);
-	}
+	ASSERT(instInfo.acceptedOperandsRight & IRValueTypeToFlags(second.valueType));
+	String secondStr = X64IRValueToStr(context, second);
 
 	PrintOut(context, outputFile, "%S %S, %S\n", instInfo.mnemonic, firstStr, secondStr);
 }
@@ -433,12 +454,18 @@ void X64OutputInstruction(Context *context, HANDLE outputFile, X64InstructionInf
 {
 	String firstStr;
 	if (instInfo.acceptedOperandsLeft & IRValueTypeToFlags(first.valueType))
+		// Type of operator allowed
 		firstStr = X64IRValueToStr(context, first);
 	else
 	{
+		// Type of operator not allowed, copy to register
 		ASSERT(instInfo.acceptedOperandsLeft & ACCEPTEDOPERANDS_REGISTER);
-		X64OutputInstruction(context, outputFile, MOV, RAX, first);
-		firstStr = "rax"_s;
+		IRValue sizedRAX = IRValueRegister(RAX_idx, first.typeTableIdx);
+		X64OutputInstruction(context, outputFile, MOV, sizedRAX, first);
+
+		TypeInfo *typeInfo = &context->typeTable[first.typeTableIdx];
+		firstStr = X64RegisterToStr(RAX_idx, typeInfo->size,
+				typeInfo->typeCategory == TYPECATEGORY_FLOATING);
 	}
 
 	PrintOut(context, outputFile, "%S %S\n", instInfo.mnemonic, firstStr);
@@ -447,6 +474,8 @@ void X64OutputInstruction(Context *context, HANDLE outputFile, X64InstructionInf
 void X64OutputInstruction3(Context *context, HANDLE outputFile, X64InstructionInfo instInfo,
 		IRValue out, IRValue left, IRValue right)
 {
+	bool floating = context->typeTable[out.typeTableIdx].typeCategory == TYPECATEGORY_FLOATING;
+
 	IRValue copyToOut, operand;
 	if (AreIRValuesDependent(context, out, right))
 	{
@@ -460,16 +489,149 @@ void X64OutputInstruction3(Context *context, HANDLE outputFile, X64InstructionIn
 		operand   = right;
 	}
 
-	X64OutputInstruction(context, outputFile, MOV, out, copyToOut);
+	if (!floating)
+		X64OutputInstruction(context, outputFile, MOV, out, copyToOut);
+	else
+		X64OutputInstruction(context, outputFile, MOVSS, out, copyToOut);
 
-	String operandStr = X64IRValueToStr(context, operand);
-	String outStr = X64IRValueToStr(context, out);
-	PrintOut(context, outputFile, "%S %S, %S\n", instInfo.mnemonic, outStr, operandStr);
+	X64OutputInstruction(context, outputFile, instInfo, out, operand);
 }
 
 void X64ProcessInstruction(Context *context, HANDLE outputFile, IRInstruction inst)
 {
-	switch (inst.type)
+	String conditionCode;
+
+	if (inst.type >= IRINSTRUCTIONTYPE_BINARY_BEGIN && inst.type <= IRINSTRUCTIONTYPE_BINARY_END)
+	{
+		bool floating =
+			context->typeTable[inst.binaryOperation.out.typeTableIdx].typeCategory ==
+			TYPECATEGORY_FLOATING;
+
+		switch (inst.type)
+		{
+		case IRINSTRUCTIONTYPE_ADD:
+		{
+			if (!floating)
+				X64OutputInstruction3(context, outputFile, ADD, inst.binaryOperation.out,
+						inst.binaryOperation.left, inst.binaryOperation.right);
+			else
+				X64OutputInstruction3(context, outputFile, ADDSS, inst.binaryOperation.out,
+						inst.binaryOperation.left, inst.binaryOperation.right);
+		} break;
+		case IRINSTRUCTIONTYPE_SUBTRACT:
+		{
+			if (!floating)
+				X64OutputInstruction3(context, outputFile, SUB, inst.binaryOperation.out,
+						inst.binaryOperation.left, inst.binaryOperation.right);
+			else
+				X64OutputInstruction3(context, outputFile, SUBSS, inst.binaryOperation.out,
+						inst.binaryOperation.left, inst.binaryOperation.right);
+		} break;
+		case IRINSTRUCTIONTYPE_MULTIPLY:
+		{
+			if (!floating)
+				X64OutputInstruction3(context, outputFile, IMUL, inst.binaryOperation.out,
+						inst.binaryOperation.left, inst.binaryOperation.right);
+			else
+				X64OutputInstruction3(context, outputFile, MULSS, inst.binaryOperation.out,
+						inst.binaryOperation.left, inst.binaryOperation.right);
+		} break;
+		case IRINSTRUCTIONTYPE_DIVIDE:
+		{
+			String left = X64IRValueToStr(context, inst.binaryOperation.left);
+			String right = X64IRValueToStr(context, inst.binaryOperation.right);
+			String out = X64IRValueToStr(context, inst.binaryOperation.out);
+			X64OutputInstruction(context, outputFile, MOV, inst.binaryOperation.out, inst.binaryOperation.left);
+			X64OutputInstruction(context, outputFile, MOV, RAX, inst.binaryOperation.left);
+			PrintOut(context, outputFile, "cqo\n");
+			if (inst.binaryOperation.right.valueType == IRVALUETYPE_IMMEDIATE_INTEGER)
+			{
+				X64OutputInstruction(context, outputFile, MOV, RCX, inst.binaryOperation.right);
+				PrintOut(context, outputFile, "idiv rcx\n");
+			}
+			else
+				PrintOut(context, outputFile, "idiv %S\n", right);
+			X64OutputInstruction(context, outputFile, MOV, inst.binaryOperation.out, RAX);
+		} break;
+		case IRINSTRUCTIONTYPE_MODULO:
+		{
+			String left = X64IRValueToStr(context, inst.binaryOperation.left);
+			String right = X64IRValueToStr(context, inst.binaryOperation.right);
+			String out = X64IRValueToStr(context, inst.binaryOperation.out);
+			X64OutputInstruction(context, outputFile, MOV, RAX, inst.binaryOperation.left);
+			PrintOut(context, outputFile, "cqo\n");
+			if (inst.binaryOperation.right.valueType == IRVALUETYPE_IMMEDIATE_INTEGER)
+			{
+				X64OutputInstruction(context, outputFile, MOV, RCX, inst.binaryOperation.right);
+				PrintOut(context, outputFile, "idiv rcx\n");
+			}
+			else
+				PrintOut(context, outputFile, "idiv %S\n", right);
+			X64OutputInstruction(context, outputFile, MOV, inst.binaryOperation.out, RDX);
+		} break;
+		case IRINSTRUCTIONTYPE_SHIFT_LEFT:
+		{
+			ASSERT(!floating);
+			X64OutputInstruction3(context, outputFile, SAL, inst.binaryOperation.out,
+					inst.binaryOperation.left, inst.binaryOperation.right);
+		} break;
+		case IRINSTRUCTIONTYPE_SHIFT_RIGHT:
+		{
+			ASSERT(!floating);
+			X64OutputInstruction3(context, outputFile, SAR, inst.binaryOperation.out,
+					inst.binaryOperation.left, inst.binaryOperation.right);
+		} break;
+		case IRINSTRUCTIONTYPE_BITWISE_AND:
+		{
+			ASSERT(!floating);
+			X64OutputInstruction3(context, outputFile, AND, inst.binaryOperation.out,
+					inst.binaryOperation.left, inst.binaryOperation.right);
+		} break;
+		case IRINSTRUCTIONTYPE_BITWISE_OR:
+		{
+			ASSERT(!floating);
+			X64OutputInstruction3(context, outputFile, OR, inst.binaryOperation.out,
+					inst.binaryOperation.left, inst.binaryOperation.right);
+		} break;
+		case IRINSTRUCTIONTYPE_BITWISE_XOR:
+		{
+			ASSERT(!floating);
+			X64OutputInstruction3(context, outputFile, XOR, inst.binaryOperation.out,
+					inst.binaryOperation.left, inst.binaryOperation.right);
+		} break;
+		case IRINSTRUCTIONTYPE_GREATER_THAN:
+		{
+			conditionCode = "g"_s;
+			goto doConditionalSet;
+		} break;
+		case IRINSTRUCTIONTYPE_LESS_THAN:
+		{
+			conditionCode = "l"_s;
+			goto doConditionalSet;
+		} break;
+		case IRINSTRUCTIONTYPE_GREATER_THAN_OR_EQUALS:
+		{
+			conditionCode = "ge"_s;
+			goto doConditionalSet;
+		} break;
+		case IRINSTRUCTIONTYPE_LESS_THAN_OR_EQUALS:
+		{
+			conditionCode = "le"_s;
+			goto doConditionalSet;
+		} break;
+		case IRINSTRUCTIONTYPE_EQUALS:
+		{
+			conditionCode = "e"_s;
+			goto doConditionalSet;
+		} break;
+		default:
+		{
+			ASSERT(!"Didn't recognize instruction type");
+			PrintOut(context, outputFile, "???INST\n");
+		} break;
+		}
+	}
+	else switch (inst.type)
 	{
 	case IRINSTRUCTIONTYPE_NOP:
 	case IRINSTRUCTIONTYPE_PUSH_VARIABLE:
@@ -483,7 +645,11 @@ void X64ProcessInstruction(Context *context, HANDLE outputFile, IRInstruction in
 	} break;
 	case IRINSTRUCTIONTYPE_ASSIGNMENT:
 	{
-		X64OutputInstruction(context, outputFile, MOV, inst.assignment.dst, inst.assignment.src);
+		if (context->typeTable[inst.binaryOperation.out.typeTableIdx].typeCategory !=
+			TYPECATEGORY_FLOATING)
+			X64OutputInstruction(context, outputFile, MOV, inst.assignment.dst, inst.assignment.src);
+		else
+			X64OutputInstruction(context, outputFile, MOVSS, inst.assignment.dst, inst.assignment.src);
 	} break;
 	case IRINSTRUCTIONTYPE_ASSIGNMENT_ZERO_EXTEND:
 	{
@@ -512,134 +678,6 @@ void X64ProcessInstruction(Context *context, HANDLE outputFile, IRInstruction in
 		IRValue typeInfoVar = IRValueFromVariable(context, &fakeVar);
 		X64OutputInstruction(context, outputFile, LEA, inst.getTypeInfo.out, typeInfoVar);
 	} break;
-	case IRINSTRUCTIONTYPE_ADD:
-	{
-		X64OutputInstruction3(context, outputFile, ADD, inst.binaryOperation.out,
-				inst.binaryOperation.left, inst.binaryOperation.right);
-	} break;
-	case IRINSTRUCTIONTYPE_SUBTRACT:
-	{
-		X64OutputInstruction3(context, outputFile, SUB, inst.binaryOperation.out,
-				inst.binaryOperation.left, inst.binaryOperation.right);
-	} break;
-	case IRINSTRUCTIONTYPE_MULTIPLY:
-	{
-		X64OutputInstruction3(context, outputFile, IMUL, inst.binaryOperation.out,
-				inst.binaryOperation.left, inst.binaryOperation.right);
-	} break;
-	case IRINSTRUCTIONTYPE_DIVIDE:
-	{
-		String left = X64IRValueToStr(context, inst.binaryOperation.left);
-		String right = X64IRValueToStr(context, inst.binaryOperation.right);
-		String out = X64IRValueToStr(context, inst.binaryOperation.out);
-		X64OutputInstruction(context, outputFile, MOV, inst.binaryOperation.out, inst.binaryOperation.left);
-		X64OutputInstruction(context, outputFile, MOV, RAX, inst.binaryOperation.left);
-		PrintOut(context, outputFile, "cqo\n");
-		if (inst.binaryOperation.right.valueType == IRVALUETYPE_IMMEDIATE_INTEGER)
-		{
-			X64OutputInstruction(context, outputFile, MOV, RCX, inst.binaryOperation.right);
-			PrintOut(context, outputFile, "idiv rcx\n");
-		}
-		else
-			PrintOut(context, outputFile, "idiv %S\n", right);
-		X64OutputInstruction(context, outputFile, MOV, inst.binaryOperation.out, RAX);
-	} break;
-	case IRINSTRUCTIONTYPE_MODULO:
-	{
-		String left = X64IRValueToStr(context, inst.binaryOperation.left);
-		String right = X64IRValueToStr(context, inst.binaryOperation.right);
-		String out = X64IRValueToStr(context, inst.binaryOperation.out);
-		X64OutputInstruction(context, outputFile, MOV, RAX, inst.binaryOperation.left);
-		PrintOut(context, outputFile, "cqo\n");
-		if (inst.binaryOperation.right.valueType == IRVALUETYPE_IMMEDIATE_INTEGER)
-		{
-			X64OutputInstruction(context, outputFile, MOV, RCX, inst.binaryOperation.right);
-			PrintOut(context, outputFile, "idiv rcx\n");
-		}
-		else
-			PrintOut(context, outputFile, "idiv %S\n", right);
-		X64OutputInstruction(context, outputFile, MOV, inst.binaryOperation.out, RDX);
-	} break;
-	case IRINSTRUCTIONTYPE_SHIFT_LEFT:
-	{
-		X64OutputInstruction3(context, outputFile, SAL, inst.binaryOperation.out,
-				inst.binaryOperation.left, inst.binaryOperation.right);
-	} break;
-	case IRINSTRUCTIONTYPE_SHIFT_RIGHT:
-	{
-		X64OutputInstruction3(context, outputFile, SAR, inst.binaryOperation.out,
-				inst.binaryOperation.left, inst.binaryOperation.right);
-	} break;
-	case IRINSTRUCTIONTYPE_BITWISE_AND:
-	{
-		X64OutputInstruction3(context, outputFile, AND, inst.binaryOperation.out,
-				inst.binaryOperation.left, inst.binaryOperation.right);
-	} break;
-	case IRINSTRUCTIONTYPE_BITWISE_OR:
-	{
-		X64OutputInstruction3(context, outputFile, OR, inst.binaryOperation.out,
-				inst.binaryOperation.left, inst.binaryOperation.right);
-	} break;
-	case IRINSTRUCTIONTYPE_BITWISE_XOR:
-	{
-		X64OutputInstruction3(context, outputFile, XOR, inst.binaryOperation.out,
-				inst.binaryOperation.left, inst.binaryOperation.right);
-	} break;
-	case IRINSTRUCTIONTYPE_GREATER_THAN:
-	{
-		String left = X64IRValueToStr(context, inst.binaryOperation.left);
-		String right = X64IRValueToStr(context, inst.binaryOperation.right);
-		String out = X64IRValueToStr(context, inst.binaryOperation.out);
-		X64OutputInstruction(context, outputFile, CMP, inst.binaryOperation.left,
-				inst.binaryOperation.right);
-		PrintOut(context, outputFile, "setg al\n");
-		IRValue sizedRAX = IRValueRegister(RAX_idx, inst.binaryOperation.out.typeTableIdx);
-		X64OutputInstruction(context, outputFile, MOV, inst.binaryOperation.out, sizedRAX);
-	} break;
-	case IRINSTRUCTIONTYPE_LESS_THAN:
-	{
-		String left = X64IRValueToStr(context, inst.binaryOperation.left);
-		String right = X64IRValueToStr(context, inst.binaryOperation.right);
-		String out = X64IRValueToStr(context, inst.binaryOperation.out);
-		X64OutputInstruction(context, outputFile, CMP, inst.binaryOperation.left,
-				inst.binaryOperation.right);
-		PrintOut(context, outputFile, "setl al\n");
-		IRValue sizedRAX = IRValueRegister(RAX_idx, inst.binaryOperation.out.typeTableIdx);
-		X64OutputInstruction(context, outputFile, MOV, inst.binaryOperation.out, sizedRAX);
-	} break;
-	case IRINSTRUCTIONTYPE_GREATER_THAN_OR_EQUALS:
-	{
-		String left = X64IRValueToStr(context, inst.binaryOperation.left);
-		String right = X64IRValueToStr(context, inst.binaryOperation.right);
-		String out = X64IRValueToStr(context, inst.binaryOperation.out);
-		X64OutputInstruction(context, outputFile, CMP, inst.binaryOperation.left,
-				inst.binaryOperation.right);
-		PrintOut(context, outputFile, "setge al\n");
-		IRValue sizedRAX = IRValueRegister(RAX_idx, inst.binaryOperation.out.typeTableIdx);
-		X64OutputInstruction(context, outputFile, MOV, inst.binaryOperation.out, sizedRAX);
-	} break;
-	case IRINSTRUCTIONTYPE_LESS_THAN_OR_EQUALS:
-	{
-		String left = X64IRValueToStr(context, inst.binaryOperation.left);
-		String right = X64IRValueToStr(context, inst.binaryOperation.right);
-		String out = X64IRValueToStr(context, inst.binaryOperation.out);
-		X64OutputInstruction(context, outputFile, CMP, inst.binaryOperation.left,
-				inst.binaryOperation.right);
-		PrintOut(context, outputFile, "setle al\n");
-		IRValue sizedRAX = IRValueRegister(RAX_idx, inst.binaryOperation.out.typeTableIdx);
-		X64OutputInstruction(context, outputFile, MOV, inst.binaryOperation.out, sizedRAX);
-	} break;
-	case IRINSTRUCTIONTYPE_EQUALS:
-	{
-		String left = X64IRValueToStr(context, inst.binaryOperation.left);
-		String right = X64IRValueToStr(context, inst.binaryOperation.right);
-		String out = X64IRValueToStr(context, inst.binaryOperation.out);
-		X64OutputInstruction(context, outputFile, CMP, inst.binaryOperation.left,
-				inst.binaryOperation.right);
-		PrintOut(context, outputFile, "sete al\n");
-		IRValue sizedRAX = IRValueRegister(RAX_idx, inst.binaryOperation.out.typeTableIdx);
-		X64OutputInstruction(context, outputFile, MOV, inst.binaryOperation.out, sizedRAX);
-	} break;
 	case IRINSTRUCTIONTYPE_NOT:
 	{
 		String in = X64IRValueToStr(context, inst.unaryOperation.in);
@@ -652,24 +690,43 @@ void X64ProcessInstruction(Context *context, HANDLE outputFile, IRInstruction in
 	} break;
 	case IRINSTRUCTIONTYPE_BITWISE_NOT:
 	{
-		String in = X64IRValueToStr(context, inst.unaryOperation.in);
-		String out = X64IRValueToStr(context, inst.unaryOperation.out);
 		X64OutputInstruction(context, outputFile, MOV, inst.unaryOperation.out, inst.unaryOperation.in);
+		String out = X64IRValueToStr(context, inst.unaryOperation.out);
 		PrintOut(context, outputFile, "not %S\n", out);
 	} break;
 	case IRINSTRUCTIONTYPE_SUBTRACT_UNARY:
 	{
-		String in = X64IRValueToStr(context, inst.unaryOperation.in);
-		String out = X64IRValueToStr(context, inst.unaryOperation.out);
 		X64OutputInstruction(context, outputFile, MOV, inst.unaryOperation.out, inst.unaryOperation.in);
+		String out = X64IRValueToStr(context, inst.unaryOperation.out);
 		PrintOut(context, outputFile, "neg %S\n", out);
 	} break;
 	case IRINSTRUCTIONTYPE_LOAD_EFFECTIVE_ADDRESS:
 	{
-		IRValue pointer = inst.unaryOperation.in;
-		String in = X64IRValueToStr(context, pointer);
-		String out = X64IRValueToStr(context, inst.unaryOperation.out);
 		X64OutputInstruction(context, outputFile, LEA, inst.unaryOperation.out, inst.unaryOperation.in);
+	} break;
+	case IRINSTRUCTIONTYPE_CONVERT_INT_TO_F32:
+	{
+		X64OutputInstruction(context, outputFile, CVTSI2SS, inst.unaryOperation.out, inst.unaryOperation.in);
+	} break;
+	case IRINSTRUCTIONTYPE_CONVERT_INT_TO_F64:
+	{
+		X64OutputInstruction(context, outputFile, CVTSI2SD, inst.unaryOperation.out, inst.unaryOperation.in);
+	} break;
+	case IRINSTRUCTIONTYPE_CONVERT_F32_TO_INT:
+	{
+		X64OutputInstruction(context, outputFile, CVTSS2SI, inst.unaryOperation.out, inst.unaryOperation.in);
+	} break;
+	case IRINSTRUCTIONTYPE_CONVERT_F64_TO_INT:
+	{
+		X64OutputInstruction(context, outputFile, CVTSD2SI, inst.unaryOperation.out, inst.unaryOperation.in);
+	} break;
+	case IRINSTRUCTIONTYPE_CONVERT_F32_TO_F64:
+	{
+		X64OutputInstruction(context, outputFile, CVTSS2SD, inst.unaryOperation.out, inst.unaryOperation.in);
+	} break;
+	case IRINSTRUCTIONTYPE_CONVERT_F64_TO_F32:
+	{
+		X64OutputInstruction(context, outputFile, CVTSD2SS, inst.unaryOperation.out, inst.unaryOperation.in);
 	} break;
 	case IRINSTRUCTIONTYPE_PROCEDURE_CALL:
 	{
@@ -763,9 +820,94 @@ void X64ProcessInstruction(Context *context, HANDLE outputFile, IRInstruction in
 		PrintOut(context, outputFile, "???INST\n");
 	} break;
 	}
+
+	return;
+doConditionalSet:
+	{
+		String left = X64IRValueToStr(context, inst.binaryOperation.left);
+		String right = X64IRValueToStr(context, inst.binaryOperation.right);
+		String out = X64IRValueToStr(context, inst.binaryOperation.out);
+
+		TypeInfo *leftTypeInfo = &context->typeTable[inst.binaryOperation.left.typeTableIdx];
+		if (leftTypeInfo-> typeCategory != TYPECATEGORY_FLOATING)
+			X64OutputInstruction(context, outputFile, CMP, inst.binaryOperation.left,
+					inst.binaryOperation.right);
+		else if (leftTypeInfo->size == 4)
+			X64OutputInstruction(context, outputFile, COMISS, inst.binaryOperation.left,
+					inst.binaryOperation.right);
+		else
+			X64OutputInstruction(context, outputFile, COMISD, inst.binaryOperation.left,
+					inst.binaryOperation.right);
+		PrintOut(context, outputFile, "set%S al\n", conditionCode);
+		IRValue sizedRAX = IRValueRegister(RAX_idx, inst.binaryOperation.out.typeTableIdx);
+		X64OutputInstruction(context, outputFile, MOV, inst.binaryOperation.out, sizedRAX);
+	}
 }
 
-void WriteToX64(Context *context)
+void X64TransformInstruction(Context *context, IRInstruction *inst, Procedure *procedure)
+{
+	if (inst->type >= IRINSTRUCTIONTYPE_BINARY_BEGIN &&
+		inst->type <  IRINSTRUCTIONTYPE_BINARY_END)
+	{
+		IRValue left  = inst->binaryOperation.left;
+		IRValue right = inst->binaryOperation.right;
+		// If both are in memory, save one in register
+		if ((left.valueType  == IRVALUETYPE_MEMORY_REGISTER ||
+			 left.valueType  == IRVALUETYPE_MEMORY_VARIABLE) &&
+			(right.valueType == IRVALUETYPE_MEMORY_REGISTER ||
+			 right.valueType == IRVALUETYPE_MEMORY_VARIABLE))
+		{
+			s64 newVirtualRegister = procedure->registerCount++;
+			IRValue temp = IRValueRegister(newVirtualRegister, right.typeTableIdx);
+
+			IRInstruction newInst = { IRINSTRUCTIONTYPE_ASSIGNMENT };
+			newInst.assignment.dst = temp;
+			newInst.assignment.src = right;
+
+			inst->binaryOperation.right = temp;
+
+			IRPatch(context, inst, newInst);
+		}
+	}
+	else switch (inst->type)
+	{
+	case IRINSTRUCTIONTYPE_PATCH:
+	{
+		X64TransformInstruction(context, inst->patch.first,  procedure);
+		X64TransformInstruction(context, inst->patch.second, procedure);
+	} break;
+	case IRINSTRUCTIONTYPE_PATCH_MANY:
+	{
+		const s64 instructionCount = inst->patchMany.instructions.size;
+		for (s64 i = 0; i < instructionCount; ++i)
+			X64TransformInstruction(context, &inst->patchMany.instructions[i], procedure);
+	} break;
+	}
+}
+
+void BackendTransformations(Context *context)
+{
+	BucketArrayInit(&context->patchedInstructions);
+
+	u64 procedureCount = BucketArrayCount(&context->procedures);
+	for (int procedureIdx = 0; procedureIdx < procedureCount; ++procedureIdx)
+	{
+		Procedure *proc = &context->procedures[procedureIdx];
+
+		// @Speed: separate array of external procedures to avoid branching
+		if (proc->isExternal)
+			continue;
+
+		u64 instructionCount = BucketArrayCount(&proc->instructions);
+		for (int instructionIdx = 0; instructionIdx < instructionCount; ++instructionIdx)
+		{
+			IRInstruction *inst = &proc->instructions[instructionIdx];
+			X64TransformInstruction(context, inst, proc);
+		}
+	}
+}
+
+void BackendMain(Context *context)
 {
 	HANDLE outputFile = CreateFileA(
 			"out.asm",

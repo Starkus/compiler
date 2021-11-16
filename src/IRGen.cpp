@@ -170,6 +170,12 @@ enum IRInstructionType
 	IRINSTRUCTIONTYPE_BITWISE_NOT,
 	IRINSTRUCTIONTYPE_SUBTRACT_UNARY,
 	IRINSTRUCTIONTYPE_LOAD_EFFECTIVE_ADDRESS,
+	IRINSTRUCTIONTYPE_CONVERT_INT_TO_F32,
+	IRINSTRUCTIONTYPE_CONVERT_INT_TO_F64,
+	IRINSTRUCTIONTYPE_CONVERT_F32_TO_INT,
+	IRINSTRUCTIONTYPE_CONVERT_F64_TO_INT,
+	IRINSTRUCTIONTYPE_CONVERT_F32_TO_F64,
+	IRINSTRUCTIONTYPE_CONVERT_F64_TO_F32,
 	IRINSTRUCTIONTYPE_UNARY_END,
 
 	IRINSTRUCTIONTYPE_BINARY_BEGIN,
@@ -655,6 +661,56 @@ IRValue IRValueFromVariable(Context *context, Variable *variable)
 	return result;
 }
 
+void IRConvertIfNecessary(Context *context, IRValue *left, IRValue *right)
+{
+	TypeInfo *typeInfoLeft  = &context->typeTable[left->typeTableIdx];
+	TypeInfo *typeInfoRight = &context->typeTable[right->typeTableIdx];
+	if (typeInfoLeft->typeCategory == TYPECATEGORY_FLOATING &&
+		typeInfoRight->typeCategory != TYPECATEGORY_FLOATING)
+	{
+		if (typeInfoRight->size == 4)
+		{
+			IRInstruction convertInst = { IRINSTRUCTIONTYPE_CONVERT_INT_TO_F32 };
+			convertInst.unaryOperation.in = *right;
+			convertInst.unaryOperation.out = IRValueRegister(NewVirtualRegister(context),
+					TYPETABLEIDX_F32);
+			*AddInstruction(context) = convertInst;
+			*right = convertInst.unaryOperation.out;
+		}
+		else if (typeInfoRight->size == 8)
+		{
+			IRInstruction convertInst = { IRINSTRUCTIONTYPE_CONVERT_INT_TO_F64 };
+			convertInst.unaryOperation.in = *right;
+			convertInst.unaryOperation.out = IRValueRegister(NewVirtualRegister(context),
+					TYPETABLEIDX_F64);
+			*AddInstruction(context) = convertInst;
+			*right = convertInst.unaryOperation.out;
+		}
+	}
+	else if (typeInfoLeft->typeCategory != TYPECATEGORY_FLOATING &&
+			 typeInfoRight->typeCategory == TYPECATEGORY_FLOATING)
+	{
+		if (typeInfoLeft->size == 4)
+		{
+			IRInstruction convertInst = { IRINSTRUCTIONTYPE_CONVERT_INT_TO_F32 };
+			convertInst.unaryOperation.in = *left;
+			convertInst.unaryOperation.out = IRValueRegister(NewVirtualRegister(context),
+					TYPETABLEIDX_F32);
+			*AddInstruction(context) = convertInst;
+			*left = convertInst.unaryOperation.out;
+		}
+		else if (typeInfoLeft->size == 8)
+		{
+			IRInstruction convertInst = { IRINSTRUCTIONTYPE_CONVERT_INT_TO_F64 };
+			convertInst.unaryOperation.in = *left;
+			convertInst.unaryOperation.out = IRValueRegister(NewVirtualRegister(context),
+					TYPETABLEIDX_F64);
+			*AddInstruction(context) = convertInst;
+			*left = convertInst.unaryOperation.out;
+		}
+	}
+}
+
 void IRDoAssignment(Context *context, IRValue leftValue, IRValue rightValue)
 {
 	s64 rightType = rightValue.typeTableIdx;
@@ -769,9 +825,10 @@ void IRDoAssignment(Context *context, IRValue leftValue, IRValue rightValue)
 		else
 			inst.type = IRINSTRUCTIONTYPE_ASSIGNMENT;
 
+		IRConvertIfNecessary(context, &leftValue, &rightValue);
+
 		inst.assignment.src = rightValue;
 		inst.assignment.dst = leftValue;
-
 		*AddInstruction(context) = inst;
 	}
 }
@@ -803,6 +860,7 @@ IRValue IRInstructionFromBinaryOperation(Context *context, ASTExpression *expres
 	{
 		IRValue leftValue  = IRGenFromExpression(context, leftHand);
 		IRValue rightValue = IRGenFromExpression(context, rightHand);
+		IRConvertIfNecessary(context, &leftValue, &rightValue);
 		result = IRInstructionFromMultiply(context, leftValue, rightValue);
 	}
 	else if (expression->binaryOperation.op == TOKEN_OP_AND)
@@ -952,6 +1010,8 @@ IRValue IRInstructionFromBinaryOperation(Context *context, ASTExpression *expres
 		inst.binaryOperation.left  = IRGenFromExpression(context, leftHand);
 		inst.binaryOperation.right = IRGenFromExpression(context, rightHand);
 
+		IRConvertIfNecessary(context, &inst.binaryOperation.left, &inst.binaryOperation.right);
+
 		switch (expression->binaryOperation.op)
 		{
 		case TOKEN_OP_PLUS:
@@ -1049,6 +1109,19 @@ IRValue IRInstructionFromBinaryOperation(Context *context, ASTExpression *expres
 	}
 
 	return result;
+}
+
+void IRPatch(Context *context, IRInstruction *original, IRInstruction newInst)
+{
+	IRInstruction *patchInst1 = BucketArrayAdd(&context->patchedInstructions);
+	*patchInst1 = newInst;
+
+	IRInstruction *patchInst2 = BucketArrayAdd(&context->patchedInstructions);
+	*patchInst2 = *original;
+
+	original->type = IRINSTRUCTIONTYPE_PATCH;
+	original->patch.first  = patchInst1;
+	original->patch.second = patchInst2;
 }
 
 IRValue IRGenFromExpression(Context *context, ASTExpression *expression)

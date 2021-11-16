@@ -179,7 +179,7 @@ void DoLivenessAnalisisOnInstruction(Context *context, BasicBlock *basicBlock, I
 	{
 		AddIfRegister(basicBlock, inst->conditionalJump.condition, liveRegisters);
 	} break;
-	case IRINSTRUCTIONTYPE_RETURN:
+	case IRINSTRUCTIONTYPE_RETURN: // @Todo: delete this
 	{
 		AddIfRegister(basicBlock, IRValueRegister(IRSPECIALREGISTER_RETURN),
 				liveRegisters);
@@ -408,21 +408,13 @@ inline void ReplaceRegisterForVariable(Context *context, Procedure *procedure,
 		s64 newVirtualRegister = procedure->registerCount++;
 		IRValue tmp = IRValueRegister(newVirtualRegister, value->typeTableIdx);
 
-		IRInstruction *newInst1 = BucketArrayAdd(&context->patchedInstructions);
-		newInst1->type = IRINSTRUCTIONTYPE_ASSIGNMENT;
-		newInst1->assignment.dst = tmp;
-		newInst1->assignment.src = IRValueMemory(variable, 0, value->typeTableIdx);
+		IRInstruction newInst = { IRINSTRUCTIONTYPE_ASSIGNMENT };
+		newInst.assignment.dst = tmp;
+		newInst.assignment.src = IRValueMemory(variable, 0, value->typeTableIdx);
 
 		*value = IRValueMemory(tmp.registerIdx, value->memory.offset, value->typeTableIdx);
 
-		IRInstruction *newInst2 = BucketArrayAdd(&context->patchedInstructions);
-		*newInst2 = *instruction;
-
-		IRInstruction patchInstruction;
-		patchInstruction.type = IRINSTRUCTIONTYPE_PATCH;
-		patchInstruction.patch.first = newInst1;
-		patchInstruction.patch.second = newInst2;
-		*instruction = patchInstruction;
+		IRPatch(context, instruction, newInst);
 	}
 	else if (value->valueType == IRVALUETYPE_REGISTER && value->registerIdx == registerIdx)
 		*value = IRValueMemory(variable, 0, value->typeTableIdx);
@@ -498,19 +490,9 @@ void SpillRegisterIntoMemory(Context *context, Procedure *procedure, s64 registe
 #endif
 
 	Variable *newVar = NewVariable(context, TPrintF("_spill_r%lld", registerIdx), TYPETABLEIDX_S64);
-
-	IRInstruction *newInst1 = BucketArrayAdd(&context->patchedInstructions);
-	newInst1->type = IRINSTRUCTIONTYPE_PUSH_VARIABLE;
-	newInst1->pushVariable.variable = newVar;
-
-	IRInstruction *newInst2 = BucketArrayAdd(&context->patchedInstructions);
-	*newInst2 = procedure->instructions[0];
-
-	IRInstruction patchInst;
-	patchInst.type = IRINSTRUCTIONTYPE_PATCH;
-	patchInst.patch.first = newInst1;
-	patchInst.patch.second = newInst2;
-	procedure->instructions[0] = patchInst;
+	IRInstruction pushInst = { IRINSTRUCTIONTYPE_PUSH_VARIABLE };
+	pushInst.pushVariable.variable = newVar;
+	IRPatch(context, &procedure->instructions[0], pushInst);
 
 	u64 instructionCount = BucketArrayCount(&procedure->instructions);
 	for (int instructionIdx = 0; instructionIdx < instructionCount; ++instructionIdx)
@@ -598,8 +580,25 @@ void ReplaceRegistersInInstruction(IRInstruction *inst, Array<s64> registerMap)
 	if (inst->type >= IRINSTRUCTIONTYPE_UNARY_BEGIN &&
 			inst->type < IRINSTRUCTIONTYPE_UNARY_END)
 	{
-		ReplaceIfRegister(&inst->unaryOperation.in, registerMap);
-		ReplaceIfRegister(&inst->unaryOperation.out, registerMap);
+		IRValue *in  = &inst->unaryOperation.in;
+		IRValue *out = &inst->unaryOperation.out;
+		if (out->valueType == IRVALUETYPE_REGISTER && out->registerIdx < IRSPECIALREGISTER_BEGIN)
+		{
+			if ((u64)out->registerIdx >= registerMap.size)
+			{
+				return;
+			}
+			else if (registerMap[out->registerIdx] == -1) // @Cleanup: I hate this!
+			{
+				// Replace assignment to unused register for a NOP.
+				// Wanted to be specific with the '-1' here so we are more likely to see when
+				// garbage gets into the register map.
+				inst->type = IRINSTRUCTIONTYPE_NOP;
+				return;
+			}
+		}
+		ReplaceIfRegister(in,  registerMap);
+		ReplaceIfRegister(out, registerMap);
 	}
 	else if (inst->type >= IRINSTRUCTIONTYPE_BINARY_BEGIN &&
 			inst->type < IRINSTRUCTIONTYPE_BINARY_END)
@@ -710,9 +709,9 @@ inline u64 BitIfRegister(IRValue value)
 
 u64 RegisterSavingInstruction(Context *context, IRInstruction *inst, u64 usedRegisters)
 {
-	if (inst->type >= IRINSTRUCTIONTYPE_UNARY_BEGIN && inst->type <= IRINSTRUCTIONTYPE_UNARY_END)
+	if (inst->type >= IRINSTRUCTIONTYPE_UNARY_BEGIN && inst->type < IRINSTRUCTIONTYPE_UNARY_END)
 		usedRegisters |= BitIfRegister(inst->unaryOperation.out);
-	else if (inst->type >= IRINSTRUCTIONTYPE_BINARY_BEGIN && inst->type <= IRINSTRUCTIONTYPE_BINARY_END)
+	else if (inst->type >= IRINSTRUCTIONTYPE_BINARY_BEGIN && inst->type < IRINSTRUCTIONTYPE_BINARY_END)
 		usedRegisters |= BitIfRegister(inst->binaryOperation.out);
 	else switch(inst->type)
 	{
@@ -796,7 +795,6 @@ void OptimizerMain(Context *context)
 	BucketArrayInit(&context->basicBlocks);
 	DynamicArrayInit(&context->leafBasicBlocks, 128);
 	DynamicArrayInit(&context->interferenceGraph, 128);
-	BucketArrayInit(&context->patchedInstructions);
 
 	GenerateBasicBlocks(context);
 
@@ -852,7 +850,7 @@ void OptimizerMain(Context *context)
 			registerMap.size = highestVirtualRegister + 1;
 			memset(registerMap.data, 0xFF, registerMap.size * sizeof(s64));
 
-			// Map all registers to fewer non-colliding registers
+			// Remap registers
 			while (nodeStack.size < context->interferenceGraph.size)
 			{
 				InterferenceGraphNode *nodeToRemove = nullptr;

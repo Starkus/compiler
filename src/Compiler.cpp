@@ -333,6 +333,8 @@ int main(int argc, char **argv)
 	}
 #endif
 
+	BackendTransformations(&context);
+
 	OptimizerMain(&context);
 
 #if PRINT_IR
@@ -343,8 +345,7 @@ int main(int argc, char **argv)
 	}
 #endif
 
-	WriteToX64(&context);
-	//WriteToC(&context);
+	BackendMain(&context);
 
 	Print("Compilation success\n");
 	return 0;
