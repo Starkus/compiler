@@ -1111,19 +1111,6 @@ IRValue IRInstructionFromBinaryOperation(Context *context, ASTExpression *expres
 	return result;
 }
 
-void IRPatch(Context *context, IRInstruction *original, IRInstruction newInst)
-{
-	IRInstruction *patchInst1 = BucketArrayAdd(&context->patchedInstructions);
-	*patchInst1 = newInst;
-
-	IRInstruction *patchInst2 = BucketArrayAdd(&context->patchedInstructions);
-	*patchInst2 = *original;
-
-	original->type = IRINSTRUCTIONTYPE_PATCH;
-	original->patch.first  = patchInst1;
-	original->patch.second = patchInst2;
-}
-
 IRValue IRGenFromExpression(Context *context, ASTExpression *expression)
 {
 	IRValue result = {};

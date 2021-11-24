@@ -87,6 +87,7 @@ struct IRLabel;
 struct IRInstruction;
 struct BasicBlock;
 struct InterferenceGraphNode;
+struct X64Instruction;
 struct Context
 {
 	Config config;
@@ -118,14 +119,13 @@ struct Context
 	BucketArray<IRLabel, 1024, malloc, realloc> irLabels;
 	IRLabel *currentBreakLabel;
 
-	// Optimizer
+	// Backend
+	HANDLE outputFile;
+
 	BucketArray<BasicBlock, 512, malloc, realloc> basicBlocks;
 	DynamicArray<BasicBlock *, malloc, realloc> leafBasicBlocks;
 	DynamicArray<InterferenceGraphNode, malloc, realloc> interferenceGraph;
-	BucketArray<IRInstruction, 128, malloc, realloc> patchedInstructions;
-
-	// Backend
-	HANDLE outputFile;
+	BucketArray<X64Instruction, 128, malloc, realloc> patchedInstructions;
 };
 
 #include "Tokenizer.cpp"
@@ -215,7 +215,7 @@ void UnexpectedTokenError(Context *context, Token *token)
 #include "TypeChecker.cpp"
 #include "IRGen.cpp"
 #include "PrintIR.cpp"
-#include "Optimize.cpp"
+//#include "Optimize.cpp"
 //#include "WriteToC.cpp"
 #include "x64.cpp"
 
@@ -333,11 +333,11 @@ int main(int argc, char **argv)
 	}
 #endif
 
-	BackendTransformations(&context);
+	BackendConvert(&context);
 
-	OptimizerMain(&context);
+	//OptimizerMain(&context);
 
-#if PRINT_IR
+#if 0//PRINT_IR
 	if (!context.config.silent)
 	{
 		Print("POST-OPTIMIZING IR\n");
@@ -345,7 +345,7 @@ int main(int argc, char **argv)
 	}
 #endif
 
-	BackendMain(&context);
+	//BackendMain(&context);
 
 	Print("Compilation success\n");
 	return 0;

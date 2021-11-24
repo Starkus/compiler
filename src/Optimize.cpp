@@ -22,6 +22,19 @@ struct InterferenceGraphNode
 	bool removed;
 };
 
+void IRPatch(Context *context, IRInstruction *original, IRInstruction newInst)
+{
+	IRInstruction *patchInst1 = BucketArrayAdd(&context->patchedInstructions);
+	*patchInst1 = newInst;
+
+	IRInstruction *patchInst2 = BucketArrayAdd(&context->patchedInstructions);
+	*patchInst2 = *original;
+
+	original->type = IRINSTRUCTIONTYPE_PATCH;
+	original->patch.first  = patchInst1;
+	original->patch.second = patchInst2;
+}
+
 #if DEBUG_OPTIMIZER
 void PrintBasicBlock(Context *context, BasicBlock *basicBlock)
 {

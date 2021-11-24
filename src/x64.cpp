@@ -20,6 +20,107 @@ struct X64InstructionInfo
 	u8 flags;
 };
 
+enum X64InstructionType
+{
+	X64_MOV,
+	X64_MOVZX,
+	X64_MOVSX,
+	X64_MOVSXD,
+	X64_CQO,
+	X64_PUSH,
+	X64_POP,
+	X64_JMP,
+	X64_JE,
+	X64_JNE,
+	X64_CALL,
+	X64_LEAVE,
+	X64_RET,
+	X64_LEA,
+	X64_CMP,
+	X64_SETG,
+	X64_SETL,
+	X64_SETGE,
+	X64_SETLE,
+	X64_SETE,
+	X64_ADD,
+	X64_SUB,
+	X64_MUL,
+	X64_IMUL,
+	X64_DIV,
+	X64_IDIV,
+	X64_SAR,
+	X64_SAL,
+	X64_AND,
+	X64_OR,
+	X64_XOR,
+	X64_NOT,
+	X64_NEG,
+	X64_MOVSS,
+	X64_MOVSD,
+	X64_ADDSS,
+	X64_ADDSD,
+	X64_SUBSS,
+	X64_SUBSD,
+	X64_MULSS,
+	X64_MULSD,
+	X64_DIVSS,
+	X64_DIVSD,
+	X64_XORPS,
+	X64_XORPD,
+	X64_COMISS,
+	X64_COMISD,
+	X64_CVTSI2SS,
+	X64_CVTSI2SD,
+	X64_CVTSS2SI,
+	X64_CVTSD2SI,
+	X64_CVTSS2SD,
+	X64_CVTSD2SS,
+	X64_Label,
+	X64_Push_Scope,
+	X64_Pop_Scope,
+	X64_Push_Variable,
+	X64_Patch,
+	X64_Patch_Many
+};
+
+struct X64Instruction
+{
+	X64InstructionType type;
+	union
+	{
+		struct
+		{
+			IRValue dst;
+			IRValue src;
+		};
+		IRLabel *label;
+		String procLabel;
+		Variable *variable;
+		struct
+		{
+			X64Instruction *patch1;
+			X64Instruction *patch2;
+		};
+		Array<X64Instruction> patchInstructions;
+	};
+};
+
+struct X64Procedure
+{
+	String name;
+	BucketArray<X64Instruction, 1024, malloc, realloc> instructions;
+	s64 stackSize;
+	u64 virtualRegisterCount;
+	DynamicArray<Variable *, malloc, realloc> spillVariables;
+};
+
+enum X64FloatingType
+{
+	X64FLOATINGTYPE_NONE,
+	X64FLOATINGTYPE_F32,
+	X64FLOATINGTYPE_F64
+};
+
 const X64InstructionInfo MOV      = { "mov"_s,       ACCEPTEDOPERANDS_REGMEM,   ACCEPTEDOPERANDS_ALL,    0 };
 const X64InstructionInfo MOVZX    = { "movzx"_s,     ACCEPTEDOPERANDS_REGMEM,   ACCEPTEDOPERANDS_ALL,    0 };
 const X64InstructionInfo MOVSX    = { "movsx"_s,     ACCEPTEDOPERANDS_REGMEM,   ACCEPTEDOPERANDS_REGMEM, 0};
@@ -184,6 +285,7 @@ String X64RegisterToStr(s64 registerIdx, s64 size, bool floating)
 	String result = "???REG"_s;
 	if (!floating)
 	{
+#if 0
 		// Map virtual registers to logical registers
 		switch (registerIdx)
 		{
@@ -199,6 +301,7 @@ String X64RegisterToStr(s64 registerIdx, s64 size, bool floating)
 		default:
 			ASSERT(registerIdx >= RAX_idx || !"Out of temporal registers");
 		}
+#endif
 
 		switch (size)
 		{
@@ -228,7 +331,7 @@ String X64RegisterToStr(s64 registerIdx, s64 size, bool floating)
 				result = "rax"_s;
 				break;
 			default:
-				result = "???REG"_s;
+				result = TPrintF("vr%lld", registerIdx);
 			}
 			break;
 		case 4:
@@ -257,7 +360,7 @@ String X64RegisterToStr(s64 registerIdx, s64 size, bool floating)
 				result = "eax"_s;
 				break;
 			default:
-				result = "???REG"_s;
+				result = TPrintF("vr%lldd", registerIdx);
 			}
 			break;
 		case 2:
@@ -286,7 +389,7 @@ String X64RegisterToStr(s64 registerIdx, s64 size, bool floating)
 				result = "ax"_s;
 				break;
 			default:
-				result = "???REG"_s;
+				result = TPrintF("vr%lldw", registerIdx);
 			}
 			break;
 		case 1:
@@ -315,7 +418,7 @@ String X64RegisterToStr(s64 registerIdx, s64 size, bool floating)
 				result = "al"_s;
 				break;
 			default:
-				result = "???REG"_s;
+				result = TPrintF("vr%lldb", registerIdx);
 			}
 			break;
 		default:
@@ -324,6 +427,7 @@ String X64RegisterToStr(s64 registerIdx, s64 size, bool floating)
 	}
 	else
 	{
+#if 0
 		// Map virtual registers to logical registers
 		switch (registerIdx)
 		{
@@ -338,6 +442,7 @@ String X64RegisterToStr(s64 registerIdx, s64 size, bool floating)
 		default:
 			ASSERT(registerIdx >= RAX_idx || !"Out of temporal registers");
 		}
+#endif
 
 		switch (registerIdx)
 		{
@@ -350,7 +455,7 @@ String X64RegisterToStr(s64 registerIdx, s64 size, bool floating)
 		case XMM6_idx: result = "xmm6"_s; break;
 		case XMM7_idx: result = "xmm7"_s; break;
 		default:
-			result = "???REG"_s;
+			result = TPrintF("vr%lldv", registerIdx);
 		}
 	}
 	return result;
@@ -381,12 +486,13 @@ String X64IRValueToStr(Context *context, IRValue value)
 	{
 		s64 offset = value.memory.offset;
 
-		if (value.memory.baseVariable->isStatic)
+		if (value.memory.baseVariable->isStatic ||
+				!value.memory.baseVariable->isAllocated)
 			result = TPrintF("%S", value.memory.baseVariable->name);
 		else
 		{
 			result = X64RegisterToStr(RSP_idx, 8, false);
-			ASSERT(value.memory.baseVariable->isAllocated);
+			//ASSERT(value.memory.baseVariable->isAllocated);
 			offset += value.memory.baseVariable->stackOffset;
 		}
 
@@ -844,66 +950,628 @@ doConditionalSet:
 	}
 }
 
-void X64TransformInstruction(Context *context, IRInstruction *inst, Procedure *procedure)
+void X64ConvertInstruction(Context *context, IRInstruction inst, X64Procedure *x64Proc)
 {
-	if (inst->type >= IRINSTRUCTIONTYPE_BINARY_BEGIN &&
-		inst->type <  IRINSTRUCTIONTYPE_BINARY_END)
+	X64Instruction result = {};
+
+	X64FloatingType floatingType = X64FLOATINGTYPE_NONE;
+	if (inst.type >= IRINSTRUCTIONTYPE_BINARY_BEGIN &&
+		inst.type <  IRINSTRUCTIONTYPE_BINARY_END)
 	{
-		IRValue left  = inst->binaryOperation.left;
-		IRValue right = inst->binaryOperation.right;
-		// If both are in memory, save one in register
-		if ((left.valueType  == IRVALUETYPE_MEMORY_REGISTER ||
-			 left.valueType  == IRVALUETYPE_MEMORY_VARIABLE) &&
-			(right.valueType == IRVALUETYPE_MEMORY_REGISTER ||
-			 right.valueType == IRVALUETYPE_MEMORY_VARIABLE))
-		{
-			s64 newVirtualRegister = procedure->registerCount++;
-			IRValue temp = IRValueRegister(newVirtualRegister, right.typeTableIdx);
-
-			IRInstruction newInst = { IRINSTRUCTIONTYPE_ASSIGNMENT };
-			newInst.assignment.dst = temp;
-			newInst.assignment.src = right;
-
-			inst->binaryOperation.right = temp;
-
-			IRPatch(context, inst, newInst);
-		}
+		TypeInfo *typeInfo = &context->typeTable[inst.binaryOperation.out.typeTableIdx];
+		if (typeInfo->typeCategory == TYPECATEGORY_FLOATING)
+			floatingType = (X64FloatingType)(X64FLOATINGTYPE_F32 + (typeInfo->size == 8));
 	}
-	else switch (inst->type)
+	else if (inst.type >= IRINSTRUCTIONTYPE_UNARY_BEGIN &&
+			 inst.type <  IRINSTRUCTIONTYPE_UNARY_END)
+	{
+		TypeInfo *typeInfo = &context->typeTable[inst.unaryOperation.out.typeTableIdx];
+		if (typeInfo->typeCategory == TYPECATEGORY_FLOATING)
+			floatingType = (X64FloatingType)(X64FLOATINGTYPE_F32 + (typeInfo->size == 8));
+	}
+	else if (inst.type == IRINSTRUCTIONTYPE_ASSIGNMENT)
+	{
+		TypeInfo *typeInfo = &context->typeTable[inst.assignment.dst.typeTableIdx];
+		if (typeInfo->typeCategory == TYPECATEGORY_FLOATING)
+			floatingType = (X64FloatingType)(X64FLOATINGTYPE_F32 + (typeInfo->size == 8));
+	}
+
+	switch (inst.type)
 	{
 	case IRINSTRUCTIONTYPE_PATCH:
 	{
-		X64TransformInstruction(context, inst->patch.first,  procedure);
-		X64TransformInstruction(context, inst->patch.second, procedure);
+		X64ConvertInstruction(context, *inst.patch.first,  x64Proc);
+		X64ConvertInstruction(context, *inst.patch.second, x64Proc);
 	} break;
 	case IRINSTRUCTIONTYPE_PATCH_MANY:
 	{
-		const s64 instructionCount = inst->patchMany.instructions.size;
+		const s64 instructionCount = inst.patchMany.instructions.size;
 		for (s64 i = 0; i < instructionCount; ++i)
-			X64TransformInstruction(context, &inst->patchMany.instructions[i], procedure);
+			X64ConvertInstruction(context, inst.patchMany.instructions[i], x64Proc);
 	} break;
+	case IRINSTRUCTIONTYPE_ASSIGNMENT:
+	{
+		switch (floatingType)
+		{
+		case X64FLOATINGTYPE_NONE:
+			result.type = X64_MOV;
+			goto doMov;
+		case X64FLOATINGTYPE_F32:
+			result.type = X64_MOVSS;
+			goto doMov;
+		case X64FLOATINGTYPE_F64:
+			result.type = X64_MOVSD;
+			goto doMov;
+		}
+	}
+	case IRINSTRUCTIONTYPE_ASSIGNMENT_ZERO_EXTEND:
+	{
+		result.type = X64_MOVZX;
+		goto doMov;
+	}
+	case IRINSTRUCTIONTYPE_LOAD_EFFECTIVE_ADDRESS:
+		result.type = X64_LEA;
+		goto doMov;
+	case IRINSTRUCTIONTYPE_ADD:
+		switch (floatingType)
+		{
+		case X64FLOATINGTYPE_NONE:
+			result.type = X64_ADD;
+			goto doRM_RMI;
+		case X64FLOATINGTYPE_F32:
+			result.type = X64_ADDSS;
+			goto doX_XM;
+		case X64FLOATINGTYPE_F64:
+			result.type = X64_ADDSD;
+			goto doX_XM;
+		}
+	case IRINSTRUCTIONTYPE_SUBTRACT:
+		switch (floatingType)
+		{
+		case X64FLOATINGTYPE_NONE:
+			result.type = X64_SUB;
+			goto doRM_RMI;
+		case X64FLOATINGTYPE_F32:
+			result.type = X64_SUBSS;
+			goto doX_XM;
+		case X64FLOATINGTYPE_F64:
+			result.type = X64_SUBSD;
+			goto doX_XM;
+		}
+	case IRINSTRUCTIONTYPE_SUBTRACT_UNARY:
+		switch (floatingType)
+		{
+		case X64FLOATINGTYPE_NONE:
+			result.type = X64_NEG;
+			goto doRM;
+		case X64FLOATINGTYPE_F32:
+			result.type = X64_XORPS;
+			result.src = IRValueImmediate(0x80000000);
+			break;
+		case X64FLOATINGTYPE_F64:
+			result.type = X64_XORPD;
+			result.src = IRValueImmediate(0x8000000000000000);
+			break;
+		}
+		result.dst = inst.unaryOperation.out;
+		*BucketArrayAdd(&x64Proc->instructions) = result;
+	case IRINSTRUCTIONTYPE_MULTIPLY:
+		switch (floatingType)
+		{
+		case X64FLOATINGTYPE_NONE:
+			result.type = X64_IMUL;
+			goto doRM_RMI;
+		case X64FLOATINGTYPE_F32:
+			result.type = X64_MULSS;
+			goto doX_XM;
+		case X64FLOATINGTYPE_F64:
+			result.type = X64_MULSD;
+			goto doX_XM;
+		}
+	case IRINSTRUCTIONTYPE_DIVIDE:
+		switch (floatingType)
+		{
+		case X64FLOATINGTYPE_NONE:
+			*BucketArrayAdd(&x64Proc->instructions) = { X64_MOV, RAX, inst.binaryOperation.left };
+			*BucketArrayAdd(&x64Proc->instructions) = { X64_CQO };
+			result.type = X64_IDIV;
+			result.dst = inst.binaryOperation.right;
+			*BucketArrayAdd(&x64Proc->instructions) = result;
+			*BucketArrayAdd(&x64Proc->instructions) = { X64_MOV, inst.binaryOperation.left, RAX };
+			return;
+		case X64FLOATINGTYPE_F32:
+			result.type = X64_DIVSS;
+			goto doX_XM;
+		case X64FLOATINGTYPE_F64:
+			result.type = X64_DIVSD;
+			goto doX_XM;
+		}
+	case IRINSTRUCTIONTYPE_MODULO:
+		*BucketArrayAdd(&x64Proc->instructions) = { X64_MOV, RAX, inst.binaryOperation.left };
+		*BucketArrayAdd(&x64Proc->instructions) = { X64_CQO };
+		result.type = X64_IDIV;
+		result.dst = inst.binaryOperation.right;
+		*BucketArrayAdd(&x64Proc->instructions) = result;
+		*BucketArrayAdd(&x64Proc->instructions) = { X64_MOV, inst.binaryOperation.left, RDX };
+		return;
+	case IRINSTRUCTIONTYPE_SHIFT_LEFT:
+		result.type = X64_SAL;
+		goto doRM_RMI;
+	case IRINSTRUCTIONTYPE_SHIFT_RIGHT:
+		result.type = X64_SAR;
+		goto doRM_RMI;
+	case IRINSTRUCTIONTYPE_LABEL:
+		result.type = X64_Label;
+		result.label = inst.label;
+		*BucketArrayAdd(&x64Proc->instructions) = result;
+		return;
+	case IRINSTRUCTIONTYPE_JUMP:
+		result.type = X64_JMP;
+		result.label = inst.jump.label;
+		*BucketArrayAdd(&x64Proc->instructions) = result;
+		return;
+	case IRINSTRUCTIONTYPE_JUMP_IF_ZERO:
+	{
+		X64Instruction cmpInst = { X64_CMP };
+		cmpInst.dst = inst.conditionalJump.condition;
+		cmpInst.src = IRValueImmediate(0);
+		result.type = X64_JNE;
+		result.label = inst.conditionalJump.label;
+
+		*BucketArrayAdd(&x64Proc->instructions) = cmpInst;
+		*BucketArrayAdd(&x64Proc->instructions) = result;
+		return;
+	}
+	case IRINSTRUCTIONTYPE_JUMP_IF_NOT_ZERO:
+	{
+		X64Instruction cmpInst = { X64_CMP };
+		cmpInst.dst = inst.conditionalJump.condition;
+		cmpInst.src = IRValueImmediate(0);
+		result.type = X64_JNE;
+		result.label = inst.conditionalJump.label;
+
+		*BucketArrayAdd(&x64Proc->instructions) = cmpInst;
+		*BucketArrayAdd(&x64Proc->instructions) = result;
+		return;
+	}
+	case IRINSTRUCTIONTYPE_GREATER_THAN:
+	{
+		result.type = X64_SETG;
+		goto doConditionalSet;
+	} break;
+	case IRINSTRUCTIONTYPE_LESS_THAN:
+	{
+		result.type = X64_SETL;
+		goto doConditionalSet;
+	} break;
+	case IRINSTRUCTIONTYPE_GREATER_THAN_OR_EQUALS:
+	{
+		result.type = X64_SETGE;
+		goto doConditionalSet;
+	} break;
+	case IRINSTRUCTIONTYPE_LESS_THAN_OR_EQUALS:
+	{
+		result.type = X64_SETLE;
+		goto doConditionalSet;
+	} break;
+	case IRINSTRUCTIONTYPE_EQUALS:
+	{
+		result.type = X64_SETE;
+		goto doConditionalSet;
+	} break;
+	case IRINSTRUCTIONTYPE_PROCEDURE_CALL:
+	{
+		// At this point, we have the actual values that go into registers/stack slots. If something
+		// is passed by copy, we already have the pointer to the copy as argument value, so we don't
+		// care.
+
+		// @Incomplete: implement calling conventions other than MS ABI
+		for (int i = 0; i < inst.procedureCall.parameters.size; ++i)
+		{
+			X64Instruction paramInst = { X64_MOV };
+			paramInst.src= inst.procedureCall.parameters[i];
+			switch(i)
+			{
+			case 0:
+				paramInst.dst = RCX;
+				break;
+			case 1:
+				paramInst.dst = RDX;
+				break;
+			case 2:
+				paramInst.dst = R8;
+				break;
+			case 3:
+				paramInst.dst = R9;
+				break;
+			default:
+				paramInst.dst = IRValueMemory(RSP_idx, i * 8, TYPETABLEIDX_S64);
+			}
+			*BucketArrayAdd(&x64Proc->instructions) = paramInst;
+		}
+
+		result.type = X64_CALL;
+		String callProcLabel = X64ProcedureToLabel(context, inst.procedureCall.procedure);
+		result.procLabel = callProcLabel;
+		*BucketArrayAdd(&x64Proc->instructions) = result;
+		return;
+	}
+	case IRINSTRUCTIONTYPE_GET_PARAMETER:
+	{
+		IRValue value;
+		switch (inst.getParameter.parameterIdx)
+		{
+			case 0: value = RCX; break;
+			case 1: value = RDX; break;
+			case 2: value = R8;  break;
+			case 3: value = R9;  break;
+							// Add 16, 8 for return address, and 8 because we push RBP
+			default: value = IRValueMemory(RBP_idx, 16 + inst.getParameter.parameterIdx * 8, TYPETABLEIDX_S64);
+		}
+		*BucketArrayAdd(&x64Proc->instructions) = { X64_MOV, inst.getParameter.dst, value };
+		return;
+	}
+	case IRINSTRUCTIONTYPE_RETURN:
+		*BucketArrayAdd(&x64Proc->instructions) = { X64_LEAVE };
+		*BucketArrayAdd(&x64Proc->instructions) = { X64_RET };
+		return;
+	case IRINSTRUCTIONTYPE_GET_TYPE_INFO:
+	{
+		Variable *fakeVar = NewVariable(context,
+				TPrintF("_typeInfo%lld", inst.getTypeInfo.typeTableIdx));
+		fakeVar->isStatic = true;
+		IRValue typeInfoVar = IRValueFromVariable(context, fakeVar);
+		*BucketArrayAdd(&x64Proc->instructions) = { X64_LEA, inst.getTypeInfo.out, typeInfoVar };
+		return;
+	}
+	case IRINSTRUCTIONTYPE_INTRINSIC_MEMCPY:
+	{
+		*BucketArrayAdd(&x64Proc->instructions) = { X64_MOV, RCX, inst.memcpy.dst };
+		*BucketArrayAdd(&x64Proc->instructions) = { X64_MOV, RDX, inst.memcpy.src };
+		*BucketArrayAdd(&x64Proc->instructions) = { X64_MOV, R8, inst.memcpy.size };
+		result.type = X64_CALL;
+		result.procLabel = "CopyMemory"_s;
+		*BucketArrayAdd(&x64Proc->instructions) = result;
+		return;
+	}
+	case IRINSTRUCTIONTYPE_CONVERT_INT_TO_F32:
+		result.type = X64_CVTSI2SS;
+		goto doCvt;
+	case IRINSTRUCTIONTYPE_CONVERT_INT_TO_F64:
+		result.type = X64_CVTSI2SD;
+		goto doCvt;
+	case IRINSTRUCTIONTYPE_CONVERT_F32_TO_INT:
+		result.type = X64_CVTSS2SI;
+		goto doCvt;
+	case IRINSTRUCTIONTYPE_CONVERT_F64_TO_INT:
+		result.type = X64_CVTSD2SI;
+		goto doCvt;
+	case IRINSTRUCTIONTYPE_CONVERT_F32_TO_F64:
+		result.type = X64_CVTSS2SD;
+		goto doCvt;
+	case IRINSTRUCTIONTYPE_CONVERT_F64_TO_F32:
+		result.type = X64_CVTSD2SS;
+		goto doCvt;
+	case IRINSTRUCTIONTYPE_PUSH_SCOPE:
+		result.type = X64_Push_Scope;
+		return;
+	case IRINSTRUCTIONTYPE_POP_SCOPE:
+		result.type = X64_Pop_Scope;
+		return;
+	case IRINSTRUCTIONTYPE_PUSH_VARIABLE:
+		result.type = X64_Push_Variable;
+		return;
+	case IRINSTRUCTIONTYPE_COMMENT:
+		return;
+	default:
+		ASSERT(!"Unrecognized IR instruction type");
+		return;
+	}
+
+doMov:
+	{
+		result.dst = inst.assignment.dst;
+		result.src = inst.assignment.src;
+		*BucketArrayAdd(&x64Proc->instructions) = result;
+		return;
+	}
+doRM:
+	{
+		X64Instruction movInst = { X64_MOV };
+		movInst.dst = inst.unaryOperation.out;
+		movInst.src = inst.unaryOperation.in;
+
+		result.dst = movInst.dst;
+
+		*BucketArrayAdd(&x64Proc->instructions) = movInst;
+		*BucketArrayAdd(&x64Proc->instructions) = result;
+
+		return;
+	}
+doRM_RMI:
+	{
+		IRValue left  = inst.binaryOperation.left;
+		IRValue right = inst.binaryOperation.right;
+
+		X64Instruction movInst = { X64_MOV };
+		movInst.dst = IRValueRegister(x64Proc->virtualRegisterCount++, left.typeTableIdx);
+		movInst.src = left;
+
+		result.dst = movInst.dst;
+		result.src = right;
+
+		*BucketArrayAdd(&x64Proc->instructions) = movInst;
+		*BucketArrayAdd(&x64Proc->instructions) = result;
+
+		return;
+	}
+doX_XM:
+	{
+		IRValue left  = inst.binaryOperation.left;
+		IRValue right = inst.binaryOperation.right;
+
+		X64Instruction movInst;
+		if (floatingType == X64FLOATINGTYPE_F32)
+			movInst = { X64_MOVSS };
+		else
+			movInst = { X64_MOVSD };
+		movInst.dst = IRValueRegister(x64Proc->virtualRegisterCount++, left.typeTableIdx);
+		movInst.src = left;
+
+		result.dst = movInst.dst;
+		result.src = right;
+
+		*BucketArrayAdd(&x64Proc->instructions) = movInst;
+		*BucketArrayAdd(&x64Proc->instructions) = result;
+
+		return;
+	}
+doCvt:
+	{
+		result.dst = inst.unaryOperation.out;
+		result.src = inst.unaryOperation.in;
+		*BucketArrayAdd(&x64Proc->instructions) = result;
+		return;
+	}
+doConditionalSet:
+	{
+		X64Instruction cmpInst;
+		switch (floatingType)
+		{
+		case X64FLOATINGTYPE_NONE:
+			cmpInst.type = X64_CMP;
+			break;
+		case X64FLOATINGTYPE_F32:
+			cmpInst.type = X64_COMISS;
+			break;
+		case X64FLOATINGTYPE_F64:
+			cmpInst.type = X64_COMISD;
+			break;
+		}
+		cmpInst.dst = inst.binaryOperation.left;
+		cmpInst.src = inst.binaryOperation.right;
+		IRValue sizedRAX = IRValueRegister(RAX_idx, inst.binaryOperation.out.typeTableIdx);
+
+		X64Instruction movInst = { X64_MOV, inst.binaryOperation.out, sizedRAX };
+
+		*BucketArrayAdd(&x64Proc->instructions) = cmpInst;
+		*BucketArrayAdd(&x64Proc->instructions) = result;
+		*BucketArrayAdd(&x64Proc->instructions) = movInst;
 	}
 }
 
-void BackendTransformations(Context *context)
+void X64PrintInstruction(Context *context, X64Instruction inst)
+{
+	switch (inst.type)
+	{
+	case X64_MOV:
+		Print("mov ");
+		goto printDstSrc;
+	case X64_MOVZX:
+		Print("movzx ");
+		goto printDstSrc;
+	case X64_CQO:
+		Print("cqo\n");
+		return;
+	case X64_LEA:
+		Print("lea ");
+		goto printDstSrc;
+	case X64_PUSH:
+		Print("push ");
+		goto printDst;
+	case X64_POP:
+		Print("pop ");
+		goto printDst;
+	case X64_ADD:
+		Print("add ");
+		goto printDstSrc;
+	case X64_SUB:
+		Print("sub ");
+		goto printDstSrc;
+	case X64_NEG:
+		Print("neg ");
+		goto printDst;
+	case X64_IMUL:
+		Print("imul ");
+		goto printDstSrc;
+	case X64_IDIV:
+		Print("idiv ");
+		goto printDst;
+	case X64_SAL:
+		Print("sal ");
+		goto printDstSrc;
+	case X64_SAR:
+		Print("sar ");
+		goto printDstSrc;
+	case X64_CMP:
+		Print("cmp ");
+		goto printDstSrc;
+	case X64_JMP:
+		Print("jmp ");
+		goto printLabel;
+	case X64_JE:
+		Print("je ");
+		goto printLabel;
+	case X64_JNE:
+		Print("jne ");
+		goto printLabel;
+	case X64_CALL:
+		Print("call %S\n", inst.procLabel);
+		return;
+	case X64_LEAVE:
+		Print("leave\n");
+		return;
+	case X64_RET:
+		Print("ret\n");
+		return;
+	case X64_SETG:
+		Print("setg ");
+		goto printDst;
+	case X64_SETL:
+		Print("setl ");
+		goto printDst;
+	case X64_SETGE:
+		Print("setge ");
+		goto printDst;
+	case X64_SETLE:
+		Print("setle ");
+		goto printDst;
+	case X64_SETE:
+		Print("sete ");
+		goto printDst;
+	case X64_MOVSS:
+		Print("movss ");
+		goto printDstSrc;
+	case X64_MOVSD:
+		Print("movsd ");
+		goto printDstSrc;
+	case X64_ADDSS:
+		Print("addss ");
+		goto printDstSrc;
+	case X64_ADDSD:
+		Print("addsd ");
+		goto printDstSrc;
+	case X64_SUBSS:
+		Print("subss ");
+		goto printDstSrc;
+	case X64_SUBSD:
+		Print("subsd ");
+		goto printDstSrc;
+	case X64_MULSS:
+		Print("mulss ");
+		goto printDstSrc;
+	case X64_MULSD:
+		Print("mulsd ");
+		goto printDstSrc;
+	case X64_DIVSS:
+		Print("divss ");
+		goto printDstSrc;
+	case X64_DIVSD:
+		Print("divsd ");
+		goto printDstSrc;
+	case X64_CVTSI2SS:
+		Print("cvtsi2ss ");
+		goto printDstSrc;
+	case X64_CVTSI2SD:
+		Print("cvtsi2sd ");
+		goto printDstSrc;
+	case X64_CVTSS2SI:
+		Print("cvtss2si ");
+		goto printDstSrc;
+	case X64_CVTSD2SI:
+		Print("cvtsd2si ");
+		goto printDstSrc;
+	case X64_CVTSS2SD:
+		Print("cvtss2sd ");
+		goto printDstSrc;
+	case X64_CVTSD2SS:
+		Print("cvtsd2ss ");
+		goto printDstSrc;
+	case X64_Label:
+		Print("%S:\n", inst.label->name);
+		return;
+	case X64_Push_Scope:
+	case X64_Pop_Scope:
+	case X64_Push_Variable:
+		return;
+	default:
+		ASSERT(!"Unrecognized x64 instruction type");
+	}
+
+printDst:
+	{
+		String dst = X64IRValueToStr(context, inst.dst);
+		Print("%S\n", dst);
+		return;
+	}
+printDstSrc:
+	{
+		String dst = X64IRValueToStr(context, inst.dst);
+		String src = X64IRValueToStr(context, inst.src);
+		Print("%S, %S\n", dst, src);
+		return;
+	}
+printLabel:
+	{
+		Print("%S\n", inst.label->name);
+		return;
+	}
+}
+
+#include "X64RegisterAllocation.cpp"
+
+void BackendConvert(Context *context)
 {
 	BucketArrayInit(&context->patchedInstructions);
 
+	Array<X64Procedure> x64Procedures;
 	u64 procedureCount = BucketArrayCount(&context->procedures);
+	ArrayInit(&x64Procedures, procedureCount, malloc);
+	x64Procedures.size = procedureCount;
+
 	for (int procedureIdx = 0; procedureIdx < procedureCount; ++procedureIdx)
 	{
 		Procedure *proc = &context->procedures[procedureIdx];
+		X64Procedure *x64Proc = &x64Procedures[procedureIdx];
+
+		x64Proc->name = X64ProcedureToLabel(context, proc);
+		x64Proc->virtualRegisterCount = proc->registerCount;
+		DynamicArrayInit(&x64Proc->spillVariables, 8);
 
 		// @Speed: separate array of external procedures to avoid branching
 		if (proc->isExternal)
 			continue;
 
+		BucketArrayInit(&x64Proc->instructions);
+		*BucketArrayAdd(&x64Proc->instructions) = { X64_PUSH, RBP };
+		*BucketArrayAdd(&x64Proc->instructions) = { X64_MOV, RBP, RSP };
+
 		u64 instructionCount = BucketArrayCount(&proc->instructions);
 		for (int instructionIdx = 0; instructionIdx < instructionCount; ++instructionIdx)
 		{
-			IRInstruction *inst = &proc->instructions[instructionIdx];
-			X64TransformInstruction(context, inst, proc);
+			IRInstruction inst = proc->instructions[instructionIdx];
+			X64ConvertInstruction(context, inst, x64Proc);
 		}
+	}
+
+	X64AllocateRegisters(context, x64Procedures);
+
+	// PRINT
+	for (int procedureIdx = 0; procedureIdx < procedureCount; ++procedureIdx)
+	{
+		// @Cleanup
+		if (context->procedures[procedureIdx].isExternal)
+			continue;
+
+		X64Procedure x64Proc = x64Procedures[procedureIdx];
+
+		Print("\n%S PROC\n", x64Proc.name);
+
+		u64 instructionCount = BucketArrayCount(&x64Proc.instructions);
+		for (int instructionIdx = 0; instructionIdx < instructionCount; ++instructionIdx)
+			X64PrintInstruction(context, x64Proc.instructions[instructionIdx]);
+
+		Print("%S ENDP\n", x64Proc.name);
 	}
 }
 
