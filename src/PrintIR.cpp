@@ -41,6 +41,86 @@ void PrintIRValue(Context *context, IRValue value)
 	Print(" : %S", TypeInfoToString(context, value.typeTableIdx));
 }
 
+void PrintIRInstructionOperator(IRInstruction inst)
+{
+	switch (inst.type)
+	{
+	case IRINSTRUCTIONTYPE_ADD:
+		Print("+");
+		break;
+	case IRINSTRUCTIONTYPE_SUBTRACT:
+	case IRINSTRUCTIONTYPE_SUBTRACT_UNARY:
+		Print("-");
+		break;
+	case IRINSTRUCTIONTYPE_MULTIPLY:
+		Print("*");
+		break;
+	case IRINSTRUCTIONTYPE_DIVIDE:
+		Print("/");
+		break;
+	case IRINSTRUCTIONTYPE_MODULO:
+		Print("%");
+		break;
+	case IRINSTRUCTIONTYPE_SHIFT_LEFT:
+		Print("<<");
+		break;
+	case IRINSTRUCTIONTYPE_SHIFT_RIGHT:
+		Print(">>");
+		break;
+	case IRINSTRUCTIONTYPE_OR:
+		Print("||");
+		break;
+	case IRINSTRUCTIONTYPE_AND:
+		Print("&&");
+		break;
+	case IRINSTRUCTIONTYPE_BITWISE_OR:
+		Print("|");
+		break;
+	case IRINSTRUCTIONTYPE_BITWISE_XOR:
+		Print("^");
+		break;
+	case IRINSTRUCTIONTYPE_BITWISE_AND:
+		Print("&");
+		break;
+	case IRINSTRUCTIONTYPE_EQUALS:
+		Print("==");
+		break;
+	case IRINSTRUCTIONTYPE_GREATER_THAN:
+		Print(">");
+		break;
+	case IRINSTRUCTIONTYPE_GREATER_THAN_OR_EQUALS:
+		Print(">=");
+		break;
+	case IRINSTRUCTIONTYPE_LESS_THAN:
+		Print("<");
+		break;
+	case IRINSTRUCTIONTYPE_LESS_THAN_OR_EQUALS:
+		Print("<=");
+		break;
+	case IRINSTRUCTIONTYPE_NOT:
+		Print("!");
+		break;
+	case IRINSTRUCTIONTYPE_LOAD_EFFECTIVE_ADDRESS:
+		Print("address of ");
+		break;
+	case IRINSTRUCTIONTYPE_CONVERT_INT_TO_F32:
+	case IRINSTRUCTIONTYPE_CONVERT_F64_TO_F32:
+		Print("to F32 ");
+		break;
+	case IRINSTRUCTIONTYPE_CONVERT_INT_TO_F64:
+	case IRINSTRUCTIONTYPE_CONVERT_F32_TO_F64:
+		Print("to F32 ");
+		break;
+	case IRINSTRUCTIONTYPE_CONVERT_F32_TO_INT:
+	case IRINSTRUCTIONTYPE_CONVERT_F64_TO_INT:
+		Print("to int ");
+		break;
+	default:
+		CRASH;
+		Print("<?>");
+	}
+}
+
 void PrintIRInstruction(Context *context, IRInstruction inst)
 {
 	if (inst.type >= IRINSTRUCTIONTYPE_UNARY_BEGIN && inst.type < IRINSTRUCTIONTYPE_UNARY_END)

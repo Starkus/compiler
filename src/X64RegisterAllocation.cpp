@@ -7,18 +7,18 @@ struct BasicBlock
 	s64 beginIdx;
 	s64 endIdx;
 	bool livenessAnalizedOnce;
-	DynamicArray<BasicBlock *, malloc, realloc> inputs;
-	DynamicArray<BasicBlock *, malloc, realloc> outputs;
+	DynamicArray<BasicBlock *, FrameAlloc, FrameRealloc> inputs;
+	DynamicArray<BasicBlock *, FrameAlloc, FrameRealloc> outputs;
 
 	// @Todo: bitmaps
-	DynamicArray<s64, malloc, realloc> liveRegistersAtInput;
-	DynamicArray<s64, malloc, realloc> liveRegistersAtOutput;
+	DynamicArray<s64, FrameAlloc, FrameRealloc> liveRegistersAtInput;
+	DynamicArray<s64, FrameAlloc, FrameRealloc> liveRegistersAtOutput;
 };
 
 struct InterferenceGraphNode
 {
 	s64 registerIdx;
-	DynamicArray<s64, malloc, realloc> edges; // @Improve: eugh
+	DynamicArray<s64, FrameAlloc, FrameRealloc> edges; // @Improve: eugh
 	bool removed;
 };
 
@@ -69,30 +69,25 @@ BasicBlock *PushBasicBlock(BasicBlock *currentBasicBlock,
 }
 
 inline bool AddIfRegister(BasicBlock *basicBlock, IRValue value,
-		DynamicArray<s64, malloc, realloc> *array)
+		DynamicArray<s64, FrameAlloc, FrameRealloc> *array)
 {
-	s64 registerIdx;
-	if (value.valueType == IRVALUETYPE_REGISTER)
-		registerIdx = value.registerIdx;
-	else if (value.valueType == IRVALUETYPE_MEMORY_REGISTER)
-		registerIdx = value.memory.baseRegister;
-	else
+	if (value.valueType != IRVALUETYPE_REGISTER && value.valueType != IRVALUETYPE_MEMORY_REGISTER)
 		return false;
 
-	if (registerIdx >= IRSPECIALREGISTER_BEGIN)
+	if (value.registerIdx >= IRSPECIALREGISTER_BEGIN)
 		return false;
 
 	for (int i = 0; i < array->size; ++i)
 	{
-		if ((*array)[i] == registerIdx)
+		if ((*array)[i] == value.registerIdx)
 			return false; // No duplicates
 	}
-	*DynamicArrayAdd(array) = registerIdx;
+	*DynamicArrayAdd(array) = value.registerIdx;
 	return true;
 }
 
 inline void RemoveIfRegister(BasicBlock *basicBlock, IRValue value,
-		DynamicArray<s64, malloc, realloc> *array)
+		DynamicArray<s64, FrameAlloc, FrameRealloc> *array)
 {
 	if (value.valueType == IRVALUETYPE_REGISTER)
 	{
@@ -112,21 +107,34 @@ inline void RemoveIfRegister(BasicBlock *basicBlock, IRValue value,
 
 inline void ReplaceIfRegister(IRValue *value, Array<s64> registerMap)
 {
-	if (value->valueType == IRVALUETYPE_REGISTER && value->registerIdx < IRSPECIALREGISTER_BEGIN)
+	if (value->valueType == IRVALUETYPE_REGISTER || value->valueType == IRVALUETYPE_MEMORY_REGISTER)
 	{
-		if (value->registerIdx < (s64)registerMap.size)
+		if (value->registerIdx >= 0 && value->registerIdx < (s64)registerMap.size)
 			value->registerIdx = registerMap[value->registerIdx];
-	}
-	else if (value->valueType == IRVALUETYPE_MEMORY_REGISTER)
-	{
-		if (value->memory.baseRegister < (s64)registerMap.size)
-			value->memory.baseRegister = registerMap[value->memory.baseRegister];
 	}
 }
 
 void DoLivenessAnalisisOnInstruction(Context *context, BasicBlock *basicBlock, X64Instruction *inst,
-		DynamicArray<s64, malloc, realloc> *liveRegisters)
+		DynamicArray<s64, FrameAlloc, FrameRealloc> *liveRegisters)
 {
+#if DEBUG_OPTIMIZER
+	if (inst->type != X64_Patch && inst->type != X64_Patch_Many)
+	{
+		Print("\t");
+		s64 s = X64PrintInstruction(context, *inst);
+		if (s < 40)
+		{
+			char buffer[40];
+			memset(buffer, ' ', sizeof(buffer));
+			buffer[39] = 0;
+			Print("%s", buffer + s);
+		}
+		for (int i = 0; i < liveRegisters->size; ++i)
+			Print("%S, ", X64RegisterToStr((*liveRegisters)[i], 8, false));
+		Print("\n");
+	}
+#endif
+
 	switch (inst->type)
 	{
 	// dst write, src read
@@ -142,6 +150,7 @@ void DoLivenessAnalisisOnInstruction(Context *context, BasicBlock *basicBlock, X
 	case X64_CVTSS2SI:
 	case X64_CVTSD2SI:
 	case X64_CVTSS2SD:
+	case X64_CVTSD2SS:
 	{
 		RemoveIfRegister(basicBlock, inst->dst, liveRegisters);
 		AddIfRegister   (basicBlock, inst->src, liveRegisters);
@@ -202,6 +211,16 @@ void DoLivenessAnalisisOnInstruction(Context *context, BasicBlock *basicBlock, X
 	case X64_Label:
 	{
 	} break;
+	case X64_Patch:
+	{
+		DoLivenessAnalisisOnInstruction(context, basicBlock, inst->patch1, liveRegisters);
+		DoLivenessAnalisisOnInstruction(context, basicBlock, inst->patch2, liveRegisters);
+	} break;
+	case X64_Patch_Many:
+	{
+		for (int i = 0; i < inst->patchInstructions.size; ++i)
+			DoLivenessAnalisisOnInstruction(context, basicBlock, &inst->patchInstructions[i], liveRegisters);
+	} break;
 	default:
 	{
 		ASSERT(!"Unknown x64 instruction while register allocating.");
@@ -212,6 +231,9 @@ void DoLivenessAnalisisOnInstruction(Context *context, BasicBlock *basicBlock, X
 	for (int i = 0; i < liveRegisters->size; ++i)
 	{
 		s64 reg = (*liveRegisters)[i];
+
+		if (reg < 0 || reg >= RAX_idx) continue;
+
 		InterferenceGraphNode *node = nullptr;
 		for (int nodeIdx = 0; nodeIdx < context->interferenceGraph.size; ++nodeIdx)
 		{
@@ -232,6 +254,9 @@ nodeFound:
 		{
 			if (i == j) continue;
 			s64 edge = (*liveRegisters)[j];
+
+			if (edge < 0 || edge >= RAX_idx) continue;
+
 			for (int k = 0; k < node->edges.size; ++k)
 			{
 				if (node->edges[k] == edge)
@@ -244,8 +269,13 @@ skipEdge:;
 }
 
 void DoLivenessAnalisis(Context *context, BasicBlock *basicBlock,
-		DynamicArray<s64, malloc, realloc> *liveRegisters)
+		DynamicArray<s64, FrameAlloc, FrameRealloc> *liveRegisters)
 {
+#if DEBUG_OPTIMIZER
+	Print("Doing liveness analisis on block %S %d-%d\n", basicBlock->procedure->name,
+			basicBlock->beginIdx, basicBlock->endIdx);
+#endif
+
 	for (int i = 0; i < basicBlock->liveRegistersAtOutput.size; ++i)
 	{
 		AddIfRegister(basicBlock, IRValueRegister(basicBlock->liveRegistersAtOutput[i]),
@@ -280,7 +310,7 @@ void DoLivenessAnalisis(Context *context, BasicBlock *basicBlock,
 	{
 		BasicBlock *inputBlock = basicBlock->inputs[i];
 		// Copy live registers array
-		DynamicArray<s64, malloc, realloc> liveRegistersCopy;
+		DynamicArray<s64, FrameAlloc, FrameRealloc> liveRegistersCopy;
 		DynamicArrayInit(&liveRegistersCopy, liveRegisters->capacity);
 		DynamicArrayCopy(&liveRegistersCopy, liveRegisters);
 
@@ -376,6 +406,9 @@ void ReplaceRegisterForVariable(Context *context, X64Procedure *procedure,
 		value->memory.baseRegister == registerIdx)
 	{
 		s64 newVirtualRegister = procedure->virtualRegisterCount++;
+
+		procedure->noSpillRegisters[newVirtualRegister >> 6] |= (1ll << newVirtualRegister);
+
 		IRValue tmp = IRValueRegister(newVirtualRegister, value->typeTableIdx);
 
 		X64Instruction newInst = { X64_MOV, tmp, IRValueMemory(variable, 0, value->typeTableIdx) };
@@ -486,14 +519,14 @@ void SpillRegisterIntoMemory(Context *context, X64Procedure *procedure, s64 regi
 	}
 }
 
-void ResolveInstructionStackOffsets(Context *context, IRInstruction inst,
-	DynamicArray<s64, malloc, realloc> *stack, s64 *stackCursor, u64 *stackSize)
+void ResolveInstructionStackOffsets(Context *context, X64Instruction inst,
+	DynamicArray<s64, FrameAlloc, FrameRealloc> *stack, s64 *stackCursor, u64 *stackSize)
 {
 	switch (inst.type)
 	{
-	case IRINSTRUCTIONTYPE_PUSH_VARIABLE:
+	case X64_Push_Variable:
 	{
-		Variable *var = inst.pushVariable.variable;
+		Variable *var = inst.variable;
 		u64 size = context->typeTable[var->typeTableIdx].size;
 		//s64 alignment = size > 8 ? 8 : NextPowerOf2(size);
 		s64 alignment = 8; //@Fix: hardcoded alignment because we use 8 byte operands everywhere
@@ -503,42 +536,41 @@ void ResolveInstructionStackOffsets(Context *context, IRInstruction inst,
 		var->isAllocated = true;
 		*stackCursor += size;
 	} break;
-	case IRINSTRUCTIONTYPE_PUSH_SCOPE:
+	case X64_Push_Scope:
 	{
 		*DynamicArrayAdd(stack) = *stackCursor;
 	} break;
-	case IRINSTRUCTIONTYPE_POP_SCOPE:
+	case X64_Pop_Scope:
 	{
 		if (*stackCursor > (s64)*stackSize)
 			*stackSize = *stackCursor;
 		*stackCursor = (*stack)[--stack->size];
 	} break;
-	case IRINSTRUCTIONTYPE_PATCH:
+	case X64_Patch:
 	{
-		ResolveInstructionStackOffsets(context, *inst.patch.first,  stack, stackCursor, stackSize);
-		ResolveInstructionStackOffsets(context, *inst.patch.second, stack, stackCursor, stackSize);
+		ResolveInstructionStackOffsets(context, *inst.patch1, stack, stackCursor, stackSize);
+		ResolveInstructionStackOffsets(context, *inst.patch2, stack, stackCursor, stackSize);
 	} break;
-	case IRINSTRUCTIONTYPE_PATCH_MANY:
+	case X64_Patch_Many:
 	{
-		for (int i = 0; i < inst.patchMany.instructions.size; ++i)
-			ResolveInstructionStackOffsets(context, inst.patchMany.instructions[i], stack, stackCursor, stackSize);
+		for (int i = 0; i < inst.patchInstructions.size; ++i)
+			ResolveInstructionStackOffsets(context, inst.patchInstructions[i], stack, stackCursor, stackSize);
 	} break;
 	}
 }
 
-void ResolveStackOffsets(Context *context)
+void ResolveStackOffsets(Context *context, Array<X64Procedure> x64Procedures)
 {
-	DynamicArray<s64, malloc, realloc> stack;
+	DynamicArray<s64, FrameAlloc, FrameRealloc> stack;
 	DynamicArrayInit(&stack, 16);
 
-	const u64 procedureCount = BucketArrayCount(&context->procedures);
-	for (int procedureIdx = 0; procedureIdx < procedureCount; ++procedureIdx)
+	for (int procedureIdx = 0; procedureIdx < x64Procedures.size; ++procedureIdx)
 	{
-		Procedure *proc = &context->procedures[procedureIdx];
+		X64Procedure *proc = &x64Procedures[procedureIdx];
 		s64 stackCursor = 0;
 
 		// @Speed: separate array of external procedures to avoid branching
-		if (proc->isExternal)
+		if (context->procedures[procedureIdx].isExternal)
 			continue;
 
 		// @Incomplete: implement calling conventions other than MS ABI
@@ -553,7 +585,7 @@ void ResolveStackOffsets(Context *context)
 		u64 instructionCount = BucketArrayCount(&proc->instructions);
 		for (int instructionIdx = 0; instructionIdx < instructionCount; ++instructionIdx)
 		{
-			IRInstruction inst = proc->instructions[instructionIdx];
+			X64Instruction inst = proc->instructions[instructionIdx];
 			ResolveInstructionStackOffsets(context, inst, &stack, &stackCursor, &proc->stackSize);
 		}
 	}
@@ -576,6 +608,7 @@ void ReplaceRegistersInInstruction(X64Instruction *inst, Array<s64> registerMap)
 	case X64_CVTSS2SI:
 	case X64_CVTSD2SI:
 	case X64_CVTSS2SD:
+	case X64_CVTSD2SS:
 	{
 		ReplaceIfRegister(&inst->dst, registerMap);
 		ReplaceIfRegister(&inst->src, registerMap);
@@ -655,18 +688,11 @@ void ReplaceRegistersInInstruction(X64Instruction *inst, Array<s64> registerMap)
 
 inline u64 BitIfRegister(IRValue value)
 {
-	if (value.valueType == IRVALUETYPE_REGISTER && value.registerIdx < IRSPECIALREGISTER_BEGIN)
+	if (value.valueType == IRVALUETYPE_REGISTER && value.valueType == IRVALUETYPE_MEMORY_REGISTER)
 	{
 		if (value.registerIdx >= RAX_idx) return 0;
 		ASSERT(value.registerIdx < 64);
 		return 1ll << value.registerIdx;
-	}
-	else if (value.valueType == IRVALUETYPE_REGISTER &&
-			value.memory.baseRegister < IRSPECIALREGISTER_BEGIN)
-	{
-		if (value.memory.baseRegister >= RAX_idx) return 0;
-		ASSERT(value.memory.baseRegister < 64);
-		return 1ll << value.memory.baseRegister;
 	}
 	return 0;
 }
@@ -764,7 +790,7 @@ void X64AllocateRegisters(Context *context, Array<X64Procedure> x64Procedures)
 			context->interferenceGraph.size = 0;
 
 			// @Todo: iterative instead of recursive?
-			DynamicArray<s64, malloc, realloc> liveRegisters;
+			DynamicArray<s64, FrameAlloc, FrameRealloc> liveRegisters;
 			DynamicArrayInit(&liveRegisters, 16);
 			DoLivenessAnalisis(context, currentLeafBlock, &liveRegisters);
 
@@ -775,6 +801,7 @@ void X64AllocateRegisters(Context *context, Array<X64Procedure> x64Procedures)
 			for (int nodeIdx = 0; nodeIdx < context->interferenceGraph.size; ++nodeIdx)
 			{
 				s64 currentReg = context->interferenceGraph[nodeIdx].registerIdx;
+				ASSERT(currentReg < RAX_idx);
 				if (currentReg > highestVirtualRegister)
 					highestVirtualRegister = currentReg;
 			}
@@ -801,6 +828,7 @@ void X64AllocateRegisters(Context *context, Array<X64Procedure> x64Procedures)
 					}
 				}
 
+				InterferenceGraphNode *fallbackNode = nullptr;
 				if (!nodeToRemove)
 				{
 					// Choose a register to spill onto the stack.
@@ -809,8 +837,14 @@ void X64AllocateRegisters(Context *context, Array<X64Procedure> x64Procedures)
 					for (int nodeIdx = 0; nodeIdx < context->interferenceGraph.size; ++nodeIdx)
 					{
 						InterferenceGraphNode *currentNode = &context->interferenceGraph[nodeIdx];
+
 						if (currentNode->removed)
 							continue;
+						fallbackNode = currentNode;
+						if (currentLeafBlock->procedure->noSpillRegisters[currentNode->registerIdx >> 6] &
+								(1ll << currentNode->registerIdx))
+							continue;
+
 						if ((s64)currentNode->edges.size > mostEdges)
 						{
 							nodeToRemove = currentNode;
@@ -827,6 +861,8 @@ void X64AllocateRegisters(Context *context, Array<X64Procedure> x64Procedures)
 						}
 					}
 				}
+
+				if (!nodeToRemove) nodeToRemove = fallbackNode;
 
 				for (int nodeIdx = 0; nodeIdx < context->interferenceGraph.size; ++nodeIdx)
 				{
@@ -850,6 +886,8 @@ void X64AllocateRegisters(Context *context, Array<X64Procedure> x64Procedures)
 			{
 				InterferenceGraphNode *currentNode = nodeStack[nodeIdx];
 
+				ASSERT(currentNode->registerIdx < RAX_idx);
+
 				for (int candidate = 0; candidate < availableRegisters; ++candidate)
 				{
 					for (int edgeIdx = 0; edgeIdx < currentNode->edges.size; ++edgeIdx)
@@ -864,6 +902,10 @@ void X64AllocateRegisters(Context *context, Array<X64Procedure> x64Procedures)
 				}
 				if (registerMap[currentNode->registerIdx] < 0)
 				{
+					if (currentLeafBlock->procedure->noSpillRegisters[currentNode->registerIdx >> 6] &
+							(1ll << currentNode->registerIdx))
+						continue;
+
 					// Spill!
 					SpillRegisterIntoMemory(context, currentLeafBlock->procedure,
 							currentNode->registerIdx);
@@ -871,7 +913,7 @@ void X64AllocateRegisters(Context *context, Array<X64Procedure> x64Procedures)
 				}
 			}
 
-			// Replace registers in IR code
+			// Replace registers in x64 code
 			X64Procedure *proc = currentLeafBlock->procedure;
 			u64 instructionCount = BucketArrayCount(&proc->instructions);
 			for (int instructionIdx = 0; instructionIdx < instructionCount; ++instructionIdx)
@@ -879,6 +921,24 @@ void X64AllocateRegisters(Context *context, Array<X64Procedure> x64Procedures)
 				X64Instruction *inst = &proc->instructions[instructionIdx];
 				ReplaceRegistersInInstruction(inst, registerMap);
 			}
+
+			u64 newNoSpillRegisters[8] = {};
+			for (int i = 0; i < registerMap.size; ++i)
+			{
+				if (proc->noSpillRegisters[i >> 6] & (1ll << i))
+				{
+					s64 j = registerMap[i];
+					newNoSpillRegisters[j >> 6] |= (1ll << j);
+				}
+			}
+			for (int i = (int)registerMap.size; i < proc->virtualRegisterCount; ++i)
+			{
+				if (proc->noSpillRegisters[i >> 6] & (1ll << i))
+				{
+					newNoSpillRegisters[i >> 6] |= (1ll << i);
+				}
+			}
+			memcpy(proc->noSpillRegisters, newNoSpillRegisters, sizeof(proc->noSpillRegisters));
 
 			if (spilledSomething)
 			{
@@ -947,5 +1007,5 @@ void X64AllocateRegisters(Context *context, Array<X64Procedure> x64Procedures)
 		proc->instructions[instructionCount - 1] = patchBottom;
 	}
 
-	ResolveStackOffsets(context);
+	ResolveStackOffsets(context, x64Procedures);
 }

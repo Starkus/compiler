@@ -44,7 +44,7 @@ enum NameType
 {
 	NAMETYPE_VARIABLE,
 	NAMETYPE_STRUCT_MEMBER,
-	NAMETYPE_STRUCT_MEMBER_MANY,
+	NAMETYPE_STRUCT_MEMBER_CHAIN,
 	NAMETYPE_STATIC_DEFINITION
 };
 struct ASTIdentifier : ASTBase
@@ -60,8 +60,13 @@ struct ASTIdentifier : ASTBase
 		struct
 		{
 			Variable *base;
-			Array<StructMember *> offsets;
+			StructMember *structMember;
 		} structMemberInfo;
+		struct
+		{
+			Variable *base;
+			Array<StructMember *> offsets;
+		} structMemberChain;
 		StaticDefinition *staticDefinition;
 	};
 };

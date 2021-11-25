@@ -39,7 +39,7 @@ typedef double f64;
 #define S32_MAX ((s32)0x7FFFFFFF)
 #define S64_MAX ((s64)0x7FFFFFFFFFFFFFFF)
 
-#define CRASH do { *((int*)0) = 1; } while (false)
+#define CRASH do { *((int*)0xDEADBEEFDEADBEEF) = 1; } while (false)
 
 #if DEBUG_BUILD
 #define ASSERT(expr) do { if (!(expr)) { Print("!!!ASSERT FAILED!!!\n>   Expression: { %s }\n>   %s:%d\n", #expr, __FILE__, __LINE__); __debugbreak(); } } while (false)

@@ -109,9 +109,11 @@ struct X64Procedure
 {
 	String name;
 	BucketArray<X64Instruction, 1024, malloc, realloc> instructions;
-	s64 stackSize;
+	u64 stackSize;
 	u64 virtualRegisterCount;
+	s64 allocatedParameterCount;
 	DynamicArray<Variable *, malloc, realloc> spillVariables;
+	u64 noSpillRegisters[8];
 };
 
 enum X64FloatingType
@@ -1077,7 +1079,7 @@ void X64ConvertInstruction(Context *context, IRInstruction inst, X64Procedure *x
 			result.type = X64_IDIV;
 			result.dst = inst.binaryOperation.right;
 			*BucketArrayAdd(&x64Proc->instructions) = result;
-			*BucketArrayAdd(&x64Proc->instructions) = { X64_MOV, inst.binaryOperation.left, RAX };
+			*BucketArrayAdd(&x64Proc->instructions) = { X64_MOV, inst.binaryOperation.out, RAX };
 			return;
 		case X64FLOATINGTYPE_F32:
 			result.type = X64_DIVSS;
@@ -1092,7 +1094,7 @@ void X64ConvertInstruction(Context *context, IRInstruction inst, X64Procedure *x
 		result.type = X64_IDIV;
 		result.dst = inst.binaryOperation.right;
 		*BucketArrayAdd(&x64Proc->instructions) = result;
-		*BucketArrayAdd(&x64Proc->instructions) = { X64_MOV, inst.binaryOperation.left, RDX };
+		*BucketArrayAdd(&x64Proc->instructions) = { X64_MOV, inst.binaryOperation.out, RDX };
 		return;
 	case IRINSTRUCTIONTYPE_SHIFT_LEFT:
 		result.type = X64_SAL;
@@ -1292,16 +1294,20 @@ doRM_RMI:
 	{
 		IRValue left  = inst.binaryOperation.left;
 		IRValue right = inst.binaryOperation.right;
+		IRValue out   = inst.binaryOperation.out;
 
-		X64Instruction movInst = { X64_MOV };
-		movInst.dst = IRValueRegister(x64Proc->virtualRegisterCount++, left.typeTableIdx);
-		movInst.src = left;
+		IRValue tmp = IRValueRegister(x64Proc->virtualRegisterCount++, left.typeTableIdx);
 
-		result.dst = movInst.dst;
+		X64Instruction movInInst = { X64_MOV, tmp, left };
+
+		result.dst = tmp;
 		result.src = right;
 
-		*BucketArrayAdd(&x64Proc->instructions) = movInst;
+		X64Instruction movOutInst = { X64_MOV, out, tmp };
+
+		*BucketArrayAdd(&x64Proc->instructions) = movInInst;
 		*BucketArrayAdd(&x64Proc->instructions) = result;
+		*BucketArrayAdd(&x64Proc->instructions) = movOutInst;
 
 		return;
 	}
@@ -1309,20 +1315,32 @@ doX_XM:
 	{
 		IRValue left  = inst.binaryOperation.left;
 		IRValue right = inst.binaryOperation.right;
+		IRValue out = inst.binaryOperation.out;
 
-		X64Instruction movInst;
+		IRValue tmp = IRValueRegister(x64Proc->virtualRegisterCount++, left.typeTableIdx);
+
+		X64Instruction movInInst;
 		if (floatingType == X64FLOATINGTYPE_F32)
-			movInst = { X64_MOVSS };
+			movInInst = { X64_MOVSS };
 		else
-			movInst = { X64_MOVSD };
-		movInst.dst = IRValueRegister(x64Proc->virtualRegisterCount++, left.typeTableIdx);
-		movInst.src = left;
+			movInInst = { X64_MOVSD };
+		movInInst.dst = tmp;
+		movInInst.src = left;
 
-		result.dst = movInst.dst;
+		result.dst = tmp;
 		result.src = right;
 
-		*BucketArrayAdd(&x64Proc->instructions) = movInst;
+		X64Instruction movOutInst;
+		if (floatingType == X64FLOATINGTYPE_F32)
+			movOutInst = { X64_MOVSS };
+		else
+			movOutInst = { X64_MOVSD };
+		movOutInst.dst = out;
+		movOutInst.src = tmp;
+
+		*BucketArrayAdd(&x64Proc->instructions) = movInInst;
 		*BucketArrayAdd(&x64Proc->instructions) = result;
+		*BucketArrayAdd(&x64Proc->instructions) = movOutInst;
 
 		return;
 	}
@@ -1360,140 +1378,149 @@ doConditionalSet:
 	}
 }
 
-void X64PrintInstruction(Context *context, X64Instruction inst)
+s64 X64PrintInstruction(Context *context, X64Instruction inst)
 {
+	s64 result = 0;
 	switch (inst.type)
 	{
 	case X64_MOV:
-		Print("mov ");
+		result = Print("mov ");
 		goto printDstSrc;
 	case X64_MOVZX:
-		Print("movzx ");
+		result = Print("movzx ");
 		goto printDstSrc;
 	case X64_CQO:
-		Print("cqo\n");
-		return;
+		return Print("cqo");
 	case X64_LEA:
-		Print("lea ");
+		result = Print("lea ");
 		goto printDstSrc;
 	case X64_PUSH:
-		Print("push ");
+		result = Print("push ");
 		goto printDst;
 	case X64_POP:
-		Print("pop ");
+		result = Print("pop ");
 		goto printDst;
 	case X64_ADD:
-		Print("add ");
+		result = Print("add ");
 		goto printDstSrc;
 	case X64_SUB:
-		Print("sub ");
+		result = Print("sub ");
 		goto printDstSrc;
 	case X64_NEG:
-		Print("neg ");
+		result = Print("neg ");
 		goto printDst;
 	case X64_IMUL:
-		Print("imul ");
+		result = Print("imul ");
 		goto printDstSrc;
 	case X64_IDIV:
-		Print("idiv ");
+		result = Print("idiv ");
 		goto printDst;
 	case X64_SAL:
-		Print("sal ");
+		result = Print("sal ");
 		goto printDstSrc;
 	case X64_SAR:
-		Print("sar ");
+		result = Print("sar ");
 		goto printDstSrc;
 	case X64_CMP:
-		Print("cmp ");
+		result = Print("cmp ");
 		goto printDstSrc;
 	case X64_JMP:
-		Print("jmp ");
+		result = Print("jmp ");
 		goto printLabel;
 	case X64_JE:
-		Print("je ");
+		result = Print("je ");
 		goto printLabel;
 	case X64_JNE:
-		Print("jne ");
+		result = Print("jne ");
 		goto printLabel;
 	case X64_CALL:
-		Print("call %S\n", inst.procLabel);
-		return;
+		return Print("call %S", inst.procLabel);
 	case X64_LEAVE:
-		Print("leave\n");
-		return;
+		return Print("leave");
 	case X64_RET:
-		Print("ret\n");
-		return;
+		return Print("ret");
 	case X64_SETG:
-		Print("setg ");
+		result = Print("setg ");
 		goto printDst;
 	case X64_SETL:
-		Print("setl ");
+		result = Print("setl ");
 		goto printDst;
 	case X64_SETGE:
-		Print("setge ");
+		result = Print("setge ");
 		goto printDst;
 	case X64_SETLE:
-		Print("setle ");
+		result = Print("setle ");
 		goto printDst;
 	case X64_SETE:
-		Print("sete ");
+		result = Print("sete ");
 		goto printDst;
 	case X64_MOVSS:
-		Print("movss ");
+		result = Print("movss ");
 		goto printDstSrc;
 	case X64_MOVSD:
-		Print("movsd ");
+		result = Print("movsd ");
 		goto printDstSrc;
 	case X64_ADDSS:
-		Print("addss ");
+		result = Print("addss ");
 		goto printDstSrc;
 	case X64_ADDSD:
-		Print("addsd ");
+		result = Print("addsd ");
 		goto printDstSrc;
 	case X64_SUBSS:
-		Print("subss ");
+		result = Print("subss ");
 		goto printDstSrc;
 	case X64_SUBSD:
-		Print("subsd ");
+		result = Print("subsd ");
 		goto printDstSrc;
 	case X64_MULSS:
-		Print("mulss ");
+		result = Print("mulss ");
 		goto printDstSrc;
 	case X64_MULSD:
-		Print("mulsd ");
+		result = Print("mulsd ");
 		goto printDstSrc;
 	case X64_DIVSS:
-		Print("divss ");
+		result = Print("divss ");
 		goto printDstSrc;
 	case X64_DIVSD:
-		Print("divsd ");
+		result = Print("divsd ");
 		goto printDstSrc;
 	case X64_CVTSI2SS:
-		Print("cvtsi2ss ");
+		result = Print("cvtsi2ss ");
 		goto printDstSrc;
 	case X64_CVTSI2SD:
-		Print("cvtsi2sd ");
+		result = Print("cvtsi2sd ");
 		goto printDstSrc;
 	case X64_CVTSS2SI:
-		Print("cvtss2si ");
+		result = Print("cvtss2si ");
 		goto printDstSrc;
 	case X64_CVTSD2SI:
-		Print("cvtsd2si ");
+		result = Print("cvtsd2si ");
 		goto printDstSrc;
 	case X64_CVTSS2SD:
-		Print("cvtss2sd ");
+		result = Print("cvtss2sd ");
 		goto printDstSrc;
 	case X64_CVTSD2SS:
-		Print("cvtsd2ss ");
+		result = Print("cvtsd2ss ");
 		goto printDstSrc;
 	case X64_Label:
-		Print("%S:\n", inst.label->name);
-		return;
+		return Print("%S:", inst.label->name);
 	case X64_Push_Scope:
 	case X64_Pop_Scope:
 	case X64_Push_Variable:
-		return;
+		return 0;
+	case X64_Patch:
+		result = X64PrintInstruction(context, *inst.patch1);
+		result += Print("\n");
+		result += X64PrintInstruction(context, *inst.patch2);
+		return result;
+	case X64_Patch_Many:
+		result = 0;
+		for (int i = 0; i < inst.patchInstructions.size; ++i)
+		{
+			if (i) result = Print("\n");
+			result += X64PrintInstruction(context, inst.patchInstructions[i]);
+		}
+		return result;
 	default:
 		ASSERT(!"Unrecognized x64 instruction type");
 	}
@@ -1501,24 +1528,47 @@ void X64PrintInstruction(Context *context, X64Instruction inst)
 printDst:
 	{
 		String dst = X64IRValueToStr(context, inst.dst);
-		Print("%S\n", dst);
-		return;
+		result += Print("%S", dst);
+		return result;
 	}
 printDstSrc:
 	{
 		String dst = X64IRValueToStr(context, inst.dst);
 		String src = X64IRValueToStr(context, inst.src);
-		Print("%S, %S\n", dst, src);
-		return;
+		result += Print("%S, %S", dst, src);
+		return result;
 	}
 printLabel:
 	{
-		Print("%S\n", inst.label->name);
-		return;
+		result += Print("%S", inst.label->name);
+		return result;
 	}
 }
 
 #include "X64RegisterAllocation.cpp"
+
+void X64PrintInstructions(Context *context, Array<X64Procedure> x64Procedures)
+{
+	for (int procedureIdx = 0; procedureIdx < x64Procedures.size; ++procedureIdx)
+	{
+		// @Cleanup
+		if (context->procedures[procedureIdx].isExternal)
+			continue;
+
+		X64Procedure x64Proc = x64Procedures[procedureIdx];
+
+		Print("\n%S PROC\n", x64Proc.name);
+
+		u64 instructionCount = BucketArrayCount(&x64Proc.instructions);
+		for (int instructionIdx = 0; instructionIdx < instructionCount; ++instructionIdx)
+		{
+			X64PrintInstruction(context, x64Proc.instructions[instructionIdx]);
+			Print("\n");
+		}
+
+		Print("%S ENDP\n", x64Proc.name);
+	}
+}
 
 void BackendConvert(Context *context)
 {
@@ -1536,6 +1586,8 @@ void BackendConvert(Context *context)
 
 		x64Proc->name = X64ProcedureToLabel(context, proc);
 		x64Proc->virtualRegisterCount = proc->registerCount;
+		x64Proc->allocatedParameterCount = proc->allocatedParameterCount;
+		memset(x64Proc->noSpillRegisters, 0, sizeof(x64Proc->noSpillRegisters));
 		DynamicArrayInit(&x64Proc->spillVariables, 8);
 
 		// @Speed: separate array of external procedures to avoid branching
@@ -1556,23 +1608,7 @@ void BackendConvert(Context *context)
 
 	X64AllocateRegisters(context, x64Procedures);
 
-	// PRINT
-	for (int procedureIdx = 0; procedureIdx < procedureCount; ++procedureIdx)
-	{
-		// @Cleanup
-		if (context->procedures[procedureIdx].isExternal)
-			continue;
-
-		X64Procedure x64Proc = x64Procedures[procedureIdx];
-
-		Print("\n%S PROC\n", x64Proc.name);
-
-		u64 instructionCount = BucketArrayCount(&x64Proc.instructions);
-		for (int instructionIdx = 0; instructionIdx < instructionCount; ++instructionIdx)
-			X64PrintInstruction(context, x64Proc.instructions[instructionIdx]);
-
-		Print("%S ENDP\n", x64Proc.name);
-	}
+	X64PrintInstructions(context, x64Procedures);
 }
 
 void BackendMain(Context *context)

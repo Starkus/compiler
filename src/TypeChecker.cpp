@@ -126,8 +126,13 @@ struct TCScopeName
 		struct
 		{
 			Variable *base;
-			Array<StructMember *> offsets;
+			StructMember *structMember;
 		} structMemberInfo;
+		struct
+		{
+			Variable *base;
+			Array<StructMember *> offsets;
+		} structMemberChain;
 		StaticDefinition *staticDefinition;
 	};
 };
@@ -740,13 +745,13 @@ void AddStructMembersToScope(Context *context, SourceLocation loc, Variable *bas
 			ASSERT(!base->isRegister);
 
 			TCScopeName newScopeName;
-			newScopeName.type = NAMETYPE_STRUCT_MEMBER;
+			newScopeName.type = NAMETYPE_STRUCT_MEMBER_CHAIN;
 			newScopeName.name = member->name;
-			newScopeName.structMemberInfo.base = base;
+			newScopeName.structMemberChain.base = base;
 
-			ArrayInit(&newScopeName.structMemberInfo.offsets, offsetStack->size, malloc);
+			ArrayInit(&newScopeName.structMemberChain.offsets, offsetStack->size, malloc);
 			for (int i = 0; i < offsetStack->size; ++i)
-				*ArrayAdd(&newScopeName.structMemberInfo.offsets) = (*offsetStack)[i];
+				*ArrayAdd(&newScopeName.structMemberChain.offsets) = (*offsetStack)[i];
 
 			*DynamicArrayAdd(&stackTop->names) = newScopeName;
 		}
@@ -1272,10 +1277,18 @@ void TypeCheckExpression(Context *context, ASTExpression *expression)
 					{
 						expression->identifier.structMemberInfo.base =
 							currentName.structMemberInfo.base;
-						expression->identifier.structMemberInfo.offsets =
-							currentName.structMemberInfo.offsets;
-						int lastIdx = (int)currentName.structMemberInfo.offsets.size - 1;
-						expression->typeTableIdx = currentName.structMemberInfo.offsets[lastIdx]->typeTableIdx;
+						expression->identifier.structMemberInfo.structMember =
+							currentName.structMemberInfo.structMember;
+						expression->typeTableIdx = currentName.structMemberInfo.structMember->typeTableIdx;
+					} break;
+					case NAMETYPE_STRUCT_MEMBER_CHAIN:
+					{
+						expression->identifier.structMemberChain.base =
+							currentName.structMemberChain.base;
+						expression->identifier.structMemberChain.offsets =
+							currentName.structMemberChain.offsets;
+						int lastIdx = (int)currentName.structMemberChain.offsets.size - 1;
+						expression->typeTableIdx = currentName.structMemberChain.offsets[lastIdx]->typeTableIdx;
 					} break;
 					case NAMETYPE_STATIC_DEFINITION:
 					{
@@ -1475,10 +1488,8 @@ skipInvalidIdentifierError:
 			if (foundMember)
 			{
 				// We don't need the base in this case, just the top most offset.
-				// @Cleanup
 				rightHand->identifier.structMemberInfo.base = nullptr;
-				ArrayInit(&rightHand->identifier.structMemberInfo.offsets, 1, malloc);
-				*ArrayAdd(&rightHand->identifier.structMemberInfo.offsets) = foundMember;
+				rightHand->identifier.structMemberInfo.structMember = foundMember;
 				expression->typeTableIdx = foundMember->typeTableIdx;
 				return;
 			}

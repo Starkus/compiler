@@ -38,6 +38,8 @@ struct IRValue
 	};
 	s64 typeTableIdx;
 };
+static_assert(offsetof(IRValue, registerIdx) == offsetof(IRValue, memory.baseRegister),
+	"IRValue::registerIdx and IRValue::memory.registerIdx should have the same offset");
 
 struct IRLabel
 {
@@ -711,33 +713,33 @@ void IRConvertIfNecessary(Context *context, IRValue *left, IRValue *right)
 	}
 }
 
-void IRDoAssignment(Context *context, IRValue leftValue, IRValue rightValue)
+void IRDoAssignment(Context *context, IRValue dstValue, IRValue srcValue)
 {
-	s64 rightType = rightValue.typeTableIdx;
-	ASSERT(rightType >= 0);
+	s64 srcType = srcValue.typeTableIdx;
+	ASSERT(srcType >= 0);
 
 	// Cast to Any
 	s64 anyTableIdx = FindTypeInStackByName(context, {}, "Any"_s);
-	if (leftValue.typeTableIdx == anyTableIdx && rightType != anyTableIdx)
+	if (dstValue.typeTableIdx == anyTableIdx && srcType != anyTableIdx)
 	{
 		TypeInfo *anyTypeInfo = &context->typeTable[anyTableIdx];
 
 		// Access typeInfo member
-		IRValue typeInfoMember = IRDoMemberAccess(context, leftValue,
+		IRValue typeInfoMember = IRDoMemberAccess(context, dstValue,
 				&anyTypeInfo->structInfo.members[0]);
 
 		// Write pointer to typeInfo to it
 		IRInstruction typeAssignInst = {};
 		typeAssignInst.type = IRINSTRUCTIONTYPE_ASSIGNMENT;
-		typeAssignInst.assignment.src = IRValueTypeOf(context, rightValue.typeTableIdx);
+		typeAssignInst.assignment.src = IRValueTypeOf(context, srcValue.typeTableIdx);
 		typeAssignInst.assignment.dst = typeInfoMember;
 		*AddInstruction(context) = typeAssignInst;
 
 		// Access data member
-		IRValue dataMember = IRDoMemberAccess(context, leftValue,
+		IRValue dataMember = IRDoMemberAccess(context, dstValue,
 				&anyTypeInfo->structInfo.members[1]);
 
-		IRValue dataValue = rightValue;
+		IRValue dataValue = srcValue;
 
 		// If data isn't in memory, copy to a variable
 		if (dataValue.valueType != IRVALUETYPE_MEMORY_REGISTER ||
@@ -768,42 +770,42 @@ void IRDoAssignment(Context *context, IRValue leftValue, IRValue rightValue)
 	}
 
 	// Cast static array to dynamic array
-	TypeInfo *leftTypeInfo  = &context->typeTable[leftValue.typeTableIdx];
-	TypeInfo *rightTypeInfo = &context->typeTable[rightValue.typeTableIdx];
-	if (leftTypeInfo->typeCategory  == TYPECATEGORY_ARRAY &&
-		rightTypeInfo->typeCategory == TYPECATEGORY_ARRAY &&
-		leftTypeInfo->arrayInfo.count  == 0 &&
-		rightTypeInfo->arrayInfo.count != 0)
+	TypeInfo *dstTypeInfo  = &context->typeTable[dstValue.typeTableIdx];
+	TypeInfo *srcTypeInfo = &context->typeTable[srcValue.typeTableIdx];
+	if (dstTypeInfo->typeCategory  == TYPECATEGORY_ARRAY &&
+		srcTypeInfo->typeCategory == TYPECATEGORY_ARRAY &&
+		dstTypeInfo->arrayInfo.count  == 0 &&
+		srcTypeInfo->arrayInfo.count != 0)
 	{
 		s64 dynamicArrayTableIdx = FindTypeInStackByName(context, {}, "Array"_s);
 		TypeInfo *dynamicArrayTypeInfo = &context->typeTable[dynamicArrayTableIdx];
 
 		// Size
 		StructMember *sizeStructMember = &dynamicArrayTypeInfo->structInfo.members[0];
-		IRValue sizeMember = IRDoMemberAccess(context, leftValue, sizeStructMember);
-		IRValue sizeValue = IRValueImmediate(rightTypeInfo->arrayInfo.count, TYPETABLEIDX_U64);
+		IRValue sizeMember = IRDoMemberAccess(context, dstValue, sizeStructMember);
+		IRValue sizeValue = IRValueImmediate(srcTypeInfo->arrayInfo.count, TYPETABLEIDX_U64);
 		IRDoAssignment(context, sizeMember, sizeValue);
 
 		// Data
 		StructMember *dataStructMember = &dynamicArrayTypeInfo->structInfo.members[1];
-		IRValue dataMember = IRDoMemberAccess(context, leftValue, dataStructMember);
-		IRValue dataValue = IRPointerToValue(context, rightValue);
+		IRValue dataMember = IRDoMemberAccess(context, dstValue, dataStructMember);
+		IRValue dataValue = IRPointerToValue(context, srcValue);
 		IRDoAssignment(context, dataMember, dataValue);
 
 		return;
 	}
 
 	// Copy structs/arrays
-	if (rightTypeInfo->typeCategory == TYPECATEGORY_STRUCT ||
-		rightTypeInfo->typeCategory == TYPECATEGORY_ARRAY)
+	if (srcTypeInfo->typeCategory == TYPECATEGORY_STRUCT ||
+		srcTypeInfo->typeCategory == TYPECATEGORY_ARRAY)
 	{
-		u64 size = context->typeTable[rightType].size;
+		u64 size = context->typeTable[srcType].size;
 		IRValue sizeValue = IRValueImmediate(size, TYPETABLEIDX_U64);
 
 		IRInstruction inst = {};
 		inst.type = IRINSTRUCTIONTYPE_INTRINSIC_MEMCPY;
-		inst.memcpy.src = IRPointerToValue(context, rightValue);
-		inst.memcpy.dst = IRPointerToValue(context, leftValue);
+		inst.memcpy.src = IRPointerToValue(context, srcValue);
+		inst.memcpy.dst = IRPointerToValue(context, dstValue);
 		inst.memcpy.size = sizeValue;
 
 		*AddInstruction(context) = inst;
@@ -812,23 +814,46 @@ void IRDoAssignment(Context *context, IRValue leftValue, IRValue rightValue)
 	{
 		IRInstruction inst = {};
 
-		u64 sizeLeft  = leftTypeInfo->size;
-		u64 sizeRight = rightTypeInfo->size;
-		if (sizeLeft > 4 && sizeRight == 4)
+		u64 sizeDst = dstTypeInfo->size;
+		u64 sizeSrc = srcTypeInfo->size;
+		if (dstTypeInfo->typeCategory == TYPECATEGORY_FLOATING &&
+			srcTypeInfo->typeCategory != TYPECATEGORY_FLOATING)
+		{
+			if (sizeDst == 4)
+				inst.type = IRINSTRUCTIONTYPE_CONVERT_INT_TO_F32;
+			else
+				inst.type = IRINSTRUCTIONTYPE_CONVERT_INT_TO_F64;
+		}
+		else if (dstTypeInfo->typeCategory != TYPECATEGORY_FLOATING &&
+				 srcTypeInfo->typeCategory == TYPECATEGORY_FLOATING)
+		{
+			if (sizeSrc == 4)
+				inst.type = IRINSTRUCTIONTYPE_CONVERT_F32_TO_INT;
+			else
+				inst.type = IRINSTRUCTIONTYPE_CONVERT_F64_TO_INT;
+		}
+		else if (dstTypeInfo->typeCategory == TYPECATEGORY_FLOATING &&
+				 srcTypeInfo->typeCategory == TYPECATEGORY_FLOATING &&
+				 sizeDst != sizeSrc)
+		{
+			if (sizeSrc == 4)
+				inst.type = IRINSTRUCTIONTYPE_CONVERT_F32_TO_F64;
+			else
+				inst.type = IRINSTRUCTIONTYPE_CONVERT_F64_TO_F32;
+		}
+		else if (sizeDst > 4 && sizeSrc == 4)
 		{
 			// @Cleanup: Other architectures? This is x86-64 specific.
 			inst.type = IRINSTRUCTIONTYPE_ASSIGNMENT;
-			leftValue.typeTableIdx = TYPETABLEIDX_S32;
+			dstValue.typeTableIdx = TYPETABLEIDX_S32;
 		}
-		else if (sizeLeft > sizeRight)
+		else if (sizeDst > sizeSrc)
 			inst.type = IRINSTRUCTIONTYPE_ASSIGNMENT_ZERO_EXTEND;
 		else
 			inst.type = IRINSTRUCTIONTYPE_ASSIGNMENT;
 
-		IRConvertIfNecessary(context, &leftValue, &rightValue);
-
-		inst.assignment.src = rightValue;
-		inst.assignment.dst = leftValue;
+		inst.assignment.dst = dstValue;
+		inst.assignment.src = srcValue;
 		*AddInstruction(context) = inst;
 	}
 }
@@ -846,7 +871,7 @@ IRValue IRInstructionFromBinaryOperation(Context *context, ASTExpression *expres
 
 		ASSERT(rightHand->nodeType == ASTNODETYPE_IDENTIFIER);
 		ASSERT(rightHand->identifier.type == NAMETYPE_STRUCT_MEMBER);
-		StructMember *structMember = rightHand->identifier.structMemberInfo.offsets[0];
+		StructMember *structMember = rightHand->identifier.structMemberInfo.structMember;
 
 		result = IRDoMemberAccess(context, value, structMember);
 	}
@@ -860,7 +885,7 @@ IRValue IRInstructionFromBinaryOperation(Context *context, ASTExpression *expres
 	{
 		IRValue leftValue  = IRGenFromExpression(context, leftHand);
 		IRValue rightValue = IRGenFromExpression(context, rightHand);
-		IRConvertIfNecessary(context, &leftValue, &rightValue);
+		//IRConvertIfNecessary(context, &leftValue, &rightValue);
 		result = IRInstructionFromMultiply(context, leftValue, rightValue);
 	}
 	else if (expression->binaryOperation.op == TOKEN_OP_AND)
@@ -1010,7 +1035,7 @@ IRValue IRInstructionFromBinaryOperation(Context *context, ASTExpression *expres
 		inst.binaryOperation.left  = IRGenFromExpression(context, leftHand);
 		inst.binaryOperation.right = IRGenFromExpression(context, rightHand);
 
-		IRConvertIfNecessary(context, &inst.binaryOperation.left, &inst.binaryOperation.right);
+		//IRConvertIfNecessary(context, &inst.binaryOperation.left, &inst.binaryOperation.right);
 
 		switch (expression->binaryOperation.op)
 		{
@@ -1345,9 +1370,15 @@ IRValue IRGenFromExpression(Context *context, ASTExpression *expression)
 		case NAMETYPE_STRUCT_MEMBER:
 		{
 			IRValue left = IRValueFromVariable(context, expression->identifier.structMemberInfo.base);
-			for (int i = 0; i < expression->identifier.structMemberInfo.offsets.size; ++i)
+			StructMember *structMember = expression->identifier.structMemberInfo.structMember;
+			result = IRDoMemberAccess(context, left, structMember);
+		} break;
+		case NAMETYPE_STRUCT_MEMBER_CHAIN:
+		{
+			IRValue left = IRValueFromVariable(context, expression->identifier.structMemberChain.base);
+			for (int i = 0; i < expression->identifier.structMemberChain.offsets.size; ++i)
 			{
-				StructMember *structMember = expression->identifier.structMemberInfo.offsets[i];
+				StructMember *structMember = expression->identifier.structMemberChain.offsets[i];
 				left = IRDoMemberAccess(context, left, structMember);
 			}
 			result = left;
@@ -1941,72 +1972,6 @@ IRValue IRGenFromExpression(Context *context, ASTExpression *expression)
 	}
 
 	return result;
-}
-
-void PrintIRInstructionOperator(IRInstruction inst)
-{
-	switch (inst.type)
-	{
-	case IRINSTRUCTIONTYPE_ADD:
-		Print("+");
-		break;
-	case IRINSTRUCTIONTYPE_SUBTRACT:
-		Print("-");
-		break;
-	case IRINSTRUCTIONTYPE_MULTIPLY:
-		Print("*");
-		break;
-	case IRINSTRUCTIONTYPE_DIVIDE:
-		Print("/");
-		break;
-	case IRINSTRUCTIONTYPE_MODULO:
-		Print("%");
-		break;
-	case IRINSTRUCTIONTYPE_SHIFT_LEFT:
-		Print("<<");
-		break;
-	case IRINSTRUCTIONTYPE_SHIFT_RIGHT:
-		Print(">>");
-		break;
-	case IRINSTRUCTIONTYPE_OR:
-		Print("||");
-		break;
-	case IRINSTRUCTIONTYPE_AND:
-		Print("&&");
-		break;
-	case IRINSTRUCTIONTYPE_BITWISE_OR:
-		Print("|");
-		break;
-	case IRINSTRUCTIONTYPE_BITWISE_XOR:
-		Print("^");
-		break;
-	case IRINSTRUCTIONTYPE_BITWISE_AND:
-		Print("&");
-		break;
-	case IRINSTRUCTIONTYPE_EQUALS:
-		Print("==");
-		break;
-	case IRINSTRUCTIONTYPE_GREATER_THAN:
-		Print(">");
-		break;
-	case IRINSTRUCTIONTYPE_GREATER_THAN_OR_EQUALS:
-		Print(">=");
-		break;
-	case IRINSTRUCTIONTYPE_LESS_THAN:
-		Print("<");
-		break;
-	case IRINSTRUCTIONTYPE_LESS_THAN_OR_EQUALS:
-		Print("<=");
-		break;
-	case IRINSTRUCTIONTYPE_NOT:
-		Print("!");
-		break;
-	case IRINSTRUCTIONTYPE_LOAD_EFFECTIVE_ADDRESS:
-		Print("address of ");
-		break;
-	default:
-		Print("<?>");
-	}
 }
 
 void IRGenMain(Context *context)

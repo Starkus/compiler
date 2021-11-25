@@ -6,7 +6,7 @@
 #define STB_SPRINTF_IMPLEMENTATION
 #include "stb/stb_sprintf.h"
 
-void Print(const char *format, ...);
+long long Print(const char *format, ...);
 
 #include "General.h"
 #include "Config.h"
@@ -19,14 +19,14 @@ Memory *g_memory;
 HANDLE g_hStdout;
 HANDLE g_hStderr;
 
-void Print(const char *format, ...)
+s64 Print(const char *format, ...)
 {
 	char *buffer = (char *)g_memory->framePtr;
 
 	va_list args;
 	va_start(args, format);
 
-	stbsp_vsprintf(buffer, format, args);
+	s64 size = stbsp_vsprintf(buffer, format, args);
 	OutputDebugStringA(buffer);
 
 	// Stdout
@@ -45,7 +45,12 @@ void Print(const char *format, ...)
 			);
 	WriteFile(logFileHandle, buffer, (DWORD)strlen(buffer), &bytesWritten, nullptr);
 
+#if DEBUG_BUILD
+	memset(g_memory->framePtr, 0xCD, size + 1);
+#endif
+
 	va_end(args);
+	return size;
 }
 
 const String TPrintF(const char *format, ...)
@@ -57,7 +62,7 @@ const String TPrintF(const char *format, ...)
 	s64 size = stbsp_vsprintf(buffer, format, args);
 	va_end(args);
 
-	g_memory->framePtr = (u8 *)g_memory->framePtr + size;
+	g_memory->framePtr = (u8 *)g_memory->framePtr + size + 1;
 
 	return { size, buffer };
 }
