@@ -37,7 +37,7 @@ struct ASTBinaryOperation : ASTBase
 	ASTExpression *rightHand;
 };
 
-struct Variable;
+struct Value;
 struct StructMember;
 struct StaticDefinition;
 enum NameType
@@ -56,16 +56,16 @@ struct ASTIdentifier : ASTBase
 	NameType type;
 	union
 	{
-		Variable *variable;
+		u32 valueIdx;
 		struct
 		{
-			Variable *base;
-			StructMember *structMember;
+			u32 baseValueIdx;
+			const StructMember *structMember;
 		} structMemberInfo;
 		struct
 		{
-			Variable *base;
-			Array<StructMember *> offsets;
+			u32 baseValueIdx;
+			Array<const StructMember *> offsets;
 		} structMemberChain;
 		StaticDefinition *staticDefinition;
 	};
@@ -131,10 +131,13 @@ struct ASTType : ASTBase
 
 struct ASTVariableDeclaration : ASTBase
 {
-	Variable *variable;
-	ASTExpression *value;
+	u32 valueIdx;
+	ASTExpression *astInitialValue;
 	ASTType *astType;
 	bool isUsing;
+
+	// TypeCheck
+	s64 typeTableIdx;
 };
 
 struct Procedure;
@@ -178,8 +181,9 @@ struct ASTFor : ASTBase
 	ASTExpression *body;
 
 	// Type check
-	Variable *indexVariable;
-	Variable *elementVariable;
+	u32 indexValueIdx;
+	u32 elementValueIdx;
+	s64 elementTypeTableIdx;
 };
 
 struct ASTReturn : ASTBase

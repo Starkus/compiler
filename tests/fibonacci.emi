@@ -14,7 +14,7 @@ fibonacci :: (i : s64) -> s64
 
 Main :: () -> s64
 {
-	fibonacci(8);
+	for (0..8) PrintF("fibonacci(%): %\n", i, fibonacci(i));
 
 	Print("Test ok\n");
 	return 0;

@@ -17,6 +17,8 @@ Main :: () -> s64
 	a := test.a;
 	b := test.b;
 
+	PrintF("Union: { int:%, float:%, struct:{%, %} }\n", test.integer, test.float, test.a, test.b);
+
 	Print("Test ok\n");
 	return 0;
 }

@@ -1,0 +1,2 @@
+* Add enum support to PrintF and update enum test
+* Fix struct type info static data

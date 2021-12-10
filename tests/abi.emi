@@ -9,6 +9,7 @@ manyArgs :: (a : s64, b : s64, c : s64, d : s64, e : s64, f : s64, g : s64, h : 
 	f = 6;
 	g = 7;
 	h = 8;
+	//manyArgs(a, b, c, d, e, f, g, h);
 }
 
 Main :: () -> s64

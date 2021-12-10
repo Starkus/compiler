@@ -6,6 +6,8 @@ struct PrintContext
 	String filename;
 	u8 *fileBuffer;
 	u64 fileSize;
+
+	Context *context;
 };
 
 String OperatorToString(s32 op)
@@ -268,21 +270,21 @@ void PrintExpression(PrintContext *context, ASTExpression *e)
 	{
 	case ASTNODETYPE_VARIABLE_DECLARATION:
 	{
-		Variable *var = e->variableDeclaration.variable;
-		if (var->isStatic)
+		Value value = context->context->values[e->variableDeclaration.valueIdx];
+		if (value.flags & VALUEFLAGS_ON_STATIC_STORAGE)
 			Print("Static variable declaration ");
 		else
 			Print("Variable declaration ");
 		String typeStr = ASTTypeToString(e->variableDeclaration.astType);
-		Print("\"%S\" of type \"%S\"", var->name, typeStr);
+		Print("\"%S\" of type \"%S\"", value.name, typeStr);
 
 		PrintSourceLocation(context, e->any.loc);
 		Print("\n");
 
-		if (e->variableDeclaration.value)
+		if (e->variableDeclaration.astInitialValue)
 		{
 			++context->indentLevels;
-			PrintExpression(context, e->variableDeclaration.value);
+			PrintExpression(context, e->variableDeclaration.astInitialValue);
 			--context->indentLevels;
 		}
 	} break;
@@ -521,6 +523,7 @@ void PrintAST(Context *context)
 	printContext.filename = context->filename;
 	printContext.fileBuffer = context->fileBuffer;
 	printContext.fileSize = context->fileSize;
+	printContext.context = context;
 
 	for (int i = 0; i < context->astRoot->block.statements.size; ++i)
 	{

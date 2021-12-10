@@ -1,5 +1,6 @@
 doThings :: (eight : u8, sixteen : u16, thirtytwo : u32)
 {
+	PrintF("Arguments: %, %, %\n", eight, sixteen, thirtytwo);
 	foo := eight + eight;
 	bar := sixteen * 4;
 	baz := thirtytwo - 2;

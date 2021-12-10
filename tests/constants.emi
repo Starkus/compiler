@@ -7,6 +7,8 @@ Main :: () -> s64
 	bar : s32 = constant;
 	baz : f32 = constantFloat;
 
+	PrintF("foo:% bar:% baz:%\n", foo, bar, baz);
+
 	Print("Test ok\n");
 	return 0;
 }

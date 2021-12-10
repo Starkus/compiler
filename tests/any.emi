@@ -26,6 +26,11 @@ Main :: () -> s64
 
 	PrintType(12345.6789);
 
+	//anF32 : f32;
+	//anF32 = 12345.6789;
+	anF32 : f32 = 12345.6789;
+	PrintType(anF32);
+
 	Print("Test ok\n");
 	return 0;
 }

@@ -33,7 +33,38 @@ void ArrayInit(Array<T> *array, u64 capacity, void *(*allocFunc)(u64))
 template <typename T>
 T *ArrayAdd(Array<T> *array)
 {
-	return &array->data[array->size++];
+	T *result = &array->data[array->size++];
+#if DEBUG_BUILD
+	ASSERT(array->size <= array->_capacity);
+#endif
+	return result;
+}
+
+template <typename T, u64 capacity>
+struct FixedArray
+{
+	T data[capacity];
+	u64 size;
+
+	T &operator[](s64 idx)
+	{
+		ASSERT(idx >= 0 && (u64)idx < capacity);
+		return data[idx];
+	}
+
+	const T &operator[](s64 idx) const
+	{
+		ASSERT(idx >= 0 && (u64)idx < capacity);
+		return data[idx];
+	}
+};
+
+template <typename T, u64 capacity>
+T *FixedArrayAdd(FixedArray<T, capacity> *array)
+{
+	T *result = &array->data[array->size++];
+	ASSERT(array->size < capacity);
+	return result;
 }
 
 template <typename T, void *(*allocFunc)(u64), void *(*reallocFunc)(void *, u64)>
@@ -91,6 +122,23 @@ T *DynamicArrayAddMany(DynamicArray<T, allocFunc, reallocFunc> *array, s64 count
 	T *first = &array->data[array->size];
 	array->size = newSize;
 	return first;
+}
+
+template <typename T, void *(*allocFunc)(u64), void *(*reallocFunc)(void *, u64)>
+bool DynamicArrayAddUnique(DynamicArray<T, allocFunc, reallocFunc> *array, T value)
+{
+	for (int i = 0; i < array->size; ++i)
+	{
+		if ((*array)[i] == value)
+			return false;
+	}
+	if (array->size >= array->capacity)
+	{
+		array->capacity *= 2;
+		array->data = (T*)reallocFunc(array->data, array->capacity * sizeof(T));
+	}
+	array->data[array->size++] = value;
+	return true;
 }
 
 template <typename T, void *(*allocFunc)(u64), void *(*reallocFunc)(void *, u64)>

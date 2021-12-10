@@ -1,39 +1,31 @@
-inline String PIRRegisterToString(s64 registerIdx)
+inline String PIRValueToStr(Context *context, u32 valueIdx)
 {
-	if (registerIdx == IRSPECIALREGISTER_STACK_BASE)
-		return "rBP"_s;
-	else if (registerIdx == IRSPECIALREGISTER_RETURN)
-		return "rRet"_s;
-	else if (registerIdx == IRSPECIALREGISTER_SHOULD_RETURN)
-		return "rDoRet"_s;
+	Value v = context->values[valueIdx];
+	if (v.name)
+		return TPrintF("$\"%S\"", v.name);
 	else
-		return TPrintF("r%lld", registerIdx);
+		return TPrintF("$v%d", valueIdx);
 }
 
 void PrintIRValue(Context *context, IRValue value)
 {
-	if (value.valueType == IRVALUETYPE_MEMORY_REGISTER)
+	if (value.valueType == IRVALUETYPE_MEMORY)
 	{
-		Print("[$%S", PIRRegisterToString(value.memory.baseRegister));
+		Print("[%S", PIRValueToStr(context, value.valueIdx));
 		if (value.memory.offset)
 			Print("+0x%llx", value.memory.offset);
 		Print("]");
 	}
-	else if (value.valueType == IRVALUETYPE_MEMORY_VARIABLE)
+	else if (value.valueType == IRVALUETYPE_VALUE)
 	{
-		Print("[&%S", value.memory.baseVariable->name);
-		if (value.memory.offset)
-			Print("+0x%llx", value.memory.offset);
-		Print("]");
+		Print("%S", PIRValueToStr(context, value.valueIdx));
 	}
-	else if (value.valueType == IRVALUETYPE_REGISTER)
-		Print("$%S", PIRRegisterToString(value.registerIdx));
 	else if (value.valueType == IRVALUETYPE_IMMEDIATE_INTEGER)
 		Print("0x%llx", value.immediate);
 	else if (value.valueType == IRVALUETYPE_IMMEDIATE_FLOAT)
 		Print("%f", value.immediateFloat);
 	else if (value.valueType == IRVALUETYPE_IMMEDIATE_STRING)
-		Print("%S", value.immediateString);
+		Print("\"%S\"", context->stringLiterals[value.immediateStringIdx]);
 	else
 		Print("???");
 
@@ -82,6 +74,9 @@ void PrintIRInstructionOperator(IRInstruction inst)
 	case IRINSTRUCTIONTYPE_BITWISE_AND:
 		Print("&");
 		break;
+	case IRINSTRUCTIONTYPE_BITWISE_NOT:
+		Print("~");
+		break;
 	case IRINSTRUCTIONTYPE_EQUALS:
 		Print("==");
 		break;
@@ -102,18 +97,6 @@ void PrintIRInstructionOperator(IRInstruction inst)
 		break;
 	case IRINSTRUCTIONTYPE_LOAD_EFFECTIVE_ADDRESS:
 		Print("address of ");
-		break;
-	case IRINSTRUCTIONTYPE_CONVERT_INT_TO_F32:
-	case IRINSTRUCTIONTYPE_CONVERT_F64_TO_F32:
-		Print("to F32 ");
-		break;
-	case IRINSTRUCTIONTYPE_CONVERT_INT_TO_F64:
-	case IRINSTRUCTIONTYPE_CONVERT_F32_TO_F64:
-		Print("to F32 ");
-		break;
-	case IRINSTRUCTIONTYPE_CONVERT_F32_TO_INT:
-	case IRINSTRUCTIONTYPE_CONVERT_F64_TO_INT:
-		Print("to int ");
 		break;
 	default:
 		CRASH;
@@ -193,9 +176,9 @@ void PrintIRInstruction(Context *context, IRInstruction inst)
 		}
 		Print(")\n");
 	} break;
-	case IRINSTRUCTIONTYPE_PUSH_VARIABLE:
+	case IRINSTRUCTIONTYPE_PUSH_VALUE:
 	{
-		Print("push variable %S\n", inst.pushVariable.variable->name);
+		Print("push value %S\n", PIRValueToStr(context, inst.pushValue.valueIdx));
 	} break;
 	case IRINSTRUCTIONTYPE_PUSH_SCOPE:
 	{
@@ -215,16 +198,6 @@ void PrintIRInstruction(Context *context, IRInstruction inst)
 		Print(" = ");
 		PrintIRValue(context, inst.assignment.src);
 		Print("\n");
-	} break;
-	case IRINSTRUCTIONTYPE_GET_PARAMETER:
-	{
-		PrintIRValue(context, inst.getParameter.dst);
-		Print(" = param%lld\n", inst.getParameter.parameterIdx);
-	} break;
-	case IRINSTRUCTIONTYPE_GET_TYPE_INFO:
-	{
-		PrintIRValue(context, inst.getTypeInfo.out);
-		Print(" = &_typeInfo%lld\n", inst.getTypeInfo.typeTableIdx);
 	} break;
 	case IRINSTRUCTIONTYPE_LOAD_EFFECTIVE_ADDRESS:
 	{
@@ -268,8 +241,6 @@ void PrintIRInstructions(Context *context)
 	for (int procedureIdx = 0; procedureIdx < procedureCount; ++procedureIdx)
 	{
 		Procedure *proc = &context->procedures[procedureIdx];
-		if (proc->isExternal)
-			continue;
 
 		String returnTypeStr = TypeInfoToString(context, proc->returnTypeTableIdx);
 
@@ -282,7 +253,8 @@ void PrintIRInstructions(Context *context)
 		for (int paramIdx = 0; paramIdx < proc->parameters.size; ++paramIdx)
 		{
 			if (paramIdx) Print(", ");
-			String typeStr = TypeInfoToString(context, proc->parameters[paramIdx].variable->typeTableIdx);
+			u32 paramValueIdx = proc->parameters[paramIdx].valueIdx;
+			String typeStr = TypeInfoToString(context, context->values[paramValueIdx].typeTableIdx);
 			Print("param%d : %S", paramIdx, typeStr);
 		}
 		Print(")");

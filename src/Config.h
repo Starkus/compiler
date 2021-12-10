@@ -4,6 +4,6 @@
 #define PRINT_C_OUTPUT		1
 #define PRINT_ASM_OUTPUT	0
 
-#define DEBUG_OPTIMIZER		1
+#define DEBUG_OPTIMIZER		0
 
 s64 g_pointerSize = 8;

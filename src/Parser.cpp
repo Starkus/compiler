@@ -2,27 +2,33 @@ ASTExpression ParseExpression(Context *context, s32 precedence);
 ASTExpression ParseStatement(Context *context);
 ASTVariableDeclaration ParseVariableDeclaration(Context *context);
 
-struct Variable
+enum ValueFlags
+{
+	VALUEFLAGS_FORCE_REGISTER    = 1,
+	VALUEFLAGS_FORCE_MEMORY      = 2,
+	VALUEFLAGS_IS_MEMORY         = 4,
+	VALUEFLAGS_IS_ALLOCATED      = 8,
+	VALUEFLAGS_ON_STATIC_STORAGE = 16,
+	VALUEFLAGS_BASE_RELATIVE     = 32,
+};
+
+struct Value
 {
 	String name;
-	s8 parameterIndex; // Negative if not a parameter
-	bool isStatic;
-	bool canBeRegister;
 	s64 typeTableIdx;
+	u8 flags;
 
 	// IRGen
-	bool isRegister;
-	bool isAllocated;
 	union
 	{
-		s64 registerIdx;
-		s64 stackOffset;
+		s32 allocatedRegister;
+		s32 stackOffset;
 	};
 };
 
 struct ProcedureParameter
 {
-	Variable *variable;
+	u32 valueIdx;
 	s64 typeTableIdx; // This type stays the same, the type of the variable itself can change, for
 					  // example if the parameter is passed by pointer because of implementation details.
 	ASTExpression *defaultValue;
@@ -31,20 +37,16 @@ struct IRInstruction;
 struct Procedure
 {
 	bool isVarargs;
-	bool isExternal;
 	DynamicArray<ProcedureParameter, malloc, realloc> parameters;
 	ASTExpression *astBody;
 	s32 requiredParameterCount;
+	u32 returnValueIdx;
 	s64 returnTypeTableIdx;
 	String varargsName;
 
 	// IRGen
 	BucketArray<IRInstruction, 256, malloc, realloc> instructions;
-	u64 registerCount;
 	s64 allocatedParameterCount;
-
-	// Register/stack allocation
-	u64 stackSize;
 };
 
 void Advance(Context *context)
@@ -88,25 +90,30 @@ ASTType *NewASTType(Context *context)
 	return BucketArrayAdd(&context->astTypeNodes);
 }
 
-Variable *NewVariable(Context *context, String name)
+u32 NewValue(Context *context, s64 typeTableIdx, u8 flags)
 {
-	Variable *result = BucketArrayAdd(&context->variables);
-	*result = {};
-	result->name = name;
-	result->parameterIndex = -1;
-	result->canBeRegister = true;
-	return result;
+	ASSERT(typeTableIdx != 0);
+	u64 idx = BucketArrayCount(&context->values);
+	Value *result = BucketArrayAdd(&context->values);
+	result->name = {};
+	result->typeTableIdx = typeTableIdx;
+	result->flags = flags;
+
+	ASSERT(idx < U32_MAX);
+	return (u32)idx;
 }
 
-Variable *NewVariable(Context *context, String name, s64 typeTableIdx)
+u32 NewValue(Context *context, String name, s64 typeTableIdx, u8 flags)
 {
-	Variable *result = BucketArrayAdd(&context->variables);
-	*result = {};
+	ASSERT(typeTableIdx != 0);
+	u64 idx = BucketArrayCount(&context->values);
+	Value *result = BucketArrayAdd(&context->values);
 	result->name = name;
-	result->parameterIndex = -1;
-	result->canBeRegister = true;
 	result->typeTableIdx = typeTableIdx;
-	return result;
+	result->flags = flags;
+
+	ASSERT(idx < U32_MAX);
+	return (u32)idx;
 }
 
 ASTStructDeclaration ParseStructOrUnion(Context *context);
@@ -514,7 +521,7 @@ ASTVariableDeclaration ParseVariableDeclaration(Context *context)
 	String name = context->token->string;
 	Advance(context);
 
-	varDecl.variable = NewVariable(context, name);
+	varDecl.valueIdx = NewValue(context, name, -1, 0);
 
 	if (context->token->type != TOKEN_OP_VARIABLE_DECLARATION && context->token->type !=
 			TOKEN_OP_VARIABLE_DECLARATION_STATIC)
@@ -522,7 +529,7 @@ ASTVariableDeclaration ParseVariableDeclaration(Context *context)
 
 	if (context->token->type == TOKEN_OP_VARIABLE_DECLARATION_STATIC)
 	{
-		varDecl.variable->isStatic = true;
+		context->values[varDecl.valueIdx].flags |= VALUEFLAGS_ON_STATIC_STORAGE;
 	}
 
 	Advance(context);
@@ -536,8 +543,8 @@ ASTVariableDeclaration ParseVariableDeclaration(Context *context)
 	if (context->token->type == TOKEN_OP_ASSIGNMENT)
 	{
 		Advance(context);
-		varDecl.value = NewTreeNode(context);
-		*varDecl.value = ParseExpression(context, -1);
+		varDecl.astInitialValue = NewTreeNode(context);
+		*varDecl.astInitialValue = ParseExpression(context, -1);
 	}
 
 	return varDecl;
@@ -548,15 +555,18 @@ ASTProcedureDeclaration ParseProcedureDeclaration(Context *context)
 	ASTProcedureDeclaration procDecl = {};
 	procDecl.loc = context->token->loc;
 
-	Procedure *procedure = BucketArrayAdd(&context->procedures);
-	*procedure = {};
-	procDecl.procedure = procedure;
-
+	Procedure *procedure;
+	bool isExternal = false;
 	if (context->token->type == TOKEN_KEYWORD_EXTERNAL)
 	{
-		procedure->isExternal = true;
+		isExternal = true;
+		procedure = BucketArrayAdd(&context->externalProcedures);
 		Advance(context);
 	}
+	else
+		procedure = BucketArrayAdd(&context->procedures);
+	*procedure = {};
+	procDecl.procedure = procedure;
 
 	DynamicArrayInit(&procDecl.astParameters, 4);
 
@@ -569,7 +579,7 @@ ASTProcedureDeclaration ParseProcedureDeclaration(Context *context)
 			Advance(context);
 			procedure->isVarargs = true;
 
-			if (!procedure->isExternal)
+			if (!isExternal)
 			{
 				if (context->token->type != TOKEN_IDENTIFIER)
 					LogError(context, context->token->loc, "Name missing after varargs token (...)"_s);
@@ -590,10 +600,8 @@ ASTProcedureDeclaration ParseProcedureDeclaration(Context *context)
 		ASTVariableDeclaration astVarDecl = ParseVariableDeclaration(context);
 		astVarDecl.isUsing = isUsing;
 		ASSERT(procDecl.astParameters.size <= S8_MAX);
-		astVarDecl.variable->parameterIndex = (s8)procDecl.astParameters.size;
-		astVarDecl.variable->canBeRegister = false; // @Check: ??
 
-		if (astVarDecl.variable->isStatic)
+		if (context->values[astVarDecl.valueIdx].flags & VALUEFLAGS_ON_STATIC_STORAGE)
 			LogError(context, context->token->loc, "Procedure parameters can't be static"_s);
 
 		*DynamicArrayAdd(&procDecl.astParameters) = astVarDecl;
@@ -950,7 +958,7 @@ ASTExpression ParseStatement(Context *context)
 		ASTVariableDeclaration varDecl = {};
 		varDecl.loc = context->token->loc;
 
-		varDecl.variable = NewVariable(context, ""_s);
+		varDecl.valueIdx = NewValue(context, -1, 0);
 
 		varDecl.astType = NewASTType(context);
 		*varDecl.astType = ParseType(context); // This will parse the struct/union declaration.
@@ -958,8 +966,8 @@ ASTExpression ParseStatement(Context *context)
 		if (context->token->type == TOKEN_OP_ASSIGNMENT)
 		{
 			Advance(context);
-			varDecl.value = NewTreeNode(context);
-			*varDecl.value = ParseExpression(context, -1);
+			varDecl.astInitialValue = NewTreeNode(context);
+			*varDecl.astInitialValue = ParseExpression(context, -1);
 		}
 
 		result.nodeType = ASTNODETYPE_VARIABLE_DECLARATION;
@@ -1053,7 +1061,8 @@ ASTExpression ParseStaticStatement(Context *context)
 			result.nodeType = ASTNODETYPE_VARIABLE_DECLARATION;
 			result.variableDeclaration = ParseVariableDeclaration(context);
 
-			ASSERT(result.variableDeclaration.variable->isStatic);
+			ASSERT(context->values[result.variableDeclaration.valueIdx].flags &
+					VALUEFLAGS_ON_STATIC_STORAGE);
 
 			AssertToken(context, context->token, ';');
 			Advance(context);
@@ -1078,8 +1087,13 @@ ASTRoot *GenerateSyntaxTree(Context *context)
 	DynamicArrayInit(&root->block.statements, 4096);
 	BucketArrayInit(&context->treeNodes);
 	BucketArrayInit(&context->astTypeNodes);
-	BucketArrayInit(&context->variables);
+	BucketArrayInit(&context->values);
 	BucketArrayInit(&context->procedures);
+	BucketArrayInit(&context->externalProcedures);
+	BucketArrayInit(&context->stringLiterals);
+
+	// Empty string
+	*BucketArrayAdd(&context->stringLiterals) = {};
 
 	context->currentTokenIdx = 0;
 	context->token = &context->tokens[0];

@@ -108,12 +108,14 @@ struct Context
 	ASTRoot *astRoot;
 	BucketArray<ASTExpression, 1024, malloc, realloc> treeNodes;
 	BucketArray<ASTType, 1024, malloc, realloc> astTypeNodes;
+	BucketArray<String, 1024, malloc, realloc> stringLiterals;
 
 	// Type check
-	BucketArray<Variable, 512, malloc, realloc> variables;
+	BucketArray<Value, 512, malloc, realloc> values;
 	BucketArray<Procedure, 512, malloc, realloc> procedures;
+	BucketArray<Procedure, 128, malloc, realloc> externalProcedures;
 	BucketArray<StaticDefinition, 512, malloc, realloc> staticDefinitions;
-	BucketArray<TypeInfo, 1024, malloc, realloc> typeTable;
+	BucketArray<const TypeInfo, 1024, malloc, realloc> typeTable;
 	DynamicArray<TCScope, malloc, realloc> tcStack;
 	s64 tcCurrentReturnType;
 
@@ -333,24 +335,11 @@ int main(int argc, char **argv)
 #if PRINT_IR
 	if (!context.config.silent)
 	{
-		Print("PRE-OPTIMIZING IR\n");
 		PrintIRInstructions(&context);
 	}
 #endif
 
-	BackendConvert(&context);
-
-	//OptimizerMain(&context);
-
-#if 0//PRINT_IR
-	if (!context.config.silent)
-	{
-		Print("POST-OPTIMIZING IR\n");
-		PrintIRInstructions(&context);
-	}
-#endif
-
-	//BackendMain(&context);
+	BackendMain(&context);
 
 	Print("Compilation success\n");
 	return 0;

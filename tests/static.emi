@@ -5,12 +5,21 @@ globalU8 :s u8 = 2;
 globalFloat :s f32 = 2.5;
 globalString :s = "Why hello";
 
+ProcWithStatic :: () -> s32
+{
+	procStatic :s s32 = 0;
+	procStatic += 1;
+	return procStatic;
+}
+
 Main :: () -> s64
 {
-	local :s s32 = 5;
+	localStatic :s s32 = 5;
 
 	global = 40;
-	local = 50;
+	localStatic = 50;
+
+	PrintF("procStatic: % % %\n", ProcWithStatic(), ProcWithStatic(), ProcWithStatic());
 
 	f := globalFloat;
 	f2 := 2.6;

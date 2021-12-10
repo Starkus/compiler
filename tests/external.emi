@@ -1,11 +1,7 @@
-memset :: external (dst : ^void, value : s32, num : u64);
 OutputDebugStringA :: external (message : ^u8);
 
 Main :: () -> s64
 {
-	array : [20] u8;
-	memset(^array, 0xFF, 20);
-
 	message := "Hello, Sailor!\0";
 	OutputDebugStringA(message.data);
 

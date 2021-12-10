@@ -41,7 +41,7 @@ Main :: () -> s64
 	couple.wife.age = 29;
 	couple.wife.height = 1.71;
 
-	PrintF("Husband id:% age:% height:%\n",
+	PrintF("Husband id:% age:% height:%\nWife id:% age:% height:%\n",
 			couple.husband.id, couple.husband.age, couple.husband.height,
 			couple.wife.id, couple.wife.age, couple.wife.height);
 
