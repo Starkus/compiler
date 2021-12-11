@@ -179,8 +179,8 @@ void DoLivenessAnalisisOnInstruction(Context *context, BasicBlock *basicBlock, X
 	case X64_LEA:
 	case X64_CVTSI2SS:
 	case X64_CVTSI2SD:
-	case X64_CVTSS2SI:
-	case X64_CVTSD2SI:
+	case X64_CVTTSS2SI:
+	case X64_CVTTSD2SI:
 	case X64_CVTSS2SD:
 	case X64_CVTSD2SS:
 	{
@@ -299,6 +299,10 @@ nodeFound:
 			if (floating == edgeFloating)
 				DynamicArrayAddUnique(&node->edges, edgeValueIdx);
 		}
+
+		// No live values that cross a procedure call can be stored in RAX.
+		if (inst->type == X64_CALL)
+			DynamicArrayAddUnique(&node->edges, RAX.valueIdx);
 	}
 }
 
@@ -532,8 +536,8 @@ inline u64 RegisterSavingInstruction(Context *context, X64Instruction *inst, u64
 	case X64_LEA:
 	case X64_CVTSI2SS:
 	case X64_CVTSI2SD:
-	case X64_CVTSS2SI:
-	case X64_CVTSD2SI:
+	case X64_CVTTSS2SI:
+	case X64_CVTTSD2SI:
 	case X64_CVTSS2SD:
 	case X64_ADD:
 	case X64_SUB:
@@ -813,12 +817,14 @@ void X64AllocateRegisters(Context *context, Array<X64Procedure> x64Procedures)
 
 				IRValue reg = x64Registers[i];
 
+				X64InstructionType movType = i >= XMM0_idx ? X64_MOVSD : X64_MOV;
+
 				X64Instruction *saveInst = ArrayAdd(&patchTop.patchInstructions);
-				*saveInst = { X64_MOV, IRValueMemory(newValueIdx, 0, TYPETABLEIDX_S64),
+				*saveInst = { movType, IRValueMemory(newValueIdx, 0, TYPETABLEIDX_S64),
 					reg };
 
 				X64Instruction *restoreInst = ArrayAdd(&patchBottom.patchInstructions);
-				*restoreInst = { X64_MOV, reg, IRValueMemory(newValueIdx, 0, TYPETABLEIDX_S64) };
+				*restoreInst = { movType, reg, IRValueMemory(newValueIdx, 0, TYPETABLEIDX_S64) };
 			}
 		}
 

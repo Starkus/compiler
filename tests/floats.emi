@@ -1,0 +1,16 @@
+FloatArg :: (smol : f32, big : f64)
+{
+	PrintF("an f32 % and an f64 %\n", smol, big);
+}
+
+AnAwfulLotOfFloatArg :: (a : f32, b : f32, c : f32, d : f32, e : f32, f : f32, g : f32, h : f32)
+{
+	PrintF("args % % % % % % % %\n", a, b, c, d, e, f, g, h);
+}
+
+Main :: () -> s64
+{
+	FloatArg(2.5, 8.0);
+	AnAwfulLotOfFloatArg(0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8);
+	return 0;
+}
