@@ -1669,7 +1669,10 @@ skipNotFound:
 		newScopeName.variableInfo.typeTableIdx = TYPETABLEIDX_S64;
 		*DynamicArrayAdd(&stackTop->names) = newScopeName;
 
-		if (expression->forNode.range->nodeType != ASTNODETYPE_BINARY_OPERATION)
+		bool isExplicitRange = expression->forNode.range->nodeType == ASTNODETYPE_BINARY_OPERATION &&
+			expression->forNode.range->binaryOperation.op == TOKEN_OP_RANGE;
+
+		if (!isExplicitRange)
 		{
 			TypeInfo rangeTypeInfo = context->typeTable[expression->forNode.range->typeTableIdx];
 			if (rangeTypeInfo.typeCategory != TYPECATEGORY_ARRAY)

@@ -569,9 +569,13 @@ void IRDoAssignment(Context *context, IRValue dstValue, IRValue srcValue)
 				anyTypeInfo.structInfo.members[1]);
 
 		IRValue dataValue = srcValue;
+		TypeInfo dataTypeInfo = context->typeTable[srcValue.typeTableIdx];
 
 		// If data isn't in memory, copy to a variable
-		if (dataValue.valueType != IRVALUETYPE_MEMORY)
+		if (dataValue.valueType != IRVALUETYPE_MEMORY &&
+			dataTypeInfo.typeCategory != TYPECATEGORY_STRUCT &&
+			dataTypeInfo.typeCategory != TYPECATEGORY_UNION &&
+			dataTypeInfo.typeCategory != TYPECATEGORY_ARRAY)
 		{
 			static u64 tempVarForAnyUniqueID = 0;
 			String tempVarName = TPrintF("_tempVarForAny%llu", tempVarForAnyUniqueID++);
@@ -1484,10 +1488,10 @@ IRValue IRGenFromExpression(Context *context, ASTExpression *expression)
 		TypeInfo rangeTypeInfo = context->typeTable[expression->forNode.range->typeTableIdx];
 
 		IRValue from = {}, to = {}, arrayValue = {};
-		if (expression->forNode.range->nodeType == ASTNODETYPE_BINARY_OPERATION)
+		if (expression->forNode.range->nodeType == ASTNODETYPE_BINARY_OPERATION &&
+			expression->forNode.range->binaryOperation.op == TOKEN_OP_RANGE)
 		{
 			ASTBinaryOperation binaryOp = expression->forNode.range->binaryOperation;
-			ASSERT(binaryOp.op == TOKEN_OP_RANGE);
 
 			from = IRGenFromExpression(context, binaryOp.leftHand);
 			to =   IRGenFromExpression(context, binaryOp.rightHand);

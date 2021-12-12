@@ -70,6 +70,17 @@ PrintF :: (format : String, ..args)
 			numStr.data = ^buffer[32 - count];
 			Print(numStr);
 		}
+		else if arg.typeInfo.typeKind == TypeKind_Struct
+		{
+			structInfo := cast(^TypeInfoStruct) arg.typeInfo;
+			Print("{ ");
+			for structInfo.members
+			{
+				if i > 0 Print(" ");
+				Print(it.name);
+			}
+			Print(" }");
+		}
 		else
 			Print("<Unknown type>");
 	}

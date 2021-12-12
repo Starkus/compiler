@@ -393,12 +393,6 @@ ASTFor ParseFor(Context *context)
 	forNode.body = NewTreeNode(context);
 	*forNode.body = ParseStatement(context);
 
-	if (forNode.range->nodeType == ASTNODETYPE_BINARY_OPERATION)
-	{
-		if (forNode.range->binaryOperation.op != TOKEN_OP_RANGE)
-			LogError(context, forNode.range->any.loc, "Invalid expression in 'for' range"_s);
-	}
-
 	return forNode;
 }
 

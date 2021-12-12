@@ -44,6 +44,7 @@ Main :: () -> s64
 	PrintF("Husband id:% age:% height:%\nWife id:% age:% height:%\n",
 			couple.husband.id, couple.husband.age, couple.husband.height,
 			couple.wife.id, couple.wife.age, couple.wife.height);
+	PrintF("COUPLE: %\n", couple);
 
 	structByValue(a);
 	PrintF("A id:% age:% height:%\n", a.id, a.age, a.height);
