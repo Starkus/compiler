@@ -81,6 +81,8 @@ enum X64InstructionType
 	X64_Patch_Many
 };
 
+s32 copyMemoryProcIdx;
+
 struct X64Instruction
 {
 	X64InstructionType type;
@@ -95,8 +97,7 @@ struct X64Instruction
 		struct
 		{
 			// Proc call info
-			String procLabel;
-			s32 procParameterCount; // @Improve: remove this.
+			s32 procedureIdx;
 			Array<u32> liveValues;
 		};
 		u32 valueIdx;
@@ -594,15 +595,6 @@ decoratePtr:
 	return result;
 }
 
-String X64ProcedureToLabel(Context *context, Procedure *proc)
-{
-	StaticDefinition *staticDef = FindStaticDefinitionByProcedure(context, proc);
-	if (staticDef)
-		return staticDef->name;
-	else
-		return TPrintF("proc.%X", proc);
-}
-
 bool IsValueInMemory(Context *context, IRValue irValue)
 {
 	if (irValue.valueType == IRVALUETYPE_MEMORY)
@@ -1026,13 +1018,14 @@ void X64ConvertInstruction(Context *context, IRInstruction inst, X64Procedure *x
 		// At this point, we have the actual values that go into registers/stack slots. If something
 		// is passed by copy, we already have the pointer to the copy as argument value, so we don't
 		// care.
-		Procedure *proc = inst.procedureCall.procedure;
+		s32 procIdx = inst.procedureCall.procedureIdx;
 
 		// @Incomplete: implement calling conventions other than MS ABI
 		for (int i = 0; i < inst.procedureCall.parameters.size; ++i)
 		{
 			IRValue param = inst.procedureCall.parameters[i];
-			s64 paramType = context->values[proc->parameters[i].valueIdx].typeTableIdx;
+			//s64 paramType = context->values[GetProcedure(context, procIdx)->parameters[i].valueIdx].typeTableIdx;
+			s64 paramType = param.typeTableIdx;
 			bool floating = context->typeTable[paramType].typeCategory == TYPECATEGORY_FLOATING;
 
 			IRValue dst;
@@ -1059,9 +1052,7 @@ void X64ConvertInstruction(Context *context, IRInstruction inst, X64Procedure *x
 		}
 
 		result.type = X64_CALL;
-		String callProcLabel = X64ProcedureToLabel(context, proc);
-		result.procLabel = callProcLabel;
-		result.procParameterCount = (s32)proc->parameters.size;
+		result.procedureIdx = procIdx;
 		*BucketArrayAdd(&x64Proc->instructions) = result;
 
 		if (inst.procedureCall.out.valueType != IRVALUETYPE_INVALID)
@@ -1074,8 +1065,7 @@ void X64ConvertInstruction(Context *context, IRInstruction inst, X64Procedure *x
 		X64Mov(context, x64Proc, RDX, inst.memcpy.src);
 		X64Mov(context, x64Proc, R8,  inst.memcpy.size);
 		result.type = X64_CALL;
-		result.procParameterCount = 3;
-		result.procLabel = "CopyMemory"_s;
+		result.procedureIdx = copyMemoryProcIdx;
 		*BucketArrayAdd(&x64Proc->instructions) = result;
 		return;
 	}
@@ -1275,7 +1265,7 @@ String X64InstructionToStr(Context *context, X64Instruction inst)
 	case X64_JNE:
 		goto printLabel;
 	case X64_CALL:
-		return TPrintF("call %S", inst.procLabel);
+		return TPrintF("call %S", GetProcedure(context, inst.procedureIdx)->name);
 	case X64_Label:
 		return TPrintF("%S:", inst.label->name);
 	case X64_Ignore:
@@ -1314,7 +1304,7 @@ inline s64 X64PrintInstruction(Context *context, X64Instruction inst)
 
 void X64PrintInstructions(Context *context, Array<X64Procedure> x64Procedures)
 {
-	for (int procedureIdx = 0; procedureIdx < x64Procedures.size; ++procedureIdx)
+	for (int procedureIdx = 1; procedureIdx < x64Procedures.size; ++procedureIdx)
 	{
 		X64Procedure x64Proc = x64Procedures[procedureIdx];
 
@@ -1426,6 +1416,17 @@ void X64PrintStaticData(Context *context, String name, IRValue value, s64 typeTa
 void BackendMain(Context *context)
 {
 	BucketArrayInit(&context->patchedInstructions);
+
+	copyMemoryProcIdx = -(s32)BucketArrayCount(&context->externalProcedures);
+	Procedure *copyMemory = BucketArrayAdd(&context->externalProcedures);
+	copyMemory->name = "CopyMemory"_s;
+	copyMemory->returnValueIdx = U32_MAX;
+	s64 voidPtrIdx = GetTypeInfoPointerOf(context, TYPETABLEIDX_VOID);
+	DynamicArrayInit(&copyMemory->parameters, 3);
+	copyMemory->parameters.size = 3;
+	copyMemory->parameters[0] = { NewValue(context, "_dst"_s, voidPtrIdx, 0), voidPtrIdx, 0 };
+	copyMemory->parameters[1] = { NewValue(context, "_src"_s, voidPtrIdx, 0), voidPtrIdx, 0 };
+	copyMemory->parameters[2] = { NewValue(context, "_size"_s, TYPETABLEIDX_S64, 0), TYPETABLEIDX_S64, 0 };
 
 	x64InstructionInfos[X64_MOV] =       { "mov"_s,      ACCEPTEDOPERANDS_REGMEM,   ACCEPTEDOPERANDS_ALL };
 	x64InstructionInfos[X64_MOVZX] =     { "movzx"_s,    ACCEPTEDOPERANDS_REGMEM,   ACCEPTEDOPERANDS_REGMEM };
@@ -1650,12 +1651,12 @@ void BackendMain(Context *context)
 	x64Procedures.size = procedureCount;
 
 	// Create X64Procedures
-	for (int procedureIdx = 0; procedureIdx < procedureCount; ++procedureIdx)
+	for (int procedureIdx = 1; procedureIdx < procedureCount; ++procedureIdx)
 	{
-		Procedure *proc = &context->procedures[procedureIdx];
+		Procedure *proc = GetProcedure(context, procedureIdx);
 		X64Procedure *x64Proc = &x64Procedures[procedureIdx];
 
-		x64Proc->name = X64ProcedureToLabel(context, proc);
+		x64Proc->name = GetProcedure(context, procedureIdx)->name;
 		x64Proc->allocatedParameterCount = proc->allocatedParameterCount;
 		x64Proc->returnValueIdx = proc->returnValueIdx;
 		x64Proc->stackSize = 0;
@@ -1664,10 +1665,18 @@ void BackendMain(Context *context)
 		BucketArrayInit(&x64Proc->instructions);
 
 		// Allocate parameters
-		for (int paramIdx = 0; paramIdx < proc->parameters.size; ++paramIdx)
+		bool returnByCopy = IRShouldPassByCopy(context, proc->returnTypeTableIdx);
+		int paramIdx = 0;
+		int paramCount = (int)proc->parameters.size;
+		if (proc->returnValueIdx != U32_MAX && returnByCopy)
 		{
-			ProcedureParameter param = proc->parameters[paramIdx];
-			s64 paramTypeIdx = context->values[proc->parameters[paramIdx].valueIdx].typeTableIdx;
+			++paramIdx;
+			X64Mov(context, x64Proc, IRValueValue(proc->returnValueIdx, TYPETABLEIDX_S64), RCX);
+		}
+		for (int i = 0; i < paramCount; ++i, ++paramIdx)
+		{
+			ProcedureParameter param = proc->parameters[i];
+			s64 paramTypeIdx = context->values[param.valueIdx].typeTableIdx;
 			bool floating = context->typeTable[paramTypeIdx].typeCategory == TYPECATEGORY_FLOATING;
 
 			IRValue src;
@@ -1703,7 +1712,10 @@ void BackendMain(Context *context)
 		if (proc->returnValueIdx != U32_MAX)
 		{
 			IRValue returnValue = IRValueValue(context, proc->returnValueIdx);
-			X64Mov(context, x64Proc, RAX, returnValue);
+			if (returnByCopy)
+				*BucketArrayAdd(&x64Proc->instructions) = { X64_LEA, RAX, returnValue };
+			else
+				X64Mov(context, x64Proc, RAX, returnValue);
 		}
 	}
 
@@ -1722,7 +1734,7 @@ void BackendMain(Context *context)
 	X64AllocateRegisters(context, x64Procedures);
 
 	// Remove instructions that reference unused values
-	for (int procedureIdx = 0; procedureIdx < x64Procedures.size; ++procedureIdx)
+	for (int procedureIdx = 1; procedureIdx < x64Procedures.size; ++procedureIdx)
 	{
 		X64InstructionStream stream = X64InstructionStreamBegin(&x64Procedures[procedureIdx]);
 		X64Instruction *inst = X64InstructionStreamAdvance(&stream);
@@ -1978,19 +1990,17 @@ void BackendMain(Context *context)
 
 	PrintOut(context, "_DATA ENDS\n");
 
-	for (int procedureIdx = 0; procedureIdx < procedureCount; ++procedureIdx)
+	for (int procedureIdx = 1; procedureIdx < procedureCount; ++procedureIdx)
 	{
-		Procedure *proc = &context->procedures[procedureIdx];
-		StaticDefinition *staticDef = FindStaticDefinitionByProcedure(context, proc);
+		StaticDefinition *staticDef = FindStaticDefinitionByProcedure(context, procedureIdx);
 		if (staticDef)
 			PrintOut(context, "PUBLIC %S\n", staticDef->name);
 	}
 
 	u64 externalProcedureCount = BucketArrayCount(&context->externalProcedures);
-	for (int procedureIdx = 0; procedureIdx < externalProcedureCount; ++procedureIdx)
+	for (int procedureIdx = 1; procedureIdx < externalProcedureCount; ++procedureIdx)
 	{
-		Procedure *proc = &context->externalProcedures[procedureIdx];
-		StaticDefinition *staticDef = FindStaticDefinitionByProcedure(context, proc);
+		StaticDefinition *staticDef = FindStaticDefinitionByProcedure(context, -procedureIdx);
 		if (staticDef)
 			PrintOut(context, "EXTRN %S:proc\n", staticDef->name);
 	}
@@ -2126,6 +2136,9 @@ nextTuple:
 			"winmm.lib "
 			"/nologo "
 			"/entry:Main "
+			"/opt:ref "
+			"/incremental:no "
+			"/dynamicbase:no "
 			"/libpath:\"%S\\lib\\x64\" "
 			"/libpath:\"%S\\lib\\%S\\ucrt\\x64\" "
 			"/libpath:\"%S\\lib\\%S\\um\\x64\" "

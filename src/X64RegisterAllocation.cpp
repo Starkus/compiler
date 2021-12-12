@@ -228,8 +228,31 @@ void DoLivenessAnalisisOnInstruction(Context *context, BasicBlock *basicBlock, X
 		for (int i = 0; i < liveValues->size; ++i)
 			inst->liveValues[i] = (*liveValues)[i];
 
-		for (int paramIdx = 0; paramIdx < inst->procParameterCount; ++paramIdx)
-			AddValue(context, x64ParameterValuesWrite[paramIdx], basicBlock->procedure, liveValues);
+		Procedure *proc = GetProcedure(context, inst->procedureIdx);
+
+		int paramIdx = 0;
+		// Take into account return value pointer in RCX
+		if (proc->returnValueIdx != U32_MAX && IRShouldPassByCopy(context, proc->returnTypeTableIdx))
+		{
+			AddValue(context, x64ParameterValuesWrite[0], basicBlock->procedure, liveValues);
+			++paramIdx;
+		}
+
+		for (int i = 0; i < proc->parameters.size; ++i, ++paramIdx)
+		{
+			bool floating = context->typeTable[proc->parameters[i].typeTableIdx].typeCategory ==
+				TYPECATEGORY_FLOATING;
+			if (!floating || paramIdx >= 4)
+				AddValue(context, x64ParameterValuesWrite[paramIdx], basicBlock->procedure, liveValues);
+			else switch (paramIdx)
+			{
+				case 0: AddValue(context, XMM0.valueIdx, basicBlock->procedure, liveValues); break;
+				case 1: AddValue(context, XMM1.valueIdx, basicBlock->procedure, liveValues); break;
+				case 2: AddValue(context, XMM2.valueIdx, basicBlock->procedure, liveValues); break;
+				case 3: AddValue(context, XMM3.valueIdx, basicBlock->procedure, liveValues); break;
+				default: ASSERT(false);
+			}
+		}
 	} break;
 	case X64_PUSH:
 	case X64_POP:
@@ -358,7 +381,7 @@ void DoLivenessAnalisis(Context *context, BasicBlock *basicBlock,
 
 void GenerateBasicBlocks(Context *context, Array<X64Procedure> x64Procedures)
 {
-	for (int procedureIdx = 0; procedureIdx < x64Procedures.size; ++procedureIdx)
+	for (int procedureIdx = 1; procedureIdx < x64Procedures.size; ++procedureIdx)
 	{
 		X64Procedure *proc = &x64Procedures[procedureIdx];
 
@@ -436,7 +459,7 @@ void ResolveStackOffsets(Context *context, Array<X64Procedure> x64Procedures)
 	DynamicArray<s64, FrameAlloc, FrameRealloc> stack;
 	DynamicArrayInit(&stack, 16);
 
-	for (int procedureIdx = 0; procedureIdx < x64Procedures.size; ++procedureIdx)
+	for (int procedureIdx = 1; procedureIdx < x64Procedures.size; ++procedureIdx)
 	{
 		X64Procedure *proc = &x64Procedures[procedureIdx];
 		s64 stackCursor = 0;
@@ -783,7 +806,7 @@ void X64AllocateRegisters(Context *context, Array<X64Procedure> x64Procedures)
 	}
 
 	// Do register saving
-	for (int procedureIdx = 0; procedureIdx < x64Procedures.size; ++procedureIdx)
+	for (int procedureIdx = 1; procedureIdx < x64Procedures.size; ++procedureIdx)
 	{
 		X64Procedure *proc = &x64Procedures[procedureIdx];
 

@@ -111,7 +111,7 @@ struct StaticDefinition
 	s64 typeTableIdx;
 	union
 	{
-		Procedure *procedure;
+		s32 procedureIdx;
 		Constant constant;
 	};
 };
@@ -172,14 +172,14 @@ StaticDefinition *FindStaticDefinitionByTypeTableIdx(Context *context, s64 typeT
 	return nullptr;
 }
 
-StaticDefinition *FindStaticDefinitionByProcedure(Context *context, Procedure *procedure)
+StaticDefinition *FindStaticDefinitionByProcedure(Context *context, s32 procedureIdx)
 {
 	u64 count = BucketArrayCount(&context->staticDefinitions);
 	for (u64 i = 0; i < count; ++i)
 	{
 		StaticDefinition *currentDef = &context->staticDefinitions[i];
 		if (currentDef->definitionType == STATICDEFINITIONTYPE_PROCEDURE &&
-				currentDef->procedure == procedure)
+				currentDef->procedureIdx == procedureIdx)
 			return currentDef;
 	}
 	return nullptr;
@@ -1180,7 +1180,7 @@ void TypeCheckExpression(Context *context, ASTExpression *expression)
 		if (astStaticDef.expression->nodeType == ASTNODETYPE_PROCEDURE_DECLARATION)
 		{
 			newStaticDef->definitionType = STATICDEFINITIONTYPE_PROCEDURE;
-			newStaticDef->procedure = astStaticDef.expression->procedureDeclaration.procedure;
+			newStaticDef->procedureIdx = astStaticDef.expression->procedureDeclaration.procedureIdx;
 		}
 		else if (astStaticDef.expression->nodeType == ASTNODETYPE_TYPE)
 		{
@@ -1197,7 +1197,7 @@ void TypeCheckExpression(Context *context, ASTExpression *expression)
 	case ASTNODETYPE_PROCEDURE_DECLARATION:
 	{
 		ASTProcedureDeclaration *procDecl = &expression->procedureDeclaration;
-		Procedure *procedure = procDecl->procedure;
+		Procedure *procedure = GetProcedure(context, procDecl->procedureIdx);
 
 		procedure->requiredParameterCount = 0;
 
@@ -1372,7 +1372,7 @@ skipInvalidIdentifierError:
 		String procName = expression->procedureCall.name;
 
 		// Search backwards so we find procedures higher in the stack first.
-		Procedure *procedure = nullptr;
+		s32 procedureIdx = S32_MIN;
 		for (s64 stackIdx = context->tcStack.size - 1; stackIdx >= 0; --stackIdx)
 		{
 			TCScope *currentScope = &context->tcStack[stackIdx];
@@ -1385,16 +1385,18 @@ skipInvalidIdentifierError:
 						currentName.staticDefinition->definitionType != STATICDEFINITIONTYPE_PROCEDURE)
 						LogError(context, expression->any.loc, "Calling a non-procedure"_s);
 
-					procedure = currentName.staticDefinition->procedure;
-					break;
+					procedureIdx = currentName.staticDefinition->procedureIdx;
+					goto skipNotFound;
 				}
 			}
 		}
 
-		if (!procedure)
-			LogError(context, expression->any.loc, TPrintF("Invalid procedure \"%S\" called", procName));
+		LogError(context, expression->any.loc, TPrintF("Invalid procedure \"%S\" called", procName));
+skipNotFound:
 
-		expression->procedureCall.procedure = procedure;
+		Procedure *procedure = GetProcedure(context, procedureIdx);
+
+		expression->procedureCall.procedureIdx = procedureIdx;
 		expression->typeTableIdx = procedure->returnTypeTableIdx;
 
 		// Type check arguments

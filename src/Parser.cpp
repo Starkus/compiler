@@ -36,6 +36,7 @@ struct ProcedureParameter
 struct IRInstruction;
 struct Procedure
 {
+	String name;
 	bool isVarargs;
 	DynamicArray<ProcedureParameter, malloc, realloc> parameters;
 	ASTExpression *astBody;
@@ -301,6 +302,15 @@ bool TryParseBinaryOperation(Context *context, ASTExpression leftHand, s32 prevP
 	return false;
 }
 
+inline Procedure *GetProcedure(Context *context, s32 procedureIdx)
+{
+	ASSERT(procedureIdx != 0);
+	if (procedureIdx > 0)
+		return &context->procedures[procedureIdx];
+	else
+		return &context->externalProcedures[-procedureIdx];
+}
+
 ASTIf ParseIf(Context *context)
 {
 	ASSERT(context->token->type == TOKEN_KEYWORD_IF);
@@ -555,18 +565,23 @@ ASTProcedureDeclaration ParseProcedureDeclaration(Context *context)
 	ASTProcedureDeclaration procDecl = {};
 	procDecl.loc = context->token->loc;
 
+	s32 procedureIdx;
 	Procedure *procedure;
 	bool isExternal = false;
 	if (context->token->type == TOKEN_KEYWORD_EXTERNAL)
 	{
 		isExternal = true;
+		procedureIdx = -(s32)BucketArrayCount(&context->externalProcedures);
 		procedure = BucketArrayAdd(&context->externalProcedures);
 		Advance(context);
 	}
 	else
+	{
+		procedureIdx = (s32)BucketArrayCount(&context->procedures);
 		procedure = BucketArrayAdd(&context->procedures);
+	}
 	*procedure = {};
-	procDecl.procedure = procedure;
+	procDecl.procedureIdx = procedureIdx;
 
 	DynamicArrayInit(&procDecl.astParameters, 4);
 
@@ -849,6 +864,7 @@ ASTStaticDefinition ParseStaticDefinition(Context *context)
 	{
 		expression.nodeType = ASTNODETYPE_PROCEDURE_DECLARATION;
 		expression.procedureDeclaration = ParseProcedureDeclaration(context);
+		GetProcedure(context, expression.procedureDeclaration.procedureIdx)->name = result.name;
 	}
 	else if (context->token->type == TOKEN_KEYWORD_STRUCT ||
 			 context->token->type == TOKEN_KEYWORD_UNION ||
@@ -1094,6 +1110,10 @@ ASTRoot *GenerateSyntaxTree(Context *context)
 
 	// Empty string
 	*BucketArrayAdd(&context->stringLiterals) = {};
+
+	// Procedure 0 is invalid
+	*BucketArrayAdd(&context->procedures) = {};
+	*BucketArrayAdd(&context->externalProcedures) = {};
 
 	context->currentTokenIdx = 0;
 	context->token = &context->tokens[0];

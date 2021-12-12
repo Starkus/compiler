@@ -162,12 +162,9 @@ void PrintIRInstruction(Context *context, IRInstruction inst)
 			PrintIRValue(context, inst.procedureCall.out);
 			Print(" := ");
 		}
-		StaticDefinition *procStaticDef = FindStaticDefinitionByProcedure(context,
-				inst.procedureCall.procedure);
-		if (procStaticDef)
-			Print("call %S(", procStaticDef->name);
-		else
-			Print("call 0x%X(", inst.procedureCall.procedure);
+		String name = GetProcedure(context,
+				inst.procedureCall.procedureIdx)->name;
+		Print("call %S(", name);
 
 		for (int i = 0; i < inst.procedureCall.parameters.size; ++i)
 		{
@@ -238,17 +235,14 @@ void PrintIRInstructions(Context *context)
 {
 	const int padding = 20;
 	const u64 procedureCount = BucketArrayCount(&context->procedures);
-	for (int procedureIdx = 0; procedureIdx < procedureCount; ++procedureIdx)
+	for (int procedureIdx = 1; procedureIdx < procedureCount; ++procedureIdx)
 	{
-		Procedure *proc = &context->procedures[procedureIdx];
+		Procedure *proc = GetProcedure(context, procedureIdx);
 
 		String returnTypeStr = TypeInfoToString(context, proc->returnTypeTableIdx);
 
-		StaticDefinition *staticDef = FindStaticDefinitionByProcedure(context, proc);
-		if (staticDef)
-			Print("proc %S(", staticDef->name);
-		else
-			Print("proc 0x%X(", proc);
+		String name = GetProcedure(context, procedureIdx)->name;
+		Print("proc %S(", name);
 
 		for (int paramIdx = 0; paramIdx < proc->parameters.size; ++paramIdx)
 		{

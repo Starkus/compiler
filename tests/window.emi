@@ -18,25 +18,40 @@ CreateWindowExA :: external (
 WS_CLIPCHILDREN :: 0x02000000;
 WS_CLIPSIBLINGS :: 0x04000000;
 
+WNDCLASSEXA :: struct
+{
+	cbSize : u32;
+	style : u32;
+	lpfnWndProc : ^void;
+	cbClsExtra : s32;
+	cbWndExtra : s32;
+	hInstance : ^void;
+	hIcon : ^void;
+	hCursor : ^void;
+	hBrush : ^void;
+	lpszMenuName : ^u8;
+	lpszClassName : ^u8;
+	hIconSm : ^void;
+};
+
 WinMain :: (hInstance : ^void, hPrevInstance : ^void, lpCmdLine : ^u8, showCmd : s64) -> s64
 {
 	AttachConsole(ATTACH_PARENT_PROCESS);
 	Print("Hello\n");
 
-	windowClass := "window\0";
+	windowClassName := "window\0";
 	windowTitle := "Hello, Sailor!\0";
 
-	windowClass : WNDCLASSEX;
+	windowClass : WNDCLASSEXA;
 	windowClass.cbSize = sizeof(windowClass);
 	windowClass.style = CS_HREDRAW | CS_VREDRAW | CS_OWNDC;
 	windowClass.lpfnWndProc = Win32WindowCallback;
-	windowClass.hInstance = context->hInstance;
-	windowClass.lpszClassName = "window";
-	context->windowClass = windowClass;
+	windowClass.hInstance = hInstance;
+	windowClass.lpszClassName = windowClassName;
 
-	bool success = RegisterClassEx(&context->windowClass);
+	success : bool = RegisterClassEx(windowClassName.data);
 
-	window := CreateWindowExA(0, windowClass.data, windowTitle.data, WS_CLIPSIBLINGS | WS_CLIPCHILDREN,
+	window := CreateWindowExA(0, windowClassName.data, windowTitle.data, WS_CLIPSIBLINGS | WS_CLIPCHILDREN,
 			0, 0, 1, 1, 0, 0, hInstance, 0);
 
 	Print("Test ok\n");

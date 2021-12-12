@@ -143,7 +143,7 @@ struct ASTVariableDeclaration : ASTBase
 struct Procedure;
 struct ASTProcedureDeclaration : ASTBase
 {
-	Procedure *procedure;
+	s32 procedureIdx;
 	ASTType *astReturnType;
 	DynamicArray<ASTVariableDeclaration, malloc, realloc> astParameters;
 };
@@ -157,7 +157,7 @@ struct ASTStaticDefinition : ASTBase
 struct ASTProcedureCall : ASTBase
 {
 	String name;
-	Procedure *procedure;
+	s32 procedureIdx;
 	DynamicArray<ASTExpression, malloc, realloc> arguments;
 };
 

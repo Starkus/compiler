@@ -1,3 +1,2 @@
 * Add enum support to PrintF and update enum test
 * ALIGNMENT
-* Floating point parameters!!!

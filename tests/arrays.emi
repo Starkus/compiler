@@ -3,7 +3,7 @@ arrayAsArgument :: (array : [5] s16)
 	foo := array[3];
 }
 
-returnArray :: () -> [4] s32
+returnArray :: (arg2 : s32) -> [4] s32
 {
 	array : [4] s32;
 	i : s32 = 0;
@@ -12,6 +12,7 @@ returnArray :: () -> [4] s32
 		array[i] = i;
 		i += 1;
 	}
+	for array PrintF("array[%] = %\n", i, @it);
 	return array;
 }
 
@@ -46,7 +47,11 @@ Main :: () -> s64
 
 	copyOfA := arrayA;
 
-	returnedArray := returnArray();
+	returnedArray := returnArray(24);
+	for returnedArray
+	{
+		PrintF("Returned array[%] = %\n", i, @it);
+	}
 
 	dynamicArray : [] s32;
 	dynamicArray = arrayB;
