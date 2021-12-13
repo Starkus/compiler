@@ -7,6 +7,14 @@ Color :: enum : s8 {
 Main :: () -> s64
 {
 	color : Color = COLOR_RED;
+	PrintF("Color is %\n", color);
+
+	enumTypeInfo := cast(^TypeInfoEnum) typeof(color);
+	for enumTypeInfo.names
+	{
+		Print(@it);
+		Print("\n");
+	}
 
 	Print("Test ok\n");
 	return 0;

@@ -12,6 +12,8 @@ Main :: () -> s64
 	baz = ^foo;
 	bar = @baz;
 
+	PrintF("Pointer to foo: %\n", baz);
+
 	a : ^^s32 = ^baz;
 	c : s32 = @@a;
 
@@ -26,6 +28,8 @@ Main :: () -> s64
 
 	aStruct : struct { a : s32; };
 	ptrToMember := ^aStruct.a;
+	@ptrToMember = 42;
+	PrintF("Pointer to struct member: %\n", ptrToMember);
 
 	Print("Test ok\n");
 	return 0;

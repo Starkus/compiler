@@ -55,6 +55,8 @@ struct TypeInfoStruct
 struct TypeInfoEnum
 {
 	s64 typeTableIdx;
+	DynamicArray<String, malloc, realloc> names;
+	DynamicArray<s64, malloc, realloc> values;
 };
 
 struct TypeInfoPointer
@@ -570,6 +572,7 @@ s64 FindOrAddTypeTableIdx(Context *context, TypeInfo typeInfo)
 // Util TypeInfo procedures
 s64 GetTypeInfoPointerOf(Context *context, s64 inType)
 {
+	ASSERT(inType < (s64)BucketArrayCount(&context->typeTable));
 	TypeInfo resultTypeInfo = {};
 	resultTypeInfo.typeCategory = TYPECATEGORY_POINTER;
 	resultTypeInfo.size = g_pointerSize;
@@ -661,6 +664,8 @@ s64 TypeCheckType(Context *context, SourceLocation loc, ASTType *astType)
 		TypeInfo t;
 		t.typeCategory = TYPECATEGORY_ENUM;
 		t.enumInfo.typeTableIdx = TYPETABLEIDX_S64;
+		DynamicArrayInit(&t.enumInfo.names, 16);
+		DynamicArrayInit(&t.enumInfo.values, 16);
 
 		if (astType->enumDeclaration.astType)
 		{
@@ -675,8 +680,6 @@ s64 TypeCheckType(Context *context, SourceLocation loc, ASTType *astType)
 		t.size = context->typeTable[t.enumInfo.typeTableIdx].size;
 
 		s64 typeTableIdx = BucketArrayCount(&context->typeTable);
-		AddType(context, t);
-		*DynamicArrayAdd(&context->tcStack[context->tcStack.size - 1].typeIndices) = typeTableIdx;
 
 		s64 currentValue = 0;
 		for (int memberIdx = 0; memberIdx < astType->enumDeclaration.members.size; ++memberIdx)
@@ -697,7 +700,7 @@ s64 TypeCheckType(Context *context, SourceLocation loc, ASTType *astType)
 				}
 				currentValue = astMember.value->literal.integer;
 			}
-			staticDefinition.constant.valueAsInt = currentValue++;
+			staticDefinition.constant.valueAsInt = currentValue;
 
 			StaticDefinition *newStaticDef = BucketArrayAdd(&context->staticDefinitions);
 			*newStaticDef = staticDefinition;
@@ -708,7 +711,14 @@ s64 TypeCheckType(Context *context, SourceLocation loc, ASTType *astType)
 			newName.name = astMember.name;
 			newName.staticDefinition = newStaticDef;
 			*DynamicArrayAdd(&stackTop->names) = newName;
+
+			*DynamicArrayAdd(&t.enumInfo.names) = astMember.name;
+			*DynamicArrayAdd(&t.enumInfo.values) = currentValue;
+			++currentValue;
 		}
+
+		AddType(context, t);
+		*DynamicArrayAdd(&context->tcStack[context->tcStack.size - 1].typeIndices) = typeTableIdx;
 
 		return typeTableIdx;
 	} break;
@@ -1669,18 +1679,24 @@ skipNotFound:
 		newScopeName.variableInfo.typeTableIdx = TYPETABLEIDX_S64;
 		*DynamicArrayAdd(&stackTop->names) = newScopeName;
 
-		bool isExplicitRange = expression->forNode.range->nodeType == ASTNODETYPE_BINARY_OPERATION &&
-			expression->forNode.range->binaryOperation.op == TOKEN_OP_RANGE;
+		ASTExpression *rangeExp = expression->forNode.range;
+		bool isExplicitRange = rangeExp->nodeType == ASTNODETYPE_BINARY_OPERATION &&
+			rangeExp->binaryOperation.op == TOKEN_OP_RANGE;
 
 		if (!isExplicitRange)
 		{
-			TypeInfo rangeTypeInfo = context->typeTable[expression->forNode.range->typeTableIdx];
-			if (rangeTypeInfo.typeCategory != TYPECATEGORY_ARRAY)
-				LogError(context, expression->forNode.range->any.loc, "'for' range expression does"
-						"not evaluate to an array nor is it a number range (..)"_s);
+			s64 elementTypeTableIdx = TYPETABLEIDX_U8;
+			s64 stringTypeIdx = FindTypeInStackByName(context, {}, "String"_s);
+			if (rangeExp->typeTableIdx != stringTypeIdx)
+			{
+				TypeInfo rangeTypeInfo = context->typeTable[rangeExp->typeTableIdx];
+				if (rangeTypeInfo.typeCategory != TYPECATEGORY_ARRAY)
+					LogError(context, expression->forNode.range->any.loc, "'for' range expression does"
+							"not evaluate to an array nor is it a number range (..)"_s);
+				elementTypeTableIdx = rangeTypeInfo.arrayInfo.elementTypeTableIdx;
+			}
 
-			s64 pointerToElementTypeTableIdx = GetTypeInfoPointerOf(context,
-					rangeTypeInfo.arrayInfo.elementTypeTableIdx);
+			s64 pointerToElementTypeTableIdx = GetTypeInfoPointerOf(context, elementTypeTableIdx);
 			String elementValueName = "it"_s;
 			u32 elementValueIdx = NewValue(context, elementValueName, pointerToElementTypeTableIdx, 0);
 			expression->forNode.elementValueIdx = elementValueIdx;

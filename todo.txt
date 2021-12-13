@@ -1,2 +1,4 @@
-* Add enum support to PrintF and update enum test
+* Vararg procedure call with 0 vararg arguments crashes!
 * ALIGNMENT
+* remove stupid copymemory everywhere
+* procedure pointers

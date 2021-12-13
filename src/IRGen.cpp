@@ -1485,7 +1485,9 @@ IRValue IRGenFromExpression(Context *context, ASTExpression *expression)
 		IRPushValueIntoStack(context, indexValueIdx);
 		IRValue indexValue = IRValueValue(context, indexValueIdx);
 
-		TypeInfo rangeTypeInfo = context->typeTable[expression->forNode.range->typeTableIdx];
+		s64 stringTypeIdx = FindTypeInStackByName(context, {}, "String"_s);
+		s64 rangeTypeIdx = expression->forNode.range->typeTableIdx;
+		TypeInfo rangeTypeInfo = context->typeTable[rangeTypeIdx];
 
 		IRValue from = {}, to = {}, arrayValue = {};
 		if (expression->forNode.range->nodeType == ASTNODETYPE_BINARY_OPERATION &&
@@ -1499,7 +1501,7 @@ IRValue IRGenFromExpression(Context *context, ASTExpression *expression)
 			// Assign 'i'
 			IRDoAssignment(context, indexValue, from);
 		}
-		else if (rangeTypeInfo.typeCategory == TYPECATEGORY_ARRAY)
+		else if (rangeTypeIdx == stringTypeIdx || rangeTypeInfo.typeCategory == TYPECATEGORY_ARRAY)
 		{
 			u32 elementValueIdx = expression->forNode.elementValueIdx;
 			// Allocate 'it' variable
@@ -1507,11 +1509,13 @@ IRValue IRGenFromExpression(Context *context, ASTExpression *expression)
 
 			arrayValue = IRGenFromExpression(context, expression->forNode.range);
 
-			s64 pointerToElementTypeTableIdx = GetTypeInfoPointerOf(context,
-					rangeTypeInfo.arrayInfo.elementTypeTableIdx);
+			s64 elementTypeIdx = TYPETABLEIDX_U8;
+			if (rangeTypeIdx != stringTypeIdx)
+				elementTypeIdx = rangeTypeInfo.arrayInfo.elementTypeTableIdx;
+			s64 pointerToElementTypeTableIdx = GetTypeInfoPointerOf(context, elementTypeIdx);
 
 			from = IRValueImmediate(0);
-			if (rangeTypeInfo.arrayInfo.count == 0)
+			if (rangeTypeInfo.arrayInfo.count == 0 || rangeTypeIdx == stringTypeIdx)
 			{
 				// Compare with size member
 				s64 arrayTableIdx = FindTypeInStackByName(context, {}, "Array"_s);
@@ -1526,8 +1530,7 @@ IRValue IRGenFromExpression(Context *context, ASTExpression *expression)
 
 			// Assign 'it'
 			IRValue elementVarValue = IRValueValue(elementValueIdx, pointerToElementTypeTableIdx);
-			IRValue elementValue = IRDoArrayAccess(context, arrayValue, indexValue,
-					rangeTypeInfo.arrayInfo.elementTypeTableIdx);
+			IRValue elementValue = IRDoArrayAccess(context, arrayValue, indexValue, elementTypeIdx);
 			elementValue = IRPointerToValue(context, elementValue);
 			IRDoAssignment(context, elementVarValue, elementValue);
 		}
@@ -1561,13 +1564,16 @@ IRValue IRGenFromExpression(Context *context, ASTExpression *expression)
 		incrementInst.binaryOperation.out = indexValue;
 		*AddInstruction(context) = incrementInst;
 
-		if (rangeTypeInfo.typeCategory == TYPECATEGORY_ARRAY)
+		if (rangeTypeIdx == stringTypeIdx || rangeTypeInfo.typeCategory == TYPECATEGORY_ARRAY)
 		{
 			// Update 'it'
+			s64 elementTypeIdx = TYPETABLEIDX_U8;
+			if (rangeTypeIdx != stringTypeIdx)
+				elementTypeIdx = rangeTypeInfo.arrayInfo.elementTypeTableIdx;
+
 			u32 elementValueIdx = expression->forNode.elementValueIdx;
 			IRValue elementVarValue = IRValueValue(context, elementValueIdx);
-			IRValue elementValue = IRDoArrayAccess(context, arrayValue, indexValue,
-					rangeTypeInfo.arrayInfo.elementTypeTableIdx);
+			IRValue elementValue = IRDoArrayAccess(context, arrayValue, indexValue, elementTypeIdx);
 			elementValue = IRPointerToValue(context, elementValue);
 			IRDoAssignment(context, elementVarValue, elementValue);
 		}

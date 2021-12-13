@@ -1005,7 +1005,7 @@ void X64ConvertInstruction(Context *context, IRInstruction inst, X64Procedure *x
 		result.dst = inst.unaryOperation.out;
 		if (context->typeTable[result.dst.typeTableIdx].size != 1)
 		{
-			*BucketArrayAdd(&x64Proc->instructions) = { X64_XOR, result.dst, result.dst };
+			X64Mov(context, x64Proc, result.dst, IRValueImmediate(0));
 			result.dst.typeTableIdx = TYPETABLEIDX_S8;
 		}
 
@@ -1198,7 +1198,7 @@ doConditionalSet:
 		result.dst = inst.binaryOperation.out;
 		if (context->typeTable[result.dst.typeTableIdx].size != 1)
 		{
-			*BucketArrayAdd(&x64Proc->instructions) = { X64_XOR, result.dst, result.dst };
+			X64Mov(context, x64Proc, result.dst, IRValueImmediate(0));
 			result.dst.typeTableIdx = TYPETABLEIDX_S8;
 		}
 
@@ -1788,6 +1788,9 @@ void BackendMain(Context *context)
 	{
 		s64 structMemberInfoTypeTableIdx = FindTypeInStackByName(context, {}, "TypeInfoStructMember"_s);
 		s64 pointerToStructMemberInfoIdx = GetTypeInfoPointerOf(context, structMemberInfoTypeTableIdx);
+		s64 stringTypeIdx = FindTypeInStackByName(context, {}, "String"_s);
+		s64 pointerToStringIdx = GetTypeInfoPointerOf(context, stringTypeIdx);
+		s64 pointerToS64Idx = GetTypeInfoPointerOf(context, TYPETABLEIDX_S64);
 		s64 typeInfoIdx = FindTypeInStackByName(context, {}, "TypeInfo"_s);
 		s64 pointerToTypeInfoIdx = GetTypeInfoPointerOf(context, typeInfoIdx);
 
@@ -1879,7 +1882,35 @@ void BackendMain(Context *context)
 
 				TypeInfo enumType = context->typeTable[typeInfo.enumInfo.typeTableIdx];
 
-				ArrayInit(&newStaticVar.initialValue.immediateStructMembers, 4, FrameAlloc);
+				u32 namesValueIdx = NewValue(context, TPrintF("_names_%lld", typeTableIdx),
+						stringTypeIdx, VALUEFLAGS_ON_STATIC_STORAGE);
+				IRStaticVariable namesStaticVar = { namesValueIdx };
+				namesStaticVar.initialValue.valueType = IRVALUETYPE_IMMEDIATE_STRUCT;
+				ArrayInit(&namesStaticVar.initialValue.immediateStructMembers,
+						typeInfo.enumInfo.names.size, FrameAlloc);
+				for (s64 nameIdx = 0; nameIdx < (s64)typeInfo.enumInfo.names.size; ++nameIdx)
+				{
+					IRValue nameImm = IRValueImmediateString(context,
+							typeInfo.enumInfo.names[nameIdx]);
+					*ArrayAdd(&namesStaticVar.initialValue.immediateStructMembers) = nameImm;
+				}
+				*DynamicArrayAdd(&context->irStaticVariables) = namesStaticVar;
+
+				u32 valuesValueIdx = NewValue(context, TPrintF("_values_%lld", typeTableIdx),
+						TYPETABLEIDX_S64, VALUEFLAGS_ON_STATIC_STORAGE);
+				IRStaticVariable valuesStaticVar = { valuesValueIdx };
+				valuesStaticVar.initialValue.valueType = IRVALUETYPE_IMMEDIATE_STRUCT;
+				ArrayInit(&valuesStaticVar.initialValue.immediateStructMembers,
+						typeInfo.enumInfo.values.size, FrameAlloc);
+				for (s64 valueIdx = 0; valueIdx < (s64)typeInfo.enumInfo.values.size; ++valueIdx)
+				{
+					IRValue valueImm = IRValueImmediate(typeInfo.enumInfo.values[valueIdx],
+							TYPETABLEIDX_S64);
+					*ArrayAdd(&valuesStaticVar.initialValue.immediateStructMembers) = valueImm;
+				}
+				*DynamicArrayAdd(&context->irStaticVariables) = valuesStaticVar;
+
+				ArrayInit(&newStaticVar.initialValue.immediateStructMembers, 8, FrameAlloc);
 				*ArrayAdd(&newStaticVar.initialValue.immediateStructMembers) =
 				{ IRValueImmediate(3, TYPETABLEIDX_S8) };
 				*ArrayAdd(&newStaticVar.initialValue.immediateStructMembers) =
@@ -1888,6 +1919,14 @@ void BackendMain(Context *context)
 				{ IRValueImmediateString(context, enumName) };
 				*ArrayAdd(&newStaticVar.initialValue.immediateStructMembers) =
 				{ IRValueMemory(enumType.valueIdx, 0, pointerToTypeInfoIdx) };
+				*ArrayAdd(&newStaticVar.initialValue.immediateStructMembers) =
+				{ IRValueImmediate(typeInfo.enumInfo.names.size, TYPETABLEIDX_S64) };
+				*ArrayAdd(&newStaticVar.initialValue.immediateStructMembers) =
+				{ IRValueMemory(namesValueIdx, 0, pointerToStringIdx) };
+				*ArrayAdd(&newStaticVar.initialValue.immediateStructMembers) =
+				{ IRValueImmediate(typeInfo.enumInfo.values.size, TYPETABLEIDX_S64) };
+				*ArrayAdd(&newStaticVar.initialValue.immediateStructMembers) =
+				{ IRValueMemory(valuesValueIdx, 0, pointerToS64Idx) };
 			} break;
 			case TYPECATEGORY_POINTER:
 			{

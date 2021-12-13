@@ -681,7 +681,13 @@ ASTExpression ParseExpression(Context *context, s32 precedence)
 
 				if (context->token->type != ')')
 				{
-					AssertToken(context, context->token, ',');
+					if (context->token->type != ',')
+					{
+						const String tokenTypeGot = TokenToString(context->token);
+						const String errorStr = TPrintF("Expected ')' or ',' but got %S",
+								tokenTypeGot);
+						LogError(context, context->token->loc, errorStr);
+					}
 					Advance(context);
 				}
 			}

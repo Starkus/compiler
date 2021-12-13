@@ -85,11 +85,12 @@ const String TokenTypeToString(s32 type)
 		return "<Operator>"_s;
 
 	char *str = (char *)FrameAlloc(5);
-	strcpy(str, "<'~'>");
+	strncpy(str, "<'~'>", 5);
 	str[2] = (char)type;
 	return { 5, str };
 }
 
+// @Speed: pass token by copy?
 const String TokenToString(Token *token)
 {
 	if (token->type >= TOKEN_KEYWORD_Begin && token->type <= TOKEN_KEYWORD_End)

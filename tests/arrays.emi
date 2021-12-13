@@ -12,7 +12,6 @@ returnArray :: (arg2 : s32) -> [4] s32
 		array[i] = i;
 		i += 1;
 	}
-	for array PrintF("array[%] = %\n", i, @it);
 	return array;
 }
 
@@ -22,10 +21,8 @@ Main :: () -> s64
 	arrayB : [8] s32;
 
 	for 0..5
-	{
 		arrayA[i] = cast(u8) i;
-		PrintF("Array[%] = %\n", i, arrayA[i]);
-	}
+	PrintF("arrayA: %\n", arrayA);
 
 	for (arrayB) @it = cast(s32)(1 << i);
 
@@ -48,17 +45,11 @@ Main :: () -> s64
 	copyOfA := arrayA;
 
 	returnedArray := returnArray(24);
-	for returnedArray
-	{
-		PrintF("Returned array[%] = %\n", i, @it);
-	}
+	PrintF("returnedArray: %\n", returnedArray);
 
 	dynamicArray : [] s32;
 	dynamicArray = arrayB;
-	for dynamicArray
-	{
-		PrintF("Dynamic array[%] = %\n", i, @it);
-	}
+	PrintF("dynamicArray: %\n", dynamicArray);
 
 	Print("Test ok\n");
 	return 0;

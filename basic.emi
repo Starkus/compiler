@@ -51,6 +51,8 @@ TypeInfoEnum :: struct
 	using _typeInfo : TypeInfo;
 	name : String;
 	typeInfo : ^TypeInfo;
+	names : [] String;
+	values : [] s64;
 };
 
 TypeInfoPointer :: struct

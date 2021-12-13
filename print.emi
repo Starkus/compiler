@@ -76,10 +76,74 @@ PrintF :: (format : String, ..args)
 			Print("{ ");
 			for structInfo.members
 			{
-				if i > 0 Print(" ");
-				Print(it.name);
+				member : Any;
+				member.typeInfo = it.typeInfo;
+				member.data = arg.data + it.offset;
+
+				buffer : [128] u8;
+				str : String;
+				str.data = ^buffer[0];
+				str.size = 0;
+				if i > 0
+				{
+					@(cast(^u32) str.data) = 0x202C;
+					str.size = 2;
+				}
+				for it.name
+				{
+					buffer[str.size] = @it;
+					str.size += 1;
+				}
+				@(cast(^u32) str.data + str.size) = 0x203A;
+				str.size += 2;
+				Print(str);
+				PrintArgument(member);
 			}
 			Print(" }");
+		}
+		else if arg.typeInfo.typeKind == TypeKind_Enum
+		{
+			enumInfo := cast(^TypeInfoEnum) arg.typeInfo;
+			num := @ cast(^s64) arg.data;
+			for (enumInfo.values)
+			{
+				if @it == num
+				{
+					Print(enumInfo.names[i]);
+					break;
+				}
+			}
+		}
+		else if arg.typeInfo.typeKind == TypeKind_Array
+		{
+			arrayInfo := cast(^TypeInfoArray) arg.typeInfo;
+			Print("{ ");
+			element : Any;
+			element.typeInfo = arrayInfo.elementTypeInfo;
+			elementSize := arrayInfo.elementTypeInfo.size;
+			buffer : ^u8 = cast(^u8) arg.data;
+			count : u64 = arrayInfo.count;
+			if count == 0
+			{
+				count = @ cast(^u64) arg.data;
+				buffer = @ cast(^^u8) arg.data + 8;
+			}
+			for 0..count
+			{
+				if i > 0 Print(", ");
+				element.data = buffer + i * elementSize;
+				PrintArgument(element);
+			}
+			Print(" }");
+		}
+		else if arg.typeInfo.typeKind == TypeKind_Pointer
+		{
+			pointerInfo := cast(^TypeInfoPointer) arg.typeInfo;
+			Print("^");
+			pointedThing : Any;
+			pointedThing.typeInfo = pointerInfo.typeInfo;
+			pointedThing.data = @ cast(^^void) arg.data;
+			PrintArgument(pointedThing);
 		}
 		else
 			Print("<Unknown type>");
