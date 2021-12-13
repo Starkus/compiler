@@ -42,6 +42,7 @@ struct Procedure
 	ASTExpression *astBody;
 	s32 requiredParameterCount;
 	u32 returnValueIdx;
+	s64 typeTableIdx; // Type of the procedure
 	s64 returnTypeTableIdx;
 	String varargsName;
 
@@ -774,6 +775,15 @@ ASTExpression ParseExpression(Context *context, s32 precedence)
 		//AssertToken(context, context->token, ')');
 		//Advance(context);
 	}
+	else if (context->token->type == TOKEN_KEYWORD_SIZEOF)
+	{
+		Advance(context);
+
+		result.any.loc = context->token->loc;
+		result.nodeType = ASTNODETYPE_SIZEOF;
+		result.sizeOfNode.expression = NewTreeNode(context);
+		*result.sizeOfNode.expression = ParseExpression(context, -1);
+	}
 	else if (context->token->type == TOKEN_KEYWORD_CAST)
 	{
 		Advance(context);
@@ -950,8 +960,13 @@ ASTExpression ParseStatement(Context *context)
 
 		result.any.loc = context->token->loc;
 		result.nodeType = ASTNODETYPE_RETURN;
-		result.returnNode.expression = NewTreeNode(context);
-		*result.returnNode.expression = ParseExpression(context, -1);
+		if (context->token->type == ';')
+			result.returnNode.expression = nullptr;
+		else
+		{
+			result.returnNode.expression = NewTreeNode(context);
+			*result.returnNode.expression = ParseExpression(context, -1);
+		}
 
 		AssertToken(context, context->token, ';');
 		Advance(context);
@@ -1023,6 +1038,7 @@ ASTExpression ParseStatement(Context *context)
 		{
 			result.nodeType = ASTNODETYPE_STATIC_DEFINITION;
 			result.staticDefinition = ParseStaticDefinition(context);
+			result.any.loc = result.staticDefinition.expression->any.loc;
 		}
 		else if (next->type == TOKEN_OP_VARIABLE_DECLARATION ||
 				next->type == TOKEN_OP_VARIABLE_DECLARATION_STATIC)
@@ -1070,6 +1086,7 @@ ASTExpression ParseStaticStatement(Context *context)
 		{
 			result.nodeType = ASTNODETYPE_STATIC_DEFINITION;
 			result.staticDefinition = ParseStaticDefinition(context);
+			result.any.loc = result.staticDefinition.expression->any.loc;
 		}
 		else if (next->type == TOKEN_OP_VARIABLE_DECLARATION ||
 				next->type == TOKEN_OP_VARIABLE_DECLARATION_STATIC)

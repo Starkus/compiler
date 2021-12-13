@@ -9,6 +9,7 @@ enum IRValueType
 	IRVALUETYPE_INVALID = -1,
 	IRVALUETYPE_VALUE,
 	IRVALUETYPE_MEMORY,
+	IRVALUETYPE_PROCEDURE,
 	IRVALUETYPE_IMMEDIATE_INTEGER,
 	IRVALUETYPE_IMMEDIATE_FLOAT,
 	IRVALUETYPE_IMMEDIATE_STRING,
@@ -24,6 +25,7 @@ struct IRValue
 		f64 immediateFloat;
 		u32 immediateStringIdx;
 		Array<IRValue> immediateStructMembers;
+		s32 procedureIdx;
 		struct
 		{
 			u32 baseValueIdx;
@@ -365,6 +367,15 @@ IRValue IRValueImmediateFloat(Context *context, f64 f, s64 typeTableIdx = TYPETA
 	return IRValueValue(newStaticVar.valueIdx, typeTableIdx);
 }
 
+IRValue IRValueProcedure(Context *context, s32 procedureIdx)
+{
+	IRValue result = {};
+	result.valueType = IRVALUETYPE_PROCEDURE;
+	result.procedureIdx = procedureIdx;
+	result.typeTableIdx = context->procedures[procedureIdx].typeTableIdx;
+	return result;
+}
+
 IRValue IRValueNewValue(Context *context, s64 typeTableIdx, u8 flags)
 {
 	u32 newValue = NewValue(context, typeTableIdx, flags);
@@ -651,6 +662,10 @@ void IRDoAssignment(Context *context, IRValue dstValue, IRValue srcValue)
 		inst.type = IRINSTRUCTIONTYPE_ASSIGNMENT;
 		inst.assignment.dst = dstValue;
 		inst.assignment.src = srcValue;
+
+		if (srcValue.valueType == IRVALUETYPE_PROCEDURE)
+			inst.type = IRINSTRUCTIONTYPE_LOAD_EFFECTIVE_ADDRESS;
+
 		*AddInstruction(context) = inst;
 	}
 }
@@ -1119,6 +1134,12 @@ IRValue IRGenFromExpression(Context *context, ASTExpression *expression)
 				else
 					result = IRValueImmediate(expression->identifier.staticDefinition->constant.valueAsInt);
 			} break;
+			case STATICDEFINITIONTYPE_PROCEDURE:
+			{
+				result = IRValueProcedure(context, expression->identifier.staticDefinition->procedureIdx);
+			} break;
+			default:
+				ASSERT(!"Invalid static definition type found while generating IR");
 			}
 		} break;
 		case NAMETYPE_STRUCT_MEMBER:
@@ -1601,8 +1622,6 @@ IRValue IRGenFromExpression(Context *context, ASTExpression *expression)
 	} break;
 	case ASTNODETYPE_RETURN:
 	{
-		IRValue returnValue = IRGenFromExpression(context, expression->returnNode.expression);
-
 		IRProcedureScope *stackTop = &context->irProcedureStack[context->irProcedureStack.size - 1];
 		Procedure *currentProc = GetProcedure(context, stackTop->procedureIdx);
 		bool isThereCleanUpToDo = false;
@@ -1628,27 +1647,31 @@ IRValue IRGenFromExpression(Context *context, ASTExpression *expression)
 			IRDoAssignment(context, shouldReturnRegister, one);
 		}
 
-		s64 returnTypeTableIdx = expression->returnNode.expression->typeTableIdx;
-		if (currentProc->returnValueIdx == U32_MAX)
-			currentProc->returnValueIdx = NewValue(context, "_return_value"_s, returnTypeTableIdx, 0);
-
-		if (IRShouldPassByCopy(context, returnTypeTableIdx))
+		if (expression->returnNode.expression != nullptr)
 		{
-			u64 size = context->typeTable[returnTypeTableIdx].size;
-			IRValue sizeValue = IRValueImmediate(size);
+			IRValue returnValue = IRGenFromExpression(context, expression->returnNode.expression);
+			s64 returnTypeTableIdx = expression->returnNode.expression->typeTableIdx;
+			if (currentProc->returnValueIdx == U32_MAX)
+				currentProc->returnValueIdx = NewValue(context, "_return_value"_s, returnTypeTableIdx, 0);
 
-			IRInstruction memcpyInst = {};
-			memcpyInst.type = IRINSTRUCTIONTYPE_INTRINSIC_MEMCPY;
-			memcpyInst.memcpy.src = IRPointerToValue(context, returnValue);
-			memcpyInst.memcpy.dst = IRValueValue(currentProc->returnValueIdx, returnTypeTableIdx);
-			memcpyInst.memcpy.size = sizeValue;
+			if (IRShouldPassByCopy(context, returnTypeTableIdx))
+			{
+				u64 size = context->typeTable[returnTypeTableIdx].size;
+				IRValue sizeValue = IRValueImmediate(size);
 
-			*AddInstruction(context) = memcpyInst;
-		}
-		else
-		{
-			IRValue dst = IRValueValue(currentProc->returnValueIdx, returnValue.typeTableIdx);
-			IRDoAssignment(context, dst, returnValue);
+				IRInstruction memcpyInst = {};
+				memcpyInst.type = IRINSTRUCTIONTYPE_INTRINSIC_MEMCPY;
+				memcpyInst.memcpy.src = IRPointerToValue(context, returnValue);
+				memcpyInst.memcpy.dst = IRValueValue(currentProc->returnValueIdx, returnTypeTableIdx);
+				memcpyInst.memcpy.size = sizeValue;
+
+				*AddInstruction(context) = memcpyInst;
+			}
+			else
+			{
+				IRValue dst = IRValueValue(currentProc->returnValueIdx, returnValue.typeTableIdx);
+				IRDoAssignment(context, dst, returnValue);
+			}
 		}
 
 		if (isThereCleanUpToDo)
@@ -1684,6 +1707,13 @@ IRValue IRGenFromExpression(Context *context, ASTExpression *expression)
 		*AddInstruction(context) = getPtrInst;
 
 		result = outValue;
+	} break;
+	case ASTNODETYPE_SIZEOF:
+	{
+		s64 typeTableIdx = expression->sizeOfNode.expression->typeTableIdx;
+		s64 size = context->typeTable[typeTableIdx].size;
+
+		result = IRValueImmediate(size, TYPETABLEIDX_S64);
 	} break;
 	case ASTNODETYPE_CAST:
 	{

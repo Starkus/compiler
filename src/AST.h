@@ -201,6 +201,11 @@ struct ASTTypeOf : ASTBase
 	ASTExpression *expression;
 };
 
+struct ASTSizeOf : ASTBase
+{
+	ASTExpression *expression;
+};
+
 struct ASTCast : ASTBase
 {
 	ASTType astType;
@@ -234,6 +239,7 @@ enum ASTNodeType
 	ASTNODETYPE_RETURN,
 	ASTNODETYPE_DEFER,
 	ASTNODETYPE_TYPEOF,
+	ASTNODETYPE_SIZEOF,
 	ASTNODETYPE_CAST
 };
 struct ASTExpression
@@ -260,6 +266,7 @@ struct ASTExpression
 		ASTReturn returnNode;
 		ASTDefer deferNode;
 		ASTTypeOf typeOfNode;
+		ASTSizeOf sizeOfNode;
 		ASTCast castNode;
 	};
 

@@ -1,22 +1,14 @@
-AttachConsole :: external (handle : ^void);
 ATTACH_PARENT_PROCESS :: -1;
-
-CreateWindowExA :: external (
-		dwExStyle : u32,
-		lpClassName : ^u8,
-		lpWindowName : ^u8,
-		dwStyle : u32,
-		x : s64,
-		y : s64,
-		nWidth : s64,
-		nHeight : s64,
-		hWndParent : ^void,
-		hMenu : ^void,
-		hInstance : ^void,
-		lpParam : ^void
-	) -> ^void;
 WS_CLIPCHILDREN :: 0x02000000;
 WS_CLIPSIBLINGS :: 0x04000000;
+CS_VREDRAW :: 0x0001;
+CS_HREDRAW :: 0x0002;
+CS_OWNDC   :: 0x0020;
+SW_SHOW    :: 5;
+PM_REMOVE  :: 0x0001;
+WM_DESTROY :: 0x0002;
+WM_CLOSE   :: 0x0010;
+WM_QUIT    :: 0x0012;
 
 WNDCLASSEXA :: struct
 {
@@ -33,33 +25,112 @@ WNDCLASSEXA :: struct
 	lpszClassName : ^u8;
 	hIconSm : ^void;
 };
+POINT :: struct
+{
+	x : s32;
+	y : s32;
+};
+MSG :: struct
+{
+	hWnd : ^void;
+	message : u32;
+		__padding0 : u32;
+	wParam : ^void;
+	lParam : ^void;
+	time : u32;
+		__padding1 : u32;
+	pt : POINT;
+	lPrivate : u32;
+		__padding2 : u32;
+};
 
-WinMain :: (hInstance : ^void, hPrevInstance : ^void, lpCmdLine : ^u8, showCmd : s64) -> s64
+AttachConsole :: external (handle : ^void);
+GetModuleHandleA :: external (lpModuleName : ^void) -> ^void;
+RegisterClassExA :: external (wndClass : ^WNDCLASSEXA) -> u16;
+CreateWindowExA :: external (
+		dwExStyle : u32,
+		lpClassName : ^u8,
+		lpWindowName : ^u8,
+		dwStyle : u32,
+		x : s32,
+		y : s32,
+		nWidth : s32,
+		nHeight : s32,
+		hWndParent : ^void,
+		hMenu : ^void,
+		hInstance : ^void,
+		lpParam : ^void
+	) -> ^void;
+ShowWindow :: external (hWnd : ^void, nCmdShow : s32);
+GetLastError :: external () -> u32;
+DefWindowProcA :: external (hWnd : ^void, uMsg : u32, wParam : ^void, lParam : ^void) -> u64;
+PeekMessageA :: external (lpMsg : ^MSG, hWnd : ^void, wMsgFilterMin : u32, wMsgFilterMax : u32,
+		wRemoveMsg : u32) -> bool;
+TranslateMessage :: external (message : ^MSG) -> bool;
+DispatchMessageA :: external (message : ^MSG) -> s64;
+
+running :s bool = 1;
+
+Win32WindowCallback :: (hWnd : ^void, uMsg : u32, wParam : ^void, lParam : ^void) -> u64
+{
+	if (uMsg == WM_DESTROY || uMsg == WM_CLOSE)
+	{
+		running = 0;
+		return 0;
+	}
+	else
+		return DefWindowProcA(hWnd, uMsg, wParam, lParam);
+}
+
+Main :: () -> s64
 {
 	AttachConsole(ATTACH_PARENT_PROCESS);
 	Print("Hello\n");
+
+	hInstance := GetModuleHandleA(0);
 
 	windowClassName := "window\0";
 	windowTitle := "Hello, Sailor!\0";
 
 	windowClass : WNDCLASSEXA;
-	windowClass.cbSize = sizeof(windowClass);
+	windowClass.cbSize = cast(u32)sizeof(windowClass);
 	windowClass.style = CS_HREDRAW | CS_VREDRAW | CS_OWNDC;
 	windowClass.lpfnWndProc = Win32WindowCallback;
+	windowClass.cbClsExtra = 0;
+	windowClass.cbWndExtra = 0;
 	windowClass.hInstance = hInstance;
-	windowClass.lpszClassName = windowClassName;
+	windowClass.hIcon = 0;
+	windowClass.hCursor = 0;
+	windowClass.hBrush = 0;
+	windowClass.lpszMenuName = 0;
+	windowClass.lpszClassName = windowClassName.data;
+	windowClass.hIconSm = 0;
 
-	success : bool = RegisterClassEx(windowClassName.data);
+	success : bool = RegisterClassExA(^windowClass);
+	PrintF("Window succeded: % Last error: %\n", success, GetLastError());
 
-	window := CreateWindowExA(0, windowClassName.data, windowTitle.data, WS_CLIPSIBLINGS | WS_CLIPCHILDREN,
-			0, 0, 1, 1, 0, 0, hInstance, 0);
+	window := CreateWindowExA(0, windowClassName.data, windowTitle.data, WS_CLIPSIBLINGS |
+					WS_CLIPCHILDREN | 0x0C0000,
+			0, 0, 128, 128, 0, 0, hInstance, 0);
+	PrintF("Window handle: % Last error: %\n", cast(s64) window, GetLastError());
+
+	ShowWindow(window, SW_SHOW);
+
+	while running
+	{
+		message : MSG;
+		while PeekMessageA(^message, 0, 0, 0, PM_REMOVE)
+		{
+			if message.message == WM_QUIT
+				running = 0;
+			else
+			{
+				TranslateMessage(^message);
+				DispatchMessageA(^message);
+			}
+		}
+	}
 
 	Print("Test ok\n");
-	return 0;
-}
-
-Main :: () -> s64
-{
-	Print("Sailor\n");
 	return 0;
 }

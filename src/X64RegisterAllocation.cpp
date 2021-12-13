@@ -528,6 +528,10 @@ void ResolveStackOffsets(Context *context, Array<X64Procedure> x64Procedures)
 		}
 		if (stackCursor > (s64)proc->stackSize)
 			proc->stackSize = stackCursor;
+
+		// Align stack to 16 bytes.
+		if (proc->stackSize & 15)
+			proc->stackSize = (proc->stackSize & ~15) + 16;
 	}
 }
 

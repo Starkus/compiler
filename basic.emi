@@ -18,7 +18,8 @@ TypeKind :: enum : u8
 	TypeKind_Struct,
 	TypeKind_Enum,
 	TypeKind_Pointer,
-	TypeKind_Array
+	TypeKind_Array,
+	TypeKind_ProcedurePointer
 };
 TypeInfo :: struct
 {
@@ -66,6 +67,13 @@ TypeInfoArray :: struct
 	using _typeInfo : TypeInfo;
 	count : u64;
 	elementTypeInfo : ^TypeInfo;
+};
+
+TypeInfoProcedurePointer :: struct
+{
+	using _typeInfo : TypeInfo;
+	parameters : [] ^TypeInfo;
+	isVarargs : bool;
 };
 
 Any :: struct

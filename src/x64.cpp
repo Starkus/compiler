@@ -380,6 +380,12 @@ String X64IRValueToStr(Context *context, IRValue value)
 		return result;
 	}
 
+	if (value.valueType == IRVALUETYPE_PROCEDURE)
+	{
+		result = TPrintF("%S", context->procedures[value.procedureIdx].name);
+		return result;
+	}
+
 	u64 size = 0;
 	TypeInfo typeInfo = context->typeTable[value.typeTableIdx];
 	size = typeInfo.size;
@@ -1954,12 +1960,52 @@ void BackendMain(Context *context)
 				*ArrayAdd(&newStaticVar.initialValue.immediateStructMembers) =
 				{ IRValueMemory(elementType.valueIdx, 0, pointerToTypeInfoIdx) };
 			} break;
+			case TYPECATEGORY_PROCEDURE_POINTER:
+			{
+				u32 parametersValueIdx = 0;
+				if (typeInfo.procedurePointerInfo.parameters.size > 0)
+				{
+					parametersValueIdx = NewValue(context, TPrintF("_params_%lld", typeTableIdx),
+							pointerToTypeInfoIdx, VALUEFLAGS_ON_STATIC_STORAGE);
+					IRStaticVariable paramsStaticVar = { parametersValueIdx };
+					paramsStaticVar.initialValue.valueType = IRVALUETYPE_IMMEDIATE_STRUCT;
+					ArrayInit(&paramsStaticVar.initialValue.immediateStructMembers,
+							typeInfo.procedurePointerInfo.parameters.size, FrameAlloc);
+					for (s64 paramIdx = 0; paramIdx < (s64)typeInfo.procedurePointerInfo.parameters.size;
+							++paramIdx)
+					{
+						TypeInfo paramType =
+							context->typeTable[typeInfo.procedurePointerInfo.parameters[paramIdx]];
+						IRValue paramImm = IRValueMemory(paramType.valueIdx, 0, pointerToTypeInfoIdx);
+						*ArrayAdd(&paramsStaticVar.initialValue.immediateStructMembers) = paramImm;
+					}
+					*DynamicArrayAdd(&context->irStaticVariables) = paramsStaticVar;
+				}
+
+				ArrayInit(&newStaticVar.initialValue.immediateStructMembers, 5, FrameAlloc);
+				*ArrayAdd(&newStaticVar.initialValue.immediateStructMembers) =
+				{ IRValueImmediate(6, TYPETABLEIDX_S8) };
+				*ArrayAdd(&newStaticVar.initialValue.immediateStructMembers) =
+				{ IRValueImmediate(typeInfo.size, TYPETABLEIDX_S64) };
+				*ArrayAdd(&newStaticVar.initialValue.immediateStructMembers) =
+				{ IRValueImmediate(typeInfo.procedurePointerInfo.parameters.size, TYPETABLEIDX_S64) };
+				if (parametersValueIdx)
+					*ArrayAdd(&newStaticVar.initialValue.immediateStructMembers) =
+					{ IRValueMemory(parametersValueIdx, 0, pointerToTypeInfoIdx) };
+				else
+					*ArrayAdd(&newStaticVar.initialValue.immediateStructMembers) =
+					{ IRValueImmediate(0, pointerToTypeInfoIdx) };
+				*ArrayAdd(&newStaticVar.initialValue.immediateStructMembers) =
+				{ IRValueImmediate(typeInfo.procedurePointerInfo.isVarargs, TYPETABLEIDX_BOOL) };
+			} break;
 			case TYPECATEGORY_INVALID:
 			{
 				ArrayInit(&newStaticVar.initialValue.immediateStructMembers, 1, FrameAlloc);
 				*ArrayAdd(&newStaticVar.initialValue.immediateStructMembers) =
-				{ IRValueImmediate(6, TYPETABLEIDX_S8) };
+				{ IRValueImmediate(7, TYPETABLEIDX_S8) };
 			} break;
+			default:
+				ASSERT(false);
 			}
 			*DynamicArrayAdd(&context->irStaticVariables) = newStaticVar;
 		}

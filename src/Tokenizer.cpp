@@ -117,36 +117,37 @@ s32 GetOperatorPrecedence(s32 op)
 	{
 		case TOKEN_OP_ASSIGNMENT:
 			return 1;
+		case TOKEN_OP_AND:
+		case TOKEN_OP_OR:
+			return 2;
 		case TOKEN_OP_EQUALS:
 		case TOKEN_OP_GREATER_THAN:
 		case TOKEN_OP_GREATER_THAN_OR_EQUAL:
 		case TOKEN_OP_LESS_THAN:
 		case TOKEN_OP_LESS_THAN_OR_EQUAL:
 		case TOKEN_OP_RANGE:
-			return 2;
+			return 4;
 		case TOKEN_OP_PLUS:
 		case TOKEN_OP_MINUS:
-			return 4;
+			return 6;
 		case TOKEN_OP_MULTIPLY:
 		case TOKEN_OP_DIVIDE:
 		case TOKEN_OP_MODULO:
-			return 6;
+			return 8;
 		case TOKEN_OP_SHIFT_LEFT:
 		case TOKEN_OP_SHIFT_RIGHT:
-		case TOKEN_OP_AND:
-		case TOKEN_OP_OR:
 		case TOKEN_OP_BITWISE_AND:
 		case TOKEN_OP_BITWISE_OR:
-			return 8;
+			return 10;
 		case TOKEN_OP_NOT:
 		case TOKEN_OP_BITWISE_NOT:
-			return 10;
+			return 12;
 		case TOKEN_OP_POINTER_TO:
 		case TOKEN_OP_DEREFERENCE:
-			return 12;
+			return 14;
 		case TOKEN_OP_ARRAY_ACCESS:
 		case TOKEN_OP_MEMBER_ACCESS:
-			return 14;
+			return 16;
 	}
 	return -1;
 }
@@ -337,6 +338,8 @@ Token ReadTokenAndAdvance(Tokenizer *tokenizer)
 			result.type = TOKEN_KEYWORD_USING;
 		else if (TokenIsStr(&result, "typeof"))
 			result.type = TOKEN_KEYWORD_TYPEOF;
+		else if (TokenIsStr(&result, "sizeof"))
+			result.type = TOKEN_KEYWORD_SIZEOF;
 		else if (TokenIsStr(&result, "cast"))
 			result.type = TOKEN_KEYWORD_CAST;
 	}

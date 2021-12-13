@@ -31,6 +31,7 @@ enum TypeCategory
 	TYPECATEGORY_ENUM,
 	TYPECATEGORY_POINTER,
 	TYPECATEGORY_ARRAY,
+	TYPECATEGORY_PROCEDURE_POINTER,
 };
 
 struct TypeInfo;
@@ -70,6 +71,12 @@ struct TypeInfoArray
 	u64 count;
 };
 
+struct TypeInfoProcedurePointer
+{
+	DynamicArray<s64, malloc, realloc> parameters;
+	bool isVarargs;
+};
+
 struct TypeInfo
 {
 	TypeCategory typeCategory;
@@ -82,6 +89,7 @@ struct TypeInfo
 		TypeInfoEnum enumInfo;
 		TypeInfoPointer pointerInfo;
 		TypeInfoArray arrayInfo;
+		TypeInfoProcedurePointer procedurePointerInfo;
 	};
 };
 
@@ -509,7 +517,7 @@ void ReportTypeCheckError(Context *context, TypeCheckErrorCode errorCode, Source
 	}
 }
 
-bool AreTypeInfosEqual(TypeInfo a, TypeInfo b)
+bool AreTypeInfosEqual(Context *context, TypeInfo a, TypeInfo b)
 {
 	if (a.typeCategory != b.typeCategory)
 		return false;
@@ -542,6 +550,17 @@ bool AreTypeInfosEqual(TypeInfo a, TypeInfo b)
 	case TYPECATEGORY_ARRAY:
 		return a.arrayInfo.elementTypeTableIdx == b.arrayInfo.elementTypeTableIdx &&
 			a.arrayInfo.count == b.arrayInfo.count;
+	case TYPECATEGORY_PROCEDURE_POINTER:
+		if (a.procedurePointerInfo.parameters.size != b.procedurePointerInfo.parameters.size)
+			return false;
+		for (int i = 0; i < a.procedurePointerInfo.parameters.size; ++i)
+		{
+			TypeInfo aParamTypeInfo = context->typeTable[a.procedurePointerInfo.parameters[i]];
+			TypeInfo bParamTypeInfo = context->typeTable[b.procedurePointerInfo.parameters[i]];
+			if (!AreTypeInfosEqual(context, aParamTypeInfo, bParamTypeInfo))
+				return false;
+		}
+		return true;
 	default:
 		CRASH;
 	}
@@ -563,7 +582,7 @@ s64 FindOrAddTypeTableIdx(Context *context, TypeInfo typeInfo)
 	for (int i = 0; i < tableSize; ++i)
 	{
 		TypeInfo t = context->typeTable[i];
-		if (AreTypeInfosEqual(typeInfo, t))
+		if (AreTypeInfosEqual(context, typeInfo, t))
 			return i;
 	}
 	return AddType(context, typeInfo);
@@ -1213,6 +1232,12 @@ void TypeCheckExpression(Context *context, ASTExpression *expression)
 
 		PushTCScope(context);
 
+		TypeInfo t = {};
+		t.size = g_pointerSize;
+		t.typeCategory = TYPECATEGORY_PROCEDURE_POINTER;
+		DynamicArrayInit(&t.procedurePointerInfo.parameters, 8);
+		t.procedurePointerInfo.isVarargs = procedure->isVarargs;
+
 		// Parameters
 		bool beginOptionalParameters = false;
 		DynamicArrayInit(&procedure->parameters, 8);
@@ -1226,6 +1251,8 @@ void TypeCheckExpression(Context *context, ASTExpression *expression)
 			procParam->valueIdx = astVarDecl.valueIdx;
 			procParam->typeTableIdx = astVarDecl.typeTableIdx;
 			procParam->defaultValue = astVarDecl.astInitialValue;
+
+			*DynamicArrayAdd(&t.procedurePointerInfo.parameters) = astVarDecl.typeTableIdx;
 
 			if (astVarDecl.isUsing)
 			{
@@ -1294,11 +1321,19 @@ void TypeCheckExpression(Context *context, ASTExpression *expression)
 			else if (result == RETURNCHECKRESULT_NEVER)
 				LogError(context, expression->any.loc, "Procedure has to return a value"_s);
 		}
+
+		s64 typeTableIdx = FindOrAddTypeTableIdx(context, t);
+		procedure->typeTableIdx = typeTableIdx;
+		expression->typeTableIdx = GetTypeInfoPointerOf(context, typeTableIdx);
 	} break;
 	case ASTNODETYPE_RETURN:
 	{
-		TypeCheckExpression(context, expression->returnNode.expression);
-		u64 typeTableIdx = expression->returnNode.expression->typeTableIdx;
+		u64 typeTableIdx = TYPETABLEIDX_VOID;
+		if (expression->returnNode.expression != nullptr)
+		{
+			TypeCheckExpression(context, expression->returnNode.expression);
+			typeTableIdx = expression->returnNode.expression->typeTableIdx;
+		}
 		TypeCheckErrorCode typeCheckResult = CheckTypesMatch(context, context->tcCurrentReturnType,
 				typeTableIdx);
 		if (typeCheckResult != TYPECHECK_COOL)
@@ -1724,6 +1759,11 @@ skipNotFound:
 
 		s64 programTypeInfoTableIdx = FindTypeInStackByName(context, expression->any.loc, "TypeInfo"_s);
 		expression->typeTableIdx = GetTypeInfoPointerOf(context, programTypeInfoTableIdx);
+	} break;
+	case ASTNODETYPE_SIZEOF:
+	{
+		TypeCheckExpression(context, expression->sizeOfNode.expression);
+		expression->typeTableIdx = TYPETABLEIDX_S64;
 	} break;
 	case ASTNODETYPE_CAST:
 	{
