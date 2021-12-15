@@ -2,7 +2,7 @@ struct Tokenizer
 {
 	const char *cursor;
 	const char *end;
-	s64 line;
+	s32 line;
 	const char *beginningOfLine;
 };
 
@@ -90,9 +90,9 @@ enum TokenType
 struct SourceLocation
 {
 	String file;
-	s64 line;
-	s64 character;
-	s64 size;
+	s32 line;
+	s32 character;
+	s32 size;
 	const u8 *fileBuffer; // @Improve: reference to file records instead of having both file name and buffer in all tokens
 };
 
@@ -104,7 +104,7 @@ struct Token
 		String string;
 		struct
 		{
-			s64 size;
+			s32 size;
 			const char *begin;
 		};
 	};

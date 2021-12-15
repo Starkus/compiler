@@ -4,12 +4,14 @@ ASTVariableDeclaration ParseVariableDeclaration(Context *context);
 
 enum ValueFlags
 {
-	VALUEFLAGS_FORCE_REGISTER    = 1,
-	VALUEFLAGS_FORCE_MEMORY      = 2,
-	VALUEFLAGS_IS_MEMORY         = 4,
-	VALUEFLAGS_IS_ALLOCATED      = 8,
-	VALUEFLAGS_ON_STATIC_STORAGE = 16,
-	VALUEFLAGS_BASE_RELATIVE     = 32,
+	VALUEFLAGS_IS_USED              = 1,
+	VALUEFLAGS_FORCE_REGISTER       = 2,
+	VALUEFLAGS_FORCE_MEMORY         = 4,
+	VALUEFLAGS_IS_MEMORY            = 8,
+	VALUEFLAGS_IS_ALLOCATED         = 16,
+	VALUEFLAGS_ON_STATIC_STORAGE    = 32,
+	VALUEFLAGS_BASE_RELATIVE        = 64,
+	VALUEFLAGS_HAS_PUSH_INSTRUCTION = 128
 };
 
 struct Value
@@ -649,6 +651,7 @@ ASTProcedureDeclaration ParseProcedureDeclaration(Context *context)
 ASTExpression ParseExpression(Context *context, s32 precedence)
 {
 	ASTExpression result = {};
+	result.any.loc = context->token->loc;
 
 	// Parenthesis
 	if (context->token->type == '(')
@@ -912,6 +915,7 @@ ASTStaticDefinition ParseStaticDefinition(Context *context)
 ASTExpression ParseStatement(Context *context)
 {
 	ASTExpression result = {};
+	result.any.loc = context->token->loc;
 
 	switch (context->token->type)
 	{

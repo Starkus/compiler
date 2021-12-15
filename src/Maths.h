@@ -68,9 +68,13 @@ inline bool IsPowerOf2(s64 n)
 	return ((n & (~(n - 1))) == n);
 }
 
-inline bool EqualWithEpsilon(f32 a, f32 b, f32 epsilon)
+inline s64 AlignTo(s64 n, s64 alignment)
 {
-	return a > b - epsilon && a < b + epsilon;
+	ASSERT(IsPowerOf2(alignment));
+	s64 mask = alignment - 1;
+	if ((n & mask) != 0)
+		n = (n & ~mask) + alignment;
+	return n;
 }
 
 inline f32 Pow(f32 n, f32 e)

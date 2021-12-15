@@ -73,6 +73,7 @@ enum X64InstructionType
 	X64_CVTSD2SS,
 	X64_Count,
 	X64_Ignore = X64_Count,
+	X64_Comment,
 	X64_Label,
 	X64_Push_Scope,
 	X64_Pop_Scope,
@@ -107,6 +108,7 @@ struct X64Instruction
 			X64Instruction *patch2;
 		};
 		Array<X64Instruction> patchInstructions;
+		String comment;
 	};
 };
 
@@ -390,6 +392,7 @@ String X64IRValueToStr(Context *context, IRValue value)
 	TypeInfo typeInfo = context->typeTable[value.typeTableIdx];
 	size = typeInfo.size;
 	Value v = context->values[value.valueIdx];
+
 	if (v.flags & VALUEFLAGS_ON_STATIC_STORAGE)
 	{
 		result = v.name;
@@ -408,6 +411,7 @@ String X64IRValueToStr(Context *context, IRValue value)
 	{
 		if (v.flags & VALUEFLAGS_IS_MEMORY)
 		{
+			ASSERT(!(v.flags & VALUEFLAGS_FORCE_REGISTER));
 			offset += v.stackOffset;
 			if (v.flags & VALUEFLAGS_BASE_RELATIVE)
 				result = "rbp"_s;
@@ -625,19 +629,25 @@ bool FitsInOperand(Context *context, u8 acceptableOperands, IRValue value)
 	return acceptableOperands & ACCEPTEDOPERANDS_MEMORY;
 }
 
-void X64Mov(Context *context, X64Procedure *x64Proc, IRValue dst, IRValue src)
+bool CanValueBeMemory(Context *context, IRValue value)
+{
+	bool isImmediate = value.valueType == IRVALUETYPE_IMMEDIATE_INTEGER ||
+					   value.valueType == IRVALUETYPE_IMMEDIATE_FLOAT;
+	if (isImmediate)
+		return false;
+	if (context->values[value.valueIdx].flags & VALUEFLAGS_FORCE_REGISTER)
+		return false;
+	if ((context->values[value.valueIdx].flags & (VALUEFLAGS_IS_ALLOCATED |
+			VALUEFLAGS_IS_MEMORY)) == VALUEFLAGS_IS_ALLOCATED)
+		return false;
+	return true;
+}
+
+void X64MovNoTmp(Context *context, X64Procedure *x64Proc, IRValue dst, IRValue src)
 {
 	X64Instruction result;
 	TypeInfo dstType = context->typeTable[dst.typeTableIdx];
 	TypeInfo srcType = context->typeTable[src.typeTableIdx];
-
-	if (IsValueInMemory(context, dst) && IsValueInMemory(context, src))
-	{
-		IRValue tmp = IRValueNewValue(context, "_mov_mm_tmp"_s, dst.typeTableIdx, VALUEFLAGS_FORCE_REGISTER);
-		X64Mov(context, x64Proc, tmp, src);
-		src = tmp;
-		srcType = context->typeTable[src.typeTableIdx];
-	}
 
 	if (dstType.typeCategory != TYPECATEGORY_FLOATING)
 	{
@@ -704,6 +714,22 @@ void X64Mov(Context *context, X64Procedure *x64Proc, IRValue dst, IRValue src)
 	result.dst = dst;
 	result.src = src;
 	*BucketArrayAdd(&x64Proc->instructions) = result;
+}
+
+void X64Mov(Context *context, X64Procedure *x64Proc, IRValue dst, IRValue src)
+{
+	// ALWAYS! >:) Almost
+	if (CanValueBeMemory(context, dst) && CanValueBeMemory(context, src))
+	//if (IsValueInMemory(context, dst) && IsValueInMemory(context, src))
+	{
+		u8 srcUsedFlag = context->values[src.valueIdx].flags & VALUEFLAGS_IS_USED;
+		IRValue tmp = IRValueNewValue(context, "_movtmp"_s, dst.typeTableIdx,
+				VALUEFLAGS_FORCE_REGISTER | srcUsedFlag);
+		X64MovNoTmp(context, x64Proc, tmp, src);
+		src = tmp;
+	}
+
+	X64MovNoTmp(context, x64Proc, dst, src);
 }
 
 void X64ConvertInstruction(Context *context, IRInstruction inst, X64Procedure *x64Proc)
@@ -1077,14 +1103,22 @@ void X64ConvertInstruction(Context *context, IRInstruction inst, X64Procedure *x
 	}
 	case IRINSTRUCTIONTYPE_PUSH_SCOPE:
 		result.type = X64_Push_Scope;
+		*BucketArrayAdd(&x64Proc->instructions) = result;
 		return;
 	case IRINSTRUCTIONTYPE_POP_SCOPE:
 		result.type = X64_Pop_Scope;
+		*BucketArrayAdd(&x64Proc->instructions) = result;
 		return;
 	case IRINSTRUCTIONTYPE_PUSH_VALUE:
 		result.type = X64_Push_Value;
+		result.valueIdx = inst.pushValue.valueIdx;
+		*BucketArrayAdd(&x64Proc->instructions) = result;
 		return;
 	case IRINSTRUCTIONTYPE_COMMENT:
+		result.type = X64_Comment;
+		result.comment = inst.comment;
+		*BucketArrayAdd(&x64Proc->instructions) = result;
+		return;
 	case IRINSTRUCTIONTYPE_RETURN:
 		return;
 	default:
@@ -1220,6 +1254,7 @@ String X64InstructionToStr(Context *context, X64Instruction inst)
 	{
 	// Two args
 	case X64_MOV:
+	case X64_MOVSX:
 	case X64_MOVZX:
 	case X64_LEA:
 	case X64_ADD:
@@ -1274,6 +1309,8 @@ String X64InstructionToStr(Context *context, X64Instruction inst)
 		return TPrintF("call %S", GetProcedure(context, inst.procedureIdx)->name);
 	case X64_Label:
 		return TPrintF("%S:", inst.label->name);
+	case X64_Comment:
+		return TPrintF("; %S", inst.comment);
 	case X64_Ignore:
 	case X64_Push_Scope:
 	case X64_Pop_Scope:
@@ -1335,10 +1372,32 @@ void X64PrintInstructions(Context *context, Array<X64Procedure> x64Procedures)
 	}
 }
 
+s64 X64StaticDataAlignTo(Context *context, s64 bytesSoFar, s64 alignment)
+{
+	s64 padding = (-bytesSoFar & (alignment - 1));
+	if (padding)
+	{
+		PrintOut(context, "    DB 00");
+		for (int i = 1; i < padding; ++i)
+		{
+			PrintOut(context, ", 00");
+		}
+		PrintOut(context, "\n");
+		bytesSoFar += padding;
+	}
+	return bytesSoFar;
+}
+
 void X64PrintStaticData(Context *context, String name, IRValue value, s64 typeTableIdx)
 {
-	if (value.valueType == IRVALUETYPE_IMMEDIATE_STRING)
+	static s64 bytesSoFar = 0;
+
+	switch (value.valueType)
 	{
+	case IRVALUETYPE_IMMEDIATE_STRING:
+	{
+		bytesSoFar = X64StaticDataAlignTo(context, bytesSoFar, 8);
+
 		String str = context->stringLiterals[value.immediateStringIdx];
 		s64 size = str.size;
 		if (size == 0)
@@ -1349,10 +1408,13 @@ void X64PrintStaticData(Context *context, String name, IRValue value, s64 typeTa
 				if (str.data[i] == '\\') --size;
 			PrintOut(context, "%S DQ %.16llxH, _str_%d\n", name, size, value.immediateStringIdx);
 		}
-	}
-	else if (value.valueType == IRVALUETYPE_IMMEDIATE_FLOAT)
+
+		bytesSoFar += 16;
+	} break;
+	case IRVALUETYPE_IMMEDIATE_FLOAT:
 	{
 		TypeInfo typeInfo = context->typeTable[typeTableIdx];
+		bytesSoFar = X64StaticDataAlignTo(context, bytesSoFar, typeInfo.size);
 		switch (typeInfo.size)
 		{
 		case 4:
@@ -1368,27 +1430,41 @@ void X64PrintStaticData(Context *context, String name, IRValue value, s64 typeTa
 		default:
 			ASSERT(!"Invalid immediate size");
 		}
-	}
-	else if (value.valueType == IRVALUETYPE_IMMEDIATE_STRUCT)
+		bytesSoFar += typeInfo.size;
+	} break;
+	case IRVALUETYPE_IMMEDIATE_STRUCT:
 	{
+		bytesSoFar = X64StaticDataAlignTo(context, bytesSoFar, 8);
+
 		Array<IRValue> members = value.immediateStructMembers;
-		X64PrintStaticData(context, name, members[0], members[0].typeTableIdx);
-		for (int memberIdx = 1; memberIdx < members.size; ++memberIdx)
+		for (int memberIdx = 0; memberIdx < members.size; ++memberIdx)
 		{
-			X64PrintStaticData(context, "   "_s, members[memberIdx],
+			String memberName = memberIdx ? "   "_s : name;
+			X64PrintStaticData(context, memberName, members[memberIdx],
 					members[memberIdx].typeTableIdx);
 		}
-	}
-	else if (value.valueType == IRVALUETYPE_MEMORY)
+	} break;
+	case IRVALUETYPE_MEMORY:
 	{
+		bytesSoFar = X64StaticDataAlignTo(context, bytesSoFar, 8);
+
 		Value v = context->values[value.memory.baseValueIdx];
 		ASSERT(v.flags & VALUEFLAGS_ON_STATIC_STORAGE);
 		ASSERT(v.name.size);
 		PrintOut(context, "%S DQ %S\n", name, v.name);
-	}
-	else if (value.valueType != IRVALUETYPE_INVALID)
+
+		bytesSoFar += 8;
+	} break;
+	case IRVALUETYPE_INVALID:
 	{
 		TypeInfo typeInfo = context->typeTable[typeTableIdx];
+		PrintOut(context, "COMM %S:BYTE:0%llxH\n", name,
+				typeInfo.size);
+	} break;
+	default:
+	{
+		TypeInfo typeInfo = context->typeTable[typeTableIdx];
+		bytesSoFar = X64StaticDataAlignTo(context, bytesSoFar, typeInfo.size);
 		switch (typeInfo.size)
 		{
 		case 1:
@@ -1410,12 +1486,8 @@ void X64PrintStaticData(Context *context, String name, IRValue value, s64 typeTa
 		default:
 			ASSERT(!"Invalid immediate size");
 		}
+		bytesSoFar += typeInfo.size;
 	}
-	else
-	{
-		TypeInfo typeInfo = context->typeTable[typeTableIdx];
-		PrintOut(context, "COMM %S:BYTE:0%llxH\n", name,
-				typeInfo.size);
 	}
 }
 
@@ -1489,37 +1561,35 @@ void BackendMain(Context *context)
 	x64InstructionInfos[X64_CVTSS2SD] =  { "cvtss2sd"_s, ACCEPTEDOPERANDS_REGISTER, ACCEPTEDOPERANDS_REGMEM };
 	x64InstructionInfos[X64_CVTSD2SS] =  { "cvtsd2ss"_s, ACCEPTEDOPERANDS_REGISTER, ACCEPTEDOPERANDS_REGMEM };
 
-	u32 RAX_valueIdx = NewValue(context, "RAX"_s, TYPETABLEIDX_S64, VALUEFLAGS_IS_ALLOCATED);
-	u32 RCX_valueIdx = NewValue(context, "RCX"_s, TYPETABLEIDX_S64, VALUEFLAGS_IS_ALLOCATED);
-	u32 RDX_valueIdx = NewValue(context, "RDX"_s, TYPETABLEIDX_S64, VALUEFLAGS_IS_ALLOCATED);
-	u32 RBX_valueIdx = NewValue(context, "RBX"_s, TYPETABLEIDX_S64, VALUEFLAGS_IS_ALLOCATED);
-	u32 RSI_valueIdx = NewValue(context, "RSI"_s, TYPETABLEIDX_S64, VALUEFLAGS_IS_ALLOCATED);
-	u32 RDI_valueIdx = NewValue(context, "RDI"_s, TYPETABLEIDX_S64, VALUEFLAGS_IS_ALLOCATED);
-	u32 RSP_valueIdx = NewValue(context, "RSP"_s, TYPETABLEIDX_S64, VALUEFLAGS_IS_ALLOCATED);
-	u32 RBP_valueIdx = NewValue(context, "RBP"_s, TYPETABLEIDX_S64, VALUEFLAGS_IS_ALLOCATED);
-	u32 R8_valueIdx  = NewValue(context, "R8"_s,  TYPETABLEIDX_S64, VALUEFLAGS_IS_ALLOCATED);
-	u32 R9_valueIdx  = NewValue(context, "R9"_s,  TYPETABLEIDX_S64, VALUEFLAGS_IS_ALLOCATED);
-	u32 R10_valueIdx = NewValue(context, "R10"_s, TYPETABLEIDX_S64, VALUEFLAGS_IS_ALLOCATED);
-	u32 R11_valueIdx = NewValue(context, "R11"_s, TYPETABLEIDX_S64, VALUEFLAGS_IS_ALLOCATED);
-	u32 R12_valueIdx = NewValue(context, "R12"_s, TYPETABLEIDX_S64, VALUEFLAGS_IS_ALLOCATED);
-	u32 R13_valueIdx = NewValue(context, "R13"_s, TYPETABLEIDX_S64, VALUEFLAGS_IS_ALLOCATED);
-	u32 R14_valueIdx = NewValue(context, "R14"_s, TYPETABLEIDX_S64, VALUEFLAGS_IS_ALLOCATED);
-	u32 R15_valueIdx = NewValue(context, "R15"_s, TYPETABLEIDX_S64, VALUEFLAGS_IS_ALLOCATED);
+	const u8 regValueFlags = VALUEFLAGS_IS_USED | VALUEFLAGS_IS_ALLOCATED;
+	u32 RAX_valueIdx = NewValue(context, "RAX"_s, TYPETABLEIDX_S64, regValueFlags);
+	u32 RCX_valueIdx = NewValue(context, "RCX"_s, TYPETABLEIDX_S64, regValueFlags);
+	u32 RDX_valueIdx = NewValue(context, "RDX"_s, TYPETABLEIDX_S64, regValueFlags);
+	u32 RBX_valueIdx = NewValue(context, "RBX"_s, TYPETABLEIDX_S64, regValueFlags);
+	u32 RSI_valueIdx = NewValue(context, "RSI"_s, TYPETABLEIDX_S64, regValueFlags);
+	u32 RDI_valueIdx = NewValue(context, "RDI"_s, TYPETABLEIDX_S64, regValueFlags);
+	u32 RSP_valueIdx = NewValue(context, "RSP"_s, TYPETABLEIDX_S64, regValueFlags);
+	u32 RBP_valueIdx = NewValue(context, "RBP"_s, TYPETABLEIDX_S64, regValueFlags);
+	u32 R8_valueIdx  = NewValue(context, "R8"_s,  TYPETABLEIDX_S64, regValueFlags);
+	u32 R9_valueIdx  = NewValue(context, "R9"_s,  TYPETABLEIDX_S64, regValueFlags);
+	u32 R10_valueIdx = NewValue(context, "R10"_s, TYPETABLEIDX_S64, regValueFlags);
+	u32 R11_valueIdx = NewValue(context, "R11"_s, TYPETABLEIDX_S64, regValueFlags);
+	u32 R12_valueIdx = NewValue(context, "R12"_s, TYPETABLEIDX_S64, regValueFlags);
+	u32 R13_valueIdx = NewValue(context, "R13"_s, TYPETABLEIDX_S64, regValueFlags);
+	u32 R14_valueIdx = NewValue(context, "R14"_s, TYPETABLEIDX_S64, regValueFlags);
+	u32 R15_valueIdx = NewValue(context, "R15"_s, TYPETABLEIDX_S64, regValueFlags);
 
-	u32 XMM0_valueIdx = NewValue(context, "XMM0"_s, TYPETABLEIDX_F64, VALUEFLAGS_IS_ALLOCATED);
-	u32 XMM1_valueIdx = NewValue(context, "XMM1"_s, TYPETABLEIDX_F64, VALUEFLAGS_IS_ALLOCATED);
-	u32 XMM2_valueIdx = NewValue(context, "XMM2"_s, TYPETABLEIDX_F64, VALUEFLAGS_IS_ALLOCATED);
-	u32 XMM3_valueIdx = NewValue(context, "XMM3"_s, TYPETABLEIDX_F64, VALUEFLAGS_IS_ALLOCATED);
-	u32 XMM4_valueIdx = NewValue(context, "XMM4"_s, TYPETABLEIDX_F64, VALUEFLAGS_IS_ALLOCATED);
-	u32 XMM5_valueIdx = NewValue(context, "XMM5"_s, TYPETABLEIDX_F64, VALUEFLAGS_IS_ALLOCATED);
-	u32 XMM6_valueIdx = NewValue(context, "XMM6"_s, TYPETABLEIDX_F64, VALUEFLAGS_IS_ALLOCATED);
-	u32 XMM7_valueIdx = NewValue(context, "XMM7"_s, TYPETABLEIDX_F64, VALUEFLAGS_IS_ALLOCATED);
+	u32 XMM0_valueIdx = NewValue(context, "XMM0"_s, TYPETABLEIDX_F64, regValueFlags);
+	u32 XMM1_valueIdx = NewValue(context, "XMM1"_s, TYPETABLEIDX_F64, regValueFlags);
+	u32 XMM2_valueIdx = NewValue(context, "XMM2"_s, TYPETABLEIDX_F64, regValueFlags);
+	u32 XMM3_valueIdx = NewValue(context, "XMM3"_s, TYPETABLEIDX_F64, regValueFlags);
+	u32 XMM4_valueIdx = NewValue(context, "XMM4"_s, TYPETABLEIDX_F64, regValueFlags);
+	u32 XMM5_valueIdx = NewValue(context, "XMM5"_s, TYPETABLEIDX_F64, regValueFlags);
+	u32 XMM6_valueIdx = NewValue(context, "XMM6"_s, TYPETABLEIDX_F64, regValueFlags);
+	u32 XMM7_valueIdx = NewValue(context, "XMM7"_s, TYPETABLEIDX_F64, regValueFlags);
 
 	for (int i = 0; i < X64REGISTER_Count; ++i)
-	{
-		context->values[RAX_valueIdx + i].flags = VALUEFLAGS_IS_ALLOCATED;
 		context->values[RAX_valueIdx + i].allocatedRegister = i;
-	}
 
 	RAX  = { IRVALUETYPE_VALUE, RAX_valueIdx, TYPETABLEIDX_S64 };
 	RCX  = { IRVALUETYPE_VALUE, RCX_valueIdx, TYPETABLEIDX_S64 };
@@ -1767,7 +1837,7 @@ void BackendMain(Context *context)
 					inst->dst.valueType == IRVALUETYPE_MEMORY)
 				{
 					Value v = context->values[inst->dst.valueIdx];
-					if (!(v.flags & (VALUEFLAGS_IS_ALLOCATED | VALUEFLAGS_ON_STATIC_STORAGE)))
+					if (!(v.flags & (VALUEFLAGS_IS_USED | VALUEFLAGS_ON_STATIC_STORAGE)))
 						inst->type = X64_Ignore;
 				}
 			} break;
@@ -1797,8 +1867,18 @@ void BackendMain(Context *context)
 		s64 stringTypeIdx = FindTypeInStackByName(context, {}, "String"_s);
 		s64 pointerToStringIdx = GetTypeInfoPointerOf(context, stringTypeIdx);
 		s64 pointerToS64Idx = GetTypeInfoPointerOf(context, TYPETABLEIDX_S64);
+
 		s64 typeInfoIdx = FindTypeInStackByName(context, {}, "TypeInfo"_s);
 		s64 pointerToTypeInfoIdx = GetTypeInfoPointerOf(context, typeInfoIdx);
+#if 0
+		s64 typeInfoIntegerIdx = FindTypeInStackByName(context, {}, "TypeInfoInteger"_s);
+		s64 typeInfoStructIdx = FindTypeInStackByName(context, {}, "TypeInfoStruct"_s);
+		s64 typeInfoStructMemberIdx = FindTypeInStackByName(context, {}, "TypeInfoStructMember"_s);
+		s64 typeInfoEnumIdx = FindTypeInStackByName(context, {}, "TypeInfoEnum"_s);
+		s64 typeInfoPointerIdx = FindTypeInStackByName(context, {}, "TypeInfoPointer"_s);
+		s64 typeInfoArrayIdx = FindTypeInStackByName(context, {}, "TypeInfoArray"_s);
+		s64 typeInfoProcedurePointerIdx = FindTypeInStackByName(context, {}, "TypeInfoProcedurePointer"_s);
+#endif
 
 		u64 tableSize = BucketArrayCount(&context->typeTable);
 		for (u64 typeTableIdx = 1; typeTableIdx < tableSize; ++typeTableIdx)
@@ -1809,6 +1889,7 @@ void BackendMain(Context *context)
 
 			IRStaticVariable newStaticVar = { typeInfo.valueIdx };
 			newStaticVar.initialValue.valueType = IRVALUETYPE_IMMEDIATE_STRUCT;
+			newStaticVar.initialValue.typeTableIdx = -1;
 
 			switch (typeInfo.typeCategory)
 			{
@@ -1816,19 +1897,20 @@ void BackendMain(Context *context)
 			{
 				ArrayInit(&newStaticVar.initialValue.immediateStructMembers, 3, FrameAlloc);
 				*ArrayAdd(&newStaticVar.initialValue.immediateStructMembers) =
-				{ IRValueImmediate(0, TYPETABLEIDX_S8) };
+					{ IRValueImmediate(0, TYPETABLEIDX_S8) };
 				*ArrayAdd(&newStaticVar.initialValue.immediateStructMembers) =
-				{ IRValueImmediate(typeInfo.size, TYPETABLEIDX_S64) };
+					{ IRValueImmediate(typeInfo.size, TYPETABLEIDX_S64) };
 				*ArrayAdd(&newStaticVar.initialValue.immediateStructMembers) =
-				{ IRValueImmediate(typeInfo.integerInfo.isSigned, TYPETABLEIDX_S32) };
+					{ IRValueImmediate(typeInfo.integerInfo.isSigned, TYPETABLEIDX_S32) };
 			} break;
 			case TYPECATEGORY_FLOATING:
 			{
+				newStaticVar.initialValue.typeTableIdx = typeInfoIdx;
 				ArrayInit(&newStaticVar.initialValue.immediateStructMembers, 2, FrameAlloc);
 				*ArrayAdd(&newStaticVar.initialValue.immediateStructMembers) =
-				{ IRValueImmediate(1, TYPETABLEIDX_S8) };
+					{ IRValueImmediate(1, TYPETABLEIDX_S8) };
 				*ArrayAdd(&newStaticVar.initialValue.immediateStructMembers) =
-				{ IRValueImmediate(typeInfo.size, TYPETABLEIDX_S64) };
+					{ IRValueImmediate(typeInfo.size, TYPETABLEIDX_S64) };
 			} break;
 			case TYPECATEGORY_STRUCT:
 			case TYPECATEGORY_UNION:
@@ -1866,17 +1948,17 @@ void BackendMain(Context *context)
 
 				ArrayInit(&newStaticVar.initialValue.immediateStructMembers, 6, FrameAlloc);
 				*ArrayAdd(&newStaticVar.initialValue.immediateStructMembers) =
-				{ IRValueImmediate(2, TYPETABLEIDX_S8) };
+					{ IRValueImmediate(2, TYPETABLEIDX_S8) };
 				*ArrayAdd(&newStaticVar.initialValue.immediateStructMembers) =
-				{ IRValueImmediate(typeInfo.size, TYPETABLEIDX_S64) };
+					{ IRValueImmediate(typeInfo.size, TYPETABLEIDX_S64) };
 				*ArrayAdd(&newStaticVar.initialValue.immediateStructMembers) =
-				{ IRValueImmediateString(context, structName) };
+					{ IRValueImmediateString(context, structName) };
 				*ArrayAdd(&newStaticVar.initialValue.immediateStructMembers) =
-				{ IRValueImmediate(typeInfo.typeCategory == TYPECATEGORY_UNION, TYPETABLEIDX_S32) };
+					{ IRValueImmediate(typeInfo.typeCategory == TYPECATEGORY_UNION, TYPETABLEIDX_S32) };
 				*ArrayAdd(&newStaticVar.initialValue.immediateStructMembers) =
-				{ IRValueImmediate(typeInfo.structInfo.members.size, TYPETABLEIDX_S64) };
+					{ IRValueImmediate(typeInfo.structInfo.members.size, TYPETABLEIDX_S64) };
 				*ArrayAdd(&newStaticVar.initialValue.immediateStructMembers) =
-				{ IRValueMemory(membersValueIdx, 0, pointerToStructMemberInfoIdx) };
+					{ IRValueMemory(membersValueIdx, 0, pointerToStructMemberInfoIdx) };
 			} break;
 			case TYPECATEGORY_ENUM:
 			{
@@ -2013,6 +2095,7 @@ void BackendMain(Context *context)
 
 	// String literals
 	s64 strCount = (s64)BucketArrayCount(&context->stringLiterals);
+	s64 bytesWritten = 0;
 	for (s64 stringLiteralIdx = 1; stringLiteralIdx < strCount; ++stringLiteralIdx)
 	{
 		PrintOut(context, "_str_%lld DB ", stringLiteralIdx);
@@ -2062,7 +2145,11 @@ void BackendMain(Context *context)
 		}
 		PrintOut(context, "\n");
 		g_memory->framePtr = buffer;
+		bytesWritten += size;
 	}
+
+	//int padding = 16 - (bytesWritten & 15);
+	X64StaticDataAlignTo(context, bytesWritten, 16);
 
 	const u64 staticVariableCount = context->irStaticVariables.size;
 	for (int staticVariableIdx = 0; staticVariableIdx < staticVariableCount; ++staticVariableIdx)
@@ -2195,8 +2282,18 @@ nextTuple:
 		windowsSDKVersion = CStrToString(latestVersionName);
 	}
 
+	bool useWindowsSubsystem = false;
+	StaticDefinition *subsystemStaticDef = FindStaticDefinitionByName(context,
+			"compiler_subsystem"_s);
+	if (subsystemStaticDef)
+	{
+		ASSERT(subsystemStaticDef->definitionType == STATICDEFINITIONTYPE_CONSTANT);
+		ASSERT(subsystemStaticDef->constant.type == CONSTANTTYPE_INTEGER);
+		useWindowsSubsystem = subsystemStaticDef->constant.valueAsInt == 1;
+	}
+
 	String subsystemArgument;
-	if (context->config.windowsSubsystem)
+	if (useWindowsSubsystem)
 		subsystemArgument = "/subsystem:WINDOWS "_s;
 	else
 		subsystemArgument = "/subsystem:CONSOLE "_s;
@@ -2207,6 +2304,7 @@ nextTuple:
 			"/nologo "
 			"/Zd "
 			"/Zi "
+			"/Fm "
 			"/I \"%S\\include\" "
 			"/I \"%S\\include\\%S\\ucrt\" "
 			"/I \"%S\\include\\%S\\shared\" "

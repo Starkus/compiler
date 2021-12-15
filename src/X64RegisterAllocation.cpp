@@ -86,6 +86,8 @@ bool CanBeRegister(Context *context, u32 valueIdx)
 inline bool AddValue(Context *context, u32 valueIdx, X64Procedure *proc,
 		DynamicArray<u32, FrameAlloc, FrameRealloc> *array)
 {
+	context->values[valueIdx].flags |= VALUEFLAGS_IS_USED;
+
 	// Nonsense to take these into account
 	if (!CanBeRegister(context, valueIdx))
 	{
@@ -131,23 +133,24 @@ inline void RemoveIfValue(Context *context, IRValue value, X64Procedure *proc,
 void DoLivenessAnalisisOnInstruction(Context *context, BasicBlock *basicBlock, X64Instruction *inst,
 		DynamicArray<u32, FrameAlloc, FrameRealloc> *liveValues)
 {
-#if DEBUG_OPTIMIZER
-	if (inst->type != X64_Patch && inst->type != X64_Patch_Many)
+	if (context->config.logAllocationInfo)
 	{
-		Print("\t");
-		s64 s = Print("%S", X64InstructionToStr(context, *inst));
-		if (s < 40)
+		if (inst->type != X64_Patch && inst->type != X64_Patch_Many)
 		{
-			char buffer[40];
-			memset(buffer, ' ', sizeof(buffer));
-			buffer[39] = 0;
-			Print("%s", buffer + s);
+			Print("\t");
+			s64 s = Print("%S", X64InstructionToStr(context, *inst));
+			if (s < 40)
+			{
+				char buffer[40];
+				memset(buffer, ' ', sizeof(buffer));
+				buffer[39] = 0;
+				Print("%s", buffer + s);
+			}
+			for (int i = 0; i < liveValues->size; ++i)
+				Print("%S, ", X64IRValueToStr(context, IRValueValue(context, (*liveValues)[i])));
+			Print("\n");
 		}
-		for (int i = 0; i < liveValues->size; ++i)
-			Print("%S, ", X64IRValueToStr(context, IRValueValue(context, (*liveValues)[i])));
-		Print("\n");
 	}
-#endif
 
 	switch (inst->type)
 	{
@@ -268,7 +271,14 @@ void DoLivenessAnalisisOnInstruction(Context *context, BasicBlock *basicBlock, X
 	case X64_SETE:
 	case X64_SETNE:
 	case X64_Label:
+	case X64_Comment:
+	case X64_Push_Scope:
+	case X64_Pop_Scope:
 	{
+	} break;
+	case X64_Push_Value:
+	{
+		context->values[inst->valueIdx].flags |= VALUEFLAGS_HAS_PUSH_INSTRUCTION;
 	} break;
 	case X64_Patch:
 	{
@@ -332,10 +342,9 @@ nodeFound:
 void DoLivenessAnalisis(Context *context, BasicBlock *basicBlock,
 		DynamicArray<u32, FrameAlloc, FrameRealloc> *liveValues)
 {
-#if DEBUG_OPTIMIZER
-	Print("Doing liveness analisis on block %S %d-%d\n", basicBlock->procedure->name,
-			basicBlock->beginIdx, basicBlock->endIdx);
-#endif
+	if (context->config.logAllocationInfo)
+		Print("Doing liveness analisis on block %S %d-%d\n", basicBlock->procedure->name,
+				basicBlock->beginIdx, basicBlock->endIdx);
 
 	for (int i = 0; i < basicBlock->liveValuesAtOutput.size; ++i)
 	{
@@ -477,9 +486,13 @@ void ResolveStackOffsets(Context *context, Array<X64Procedure> x64Procedures)
 		{
 			Value *value = &context->values[proc->spilledValues[spillIdx]];
 			ASSERT(!(value->flags & VALUEFLAGS_IS_ALLOCATED));
+
+			// If the value has properly scoped allocation don't dumbly spill into stack.
+			if (value->flags & VALUEFLAGS_HAS_PUSH_INSTRUCTION)
+				continue;
+
 			u64 size = context->typeTable[value->typeTableIdx].size;
-			//s64 alignment = size > 8 ? 8 : NextPowerOf2(size);
-			s64 alignment = 8; //@Fix: hardcoded alignment because we use 8 byte operands everywhere
+			int alignment = size > 8 ? 8 : NextPowerOf2((int)size);
 			if (stackCursor & (alignment - 1))
 				stackCursor = (stackCursor + alignment) & ~(alignment - 1);
 			ASSERT(stackCursor < S32_MAX);
@@ -499,13 +512,17 @@ void ResolveStackOffsets(Context *context, Array<X64Procedure> x64Procedures)
 			case X64_Push_Value:
 			{
 				Value *value = &context->values[inst->valueIdx];
-				ASSERT(!(value->flags & VALUEFLAGS_IS_ALLOCATED));
+				ASSERT(value->flags & VALUEFLAGS_HAS_PUSH_INSTRUCTION);
+				if (value->flags & VALUEFLAGS_IS_ALLOCATED)
+				{
+					ASSERT(!(value->flags & VALUEFLAGS_IS_MEMORY));
+					goto next;
+				}
 				// We don't allocate static values, the assembler/linker does.
 				ASSERT(!(value->flags & VALUEFLAGS_ON_STATIC_STORAGE));
 
 				u64 size = context->typeTable[value->typeTableIdx].size;
-				//s64 alignment = size > 8 ? 8 : NextPowerOf2(size);
-				s64 alignment = 8; //@Fix: hardcoded alignment because we use 8 byte operands everywhere
+				int alignment = size > 8 ? 8 : NextPowerOf2((int)size);
 				if (stackCursor & (alignment - 1))
 					stackCursor = (stackCursor + alignment) & ~(alignment - 1);
 				ASSERT(stackCursor < S32_MAX);
@@ -524,6 +541,7 @@ void ResolveStackOffsets(Context *context, Array<X64Procedure> x64Procedures)
 				stackCursor = stack[--stack.size];
 			} break;
 			}
+next:
 			inst = X64InstructionStreamAdvance(&stream);
 		}
 		if (stackCursor > (s64)proc->stackSize)
@@ -540,7 +558,8 @@ inline u64 BitIfRegister(Context *context, IRValue irValue)
 	if (irValue.valueType == IRVALUETYPE_VALUE || irValue.valueType == IRVALUETYPE_MEMORY)
 	{
 		Value value = context->values[irValue.valueIdx];
-		if (value.flags & VALUEFLAGS_IS_ALLOCATED && !(value.flags & VALUEFLAGS_IS_MEMORY))
+		if (value.flags & VALUEFLAGS_IS_USED && VALUEFLAGS_IS_ALLOCATED &&
+				!(value.flags & VALUEFLAGS_IS_MEMORY))
 		{
 			ASSERT(value.allocatedRegister < 64);
 			return 1ll << value.allocatedRegister;
@@ -605,7 +624,8 @@ inline u64 RegisterSavingInstruction(Context *context, X64Instruction *inst, u64
 		for (int i = 0; i < inst->liveValues.size; ++i)
 		{
 			Value v = context->values[inst->liveValues[i]];
-			if ((v.flags & (VALUEFLAGS_IS_ALLOCATED | VALUEFLAGS_IS_MEMORY)) == VALUEFLAGS_IS_ALLOCATED)
+			if ((v.flags & (VALUEFLAGS_IS_USED | VALUEFLAGS_IS_ALLOCATED | VALUEFLAGS_IS_MEMORY)) ==
+					(VALUEFLAGS_IS_USED | VALUEFLAGS_IS_ALLOCATED))
 				liveRegisterBits |= (1ll << v.allocatedRegister);
 		}
 
@@ -620,7 +640,8 @@ inline u64 RegisterSavingInstruction(Context *context, X64Instruction *inst, u64
 			if (usedCalleeSaveRegisters & ((u64)1 << i))
 			{
 				u32 newValueIdx = NewValue(context, "_save_reg"_s, TYPETABLEIDX_S64,
-						VALUEFLAGS_FORCE_MEMORY);
+						VALUEFLAGS_IS_USED | VALUEFLAGS_FORCE_MEMORY |
+						VALUEFLAGS_HAS_PUSH_INSTRUCTION);
 
 				IRValue reg = x64Registers[i];
 
@@ -670,16 +691,17 @@ void X64AllocateRegisters(Context *context, Array<X64Procedure> x64Procedures)
 		DynamicArrayInit(&liveValues, 32);
 		DoLivenessAnalisis(context, currentLeafBlock, &liveValues);
 
-#if DEBUG_OPTIMIZER
-		for (int nodeIdx = 0; nodeIdx < context->interferenceGraph.size; ++nodeIdx)
+		if (context->config.logAllocationInfo)
 		{
-			InterferenceGraphNode *currentNode = &context->interferenceGraph[nodeIdx];
-			Print("Value %S coexists with: ", X64IRValueToStr(context, IRValueValue(context, currentNode->valueIdx)));
-			for (int i = 0; i < currentNode->edges.size; ++i)
-				Print("%S, ", X64IRValueToStr(context, IRValueValue(context, currentNode->edges[i])));
-			Print("\n");
+			for (int nodeIdx = 0; nodeIdx < context->interferenceGraph.size; ++nodeIdx)
+			{
+				InterferenceGraphNode *currentNode = &context->interferenceGraph[nodeIdx];
+				Print("Value %S coexists with: ", X64IRValueToStr(context, IRValueValue(context, currentNode->valueIdx)));
+				for (int i = 0; i < currentNode->edges.size; ++i)
+					Print("%S, ", X64IRValueToStr(context, IRValueValue(context, currentNode->edges[i])));
+				Print("\n");
+			}
 		}
-#endif
 
 		Array<InterferenceGraphNode *> nodeStack;
 		ArrayInit(&nodeStack, context->interferenceGraph.size, malloc);
@@ -839,7 +861,7 @@ void X64AllocateRegisters(Context *context, Array<X64Procedure> x64Procedures)
 			if (usedCallerSaveRegisters & ((u64)1 << i))
 			{
 				u32 newValueIdx = NewValue(context, "_save_reg"_s, TYPETABLEIDX_S64,
-						VALUEFLAGS_FORCE_MEMORY);
+						VALUEFLAGS_IS_USED | VALUEFLAGS_FORCE_MEMORY);
 				*DynamicArrayAdd(&proc->spilledValues) = newValueIdx;
 
 				IRValue reg = x64Registers[i];

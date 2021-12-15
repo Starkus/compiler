@@ -137,7 +137,7 @@ void PrintIRInstruction(Context *context, IRInstruction inst)
 	} break;
 	case IRINSTRUCTIONTYPE_COMMENT:
 	{
-		Print("// \"%S\"\n", inst.comment);
+		Print("\t// %S\n", inst.comment);
 	} break;
 	case IRINSTRUCTIONTYPE_JUMP:
 	{
@@ -230,7 +230,6 @@ void PrintIRInstruction(Context *context, IRInstruction inst)
 	}
 }
 
-#if PRINT_IR
 void PrintIRInstructions(Context *context)
 {
 	const int padding = 20;
@@ -300,4 +299,3 @@ void PrintIRInstructions(Context *context)
 	}
 	Print("\n");
 }
-#endif

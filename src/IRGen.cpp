@@ -298,6 +298,14 @@ inline IRInstruction *AddInstruction(Context *context)
 	return BucketArrayAdd(&GetProcedure(context, stackTop.procedureIdx)->instructions);
 }
 
+void IRAddComment(Context *context, String comment)
+{
+	IRInstruction result;
+	result.type = IRINSTRUCTIONTYPE_COMMENT;
+	result.comment = comment;
+	*AddInstruction(context) = result;
+}
+
 IRValue IRValueValue(u32 valueIdx, s64 typeTableIdx = TYPETABLEIDX_S64)
 {
 	IRValue result;
@@ -469,9 +477,6 @@ IRValue IRDoMemberAccess(Context *context, IRValue structValue, StructMember str
 {
 	ASSERT(structValue.valueType == IRVALUETYPE_VALUE || structValue.valueType == IRVALUETYPE_MEMORY);
 
-	// @Delete
-	context->values[structValue.valueIdx].flags |= VALUEFLAGS_FORCE_REGISTER;
-
 	s64 offset = structMember.offset;
 	if (structValue.valueType == IRVALUETYPE_MEMORY)
 		offset += structValue.memory.offset;
@@ -489,6 +494,8 @@ IRValue IRDoArrayAccess(Context *context, IRValue arrayValue, IRValue indexValue
 			arrayTypeInfo.arrayInfo.count == 0)
 	{
 		// Access the 'data' pointer
+		IRAddComment(context, "Addressing dynamic array"_s);
+
 		s64 arrayTypeTableIdx = FindTypeInStackByName(context, {}, "Array"_s);
 		TypeInfo arrayStructTypeInfo = context->typeTable[arrayTypeTableIdx];
 		StructMember dataMember = arrayStructTypeInfo.structInfo.members[1];
@@ -518,14 +525,6 @@ IRValue IRDoArrayAccess(Context *context, IRValue arrayValue, IRValue indexValue
 
 	IRValue result = IRValueMemory(pointerToElementValue.valueIdx, 0, elementTypeIdx);
 	return result;
-}
-
-void IRAddComment(Context *context, String comment)
-{
-	IRInstruction result;
-	result.type = IRINSTRUCTIONTYPE_COMMENT;
-	result.comment = comment;
-	*AddInstruction(context) = result;
 }
 
 inline void IRPushValueIntoStack(Context *context, u32 valueIdx)
@@ -562,6 +561,7 @@ void IRDoAssignment(Context *context, IRValue dstValue, IRValue srcValue)
 	s64 anyTableIdx = FindTypeInStackByName(context, {}, "Any"_s);
 	if (dstValue.typeTableIdx == anyTableIdx && srcValue.typeTableIdx != anyTableIdx)
 	{
+		IRAddComment(context, "Wrapping in Any"_s);
 		TypeInfo anyTypeInfo = context->typeTable[anyTableIdx];
 
 		// Access typeInfo member
@@ -690,10 +690,29 @@ IRValue IRInstructionFromBinaryOperation(Context *context, ASTExpression *expres
 	{
 		IRValue value = IRGenFromExpression(context, leftHand);
 
+#if 0
 		if (context->typeTable[value.typeTableIdx].typeCategory == TYPECATEGORY_POINTER)
 		{
 			// Dereference the pointer to the struct
 			value = IRDereferenceValue(context, value);
+		}
+#endif
+		TypeInfo structTypeInfo = context->typeTable[value.typeTableIdx];
+		if (structTypeInfo.typeCategory == TYPECATEGORY_POINTER)
+		{
+			// Dereference the pointer to the struct
+			String name = TPrintF("_deref_%S", context->values[value.valueIdx].name);
+			u32 newValueIdx = NewValue(context, name, value.typeTableIdx, 0);
+			IRValue newValue = IRValueValue(newValueIdx, value.typeTableIdx);
+
+			IRInstruction inst = {};
+			inst.type = IRINSTRUCTIONTYPE_ASSIGNMENT;
+			inst.assignment.dst = newValue;
+			inst.assignment.src = value;
+			*AddInstruction(context) = inst;
+
+			s64 pointedTypeIdx = structTypeInfo.pointerInfo.pointedTypeTableIdx;
+			value = IRValueMemory(newValueIdx, 0, pointedTypeIdx);
 		}
 
 		ASSERT(rightHand->nodeType == ASTNODETYPE_IDENTIFIER);
@@ -707,7 +726,7 @@ IRValue IRInstructionFromBinaryOperation(Context *context, ASTExpression *expres
 		IRValue arrayValue = IRGenFromExpression(context, leftHand);
 		IRValue indexValue = IRGenFromExpression(context, rightHand);
 
-		if (context->typeTable[leftHand->typeTableIdx].typeCategory == TYPECATEGORY_POINTER)
+		if (context->typeTable[arrayValue.typeTableIdx].typeCategory == TYPECATEGORY_POINTER)
 		{
 			// Dereference the pointer to the array
 			arrayValue = IRDereferenceValue(context, arrayValue);
@@ -998,6 +1017,9 @@ IRValue IRGenFromExpression(Context *context, ASTExpression *expression)
 
 		for (int i = 0; i < expression->block.statements.size; ++i)
 		{
+			SourceLocation loc = expression->block.statements[i].any.loc;
+			IRAddComment(context, GetSourceLine(context, loc.fileBuffer, loc.line));
+
 			IRGenFromExpression(context, &expression->block.statements[i]);
 		}
 
@@ -1717,8 +1739,10 @@ IRValue IRGenFromExpression(Context *context, ASTExpression *expression)
 	} break;
 	case ASTNODETYPE_CAST:
 	{
-		result = IRGenFromExpression(context, expression->castNode.expression);
-		result.typeTableIdx = expression->typeTableIdx;
+		IRValue src = IRGenFromExpression(context, expression->castNode.expression);
+
+		result = IRValueNewValue(context, "_cast"_s, expression->typeTableIdx, 0);
+		IRDoAssignment(context, result, src);
 	} break;
 	case ASTNODETYPE_ENUM_DECLARATION:
 	{

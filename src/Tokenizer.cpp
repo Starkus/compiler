@@ -1,104 +1,3 @@
-const String TokenTypeToString(s32 type)
-{
-	switch (type)
-	{
-	case TOKEN_INVALID:
-		return "<Invalid>"_s;
-	case TOKEN_IDENTIFIER:
-		return "<Identifier>"_s;
-
-	case TOKEN_LITERAL_CHARACTER:
-		return "<Literal char>"_s;
-	case TOKEN_LITERAL_NUMBER:
-		return "<Literal number>"_s;
-	case TOKEN_LITERAL_STRING:
-		return "<Literal string>"_s;
-
-	case TOKEN_OP_ASSIGNMENT:
-		return "< = >"_s;
-	case TOKEN_OP_ASSIGNMENT_PLUS:
-		return "< += >"_s;
-	case TOKEN_OP_ASSIGNMENT_MINUS:
-		return "< -= >"_s;
-	case TOKEN_OP_ASSIGNMENT_MULTIPLY:
-		return "< *= >"_s;
-	case TOKEN_OP_ASSIGNMENT_DIVIDE:
-		return "< /= >"_s;
-	case TOKEN_OP_ASSIGNMENT_MODULO:
-		return "< %= >"_s;
-	case TOKEN_OP_ASSIGNMENT_SHIFT_LEFT:
-		return "< <<= >"_s;
-	case TOKEN_OP_ASSIGNMENT_SHIFT_RIGHT:
-		return "< >>= >"_s;
-	case TOKEN_OP_ASSIGNMENT_OR:
-		return "< ||= >"_s;
-	case TOKEN_OP_ASSIGNMENT_AND:
-		return "< &&= >"_s;
-	case TOKEN_OP_EQUALS:
-		return "< == >"_s;
-	case TOKEN_OP_GREATER_THAN:
-		return "< > >"_s;
-	case TOKEN_OP_GREATER_THAN_OR_EQUAL:
-		return "< >= >"_s;
-	case TOKEN_OP_LESS_THAN:
-		return "< < >"_s;
-	case TOKEN_OP_LESS_THAN_OR_EQUAL:
-		return "< <= >"_s;
-	case TOKEN_OP_PLUS:
-		return "< + >"_s;
-	case TOKEN_OP_MINUS:
-		return "< - >"_s;
-	case TOKEN_OP_MULTIPLY:
-		return "< * >"_s;
-	case TOKEN_OP_DIVIDE:
-		return "< / >"_s;
-	case TOKEN_OP_MODULO:
-		return "< % >"_s;
-	case TOKEN_OP_SHIFT_LEFT:
-		return "< << >"_s;
-	case TOKEN_OP_SHIFT_RIGHT:
-		return "< >> >"_s;
-	case TOKEN_OP_POINTER_TO:
-		return "< ^ >"_s;
-	case TOKEN_OP_DEREFERENCE:
-		return "< @ >"_s;
-	case TOKEN_OP_ARRAY_ACCESS:
-		return "< [] >"_s;
-	case TOKEN_OP_ARROW:
-		return "< -> >"_s;
-	case TOKEN_OP_VARIABLE_DECLARATION:
-		return "< : >"_s;
-	case TOKEN_OP_VARIABLE_DECLARATION_STATIC:
-		return "< :s >"_s;
-	case TOKEN_OP_STATIC_DEF:
-		return "< :: >"_s;
-	case TOKEN_OP_RANGE:
-		return "< .. >"_s;
-
-	case TOKEN_END_OF_FILE:
-		return "<EOF>"_s;
-	}
-
-	if (type >= TOKEN_KEYWORD_Begin && type <= TOKEN_KEYWORD_End)
-		return "<Keyword>"_s;
-	if (type >= TOKEN_OP_Begin && type <= TOKEN_OP_End)
-		return "<Operator>"_s;
-
-	char *str = (char *)FrameAlloc(5);
-	strncpy(str, "<'~'>", 5);
-	str[2] = (char)type;
-	return { 5, str };
-}
-
-// @Speed: pass token by copy?
-const String TokenToString(Token *token)
-{
-	if (token->type >= TOKEN_KEYWORD_Begin && token->type <= TOKEN_KEYWORD_End)
-		return token->string;
-
-	return TokenTypeToString(token->type);
-}
-
 inline bool IsTokenKeyword(Token *token)
 {
 	return token->type >= TOKEN_KEYWORD_Begin && token->type <= TOKEN_KEYWORD_End;
@@ -238,7 +137,8 @@ inline bool TokenIsEqual(Token *a, Token *b)
 	return true;
 }
 
-Token ReadTokenAndAdvance(Tokenizer *tokenizer)
+void TokenizeFile(Context *context);
+Token ReadTokenAndAdvance(Context *context, Tokenizer *tokenizer)
 {
 	Token result = {};
 
@@ -262,7 +162,10 @@ Token ReadTokenAndAdvance(Tokenizer *tokenizer)
 
 	result.begin = tokenizer->cursor;
 	result.loc.line = tokenizer->line;
-	result.loc.character = tokenizer->cursor - tokenizer->beginningOfLine;
+	result.loc.character = (s32)(tokenizer->cursor - tokenizer->beginningOfLine);
+	result.loc.file = context->filename;
+	result.loc.fileBuffer = context->fileBuffer;
+	result.loc.size = result.size;
 
 	if (!*tokenizer->cursor || tokenizer->cursor >= tokenizer->end)
 	{
@@ -285,6 +188,8 @@ Token ReadTokenAndAdvance(Tokenizer *tokenizer)
 			}
 			++result.size;
 			++tokenizer->cursor;
+			if (!*tokenizer->cursor || tokenizer->cursor >= tokenizer->end)
+				LogError(context, result.loc, "String literal never closed!"_s);
 		}
 		++tokenizer->cursor;
 	}
@@ -406,6 +311,35 @@ numberDone:
 		char next = *(tokenizer->cursor + 1);
 		switch (*tokenizer->cursor)
 		{
+		case '#':
+		{
+			do
+			{
+				++result.size;
+				++tokenizer->cursor;
+			}
+			while (IsAlpha(*tokenizer->cursor));
+			if (StringEquals(result.string, "#include"_s))
+			{
+				// @Improve if we have out of order compilation some day.
+				Token sourceFileToken = ReadTokenAndAdvance(context, tokenizer);
+				if (sourceFileToken.type != TOKEN_LITERAL_STRING)
+					LogError(context, sourceFileToken.loc, "ERROR! #include must be followed by string literal"_s);
+
+				String previousFilename = context->filename;
+				u8 *previousFileBuffer = context->fileBuffer;
+
+				context->filename = sourceFileToken.string;
+				Win32ReadEntireFile(StringToCStr(sourceFileToken.string, FrameAlloc), &context->fileBuffer,
+					&context->fileSize, FrameAlloc);
+				TokenizeFile(context);
+
+				context->filename = previousFilename;
+				context->fileBuffer = previousFileBuffer;
+
+				return ReadTokenAndAdvance(context, tokenizer);
+			}
+		} break;
 		case '=':
 		{
 			if (next == '=')
@@ -620,7 +554,7 @@ numberDone:
 		}
 		};
 		++tokenizer->cursor;
-		result.size = tokenizer->cursor - result.begin;
+		result.size = (s32)(tokenizer->cursor - result.begin);
 	}
 	else
 	{
@@ -642,11 +576,7 @@ void TokenizeFile(Context *context)
 	tokenizer.line = 1; // Line numbers start at 1 not 0.
 	while (true)
 	{
-		Token newToken = ReadTokenAndAdvance(&tokenizer);
-
-		newToken.loc.file = context->filename;
-		newToken.loc.fileBuffer = context->fileBuffer;
-		newToken.loc.size = newToken.size;
+		Token newToken = ReadTokenAndAdvance(context, &tokenizer);
 
 		if (newToken.type == TOKEN_END_OF_FILE)
 			break;

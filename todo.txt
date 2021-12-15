@@ -1,4 +1,4 @@
 * Vararg procedure call with 0 vararg arguments crashes!
-* ALIGNMENT
 * remove stupid copymemory everywhere
-* procedure pointers
+* call procedure pointers
+* Reduce moving things from one register to another unnecessarily

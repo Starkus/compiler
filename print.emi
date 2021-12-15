@@ -2,7 +2,13 @@ PrintF :: (format : String, ..args)
 {
 	PrintArgument :: (arg : Any)
 	{
-		if arg.typeInfo.typeKind == TypeKind_Integer
+		if arg.typeInfo == typeof(String)
+		{
+			//Print(@ cast(^String) arg.data);
+			str : String = @ cast(^String) arg.data;
+			Print(str);
+		}
+		else if arg.typeInfo.typeKind == TypeKind_Integer
 		{
 			intInfo := cast(^TypeInfoInteger) arg.typeInfo;
 			num : s64;

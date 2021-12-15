@@ -1,0 +1,70 @@
+ATTACH_PARENT_PROCESS :: -1;
+WS_CLIPCHILDREN :: 0x02000000;
+WS_CLIPSIBLINGS :: 0x04000000;
+WS_SIZEBOX      :: 0x00040000;
+WS_SYSMENU      :: 0x00080000;
+CS_VREDRAW :: 0x0001;
+CS_HREDRAW :: 0x0002;
+CS_OWNDC   :: 0x0020;
+SW_SHOW    :: 5;
+PM_REMOVE  :: 0x0001;
+WM_DESTROY :: 0x0002;
+WM_CLOSE   :: 0x0010;
+WM_QUIT    :: 0x0012;
+
+WNDCLASSEXA :: struct
+{
+	cbSize : u32;
+	style : u32;
+	lpfnWndProc : ^void;
+	cbClsExtra : s32;
+	cbWndExtra : s32;
+	hInstance : ^void;
+	hIcon : ^void;
+	hCursor : ^void;
+	hBrush : ^void;
+	lpszMenuName : ^u8;
+	lpszClassName : ^u8;
+	hIconSm : ^void;
+};
+POINT :: struct
+{
+	x : s32;
+	y : s32;
+};
+MSG :: struct
+{
+	hWnd : ^void;
+	message : u32;
+	wParam : ^void;
+	lParam : ^void;
+	time : u32;
+	pt : POINT;
+	lPrivate : u32;
+};
+
+AttachConsole :: external (handle : ^void);
+GetModuleHandleA :: external (lpModuleName : ^void) -> ^void;
+RegisterClassExA :: external (wndClass : ^WNDCLASSEXA) -> u16;
+CreateWindowExA :: external (
+		dwExStyle : u32,
+		lpClassName : ^u8,
+		lpWindowName : ^u8,
+		dwStyle : u32,
+		x : s32,
+		y : s32,
+		nWidth : s32,
+		nHeight : s32,
+		hWndParent : ^void,
+		hMenu : ^void,
+		hInstance : ^void,
+		lpParam : ^void
+	) -> ^void;
+ShowWindow :: external (hWnd : ^void, nCmdShow : s32);
+GetLastError :: external () -> u32;
+DefWindowProcA :: external (hWnd : ^void, uMsg : u32, wParam : ^void, lParam : ^void) -> u64;
+PeekMessageA :: external (lpMsg : ^MSG, hWnd : ^void, wMsgFilterMin : u32, wMsgFilterMax : u32,
+		wRemoveMsg : u32) -> bool;
+TranslateMessage :: external (message : ^MSG) -> bool;
+DispatchMessageA :: external (message : ^MSG) -> s64;
+

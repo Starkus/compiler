@@ -74,8 +74,9 @@ const String TPrintF(const char *format, ...)
 
 struct Config
 {
-	bool silent;
-	bool windowsSubsystem;
+	bool logAST;
+	bool logIR;
+	bool logAllocationInfo;
 };
 
 struct Token;
@@ -135,97 +136,6 @@ struct Context
 	BucketArray<X64Instruction, 128, malloc, realloc> patchedInstructions;
 };
 
-#include "Tokenizer.cpp"
-
-void Log(Context *context, SourceLocation loc, String str)
-{
-	Print("%S %d:%d %S\n", loc.file, loc.line, loc.character, str);
-
-	// Print line
-	const char *beginningOfLine = nullptr;
-	int size = 0;
-	{
-		int l = 1;
-		for (const char *scan = (const char *)loc.fileBuffer; *scan; ++scan)
-		{
-			if (l == loc.line)
-			{
-				beginningOfLine = scan;
-				break;
-			}
-			if (*scan == '\n')
-				++l;
-		}
-		for (const char *scan = beginningOfLine; ; ++scan)
-		{
-			if (!*scan || *scan == '\n')
-				break;
-			++size;
-		}
-	}
-	Print("... %.*s\n... ", size, beginningOfLine);
-
-	int shift = 0;
-	for (int i = 0; i < loc.character; ++i)
-	{
-		if (beginningOfLine[i] == '\t')
-			shift += 4;
-		else
-			++shift;
-	}
-
-	for (int i = 0; i < shift; ++i)
-		Print(" ");
-	for (int i = 0; i < loc.size; ++i)
-		Print("^");
-	Print("\n");
-}
-
-inline void LogErrorNoCrash(Context *context, SourceLocation loc, String errorStr)
-{
-	Log(context, loc, StringConcat("ERROR: "_s, errorStr));
-}
-
-#define LogError(context, loc, str) do { LogErrorNoCrash(context, loc, str); CRASH; } while(0)
-
-inline void LogWarning(Context *context, SourceLocation loc, String str)
-{
-	Log(context, loc, StringConcat("WARNING: "_s, str));
-}
-
-inline void LogNote(Context *context, SourceLocation loc, String str)
-{
-	Log(context, loc, StringConcat("NOTE: "_s, str));
-}
-
-void AssertToken(Context *context, Token *token, int type)
-{
-	if (token->type != type)
-	{
-		const String tokenTypeGot = TokenToString(token);
-		const String tokenTypeExp = TokenTypeToString(type);
-		const String errorStr = TPrintF("Expected token of type %S but got %S",
-				tokenTypeExp, tokenTypeGot);
-		LogError(context, token->loc, errorStr);
-	}
-}
-
-void UnexpectedTokenError(Context *context, Token *token)
-{
-	const String tokenType = TokenTypeToString(token->type);
-	const String errorStr = TPrintF("Unexpected token of type %S", tokenType);
-	LogError(context, token->loc, errorStr);
-}
-
-#include "Parser.cpp"
-#include "PrintAST.cpp"
-#include "TypeChecker.cpp"
-#include "IRGen.cpp"
-#include "PrintIR.cpp"
-//#include "Optimize.cpp"
-//#include "WriteToC.cpp"
-#include "x64.cpp"
-
 bool Win32ReadEntireFile(const char *filename, u8 **fileBuffer, u64 *fileSize, void *(*allocFunc)(u64))
 {
 	char fullname[MAX_PATH];
@@ -274,6 +184,199 @@ bool Win32ReadEntireFile(const char *filename, u8 **fileBuffer, u64 *fileSize, v
 	return error == ERROR_SUCCESS;
 }
 
+String GetSourceLine(Context *context, const u8 *fileBuffer, s32 line)
+{
+	String sourceLine = {};
+	{
+		int l = 1;
+		for (const char *scan = (const char *)fileBuffer; *scan; ++scan)
+		{
+			if (l == line)
+			{
+				sourceLine.data = scan;
+				break;
+			}
+			if (*scan == '\n')
+				++l;
+		}
+		for (const char *scan = sourceLine.data; ; ++scan)
+		{
+			if (!*scan || *scan == '\n' || *scan == '\r')
+				break;
+			++sourceLine.size;
+		}
+	}
+	return sourceLine;
+}
+
+const String TokenTypeToString(s32 type)
+{
+	switch (type)
+	{
+	case TOKEN_INVALID:
+		return "<Invalid>"_s;
+	case TOKEN_IDENTIFIER:
+		return "<Identifier>"_s;
+
+	case TOKEN_LITERAL_CHARACTER:
+		return "<Literal char>"_s;
+	case TOKEN_LITERAL_NUMBER:
+		return "<Literal number>"_s;
+	case TOKEN_LITERAL_STRING:
+		return "<Literal string>"_s;
+
+	case TOKEN_OP_ASSIGNMENT:
+		return "< = >"_s;
+	case TOKEN_OP_ASSIGNMENT_PLUS:
+		return "< += >"_s;
+	case TOKEN_OP_ASSIGNMENT_MINUS:
+		return "< -= >"_s;
+	case TOKEN_OP_ASSIGNMENT_MULTIPLY:
+		return "< *= >"_s;
+	case TOKEN_OP_ASSIGNMENT_DIVIDE:
+		return "< /= >"_s;
+	case TOKEN_OP_ASSIGNMENT_MODULO:
+		return "< %= >"_s;
+	case TOKEN_OP_ASSIGNMENT_SHIFT_LEFT:
+		return "< <<= >"_s;
+	case TOKEN_OP_ASSIGNMENT_SHIFT_RIGHT:
+		return "< >>= >"_s;
+	case TOKEN_OP_ASSIGNMENT_OR:
+		return "< ||= >"_s;
+	case TOKEN_OP_ASSIGNMENT_AND:
+		return "< &&= >"_s;
+	case TOKEN_OP_EQUALS:
+		return "< == >"_s;
+	case TOKEN_OP_GREATER_THAN:
+		return "< > >"_s;
+	case TOKEN_OP_GREATER_THAN_OR_EQUAL:
+		return "< >= >"_s;
+	case TOKEN_OP_LESS_THAN:
+		return "< < >"_s;
+	case TOKEN_OP_LESS_THAN_OR_EQUAL:
+		return "< <= >"_s;
+	case TOKEN_OP_PLUS:
+		return "< + >"_s;
+	case TOKEN_OP_MINUS:
+		return "< - >"_s;
+	case TOKEN_OP_MULTIPLY:
+		return "< * >"_s;
+	case TOKEN_OP_DIVIDE:
+		return "< / >"_s;
+	case TOKEN_OP_MODULO:
+		return "< % >"_s;
+	case TOKEN_OP_SHIFT_LEFT:
+		return "< << >"_s;
+	case TOKEN_OP_SHIFT_RIGHT:
+		return "< >> >"_s;
+	case TOKEN_OP_POINTER_TO:
+		return "< ^ >"_s;
+	case TOKEN_OP_DEREFERENCE:
+		return "< @ >"_s;
+	case TOKEN_OP_ARRAY_ACCESS:
+		return "< [] >"_s;
+	case TOKEN_OP_ARROW:
+		return "< -> >"_s;
+	case TOKEN_OP_VARIABLE_DECLARATION:
+		return "< : >"_s;
+	case TOKEN_OP_VARIABLE_DECLARATION_STATIC:
+		return "< :s >"_s;
+	case TOKEN_OP_STATIC_DEF:
+		return "< :: >"_s;
+	case TOKEN_OP_RANGE:
+		return "< .. >"_s;
+
+	case TOKEN_END_OF_FILE:
+		return "<EOF>"_s;
+	}
+
+	if (type >= TOKEN_KEYWORD_Begin && type <= TOKEN_KEYWORD_End)
+		return "<Keyword>"_s;
+	if (type >= TOKEN_OP_Begin && type <= TOKEN_OP_End)
+		return "<Operator>"_s;
+
+	char *str = (char *)FrameAlloc(5);
+	strncpy(str, "<'~'>", 5);
+	str[2] = (char)type;
+	return { 5, str };
+}
+
+// @Speed: pass token by copy?
+const String TokenToString(Token *token)
+{
+	if (token->type >= TOKEN_KEYWORD_Begin && token->type <= TOKEN_KEYWORD_End)
+		return token->string;
+
+	return TokenTypeToString(token->type);
+}
+
+void Log(Context *context, SourceLocation loc, String str)
+{
+	Print("%S %d:%d %S\n", loc.file, loc.line, loc.character, str);
+
+	String sourceLine = GetSourceLine(context, loc.fileBuffer, loc.line);
+	Print("... %S\n... ", sourceLine);
+
+	int shift = 0;
+	for (int i = 0; i < loc.character; ++i)
+	{
+		if (sourceLine.data[i] == '\t')
+			shift += 4;
+		else
+			++shift;
+	}
+
+	for (int i = 0; i < shift; ++i)
+		Print(" ");
+	for (int i = 0; i < loc.size; ++i)
+		Print("^");
+	Print("\n");
+}
+
+inline void LogErrorNoCrash(Context *context, SourceLocation loc, String errorStr)
+{
+	Log(context, loc, StringConcat("ERROR: "_s, errorStr));
+}
+
+#define LogError(context, loc, str) do { LogErrorNoCrash(context, loc, str); CRASH; } while(0)
+
+inline void LogWarning(Context *context, SourceLocation loc, String str)
+{
+	Log(context, loc, StringConcat("WARNING: "_s, str));
+}
+
+inline void LogNote(Context *context, SourceLocation loc, String str)
+{
+	Log(context, loc, StringConcat("NOTE: "_s, str));
+}
+
+void AssertToken(Context *context, Token *token, int type)
+{
+	if (token->type != type)
+	{
+		const String tokenTypeGot = TokenToString(token);
+		const String tokenTypeExp = TokenTypeToString(type);
+		const String errorStr = TPrintF("Expected token of type %S but got %S",
+				tokenTypeExp, tokenTypeGot);
+		LogError(context, token->loc, errorStr);
+	}
+}
+
+void UnexpectedTokenError(Context *context, Token *token)
+{
+	const String tokenType = TokenTypeToString(token->type);
+	const String errorStr = TPrintF("Unexpected token of type %S", tokenType);
+	LogError(context, token->loc, errorStr);
+}
+
+#include "Tokenizer.cpp"
+#include "Parser.cpp"
+#include "PrintAST.cpp"
+#include "TypeChecker.cpp"
+#include "IRGen.cpp"
+#include "PrintIR.cpp"
+#include "x64.cpp"
+
 int main(int argc, char **argv)
 {
 	g_hStdout = GetStdHandle(STD_OUTPUT_HANDLE);
@@ -291,7 +394,7 @@ int main(int argc, char **argv)
 	Context context = {};
 	BucketArrayInit(&context.tokens);
 
-	DynamicArray<String, malloc, realloc> inputFiles;
+	DynamicArray<String, FrameAlloc, FrameRealloc> inputFiles;
 	DynamicArrayInit(&inputFiles, 8);
 	*DynamicArrayAdd(&inputFiles) = "basic.emi"_s;
 	*DynamicArrayAdd(&inputFiles) = "print.emi"_s;
@@ -300,10 +403,14 @@ int main(int argc, char **argv)
 		char *arg = argv[argIdx];
 		if (arg[0] == '-')
 		{
-			if (strcmp("-silent", arg) == 0)
-				context.config.silent = true;
-			else if (strcmp("-windowsSubsystem", arg) == 0)
-				context.config.windowsSubsystem = true;
+			if (strcmp("-logAST", arg) == 0)
+				context.config.logAST = true;
+			else if (strcmp("-logIR", arg) == 0)
+				context.config.logIR = true;
+			else if (strcmp("-logAllocationInfo", arg) == 0)
+				context.config.logAllocationInfo = true;
+			else
+				Print("Unknown option \"%s\"\n", arg);
 		}
 		else
 		{
@@ -323,21 +430,18 @@ int main(int argc, char **argv)
 	*BucketArrayAdd(&context.tokens) = eofToken;
 
 	GenerateSyntaxTree(&context);
-#if PRINT_AST_TREE
-	if (!context.config.silent)
+
+	if (context.config.logAST)
 		PrintAST(&context);
-#endif
 
 	TypeCheckMain(&context);
 
 	IRGenMain(&context);
 
-#if PRINT_IR
-	if (!context.config.silent)
+	if (context.config.logIR)
 	{
 		PrintIRInstructions(&context);
 	}
-#endif
 
 	BackendMain(&context);
 

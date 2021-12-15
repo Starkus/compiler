@@ -1,4 +1,3 @@
-#if PRINT_AST_TREE
 struct PrintContext
 {
 	int indentLevels;
@@ -306,8 +305,9 @@ void PrintExpression(PrintContext *context, ASTExpression *e)
 			PrintExpression(context, &pexp);
 		}
 
-		if (e->procedureDeclaration.procedure->astBody)
-			PrintExpression(context, e->procedureDeclaration.procedure->astBody);
+		Procedure *procedure = GetProcedure(context->context, e->procedureDeclaration.procedureIdx);
+		if (procedure->astBody)
+			PrintExpression(context, procedure->astBody);
 		--context->indentLevels;
 	} break;
 	case ASTNODETYPE_BLOCK:
@@ -509,6 +509,20 @@ void PrintExpression(PrintContext *context, ASTExpression *e)
 		PrintExpression(context, e->castNode.expression);
 		--context->indentLevels;
 	} break;
+	case ASTNODETYPE_TYPEOF:
+	{
+		Print("Type of\n");
+		++context->indentLevels;
+		PrintExpression(context, e->typeOfNode.expression);
+		--context->indentLevels;
+	} break;
+	case ASTNODETYPE_SIZEOF:
+	{
+		Print("Size of\n");
+		++context->indentLevels;
+		PrintExpression(context, e->typeOfNode.expression);
+		--context->indentLevels;
+	} break;
 	default:
 	{
 		Print("UNKNOWN!\n");
@@ -531,4 +545,3 @@ void PrintAST(Context *context)
 		PrintExpression(&printContext, statement);
 	}
 }
-#endif

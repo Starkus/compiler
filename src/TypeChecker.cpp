@@ -623,6 +623,7 @@ s64 TypeCheckStructDeclaration(Context *context, ASTStructDeclaration astStructD
 	t.typeCategory = astStructDecl.isUnion ? TYPECATEGORY_UNION : TYPECATEGORY_STRUCT;
 	DynamicArrayInit(&t.structInfo.members, 16);
 
+	int largestAlignment = 0;
 	for (int memberIdx = 0; memberIdx < astStructDecl.members.size; ++memberIdx)
 	{
 		ASTStructMemberDeclaration astMember = astStructDecl.members[memberIdx];
@@ -633,10 +634,19 @@ s64 TypeCheckStructDeclaration(Context *context, ASTStructDeclaration astStructD
 		member->typeTableIdx = TypeCheckType(context, astMember.loc, astMember.astType);
 
 		s64 memberSize = context->typeTable[member->typeTableIdx].size;
+		int alignment = 8;
+		if (memberSize < 8)
+			alignment = NextPowerOf2((int)memberSize);
+
+		if (alignment > largestAlignment)
+			largestAlignment = alignment;
+
 		if (!astStructDecl.isUnion)
 		{
-			member->offset = t.size; // @Todo: aligning
-			t.size += memberSize; // @Todo: aligning
+			if (t.size & (alignment - 1))
+				t.size = (t.size & ~(alignment - 1)) + alignment;
+			member->offset = t.size;
+			t.size += memberSize;
 		}
 		else
 		{
@@ -645,6 +655,8 @@ s64 TypeCheckStructDeclaration(Context *context, ASTStructDeclaration astStructD
 				t.size = memberSize;
 		}
 	}
+	if (t.size & (largestAlignment - 1))
+		t.size = (t.size & ~(largestAlignment - 1)) + largestAlignment;
 
 	s64 typeTableIdx = BucketArrayCount(&context->typeTable);
 	AddType(context, t);
@@ -995,7 +1007,16 @@ Constant EvaluateConstant(Context *context, ASTExpression *expression)
 		case LITERALTYPE_FLOATING:
 			result.valueAsFloat = expression->literal.floating;
 			break;
+		default:
+			goto error;
 		}
+	} break;
+	case ASTNODETYPE_IDENTIFIER:
+	{
+		if (expression->identifier.type == NAMETYPE_STATIC_DEFINITION)
+			result = expression->identifier.staticDefinition->constant;
+		else
+			goto error;
 	} break;
 	case ASTNODETYPE_UNARY_OPERATION:
 	{
@@ -1026,6 +1047,8 @@ Constant EvaluateConstant(Context *context, ASTExpression *expression)
 			ASSERT(!isFloat);
 			result.valueAsInt = ~inValue.valueAsInt;
 		} break;
+		default:
+			goto error;
 		}
 	} break;
 	case ASTNODETYPE_BINARY_OPERATION:
@@ -1132,10 +1155,17 @@ Constant EvaluateConstant(Context *context, ASTExpression *expression)
 			ASSERT(!isFloat);
 			result.valueAsInt = leftValue.valueAsInt ^ rightValue.valueAsInt;
 		} break;
+		default:
+			goto error;
 		}
 	} break;
+	default:
+		goto error;
 	}
 	return result;
+error:
+	LogError(context, expression->any.loc, "Failed to evaluate constant"_s);
+	return {};
 }
 
 void TypeCheckExpression(Context *context, ASTExpression *expression)
@@ -1218,10 +1248,13 @@ void TypeCheckExpression(Context *context, ASTExpression *expression)
 		else
 		{
 			newStaticDef->definitionType = STATICDEFINITIONTYPE_CONSTANT;
-			newStaticDef->constant = EvaluateConstant(context, astStaticDef.expression);
 		}
 		TypeCheckExpression(context, astStaticDef.expression);
 		newStaticDef->typeTableIdx = astStaticDef.expression->typeTableIdx;
+
+		// Need to evaluate constant AFTER type checking expression.
+		if (newStaticDef->definitionType == STATICDEFINITIONTYPE_CONSTANT)
+			newStaticDef->constant = EvaluateConstant(context, astStaticDef.expression);
 	} break;
 	case ASTNODETYPE_PROCEDURE_DECLARATION:
 	{
