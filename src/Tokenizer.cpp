@@ -161,10 +161,9 @@ Token ReadTokenAndAdvance(Context *context, Tokenizer *tokenizer)
 	}
 
 	result.begin = tokenizer->cursor;
+	result.loc.fileIdx = context->currentFileIdx;
 	result.loc.line = tokenizer->line;
 	result.loc.character = (s32)(tokenizer->cursor - tokenizer->beginningOfLine);
-	result.loc.file = context->filename;
-	result.loc.fileBuffer = context->fileBuffer;
 	result.loc.size = result.size;
 
 	if (!*tokenizer->cursor || tokenizer->cursor >= tokenizer->end)
@@ -326,16 +325,17 @@ numberDone:
 				if (sourceFileToken.type != TOKEN_LITERAL_STRING)
 					LogError(context, sourceFileToken.loc, "ERROR! #include must be followed by string literal"_s);
 
-				String previousFilename = context->filename;
-				u8 *previousFileBuffer = context->fileBuffer;
+				SourceFile newSourceFile = { sourceFileToken.string };
+				Win32ReadEntireFile(StringToCStr(sourceFileToken.string, FrameAlloc), &newSourceFile.buffer,
+					&newSourceFile.size, FrameAlloc);
 
-				context->filename = sourceFileToken.string;
-				Win32ReadEntireFile(StringToCStr(sourceFileToken.string, FrameAlloc), &context->fileBuffer,
-					&context->fileSize, FrameAlloc);
+				s32 previousFileIdx = context->currentFileIdx;
+
+				context->currentFileIdx = (s32)context->sourceFiles.size;
+				*DynamicArrayAdd(&context->sourceFiles) = newSourceFile;
 				TokenizeFile(context);
 
-				context->filename = previousFilename;
-				context->fileBuffer = previousFileBuffer;
+				context->currentFileIdx = previousFileIdx;
 
 				return ReadTokenAndAdvance(context, tokenizer);
 			}
@@ -570,9 +570,10 @@ numberDone:
 void TokenizeFile(Context *context)
 {
 	Tokenizer tokenizer = {};
-	tokenizer.cursor = (char *)context->fileBuffer;
-	tokenizer.beginningOfLine = (char *)context->fileBuffer;
-	tokenizer.end = (char *)(context->fileBuffer + context->fileSize);
+	SourceFile file = context->sourceFiles[context->currentFileIdx];
+	tokenizer.cursor = (char *)file.buffer;
+	tokenizer.beginningOfLine = (char *)file.buffer;
+	tokenizer.end = (char *)(file.buffer + file.size);
 	tokenizer.line = 1; // Line numbers start at 1 not 0.
 	while (true)
 	{

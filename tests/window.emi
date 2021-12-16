@@ -7,13 +7,13 @@ Compiler_Subsystems :: enum
 };
 compiler_subsystem :: COMPILER_SUBSYSTEM_WINDOWS;
 
-running :s bool = 1;
+running :s bool = true;
 
 Win32WindowCallback :: (hWnd : ^void, uMsg : u32, wParam : ^void, lParam : ^void) -> u64
 {
 	if (uMsg == WM_DESTROY || uMsg == WM_CLOSE)
 	{
-		running = 0;
+		running = false;
 		return 0;
 	}
 	else
@@ -24,7 +24,7 @@ Main :: () -> s64
 {
 	AttachConsole(ATTACH_PARENT_PROCESS);
 
-	hInstance := GetModuleHandleA(0);
+	hInstance := GetModuleHandleA(null);
 
 	windowClassName := "window\0";
 	windowTitle := "Hello, Sailor!\0";
@@ -36,12 +36,12 @@ Main :: () -> s64
 	windowClass.cbClsExtra = 0;
 	windowClass.cbWndExtra = 0;
 	windowClass.hInstance = hInstance;
-	windowClass.hIcon = 0;
-	windowClass.hCursor = 0;
-	windowClass.hBrush = 0;
-	windowClass.lpszMenuName = 0;
+	windowClass.hIcon = null;
+	windowClass.hCursor = null;
+	windowClass.hBrush = null;
+	windowClass.lpszMenuName = null;
 	windowClass.lpszClassName = windowClassName.data;
-	windowClass.hIconSm = 0;
+	windowClass.hIconSm = null;
 
 	success : bool = RegisterClassExA(^windowClass);
 	PrintF("Window succeded: % Last error: %\n", success, GetLastError());

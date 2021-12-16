@@ -130,17 +130,6 @@ struct IRIntrinsicMemcpy
 	IRValue size;
 };
 
-struct IRPatchInstruction
-{
-	IRInstruction *first;
-	IRInstruction *second;
-};
-
-struct IRPatchInstructionMany
-{
-	Array<IRInstruction> instructions;
-};
-
 enum IRInstructionType
 {
 	IRINSTRUCTIONTYPE_INVALID = -1,
@@ -189,9 +178,6 @@ enum IRInstructionType
 	IRINSTRUCTIONTYPE_BINARY_END,
 
 	IRINSTRUCTIONTYPE_INTRINSIC_MEMCPY,
-
-	IRINSTRUCTIONTYPE_PATCH,
-	IRINSTRUCTIONTYPE_PATCH_MANY
 };
 struct IRInstruction
 {
@@ -212,9 +198,6 @@ struct IRInstruction
 		IRArrayAccess arrayAccess;
 		IRUnaryOperation unaryOperation;
 		IRBinaryOperation binaryOperation;
-
-		IRPatchInstruction patch;
-		IRPatchInstructionMany patchMany;
 
 		IRIntrinsicMemcpy memcpy;
 	};
@@ -1018,7 +1001,7 @@ IRValue IRGenFromExpression(Context *context, ASTExpression *expression)
 		for (int i = 0; i < expression->block.statements.size; ++i)
 		{
 			SourceLocation loc = expression->block.statements[i].any.loc;
-			IRAddComment(context, GetSourceLine(context, loc.fileBuffer, loc.line));
+			IRAddComment(context, GetSourceLine(context, loc.fileIdx, loc.line));
 
 			IRGenFromExpression(context, &expression->block.statements[i]);
 		}
@@ -1103,23 +1086,22 @@ IRValue IRGenFromExpression(Context *context, ASTExpression *expression)
 			// Initial value
 			if (varDecl.astInitialValue)
 			{
-				if (varDecl.astInitialValue->nodeType != ASTNODETYPE_LITERAL)
-				{
-					// @Todo: Somehow execute constant expressions and bake them?
-					LogError(context, expression->any.loc, "Non literal initial values for global variables not yet supported"_s);
-				}
-				else if (varDecl.astInitialValue->literal.type == LITERALTYPE_FLOATING)
-				{
-					newStaticVar.initialValue.valueType = IRVALUETYPE_IMMEDIATE_FLOAT;
-					newStaticVar.initialValue.immediateFloat = varDecl.astInitialValue->literal.floating;
-				}
-				else if (varDecl.astInitialValue->literal.type == LITERALTYPE_STRING)
+				if (varDecl.astInitialValue->literal.type == LITERALTYPE_STRING)
 				{
 					newStaticVar.initialValue = IRValueImmediateString(context,
 							varDecl.astInitialValue->literal.string);
 				}
 				else
-					newStaticVar.initialValue = IRGenFromExpression(context, varDecl.astInitialValue);
+				{
+					Constant constant  = EvaluateConstant(context, varDecl.astInitialValue);
+					if (constant.type == CONSTANTTYPE_FLOATING)
+					{
+						newStaticVar.initialValue.valueType = IRVALUETYPE_IMMEDIATE_FLOAT;
+						newStaticVar.initialValue.immediateFloat = constant.valueAsFloat;
+					}
+					else
+						newStaticVar.initialValue = IRValueImmediate(constant.valueAsInt);
+				}
 			}
 
 			*DynamicArrayAdd(&context->irStaticVariables) = newStaticVar;

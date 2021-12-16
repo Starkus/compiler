@@ -665,6 +665,186 @@ s64 TypeCheckStructDeclaration(Context *context, ASTStructDeclaration astStructD
 	return typeTableIdx;
 }
 
+Constant EvaluateConstant(Context *context, ASTExpression *expression)
+{
+	Constant result;
+	result.type = CONSTANTTYPE_INTEGER;
+	result.valueAsInt = 0xFA11FA11FA11FA11;
+
+	switch (expression->nodeType)
+	{
+	case ASTNODETYPE_LITERAL:
+	{
+		switch (expression->literal.type)
+		{
+		case LITERALTYPE_INTEGER:
+		case LITERALTYPE_CHARACTER:
+			result.valueAsInt = expression->literal.integer;
+			break;
+		case LITERALTYPE_FLOATING:
+			result.valueAsFloat = expression->literal.floating;
+			break;
+		default:
+			goto error;
+		}
+	} break;
+	case ASTNODETYPE_IDENTIFIER:
+	{
+		if (expression->identifier.type == NAMETYPE_STATIC_DEFINITION)
+			result = expression->identifier.staticDefinition->constant;
+		else
+			goto error;
+	} break;
+	case ASTNODETYPE_UNARY_OPERATION:
+	{
+		ASTExpression *in = expression->unaryOperation.expression;
+		Constant inValue  = EvaluateConstant(context, in);
+
+		bool isFloat = inValue.type == CONSTANTTYPE_FLOATING;
+		result.type = inValue.type;
+
+		switch (expression->unaryOperation.op)
+		{
+		case TOKEN_OP_MINUS:
+		{
+			if (isFloat)
+				result.valueAsFloat = -inValue.valueAsFloat;
+			else
+				result.valueAsInt = -inValue.valueAsInt;
+		} break;
+		case TOKEN_OP_NOT:
+		{
+			if (isFloat)
+				result.valueAsFloat = !inValue.valueAsFloat;
+			else
+				result.valueAsInt = !inValue.valueAsInt;
+		} break;
+		case TOKEN_OP_BITWISE_NOT:
+		{
+			ASSERT(!isFloat);
+			result.valueAsInt = ~inValue.valueAsInt;
+		} break;
+		default:
+			goto error;
+		}
+	} break;
+	case ASTNODETYPE_BINARY_OPERATION:
+	{
+		ASTExpression *rightHand = expression->binaryOperation.rightHand;
+		ASTExpression *leftHand  = expression->binaryOperation.leftHand;
+		Constant leftValue  = EvaluateConstant(context, leftHand);
+		Constant rightValue = EvaluateConstant(context, rightHand);
+
+		bool isFloat = false;
+		if (leftValue.type == CONSTANTTYPE_INTEGER)
+		{
+			if (rightValue.type == CONSTANTTYPE_FLOATING)
+			{
+				rightValue.type = CONSTANTTYPE_INTEGER;
+				rightValue.valueAsInt = (s64)rightValue.valueAsFloat;
+			}
+			result.type = CONSTANTTYPE_INTEGER;
+		}
+		if (leftValue.type == CONSTANTTYPE_FLOATING)
+		{
+			isFloat = true;
+			if (rightValue.type == CONSTANTTYPE_INTEGER)
+			{
+				rightValue.type = CONSTANTTYPE_FLOATING;
+				rightValue.valueAsFloat = (f64)rightValue.valueAsInt;
+			}
+			result.type = CONSTANTTYPE_FLOATING;
+		}
+
+		switch (expression->binaryOperation.op)
+		{
+		case TOKEN_OP_PLUS:
+		{
+			if (isFloat)
+				result.valueAsFloat = leftValue.valueAsFloat + rightValue.valueAsFloat;
+			else
+				result.valueAsInt = leftValue.valueAsInt + rightValue.valueAsInt;
+		} break;
+		case TOKEN_OP_MINUS:
+		{
+			if (isFloat)
+				result.valueAsFloat = leftValue.valueAsFloat - rightValue.valueAsFloat;
+			else
+				result.valueAsInt = leftValue.valueAsInt - rightValue.valueAsInt;
+		} break;
+		case TOKEN_OP_MULTIPLY:
+		{
+			if (isFloat)
+				result.valueAsFloat = leftValue.valueAsFloat * rightValue.valueAsFloat;
+			else
+				result.valueAsInt = leftValue.valueAsInt * rightValue.valueAsInt;
+		} break;
+		case TOKEN_OP_DIVIDE:
+		{
+			if (isFloat)
+				result.valueAsFloat = leftValue.valueAsFloat / rightValue.valueAsFloat;
+			else
+				result.valueAsInt = leftValue.valueAsInt / rightValue.valueAsInt;
+		} break;
+		case TOKEN_OP_MODULO:
+		{
+			if (isFloat)
+				result.valueAsFloat = fmod(leftValue.valueAsFloat, rightValue.valueAsFloat);
+			else
+				result.valueAsInt = leftValue.valueAsInt % rightValue.valueAsInt;
+		} break;
+		case TOKEN_OP_SHIFT_LEFT:
+		{
+			ASSERT(!isFloat);
+			result.valueAsInt = leftValue.valueAsInt << rightValue.valueAsInt;
+		} break;
+		case TOKEN_OP_SHIFT_RIGHT:
+		{
+			ASSERT(!isFloat);
+			result.valueAsInt = leftValue.valueAsInt >> rightValue.valueAsInt;
+		} break;
+		case TOKEN_OP_AND:
+		{
+			if (isFloat)
+				result.valueAsFloat = leftValue.valueAsFloat && rightValue.valueAsFloat;
+			else
+				result.valueAsInt = leftValue.valueAsInt && rightValue.valueAsInt;
+		} break;
+		case TOKEN_OP_OR:
+		{
+			if (isFloat)
+				result.valueAsFloat = leftValue.valueAsFloat || rightValue.valueAsFloat;
+			else
+				result.valueAsInt = leftValue.valueAsInt || rightValue.valueAsInt;
+		} break;
+		case TOKEN_OP_BITWISE_AND:
+		{
+			ASSERT(!isFloat);
+			result.valueAsInt = leftValue.valueAsInt & rightValue.valueAsInt;
+		} break;
+		case TOKEN_OP_BITWISE_OR:
+		{
+			ASSERT(!isFloat);
+			result.valueAsInt = leftValue.valueAsInt | rightValue.valueAsInt;
+		} break;
+		case TOKEN_OP_BITWISE_XOR:
+		{
+			ASSERT(!isFloat);
+			result.valueAsInt = leftValue.valueAsInt ^ rightValue.valueAsInt;
+		} break;
+		default:
+			goto error;
+		}
+	} break;
+	default:
+		goto error;
+	}
+	return result;
+error:
+	LogError(context, expression->any.loc, "Failed to evaluate constant"_s);
+	return {};
+}
+
 s64 TypeCheckType(Context *context, SourceLocation loc, ASTType *astType)
 {
 	switch (astType->nodeType)
@@ -724,12 +904,11 @@ s64 TypeCheckType(Context *context, SourceLocation loc, ASTType *astType)
 
 			if (astMember.value)
 			{
-				if (astMember.value->nodeType != ASTNODETYPE_LITERAL)
-				{
-					// @Todo: Somehow execute constant expressions and bake them?
-					LogError(context, astType->loc, "Non literal initial values for enum values not yet supported"_s);
-				}
-				currentValue = astMember.value->literal.integer;
+				Constant constant  = EvaluateConstant(context, astMember.value);
+				if (constant.type == CONSTANTTYPE_FLOATING)
+					currentValue = (s64)constant.valueAsFloat;
+				else
+					currentValue = constant.valueAsInt;
 			}
 			staticDefinition.constant.valueAsInt = currentValue;
 
@@ -986,186 +1165,6 @@ const StructMember *FindStructMemberByName(Context *context, TypeInfo structType
 		}
 	}
 	return nullptr;
-}
-
-Constant EvaluateConstant(Context *context, ASTExpression *expression)
-{
-	Constant result;
-	result.type = CONSTANTTYPE_INTEGER;
-	result.valueAsInt = 0xFA11FA11FA11FA11;
-
-	switch (expression->nodeType)
-	{
-	case ASTNODETYPE_LITERAL:
-	{
-		switch (expression->literal.type)
-		{
-		case LITERALTYPE_INTEGER:
-		case LITERALTYPE_CHARACTER:
-			result.valueAsInt = expression->literal.integer;
-			break;
-		case LITERALTYPE_FLOATING:
-			result.valueAsFloat = expression->literal.floating;
-			break;
-		default:
-			goto error;
-		}
-	} break;
-	case ASTNODETYPE_IDENTIFIER:
-	{
-		if (expression->identifier.type == NAMETYPE_STATIC_DEFINITION)
-			result = expression->identifier.staticDefinition->constant;
-		else
-			goto error;
-	} break;
-	case ASTNODETYPE_UNARY_OPERATION:
-	{
-		ASTExpression *in = expression->unaryOperation.expression;
-		Constant inValue  = EvaluateConstant(context, in);
-
-		bool isFloat = inValue.type == CONSTANTTYPE_FLOATING;
-		result.type = inValue.type;
-
-		switch (expression->unaryOperation.op)
-		{
-		case TOKEN_OP_MINUS:
-		{
-			if (isFloat)
-				result.valueAsFloat = -inValue.valueAsFloat;
-			else
-				result.valueAsInt = -inValue.valueAsInt;
-		} break;
-		case TOKEN_OP_NOT:
-		{
-			if (isFloat)
-				result.valueAsFloat = !inValue.valueAsFloat;
-			else
-				result.valueAsInt = !inValue.valueAsInt;
-		} break;
-		case TOKEN_OP_BITWISE_NOT:
-		{
-			ASSERT(!isFloat);
-			result.valueAsInt = ~inValue.valueAsInt;
-		} break;
-		default:
-			goto error;
-		}
-	} break;
-	case ASTNODETYPE_BINARY_OPERATION:
-	{
-		ASTExpression *rightHand = expression->binaryOperation.rightHand;
-		ASTExpression *leftHand  = expression->binaryOperation.leftHand;
-		Constant leftValue  = EvaluateConstant(context, leftHand);
-		Constant rightValue = EvaluateConstant(context, rightHand);
-
-		bool isFloat = false;
-		if (leftValue.type == CONSTANTTYPE_INTEGER)
-		{
-			if (rightValue.type == CONSTANTTYPE_FLOATING)
-			{
-				rightValue.type = CONSTANTTYPE_INTEGER;
-				rightValue.valueAsInt = (s64)rightValue.valueAsFloat;
-			}
-			result.type = CONSTANTTYPE_INTEGER;
-		}
-		if (leftValue.type == CONSTANTTYPE_FLOATING)
-		{
-			isFloat = true;
-			if (rightValue.type == CONSTANTTYPE_INTEGER)
-			{
-				rightValue.type = CONSTANTTYPE_FLOATING;
-				rightValue.valueAsFloat = (f64)rightValue.valueAsInt;
-			}
-			result.type = CONSTANTTYPE_FLOATING;
-		}
-
-		switch (expression->binaryOperation.op)
-		{
-		case TOKEN_OP_PLUS:
-		{
-			if (isFloat)
-				result.valueAsFloat = leftValue.valueAsFloat + rightValue.valueAsFloat;
-			else
-				result.valueAsInt = leftValue.valueAsInt + rightValue.valueAsInt;
-		} break;
-		case TOKEN_OP_MINUS:
-		{
-			if (isFloat)
-				result.valueAsFloat = leftValue.valueAsFloat - rightValue.valueAsFloat;
-			else
-				result.valueAsInt = leftValue.valueAsInt - rightValue.valueAsInt;
-		} break;
-		case TOKEN_OP_MULTIPLY:
-		{
-			if (isFloat)
-				result.valueAsFloat = leftValue.valueAsFloat * rightValue.valueAsFloat;
-			else
-				result.valueAsInt = leftValue.valueAsInt * rightValue.valueAsInt;
-		} break;
-		case TOKEN_OP_DIVIDE:
-		{
-			if (isFloat)
-				result.valueAsFloat = leftValue.valueAsFloat / rightValue.valueAsFloat;
-			else
-				result.valueAsInt = leftValue.valueAsInt / rightValue.valueAsInt;
-		} break;
-		case TOKEN_OP_MODULO:
-		{
-			if (isFloat)
-				result.valueAsFloat = fmod(leftValue.valueAsFloat, rightValue.valueAsFloat);
-			else
-				result.valueAsInt = leftValue.valueAsInt % rightValue.valueAsInt;
-		} break;
-		case TOKEN_OP_SHIFT_LEFT:
-		{
-			ASSERT(!isFloat);
-			result.valueAsInt = leftValue.valueAsInt << rightValue.valueAsInt;
-		} break;
-		case TOKEN_OP_SHIFT_RIGHT:
-		{
-			ASSERT(!isFloat);
-			result.valueAsInt = leftValue.valueAsInt >> rightValue.valueAsInt;
-		} break;
-		case TOKEN_OP_AND:
-		{
-			if (isFloat)
-				result.valueAsFloat = leftValue.valueAsFloat && rightValue.valueAsFloat;
-			else
-				result.valueAsInt = leftValue.valueAsInt && rightValue.valueAsInt;
-		} break;
-		case TOKEN_OP_OR:
-		{
-			if (isFloat)
-				result.valueAsFloat = leftValue.valueAsFloat || rightValue.valueAsFloat;
-			else
-				result.valueAsInt = leftValue.valueAsInt || rightValue.valueAsInt;
-		} break;
-		case TOKEN_OP_BITWISE_AND:
-		{
-			ASSERT(!isFloat);
-			result.valueAsInt = leftValue.valueAsInt & rightValue.valueAsInt;
-		} break;
-		case TOKEN_OP_BITWISE_OR:
-		{
-			ASSERT(!isFloat);
-			result.valueAsInt = leftValue.valueAsInt | rightValue.valueAsInt;
-		} break;
-		case TOKEN_OP_BITWISE_XOR:
-		{
-			ASSERT(!isFloat);
-			result.valueAsInt = leftValue.valueAsInt ^ rightValue.valueAsInt;
-		} break;
-		default:
-			goto error;
-		}
-	} break;
-	default:
-		goto error;
-	}
-	return result;
-error:
-	LogError(context, expression->any.loc, "Failed to evaluate constant"_s);
-	return {};
 }
 
 void TypeCheckExpression(Context *context, ASTExpression *expression)

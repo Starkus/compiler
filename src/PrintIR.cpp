@@ -213,16 +213,6 @@ void PrintIRInstruction(Context *context, IRInstruction inst)
 		PrintIRValue(context, inst.memcpy.size);
 		Print(")\n");
 	} break;
-	case IRINSTRUCTIONTYPE_PATCH:
-	{
-		PrintIRInstruction(context, *inst.patch.first);
-		PrintIRInstruction(context, *inst.patch.second);
-	} break;
-	case IRINSTRUCTIONTYPE_PATCH_MANY:
-	{
-		for (int i = 0; i < inst.patchMany.instructions.size; ++i)
-			PrintIRInstruction(context, inst.patchMany.instructions[i]);
-	} break;
 	default:
 	{
 		Print("???INST\n");

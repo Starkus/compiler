@@ -33,9 +33,9 @@ struct InterferenceGraphNode
 
 void X64Patch(Context *context, X64Instruction *original, X64Instruction newInst)
 {
-	X64Instruction *patch1 = BucketArrayAdd(&context->patchedInstructions);
+	X64Instruction *patch1 = BucketArrayAdd(&context->bePatchedInstructions);
 	*patch1 = newInst;
-	X64Instruction *patch2 = BucketArrayAdd(&context->patchedInstructions);
+	X64Instruction *patch2 = BucketArrayAdd(&context->bePatchedInstructions);
 	*patch2 = *original;
 
 	X64Instruction patchInst = { X64_Patch };
@@ -302,16 +302,16 @@ void DoLivenessAnalisisOnInstruction(Context *context, BasicBlock *basicBlock, X
 		u32 valueIdx = (*liveValues)[i];
 
 		InterferenceGraphNode *node = nullptr;
-		for (int nodeIdx = 0; nodeIdx < context->interferenceGraph.size; ++nodeIdx)
+		for (int nodeIdx = 0; nodeIdx < context->beInterferenceGraph.size; ++nodeIdx)
 		{
-			InterferenceGraphNode *currentNode = &context->interferenceGraph[nodeIdx];
+			InterferenceGraphNode *currentNode = &context->beInterferenceGraph[nodeIdx];
 			if (currentNode->valueIdx == valueIdx)
 			{
 				node = currentNode;
 				goto nodeFound;
 			}
 		}
-		node = DynamicArrayAdd(&context->interferenceGraph);
+		node = DynamicArrayAdd(&context->beInterferenceGraph);
 		*node = {};
 		node->valueIdx = valueIdx;
 		DynamicArrayInit(&node->edges, 8);
@@ -394,7 +394,7 @@ void GenerateBasicBlocks(Context *context, Array<X64Procedure> x64Procedures)
 	{
 		X64Procedure *proc = &x64Procedures[procedureIdx];
 
-		BasicBlock *currentBasicBlock = PushBasicBlock(nullptr, &context->basicBlocks);
+		BasicBlock *currentBasicBlock = PushBasicBlock(nullptr, &context->beBasicBlocks);
 		currentBasicBlock->procedure = proc;
 
 		u64 instructionCount = BucketArrayCount(&proc->instructions);
@@ -407,7 +407,7 @@ void GenerateBasicBlocks(Context *context, Array<X64Procedure> x64Procedures)
 			{
 				currentBasicBlock->endIdx = instructionIdx - 1;
 				BasicBlock *previousBlock = currentBasicBlock;
-				currentBasicBlock = PushBasicBlock(currentBasicBlock, &context->basicBlocks);
+				currentBasicBlock = PushBasicBlock(currentBasicBlock, &context->beBasicBlocks);
 				*DynamicArrayAdd(&currentBasicBlock->inputs) = previousBlock;
 				*DynamicArrayAdd(&previousBlock->outputs) = currentBasicBlock;
 			} break;
@@ -417,7 +417,7 @@ void GenerateBasicBlocks(Context *context, Array<X64Procedure> x64Procedures)
 			{
 				currentBasicBlock->endIdx = instructionIdx;
 				BasicBlock *previousBlock = currentBasicBlock;
-				currentBasicBlock = PushBasicBlock(currentBasicBlock, &context->basicBlocks);
+				currentBasicBlock = PushBasicBlock(currentBasicBlock, &context->beBasicBlocks);
 				*DynamicArrayAdd(&currentBasicBlock->inputs) = previousBlock;
 				*DynamicArrayAdd(&previousBlock->outputs) = currentBasicBlock;
 			} break;
@@ -426,13 +426,13 @@ void GenerateBasicBlocks(Context *context, Array<X64Procedure> x64Procedures)
 				ASSERT(!"Patches not supported here!");
 			}
 		}
-		*DynamicArrayAdd(&context->leafBasicBlocks) = currentBasicBlock;
+		*DynamicArrayAdd(&context->beLeafBasicBlocks) = currentBasicBlock;
 	}
 
-	const u64 basicBlockCount = BucketArrayCount(&context->basicBlocks);
+	const u64 basicBlockCount = BucketArrayCount(&context->beBasicBlocks);
 	for (int i = 0; i < basicBlockCount; ++i)
 	{
-		BasicBlock *jumpBlock = &context->basicBlocks[i];
+		BasicBlock *jumpBlock = &context->beBasicBlocks[i];
 
 		IRLabel *label = nullptr;
 		X64Instruction endInstruction = jumpBlock->procedure->instructions[jumpBlock->endIdx];
@@ -445,7 +445,7 @@ void GenerateBasicBlocks(Context *context, Array<X64Procedure> x64Procedures)
 
 		for (int j = 0; j < basicBlockCount; ++j)
 		{
-			BasicBlock *labelBlock = &context->basicBlocks[j];
+			BasicBlock *labelBlock = &context->beBasicBlocks[j];
 			X64Instruction beginInstruction =
 				labelBlock->procedure->instructions[labelBlock->beginIdx];
 
@@ -668,9 +668,9 @@ inline u64 RegisterSavingInstruction(Context *context, X64Instruction *inst, u64
 
 void X64AllocateRegisters(Context *context, Array<X64Procedure> x64Procedures)
 {
-	BucketArrayInit(&context->basicBlocks);
-	DynamicArrayInit(&context->leafBasicBlocks, 128);
-	DynamicArrayInit(&context->interferenceGraph, 128);
+	BucketArrayInit(&context->beBasicBlocks);
+	DynamicArrayInit(&context->beLeafBasicBlocks, 128);
+	DynamicArrayInit(&context->beInterferenceGraph, 128);
 
 	GenerateBasicBlocks(context, x64Procedures);
 
@@ -678,13 +678,13 @@ void X64AllocateRegisters(Context *context, Array<X64Procedure> x64Procedures)
 	int availableRegistersFP = 8;
 
 	// Do liveness analisis, starting from all leaf blocks
-	for (int leafIdx = 0; leafIdx < context->leafBasicBlocks.size; ++leafIdx)
+	for (int leafIdx = 0; leafIdx < context->beLeafBasicBlocks.size; ++leafIdx)
 	{
-		BasicBlock *currentLeafBlock = context->leafBasicBlocks[leafIdx];
+		BasicBlock *currentLeafBlock = context->beLeafBasicBlocks[leafIdx];
 
 		String procName = currentLeafBlock->procedure->name;
 
-		context->interferenceGraph.size = 0;
+		context->beInterferenceGraph.size = 0;
 
 		// @Todo: iterative instead of recursive?
 		DynamicArray<u32, FrameAlloc, FrameRealloc> liveValues;
@@ -693,9 +693,9 @@ void X64AllocateRegisters(Context *context, Array<X64Procedure> x64Procedures)
 
 		if (context->config.logAllocationInfo)
 		{
-			for (int nodeIdx = 0; nodeIdx < context->interferenceGraph.size; ++nodeIdx)
+			for (int nodeIdx = 0; nodeIdx < context->beInterferenceGraph.size; ++nodeIdx)
 			{
-				InterferenceGraphNode *currentNode = &context->interferenceGraph[nodeIdx];
+				InterferenceGraphNode *currentNode = &context->beInterferenceGraph[nodeIdx];
 				Print("Value %S coexists with: ", X64IRValueToStr(context, IRValueValue(context, currentNode->valueIdx)));
 				for (int i = 0; i < currentNode->edges.size; ++i)
 					Print("%S, ", X64IRValueToStr(context, IRValueValue(context, currentNode->edges[i])));
@@ -704,16 +704,16 @@ void X64AllocateRegisters(Context *context, Array<X64Procedure> x64Procedures)
 		}
 
 		Array<InterferenceGraphNode *> nodeStack;
-		ArrayInit(&nodeStack, context->interferenceGraph.size, malloc);
+		ArrayInit(&nodeStack, context->beInterferenceGraph.size, malloc);
 
 		// Allocate values to registers when possible
-		while (nodeStack.size < context->interferenceGraph.size)
+		while (nodeStack.size < context->beInterferenceGraph.size)
 		{
 			InterferenceGraphNode *nodeToRemove = nullptr;
 			int nodeToRemoveIdx = -1;
-			for (int nodeIdx = 0; nodeIdx < context->interferenceGraph.size; ++nodeIdx)
+			for (int nodeIdx = 0; nodeIdx < context->beInterferenceGraph.size; ++nodeIdx)
 			{
-				InterferenceGraphNode *currentNode = &context->interferenceGraph[nodeIdx];
+				InterferenceGraphNode *currentNode = &context->beInterferenceGraph[nodeIdx];
 				if (currentNode->removed)
 					continue;
 				if (currentNode->edges.size < availableRegisters)
@@ -732,9 +732,9 @@ void X64AllocateRegisters(Context *context, Array<X64Procedure> x64Procedures)
 				// Choose a register to spill onto the stack.
 				// This heuristic is very arbitrary and sub-optimal.
 				s64 mostEdges = -1;
-				for (int nodeIdx = 0; nodeIdx < context->interferenceGraph.size; ++nodeIdx)
+				for (int nodeIdx = 0; nodeIdx < context->beInterferenceGraph.size; ++nodeIdx)
 				{
-					InterferenceGraphNode *currentNode = &context->interferenceGraph[nodeIdx];
+					InterferenceGraphNode *currentNode = &context->beInterferenceGraph[nodeIdx];
 
 					if (currentNode->removed)
 						continue;
@@ -764,9 +764,9 @@ void X64AllocateRegisters(Context *context, Array<X64Procedure> x64Procedures)
 			if (!nodeToRemove) nodeToRemove = fallbackNode;
 			ASSERT(nodeToRemove);
 
-			for (int nodeIdx = 0; nodeIdx < context->interferenceGraph.size; ++nodeIdx)
+			for (int nodeIdx = 0; nodeIdx < context->beInterferenceGraph.size; ++nodeIdx)
 			{
-				InterferenceGraphNode *currentNode = &context->interferenceGraph[nodeIdx];
+				InterferenceGraphNode *currentNode = &context->beInterferenceGraph[nodeIdx];
 				if (currentNode->removed)
 					continue;
 				for (int i = 0; i < currentNode->edges.size; ++i)

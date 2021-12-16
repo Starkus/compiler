@@ -87,13 +87,19 @@ enum TokenType
 	TOKEN_END_OF_FILE		= 255
 };
 
+struct SourceFile
+{
+	String name;
+	u8 *buffer;
+	u64 size;
+};
+
 struct SourceLocation
 {
-	String file;
+	s32 fileIdx;
 	s32 line;
 	s32 character;
 	s32 size;
-	const u8 *fileBuffer; // @Improve: reference to file records instead of having both file name and buffer in all tokens
 };
 
 struct Token
@@ -111,3 +117,5 @@ struct Token
 
 	SourceLocation loc;
 };
+static_assert(offsetof(Token, string.size) == offsetof(Token, size), "Token::size and Token::string::size should have same offset");
+static_assert(offsetof(Token, string.data) == offsetof(Token, begin), "Token::begin and Token::string::data should have same offset");

@@ -79,10 +79,6 @@ struct Config
 	bool logAllocationInfo;
 };
 
-struct Token;
-struct ASTRoot;
-struct ASTExpression;
-struct ASTType;
 struct TypeInfo;
 struct StaticDefinition;
 struct TCScope;
@@ -93,14 +89,13 @@ struct IRLabel;
 struct IRInstruction;
 struct BasicBlock;
 struct InterferenceGraphNode;
-struct X64Instruction;
+struct BEInstruction;
 struct Context
 {
 	Config config;
 
-	String filename;
-	u8 *fileBuffer;
-	u64 fileSize;
+	DynamicArray<SourceFile, malloc, realloc> sourceFiles;
+	s32 currentFileIdx;
 
 	// Parsing
 	BucketArray<Token, 1024, malloc, realloc> tokens;
@@ -130,10 +125,10 @@ struct Context
 	// Backend
 	HANDLE outputFile;
 
-	BucketArray<BasicBlock, 512, malloc, realloc> basicBlocks;
-	DynamicArray<BasicBlock *, malloc, realloc> leafBasicBlocks;
-	DynamicArray<InterferenceGraphNode, malloc, realloc> interferenceGraph;
-	BucketArray<X64Instruction, 128, malloc, realloc> patchedInstructions;
+	BucketArray<BasicBlock, 512, malloc, realloc> beBasicBlocks;
+	DynamicArray<BasicBlock *, malloc, realloc> beLeafBasicBlocks;
+	DynamicArray<InterferenceGraphNode, malloc, realloc> beInterferenceGraph;
+	BucketArray<BEInstruction, 128, malloc, realloc> bePatchedInstructions;
 };
 
 bool Win32ReadEntireFile(const char *filename, u8 **fileBuffer, u64 *fileSize, void *(*allocFunc)(u64))
@@ -184,12 +179,13 @@ bool Win32ReadEntireFile(const char *filename, u8 **fileBuffer, u64 *fileSize, v
 	return error == ERROR_SUCCESS;
 }
 
-String GetSourceLine(Context *context, const u8 *fileBuffer, s32 line)
+String GetSourceLine(Context *context, s32 fileIdx, s32 line)
 {
+	SourceFile sourceFile = context->sourceFiles[fileIdx];
 	String sourceLine = {};
 	{
 		int l = 1;
-		for (const char *scan = (const char *)fileBuffer; *scan; ++scan)
+		for (const char *scan = (const char *)sourceFile.buffer; *scan; ++scan)
 		{
 			if (l == line)
 			{
@@ -312,9 +308,10 @@ const String TokenToString(Token *token)
 
 void Log(Context *context, SourceLocation loc, String str)
 {
-	Print("%S %d:%d %S\n", loc.file, loc.line, loc.character, str);
+	SourceFile sourceFile = context->sourceFiles[loc.fileIdx];
+	Print("%S %d:%d %S\n", sourceFile.name, loc.line, loc.character, str);
 
-	String sourceLine = GetSourceLine(context, loc.fileBuffer, loc.line);
+	String sourceLine = GetSourceLine(context, loc.fileIdx, loc.line);
 	Print("... %S\n... ", sourceLine);
 
 	int shift = 0;
@@ -392,6 +389,7 @@ int main(int argc, char **argv)
 	MemoryInit(&memory);
 
 	Context context = {};
+	DynamicArrayInit(&context.sourceFiles, 8);
 	BucketArrayInit(&context.tokens);
 
 	DynamicArray<String, FrameAlloc, FrameRealloc> inputFiles;
@@ -421,9 +419,11 @@ int main(int argc, char **argv)
 
 	for (int i = 0; i < inputFiles.size; ++i)
 	{
-		context.filename = inputFiles[i];
-		Win32ReadEntireFile(StringToCStr(inputFiles[i], FrameAlloc), &context.fileBuffer,
-				&context.fileSize, FrameAlloc);
+		SourceFile newSourceFile = { inputFiles[i] };
+		Win32ReadEntireFile(StringToCStr(inputFiles[i], FrameAlloc), &newSourceFile.buffer,
+				&newSourceFile.size, FrameAlloc);
+		context.currentFileIdx = (s32)context.sourceFiles.size;
+		*DynamicArrayAdd(&context.sourceFiles) = newSourceFile;
 		TokenizeFile(&context);
 	}
 	Token eofToken = { TOKEN_END_OF_FILE };

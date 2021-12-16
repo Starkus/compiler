@@ -84,7 +84,7 @@ enum X64InstructionType
 
 s32 copyMemoryProcIdx;
 
-struct X64Instruction
+struct BEInstruction
 {
 	X64InstructionType type;
 	union
@@ -104,13 +104,14 @@ struct X64Instruction
 		u32 valueIdx;
 		struct
 		{
-			X64Instruction *patch1;
-			X64Instruction *patch2;
+			BEInstruction *patch1;
+			BEInstruction *patch2;
 		};
-		Array<X64Instruction> patchInstructions;
+		Array<BEInstruction> patchInstructions;
 		String comment;
 	};
 };
+typedef BEInstruction X64Instruction;
 
 struct X64Procedure
 {
@@ -760,19 +761,6 @@ void X64ConvertInstruction(Context *context, IRInstruction inst, X64Procedure *x
 
 	switch (inst.type)
 	{
-	case IRINSTRUCTIONTYPE_PATCH:
-	{
-		X64ConvertInstruction(context, *inst.patch.first,  x64Proc);
-		X64ConvertInstruction(context, *inst.patch.second, x64Proc);
-		return;
-	}
-	case IRINSTRUCTIONTYPE_PATCH_MANY:
-	{
-		const s64 instructionCount = inst.patchMany.instructions.size;
-		for (s64 i = 0; i < instructionCount; ++i)
-			X64ConvertInstruction(context, inst.patchMany.instructions[i], x64Proc);
-		return;
-	}
 	case IRINSTRUCTIONTYPE_ASSIGNMENT:
 	{
 		X64Mov(context, x64Proc, inst.assignment.dst, inst.assignment.src);
@@ -1493,7 +1481,7 @@ void X64PrintStaticData(Context *context, String name, IRValue value, s64 typeTa
 
 void BackendMain(Context *context)
 {
-	BucketArrayInit(&context->patchedInstructions);
+	BucketArrayInit(&context->bePatchedInstructions);
 
 	copyMemoryProcIdx = -(s32)BucketArrayCount(&context->externalProcedures);
 	Procedure *copyMemory = BucketArrayAdd(&context->externalProcedures);
