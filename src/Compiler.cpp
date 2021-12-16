@@ -35,7 +35,7 @@ s64 Print(const char *format, ...)
 
 	// Log file
 	static HANDLE logFileHandle = CreateFileA(
-			"log.txt",
+			"output/log.txt",
 			GENERIC_WRITE,
 			0,
 			nullptr,
@@ -394,8 +394,8 @@ int main(int argc, char **argv)
 
 	DynamicArray<String, FrameAlloc, FrameRealloc> inputFiles;
 	DynamicArrayInit(&inputFiles, 8);
-	*DynamicArrayAdd(&inputFiles) = "basic.emi"_s;
-	*DynamicArrayAdd(&inputFiles) = "print.emi"_s;
+	*DynamicArrayAdd(&inputFiles) = "core/basic.emi"_s;
+	*DynamicArrayAdd(&inputFiles) = "core/print.emi"_s;
 	for (int argIdx = 1; argIdx < argc; ++argIdx)
 	{
 		char *arg = argv[argIdx];

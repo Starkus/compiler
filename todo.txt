@@ -2,3 +2,4 @@
 * remove stupid copymemory everywhere
 * call procedure pointers
 * Reduce moving things from one register to another unnecessarily
+* Proper error message when trying to compile inexistant file

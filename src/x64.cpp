@@ -1784,7 +1784,7 @@ void BackendMain(Context *context)
 	}
 
 	context->outputFile = CreateFileA(
-			"x64_before_allocation.txt",
+			"output/x64_before_allocation.txt",
 			GENERIC_WRITE,
 			0,
 			nullptr,
@@ -1834,8 +1834,22 @@ void BackendMain(Context *context)
 		}
 	}
 
+	String outputPath;
+	String assemblyOutputFilename;
+	{
+		char *buffer = (char *)FrameAlloc(MAX_PATH);
+		outputPath.size = GetFullPathNameA("output", MAX_PATH, buffer, nullptr);
+		outputPath.data = buffer;
+
+		CreateDirectoryA(outputPath.data, nullptr);
+
+		buffer = (char *)FrameAlloc(MAX_PATH);
+		assemblyOutputFilename.size = GetFullPathNameA("output\\out.asm", MAX_PATH, buffer, nullptr);
+		assemblyOutputFilename.data = buffer;
+	}
+
 	context->outputFile = CreateFileA(
-			"out.asm",
+			assemblyOutputFilename.data,
 			GENERIC_WRITE,
 			0,
 			nullptr,
@@ -1844,7 +1858,7 @@ void BackendMain(Context *context)
 			nullptr
 			);
 
-	PrintOut(context, "include basic.asm\n\n");
+	PrintOut(context, "include ..\\core\\basic.asm\n\n");
 
 	PrintOut(context, "_DATA SEGMENT\n");
 
@@ -2313,7 +2327,7 @@ nextTuple:
 			"/libpath:\"%S\\lib\\x64\" "
 			"/libpath:\"%S\\lib\\%S\\ucrt\\x64\" "
 			"/libpath:\"%S\\lib\\%S\\um\\x64\" "
-			"/out:bin/out.exe%c",
+			"/out:out.exe%c",
 			msvcPath,
 			msvcPath,
 			windowsSDKPath, windowsSDKVersion,
@@ -2339,7 +2353,7 @@ nextTuple:
 			false,
 			0,
 			NULL,
-			NULL,
+			outputPath.data,
 			&startupInfo,
 			&processInformation
 			))
