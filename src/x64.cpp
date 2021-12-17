@@ -1808,6 +1808,24 @@ void BackendMain(Context *context)
 			{
 			// dst write, src read
 			case X64_MOV:
+			{
+				// Ignore mov thing into itself
+				if (inst->dst.valueType == IRVALUETYPE_VALUE &&
+					inst->src.valueType == IRVALUETYPE_VALUE)
+				{
+					Value dst = context->values[inst->dst.valueIdx];
+					Value src = context->values[inst->src.valueIdx];
+					if (dst.flags & VALUEFLAGS_IS_ALLOCATED && src.flags & VALUEFLAGS_IS_ALLOCATED)
+					{
+						// Value::stackOffset is alias of Value::allocatedRegister
+						if (dst.allocatedRegister == src.allocatedRegister)
+						{
+							inst->type = X64_Ignore;
+							break;
+						}
+					}
+				}
+			} // fall through
 			case X64_MOVZX:
 			case X64_MOVSX:
 			case X64_MOVSXD:
@@ -2122,10 +2140,21 @@ void BackendMain(Context *context)
 				case '0':
 					PrintOut(context, "00H");
 					break;
+				case '"':
+					PrintOut(context, "22H");
+					break;
 				}
 				++in;
 				++i;
 				--size; // Don't count backslash for string size.
+				first = false;
+			}
+			else if (*in == '\'')
+			{
+				if (!first) PrintOut(context, ", ");
+				PrintOut(context, "27H");
+				++in;
+				++i;
 				first = false;
 			}
 			else
@@ -2320,6 +2349,7 @@ nextTuple:
 			"gdi32.lib "
 			"winmm.lib "
 			"/nologo "
+			"/debug:full "
 			"/entry:Main "
 			"/opt:ref "
 			"/incremental:no "

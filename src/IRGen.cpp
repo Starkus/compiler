@@ -1269,7 +1269,8 @@ IRValue IRGenFromExpression(Context *context, ASTExpression *expression)
 		}
 
 		// Default parameters
-		for (u64 argIdx = astProcCall->arguments.size; argIdx < procedure->parameters.size;
+		for (u64 argIdx = astProcCall->arguments.size; argIdx < (procedure->parameters.size -
+				procedure->isVarargs);
 				++argIdx)
 		{
 			ASTExpression *arg = procedure->parameters[argIdx].defaultValue;
@@ -1280,7 +1281,7 @@ IRValue IRGenFromExpression(Context *context, ASTExpression *expression)
 		// Varargs
 		s64 varargsCount = astProcCall->arguments.size - (procedure->parameters.size -
 				procedure->isVarargs);
-		if (varargsCount > 0)
+		if (procedure->isVarargs)
 		{
 			static u64 varargsUniqueID = 0;
 
@@ -1288,32 +1289,40 @@ IRValue IRGenFromExpression(Context *context, ASTExpression *expression)
 
 			s64 anyTableIdx = FindTypeInStackByName(context, {}, "Any"_s);
 
-			// Allocate stack space for buffer
-			String tempVarName = TPrintF("_varargsBuffer%llu", varargsUniqueID++);
-			u32 bufferValueIdx = IRAddTempValue(context, tempVarName,
-					GetTypeInfoArrayOf(context, anyTableIdx, varargsCount), VALUEFLAGS_FORCE_MEMORY);
-			IRValue bufferIRValue = IRValueValue(context, bufferValueIdx);
-
-			// Fill the buffer
-			int nonVarargs = (int)procedure->parameters.size - 1;
-			for (int argIdx = 0; argIdx < varargsCount; ++argIdx)
+			IRValue pointerToBuffer;
+			if (varargsCount > 0)
 			{
-				ASTExpression *arg = &astProcCall->arguments[argIdx + nonVarargs];
+				// Allocate stack space for buffer
+				String tempVarName = TPrintF("_varargsBuffer%llu", varargsUniqueID);
+				u32 bufferValueIdx = IRAddTempValue(context, tempVarName,
+						GetTypeInfoArrayOf(context, anyTableIdx, varargsCount), VALUEFLAGS_FORCE_MEMORY);
+				IRValue bufferIRValue = IRValueValue(context, bufferValueIdx);
 
-				IRValue bufferIndexValue = IRValueImmediate(argIdx);
-				IRValue bufferSlotValue = IRDoArrayAccess(context, bufferIRValue, bufferIndexValue,
-						anyTableIdx);
+				// Fill the buffer
+				int nonVarargs = (int)procedure->parameters.size - 1;
+				for (int argIdx = 0; argIdx < varargsCount; ++argIdx)
+				{
+					ASTExpression *arg = &astProcCall->arguments[argIdx + nonVarargs];
 
-				IRValue rightValue = IRGenFromExpression(context, arg);
-				IRDoAssignment(context, bufferSlotValue, rightValue);
+					IRValue bufferIndexValue = IRValueImmediate(argIdx);
+					IRValue bufferSlotValue = IRDoArrayAccess(context, bufferIRValue, bufferIndexValue,
+							anyTableIdx);
+
+					IRValue rightValue = IRGenFromExpression(context, arg);
+					IRDoAssignment(context, bufferSlotValue, rightValue);
+				}
+
+				pointerToBuffer = IRPointerToValue(context, bufferIRValue);
 			}
+			else
+				pointerToBuffer = IRValueImmediate(0, GetTypeInfoPointerOf(context, anyTableIdx));
 
 			// By now we should have the buffer with all the varargs as Any structs.
 			// Now we put it into a dynamic array struct.
 			s64 dynamicArrayTableIdx = FindTypeInStackByName(context, {}, "Array"_s);
 
 			// Allocate stack space for array
-			tempVarName = TPrintF("_varargsArray%llu", varargsUniqueID++);
+			String tempVarName = TPrintF("_varargsArray%llu", varargsUniqueID++);
 			u32 arrayValueIdx = IRAddTempValue(context, tempVarName,
 					dynamicArrayTableIdx, VALUEFLAGS_FORCE_MEMORY);
 			IRValue arrayIRValue = IRValueValue(context, arrayValueIdx);
@@ -1331,7 +1340,7 @@ IRValue IRGenFromExpression(Context *context, ASTExpression *expression)
 			{
 				StructMember dataStructMember = dynamicArrayTypeInfo.structInfo.members[1];
 				IRValue dataMember = IRDoMemberAccess(context, arrayIRValue, dataStructMember);
-				IRValue dataValue = IRPointerToValue(context, bufferIRValue);
+				IRValue dataValue = pointerToBuffer;
 				IRDoAssignment(context, dataMember, dataValue);
 			}
 
@@ -1438,6 +1447,36 @@ IRValue IRGenFromExpression(Context *context, ASTExpression *expression)
 
 			result = IRValueValue(context, newStaticVar.valueIdx);
 		} break;
+		case LITERALTYPE_STRUCT:
+		{
+			static u64 structStaticVarUniqueID = 0;
+
+			s64 structTypeIdx = expression->typeTableIdx;
+			ASSERT(structTypeIdx > 0);
+
+			IRValue structIRValue = { IRVALUETYPE_IMMEDIATE_STRUCT };
+			structIRValue.typeTableIdx = structTypeIdx;
+			ArrayInit(&structIRValue.immediateStructMembers, expression->literal.members.size,
+					FrameAlloc);
+			for (int memberIdx = 0; memberIdx < expression->literal.members.size; ++memberIdx)
+			{
+				IRValue memberIRValue = IRGenFromExpression(context,
+						expression->literal.members[memberIdx]);
+				*ArrayAdd(&structIRValue.immediateStructMembers) = memberIRValue;
+			}
+
+			IRStaticVariable newStaticVar = {};
+			newStaticVar.valueIdx = NewValue(context,
+					TPrintF("staticStruct%d", structStaticVarUniqueID++),
+					structTypeIdx, VALUEFLAGS_ON_STATIC_STORAGE);
+			newStaticVar.initialValue = structIRValue;
+			newStaticVar.initialValue.typeTableIdx = structTypeIdx;
+			*DynamicArrayAdd(&context->irStaticVariables) = newStaticVar;
+
+			result = IRValueValue(newStaticVar.valueIdx, structTypeIdx);
+		} break;
+		default:
+			ASSERT(!"Unexpected literal type");
 		}
 		break;
 	} break;
@@ -1655,6 +1694,7 @@ IRValue IRGenFromExpression(Context *context, ASTExpression *expression)
 		{
 			IRValue returnValue = IRGenFromExpression(context, expression->returnNode.expression);
 			s64 returnTypeTableIdx = expression->returnNode.expression->typeTableIdx;
+			ASSERT(returnTypeTableIdx > 0);
 			if (currentProc->returnValueIdx == U32_MAX)
 				currentProc->returnValueIdx = NewValue(context, "_return_value"_s, returnTypeTableIdx, 0);
 

@@ -1,5 +1,7 @@
 enum TypeTableIndices
 {
+	TYPETABLEIDX_STRUCT_LITERAL = -5,
+
 	TYPETABLEIDX_PRIMITIVE_BEGIN = 1,
 	TYPETABLEIDX_S8 = TYPETABLEIDX_PRIMITIVE_BEGIN,
 	TYPETABLEIDX_S16,
@@ -350,6 +352,38 @@ enum TypeCheckErrorCode
 	TYPECHECK_ARRAY_SIZE_MISMATCH,
 	TYPECHECK_STRUCT_MISMATCH,
 };
+
+void ReportTypeCheckError(Context *context, TypeCheckErrorCode errorCode, SourceLocation sourceLoc,
+		s64 leftTableIdx, s64 rightTableIdx)
+{
+	String leftStr  = TypeInfoToString(context, leftTableIdx);
+	String rightStr = TypeInfoToString(context, rightTableIdx);
+	switch (errorCode)
+	{
+	case TYPECHECK_SIGN_MISMATCH:
+		LogError(context, sourceLoc, TPrintF(
+			"Integer sign mismatch! (left is %S and right is %S)", leftStr, rightStr));
+	case TYPECHECK_SIZE_MISMATCH:
+		LogError(context, sourceLoc, TPrintF(
+			"Integer size mismatch! (left is %S and right is %S)", leftStr, rightStr));
+	case TYPECHECK_TYPE_CATEGORY_MISMATCH:
+		LogError(context, sourceLoc, TPrintF(
+			"Expression type mismatch! (left is %S and right is %S)", leftStr, rightStr));
+	case TYPECHECK_POINTED_TYPE_MISMATCH:
+		LogError(context, sourceLoc, TPrintF(
+			"Unrelated pointed types! (left is %S and right is %S)", leftStr, rightStr));
+	case TYPECHECK_ARRAY_SIZE_MISMATCH:
+		LogError(context, sourceLoc, TPrintF(
+			"Size of arrays are different! (left is %S and right is %S)", leftStr, rightStr));
+	case TYPECHECK_STRUCT_MISMATCH:
+		LogError(context, sourceLoc, TPrintF(
+			"Expressions evaluate to different structs! (left is %S and right is %S)", leftStr, rightStr));
+	case TYPECHECK_MISC_ERROR:
+		LogError(context, sourceLoc, TPrintF(
+			"Expression type mismatch! (left is %S and right is %S)", leftStr, rightStr));
+	}
+}
+
 TypeCheckErrorCode CheckTypesMatch(Context *context, s64 leftTableIdx, s64 rightTableIdx)
 {
 	if (leftTableIdx == rightTableIdx)
@@ -450,71 +484,67 @@ TypeCheckErrorCode CheckTypesMatch(Context *context, s64 leftTableIdx, s64 right
 	return TYPECHECK_MISC_ERROR;
 }
 
-TypeCheckErrorCode CheckTypesMatchAndSpecialize(Context *context, s64 *leftTableIdx, s64 *rightTableIdx)
+TypeCheckErrorCode CheckTypesMatchAndSpecialize(Context *context, s64 *leftTableIdx, ASTExpression *rightHand)
 {
+	if (rightHand->typeTableIdx == TYPETABLEIDX_STRUCT_LITERAL)
+	{
+		s64 structTypeIdx = *leftTableIdx;
+		TypeInfo structTypeInfo = context->typeTable[structTypeIdx];
+		ASSERT(structTypeInfo.typeCategory == TYPECATEGORY_STRUCT);
+
+		ASSERT(rightHand->nodeType == ASTNODETYPE_LITERAL);
+		ASSERT(rightHand->literal.type == LITERALTYPE_STRUCT);
+		if (structTypeInfo.structInfo.members.size < rightHand->literal.members.size)
+			LogError(context, rightHand->any.loc, "Too many values in struct literal"_s);
+		for (int memberIdx = 0; memberIdx < rightHand->literal.members.size; ++memberIdx)
+		{
+			TypeCheckErrorCode errorCode = CheckTypesMatchAndSpecialize(context,
+					&structTypeInfo.structInfo.members[memberIdx].typeTableIdx,
+					rightHand->literal.members[memberIdx]);
+			if (errorCode != TYPECHECK_COOL)
+				Print("Type of struct literal value in position %d and "
+						"type of struct member number %d don't match\n", memberIdx, memberIdx);
+				ReportTypeCheckError(context, errorCode, rightHand->any.loc,
+						structTypeInfo.structInfo.members[memberIdx].typeTableIdx,
+						rightHand->literal.members[memberIdx]->typeTableIdx);
+		}
+
+		rightHand->typeTableIdx = structTypeIdx;
+		return TYPECHECK_COOL;
+	}
+
 	TypeCategory leftTypeCat  = context->typeTable[*leftTableIdx].typeCategory;
-	TypeCategory rightTypeCat = context->typeTable[*rightTableIdx].typeCategory;
+	TypeCategory rightTypeCat = context->typeTable[rightHand->typeTableIdx].typeCategory;
 
 	if (*leftTableIdx == TYPETABLEIDX_INTEGER && (rightTypeCat == TYPECATEGORY_INTEGER ||
 				rightTypeCat == TYPECATEGORY_POINTER || rightTypeCat == TYPECATEGORY_FLOATING))
 	{
-		*leftTableIdx = *rightTableIdx;
+		*leftTableIdx = rightHand->typeTableIdx;
 		return TYPECHECK_COOL;
 	}
-	if (*rightTableIdx == TYPETABLEIDX_INTEGER && (leftTypeCat == TYPECATEGORY_INTEGER ||
+	if (rightHand->typeTableIdx == TYPETABLEIDX_INTEGER && (leftTypeCat == TYPECATEGORY_INTEGER ||
 				leftTypeCat == TYPECATEGORY_POINTER || leftTypeCat == TYPECATEGORY_FLOATING))
 	{
-		*rightTableIdx = *leftTableIdx;
+		rightHand->typeTableIdx = *leftTableIdx;
 		return TYPECHECK_COOL;
 	}
 
 	if (*leftTableIdx == TYPETABLEIDX_FLOATING && rightTypeCat == TYPECATEGORY_FLOATING)
 	{
-		*leftTableIdx = *rightTableIdx;
+		*leftTableIdx = rightHand->typeTableIdx;
 		return TYPECHECK_COOL;
 	}
-	if (*rightTableIdx == TYPETABLEIDX_FLOATING && leftTypeCat == TYPECATEGORY_FLOATING)
+	if (rightHand->typeTableIdx == TYPETABLEIDX_FLOATING && leftTypeCat == TYPECATEGORY_FLOATING)
 	{
-		*rightTableIdx = *leftTableIdx;
+		rightHand->typeTableIdx = *leftTableIdx;
 		return TYPECHECK_COOL;
 	}
 
-	TypeCheckErrorCode typeCheckResult = CheckTypesMatch(context, *leftTableIdx, *rightTableIdx);
+	TypeCheckErrorCode typeCheckResult = CheckTypesMatch(context, *leftTableIdx, rightHand->typeTableIdx);
 	if (typeCheckResult == TYPECHECK_COOL)
 		return TYPECHECK_COOL;
 
 	return TYPECHECK_MISC_ERROR;
-}
-
-void ReportTypeCheckError(Context *context, TypeCheckErrorCode errorCode, SourceLocation sourceLoc,
-		s64 leftTableIdx, s64 rightTableIdx)
-{
-	String leftStr  = TypeInfoToString(context, leftTableIdx);
-	String rightStr = TypeInfoToString(context, rightTableIdx);
-	switch (errorCode)
-	{
-	case TYPECHECK_SIGN_MISMATCH:
-		LogError(context, sourceLoc, TPrintF(
-			"Integer sign mismatch! (left is %S and right is %S)", leftStr, rightStr));
-	case TYPECHECK_SIZE_MISMATCH:
-		LogError(context, sourceLoc, TPrintF(
-			"Integer size mismatch! (left is %S and right is %S)", leftStr, rightStr));
-	case TYPECHECK_TYPE_CATEGORY_MISMATCH:
-		LogError(context, sourceLoc, TPrintF(
-			"Expression type mismatch! (left is %S and right is %S)", leftStr, rightStr));
-	case TYPECHECK_POINTED_TYPE_MISMATCH:
-		LogError(context, sourceLoc, TPrintF(
-			"Unrelated pointed types! (left is %S and right is %S)", leftStr, rightStr));
-	case TYPECHECK_ARRAY_SIZE_MISMATCH:
-		LogError(context, sourceLoc, TPrintF(
-			"Size of arrays are different! (left is %S and right is %S)", leftStr, rightStr));
-	case TYPECHECK_STRUCT_MISMATCH:
-		LogError(context, sourceLoc, TPrintF(
-			"Expressions evaluate to different structs! (left is %S and right is %S)", leftStr, rightStr));
-	case TYPECHECK_MISC_ERROR:
-		LogError(context, sourceLoc, TPrintF(
-			"Expression type mismatch! (left is %S and right is %S)", leftStr, rightStr));
-	}
 }
 
 bool AreTypeInfosEqual(Context *context, TypeInfo a, TypeInfo b)
@@ -1057,25 +1087,24 @@ ASTVariableDeclaration TypeCheckVariableDeclaration(Context *context, ASTVariabl
 	if (varDecl.astInitialValue)
 	{
 		TypeCheckExpression(context, varDecl.astInitialValue);
-		s64 valueType = varDecl.astInitialValue->typeTableIdx;
 
 		if (varDecl.astType)
 		{
 			TypeCheckErrorCode typeCheckResult = CheckTypesMatchAndSpecialize(context,
-					&varDecl.typeTableIdx, &valueType);
+					&varDecl.typeTableIdx, varDecl.astInitialValue);
 			if (typeCheckResult != TYPECHECK_COOL)
 			{
 				Print("Variable declaration type and initial type don't match\n");
 				ReportTypeCheckError(context, typeCheckResult, varDecl.loc, varDecl.typeTableIdx,
-						valueType);
+						varDecl.astInitialValue->typeTableIdx);
 			}
 		}
 		else
 		{
-			if (valueType == TYPETABLEIDX_VOID)
+			if (varDecl.astInitialValue->typeTableIdx == TYPETABLEIDX_VOID)
 				LogError(context, varDecl.loc, "Variable can't be of type void!"_s);
 
-			varDecl.typeTableIdx = InferType(valueType);
+			varDecl.typeTableIdx = InferType(varDecl.astInitialValue->typeTableIdx);
 		}
 	}
 
@@ -1360,14 +1389,16 @@ void TypeCheckExpression(Context *context, ASTExpression *expression)
 	} break;
 	case ASTNODETYPE_RETURN:
 	{
-		u64 typeTableIdx = TYPETABLEIDX_VOID;
+		TypeCheckErrorCode typeCheckResult;
 		if (expression->returnNode.expression != nullptr)
 		{
 			TypeCheckExpression(context, expression->returnNode.expression);
-			typeTableIdx = expression->returnNode.expression->typeTableIdx;
+			typeCheckResult = CheckTypesMatchAndSpecialize(context,
+					&context->tcCurrentReturnType, expression->returnNode.expression);
 		}
-		TypeCheckErrorCode typeCheckResult = CheckTypesMatch(context, context->tcCurrentReturnType,
-				typeTableIdx);
+		else
+			typeCheckResult = CheckTypesMatch(context, context->tcCurrentReturnType, TYPETABLEIDX_VOID);
+
 		if (typeCheckResult != TYPECHECK_COOL)
 			LogError(context, expression->any.loc, "Incorrect return type"_s);
 	} break;
@@ -1512,7 +1543,7 @@ skipNotFound:
 			ASTExpression *arg = &expression->procedureCall.arguments[argIdx];
 			s64 *paramTypeIdx = &procedure->parameters[argIdx].typeTableIdx;
 			TypeCheckErrorCode typeCheckResult = CheckTypesMatchAndSpecialize(context,
-					paramTypeIdx, &arg->typeTableIdx);
+					paramTypeIdx, arg);
 
 			if (typeCheckResult != TYPECHECK_COOL)
 			{
@@ -1655,7 +1686,7 @@ skipNotFound:
 			TypeCheckExpression(context, rightHand);
 
 			TypeCheckErrorCode typeCheckResult = CheckTypesMatchAndSpecialize(context,
-					&leftHand->typeTableIdx, &rightHand->typeTableIdx);
+					&leftHand->typeTableIdx, rightHand);
 
 			if (typeCheckResult != TYPECHECK_COOL)
 			{
@@ -1699,8 +1730,13 @@ skipNotFound:
 		case LITERALTYPE_STRING:
 			expression->typeTableIdx = FindTypeInStackByName(context, {}, "String"_s);
 			break;
+		case LITERALTYPE_STRUCT:
+			expression->typeTableIdx = TYPETABLEIDX_STRUCT_LITERAL;
+			for (int memberIdx = 0; memberIdx < expression->literal.members.size; ++memberIdx)
+				TypeCheckExpression(context, expression->literal.members[memberIdx]);
+			break;
 		default:
-			CRASH;
+			ASSERT(!"Unexpected literal type");
 		}
 	} break;
 	case ASTNODETYPE_IF:

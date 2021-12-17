@@ -519,6 +519,38 @@ ASTStructDeclaration ParseStructOrUnion(Context *context)
 	return structDeclaration;
 }
 
+Array<ASTExpression *> ParseStructLiteral(Context *context)
+{
+	DynamicArray<ASTExpression *, FrameAlloc, FrameRealloc> members;
+	DynamicArrayInit(&members, 8);
+
+	while (true)
+	{
+		ASTExpression *newTreeNode = NewTreeNode(context);
+		*newTreeNode = ParseExpression(context, -1);
+		*DynamicArrayAdd(&members) = newTreeNode;
+
+		if (context->token->type == '}')
+			break;
+		if (context->token->type == ',')
+		{
+			Advance(context);
+			continue;
+		}
+
+		String tokenStr = TokenTypeToString(context->token->type);
+		LogError(context, context->token->loc, TPrintF("Parsing struct literal. Expected ',' or '}' but got %S", tokenStr));
+	}
+
+	Array<ASTExpression *> result;
+	result.data = members.data;
+	result.size = members.size;
+#if DEBUG_BUILD
+	result._capacity = members.capacity;
+#endif
+	return result;
+}
+
 ASTVariableDeclaration ParseVariableDeclaration(Context *context)
 {
 	ASTVariableDeclaration varDecl = {};
@@ -661,6 +693,19 @@ ASTExpression ParseExpression(Context *context, s32 precedence)
 		result = ParseExpression(context, -1);
 
 		AssertToken(context, context->token, ')');
+		Advance(context);
+	}
+	else if (context->token->type == '{')
+	{
+		Advance(context);
+
+		result.any.loc = context->token->loc;
+		result.nodeType = ASTNODETYPE_LITERAL;
+
+		result.literal.type = LITERALTYPE_STRUCT;
+		result.literal.members = ParseStructLiteral(context);
+
+		AssertToken(context, context->token, '}');
 		Advance(context);
 	}
 	else if (context->token->type == TOKEN_IDENTIFIER)

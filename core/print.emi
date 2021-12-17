@@ -3,10 +3,11 @@ PrintF :: (format : String, ..args)
 	PrintArgument :: (arg : Any)
 	{
 		if arg.typeInfo == typeof(String)
+			Print(@ cast(^String) arg.data);
+		else if arg.typeInfo == typeof(Any)
 		{
-			//Print(@ cast(^String) arg.data);
-			str : String = @ cast(^String) arg.data;
-			Print(str);
+			any := cast(^Any) arg.data;
+			PrintArgument(@any);
 		}
 		else if arg.typeInfo.typeKind == TypeKind_Integer
 		{
@@ -144,12 +145,18 @@ PrintF :: (format : String, ..args)
 		}
 		else if arg.typeInfo.typeKind == TypeKind_Pointer
 		{
-			pointerInfo := cast(^TypeInfoPointer) arg.typeInfo;
-			Print("^");
-			pointedThing : Any;
-			pointedThing.typeInfo = pointerInfo.typeInfo;
-			pointedThing.data = @ cast(^^void) arg.data;
-			PrintArgument(pointedThing);
+			pointer : ^void = @ cast(^^void) arg.data;
+			if pointer == null
+				Print("null");
+			else
+			{
+				pointerInfo := cast(^TypeInfoPointer) arg.typeInfo;
+				Print("^");
+				pointedThing : Any;
+				pointedThing.typeInfo = pointerInfo.typeInfo;
+				pointedThing.data = pointer;
+				PrintArgument(pointedThing);
+			}
 		}
 		else
 			Print("<Unknown type>");

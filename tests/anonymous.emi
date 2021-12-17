@@ -1,3 +1,13 @@
+AnonReturn :: () -> struct { one : s32; two : s32; }
+{
+	return { 1, 2 };
+}
+
+AnonParam :: (param : struct { three : s64; four : s64; })
+{
+	PrintF("Anonymous struct parameter received: %\n", param);
+}
+
 Main :: () -> s64
 {
 	struct
@@ -31,6 +41,11 @@ Main :: () -> s64
 		};
 	};
 	deep = 5;
+
+	anonReturnValue := AnonReturn();
+	PrintF("Anonymous struct return: %\n", anonReturnValue);
+
+	AnonParam({ 3, 4 });
 
 	Print("Test ok\n");
 	return 0;

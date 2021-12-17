@@ -9,6 +9,12 @@ doThings :: (eight : u8, sixteen : u16, thirtytwo : u32)
 defaultArg :: (eight : s8 = 8)
 {
 	foo := eight;
+	PrintF("Argument: %\n", eight);
+}
+
+mixed :: (fixedParam : u32, optional : f64 = 5.5, ..varargs)
+{
+	PrintF("FixedParam: %, optional: %, varargs: %\n", fixedParam, optional, varargs);
 }
 
 Main :: () -> s64
@@ -16,6 +22,9 @@ Main :: () -> s64
 	doThings(8, 16, 32);
 	defaultArg();
 	defaultArg(16);
+	mixed(42);
+	mixed(43, 6.6);
+	mixed(44, 7.7, 1, 2, 3);
 
 	Print("Test ok\n");
 	return 0;

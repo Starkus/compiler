@@ -10,7 +10,8 @@ enum LiteralType
 	LITERALTYPE_INTEGER,
 	LITERALTYPE_FLOATING,
 	LITERALTYPE_CHARACTER,
-	LITERALTYPE_STRING
+	LITERALTYPE_STRING,
+	LITERALTYPE_STRUCT
 };
 struct ASTLiteral : ASTBase
 {
@@ -21,6 +22,7 @@ struct ASTLiteral : ASTBase
 		f64 floating;
 		char character;
 		String string;
+		Array<ASTExpression *> members;
 	};
 };
 
