@@ -159,7 +159,12 @@ struct ASTStaticDefinition : ASTBase
 struct ASTProcedureCall : ASTBase
 {
 	String name;
-	s32 procedureIdx;
+	bool isIndirect;
+	union
+	{
+		s32 procedureIdx;
+		u32 valueIdx;
+	};
 	DynamicArray<ASTExpression, malloc, realloc> arguments;
 };
 

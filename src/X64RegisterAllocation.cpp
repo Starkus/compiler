@@ -257,6 +257,45 @@ void DoLivenessAnalisisOnInstruction(Context *context, BasicBlock *basicBlock, X
 			}
 		}
 	} break;
+	case X64_CALL_Indirect:
+	{
+		ArrayInit(&inst->liveValues, liveValues->size, FrameAlloc);
+		inst->liveValues.size = liveValues->size;
+		for (int i = 0; i < liveValues->size; ++i)
+			inst->liveValues[i] = (*liveValues)[i];
+
+		AddValue(context, inst->valueIdx, basicBlock->procedure, liveValues);
+
+		s64 procTypeIdx = context->values[inst->valueIdx].typeTableIdx;
+		TypeInfo procTypeInfo = context->typeTable[procTypeIdx];
+		ASSERT(procTypeInfo.typeCategory == TYPECATEGORY_PROCEDURE);
+
+		s64 returnTypeIdx = procTypeInfo.procedureInfo.returnTypeTableIdx;
+
+		int paramIdx = 0;
+		// Take into account return value pointer in RCX
+		if (returnTypeIdx > 0 && IRShouldPassByCopy(context, returnTypeIdx))
+		{
+			AddValue(context, x64ParameterValuesWrite[0], basicBlock->procedure, liveValues);
+			++paramIdx;
+		}
+
+		for (int i = 0; i < procTypeInfo.procedureInfo.parameters.size; ++i, ++paramIdx)
+		{
+			bool floating = context->typeTable[procTypeInfo.procedureInfo.parameters[i]].typeCategory ==
+				TYPECATEGORY_FLOATING;
+			if (!floating || paramIdx >= 4)
+				AddValue(context, x64ParameterValuesWrite[paramIdx], basicBlock->procedure, liveValues);
+			else switch (paramIdx)
+			{
+				case 0: AddValue(context, XMM0.valueIdx, basicBlock->procedure, liveValues); break;
+				case 1: AddValue(context, XMM1.valueIdx, basicBlock->procedure, liveValues); break;
+				case 2: AddValue(context, XMM2.valueIdx, basicBlock->procedure, liveValues); break;
+				case 3: AddValue(context, XMM3.valueIdx, basicBlock->procedure, liveValues); break;
+				default: ASSERT(false);
+			}
+		}
+	} break;
 	case X64_PUSH:
 	case X64_POP:
 	case X64_JMP:

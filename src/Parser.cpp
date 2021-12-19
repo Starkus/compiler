@@ -28,12 +28,28 @@ struct Value
 	};
 };
 
+enum ConstantType
+{
+	CONSTANTTYPE_INVALID = 0,
+	CONSTANTTYPE_INTEGER,
+	CONSTANTTYPE_FLOATING
+};
+struct Constant
+{
+	ConstantType type;
+	union
+	{
+		s64 valueAsInt;
+		f64 valueAsFloat;
+	};
+};
+
 struct ProcedureParameter
 {
 	u32 valueIdx;
 	s64 typeTableIdx; // This type stays the same, the type of the variable itself can change, for
 					  // example if the parameter is passed by pointer because of implementation details.
-	ASTExpression *defaultValue;
+	Constant defaultValue;
 };
 struct IRInstruction;
 struct Procedure

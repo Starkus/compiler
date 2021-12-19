@@ -1,0 +1,22 @@
+Main :: () -> s64
+{
+	Proce :: () { Print("Procedure called through pointer!\n"); }
+	ReturnNumber :: () -> s32 { return 42; }
+	Params :: (one : s32, two : s32, three : s32) { PrintF("Params: %, %, %\n", one, two, three); }
+	Varargs :: (format : String, ..args) { PrintF(format, args); }
+
+	pointerToProce := Proce;
+	pointerToProce();
+
+	pointerToReturnNumber := ReturnNumber;
+	number : s32 = pointerToReturnNumber();
+	PrintF("Received number % through procedure pointer call\n", number);
+
+	pointerToParams := Params;
+	pointerToParams(1, 2, 3);
+
+	pointerToVarargs := Varargs;
+	pointerToVarargs("Print things: % % %", 1, 2.4, true);
+
+	return 0;
+}

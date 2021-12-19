@@ -173,6 +173,22 @@ void PrintIRInstruction(Context *context, IRInstruction inst)
 		}
 		Print(")\n");
 	} break;
+	case IRINSTRUCTIONTYPE_PROCEDURE_CALL_INDIRECT:
+	{
+		if (inst.procedureCallIndirect.out.valueType != IRVALUETYPE_INVALID)
+		{
+			PrintIRValue(context, inst.procedureCallIndirect.out);
+			Print(" := ");
+		}
+		Print("call %S(", PIRValueToStr(context, inst.procedureCallIndirect.valueIdx));
+
+		for (int i = 0; i < inst.procedureCallIndirect.parameters.size; ++i)
+		{
+			if (i) Print(", ");
+			PrintIRValue(context, inst.procedureCallIndirect.parameters[i]);
+		}
+		Print(")\n");
+	} break;
 	case IRINSTRUCTIONTYPE_PUSH_VALUE:
 	{
 		Print("push value %S\n", PIRValueToStr(context, inst.pushValue.valueIdx));
@@ -237,8 +253,9 @@ void PrintIRInstructions(Context *context)
 		{
 			if (paramIdx) Print(", ");
 			u32 paramValueIdx = proc->parameters[paramIdx].valueIdx;
-			String typeStr = TypeInfoToString(context, context->values[paramValueIdx].typeTableIdx);
-			Print("param%d : %S", paramIdx, typeStr);
+			Value paramValue = context->values[paramValueIdx];
+			String typeStr = TypeInfoToString(context, paramValue.typeTableIdx);
+			Print("%S : %S", paramValue.name, typeStr);
 		}
 		Print(")");
 		if (proc->returnTypeTableIdx != TYPETABLEIDX_VOID)

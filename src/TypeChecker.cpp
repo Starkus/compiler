@@ -33,7 +33,7 @@ enum TypeCategory
 	TYPECATEGORY_ENUM,
 	TYPECATEGORY_POINTER,
 	TYPECATEGORY_ARRAY,
-	TYPECATEGORY_PROCEDURE_POINTER,
+	TYPECATEGORY_PROCEDURE,
 };
 
 struct TypeInfo;
@@ -73,8 +73,9 @@ struct TypeInfoArray
 	u64 count;
 };
 
-struct TypeInfoProcedurePointer
+struct TypeInfoProcedure
 {
+	s64 returnTypeTableIdx;
 	DynamicArray<s64, malloc, realloc> parameters;
 	bool isVarargs;
 };
@@ -91,22 +92,7 @@ struct TypeInfo
 		TypeInfoEnum enumInfo;
 		TypeInfoPointer pointerInfo;
 		TypeInfoArray arrayInfo;
-		TypeInfoProcedurePointer procedurePointerInfo;
-	};
-};
-
-enum ConstantType
-{
-	CONSTANTTYPE_INTEGER,
-	CONSTANTTYPE_FLOATING
-};
-struct Constant
-{
-	ConstantType type;
-	union
-	{
-		s64 valueAsInt;
-		f64 valueAsFloat;
+		TypeInfoProcedure procedureInfo;
 	};
 };
 
@@ -547,6 +533,12 @@ TypeCheckErrorCode CheckTypesMatchAndSpecialize(Context *context, s64 *leftTable
 	return TYPECHECK_MISC_ERROR;
 }
 
+// @Improve
+TypeCheckErrorCode CheckTypesMatchAndSpecializeRight(Context *context, s64 leftTableIdx, ASTExpression *rightHand)
+{
+	return CheckTypesMatchAndSpecialize(context, &leftTableIdx, rightHand);
+}
+
 bool AreTypeInfosEqual(Context *context, TypeInfo a, TypeInfo b)
 {
 	if (a.typeCategory != b.typeCategory)
@@ -580,17 +572,25 @@ bool AreTypeInfosEqual(Context *context, TypeInfo a, TypeInfo b)
 	case TYPECATEGORY_ARRAY:
 		return a.arrayInfo.elementTypeTableIdx == b.arrayInfo.elementTypeTableIdx &&
 			a.arrayInfo.count == b.arrayInfo.count;
-	case TYPECATEGORY_PROCEDURE_POINTER:
-		if (a.procedurePointerInfo.parameters.size != b.procedurePointerInfo.parameters.size)
+	case TYPECATEGORY_PROCEDURE:
+		if (a.procedureInfo.parameters.size != b.procedureInfo.parameters.size)
 			return false;
-		for (int i = 0; i < a.procedurePointerInfo.parameters.size; ++i)
+		if (a.procedureInfo.isVarargs != b.procedureInfo.isVarargs)
+			return false;
+		TypeInfo aReturnTypeInfo = context->typeTable[a.procedureInfo.returnTypeTableIdx];
+		TypeInfo bReturnTypeInfo = context->typeTable[b.procedureInfo.returnTypeTableIdx];
+		if (!AreTypeInfosEqual(context, aReturnTypeInfo, bReturnTypeInfo))
+			return false;
+		for (int i = 0; i < a.procedureInfo.parameters.size; ++i)
 		{
-			TypeInfo aParamTypeInfo = context->typeTable[a.procedurePointerInfo.parameters[i]];
-			TypeInfo bParamTypeInfo = context->typeTable[b.procedurePointerInfo.parameters[i]];
+			TypeInfo aParamTypeInfo = context->typeTable[a.procedureInfo.parameters[i]];
+			TypeInfo bParamTypeInfo = context->typeTable[b.procedureInfo.parameters[i]];
 			if (!AreTypeInfosEqual(context, aParamTypeInfo, bParamTypeInfo))
 				return false;
 		}
 		return true;
+	case TYPECATEGORY_INVALID:
+		return b.typeCategory == TYPECATEGORY_INVALID;
 	default:
 		CRASH;
 	}
@@ -712,6 +712,7 @@ Constant EvaluateConstant(Context *context, ASTExpression *expression)
 			result.valueAsInt = expression->literal.integer;
 			break;
 		case LITERALTYPE_FLOATING:
+			result.type = CONSTANTTYPE_FLOATING;
 			result.valueAsFloat = expression->literal.floating;
 			break;
 		default:
@@ -738,14 +739,20 @@ Constant EvaluateConstant(Context *context, ASTExpression *expression)
 		case TOKEN_OP_MINUS:
 		{
 			if (isFloat)
+			{
+				result.type = CONSTANTTYPE_FLOATING;
 				result.valueAsFloat = -inValue.valueAsFloat;
+			}
 			else
 				result.valueAsInt = -inValue.valueAsInt;
 		} break;
 		case TOKEN_OP_NOT:
 		{
 			if (isFloat)
+			{
+				result.type = CONSTANTTYPE_FLOATING;
 				result.valueAsFloat = !inValue.valueAsFloat;
+			}
 			else
 				result.valueAsInt = !inValue.valueAsInt;
 		} break;
@@ -1295,9 +1302,9 @@ void TypeCheckExpression(Context *context, ASTExpression *expression)
 
 		TypeInfo t = {};
 		t.size = g_pointerSize;
-		t.typeCategory = TYPECATEGORY_PROCEDURE_POINTER;
-		DynamicArrayInit(&t.procedurePointerInfo.parameters, 8);
-		t.procedurePointerInfo.isVarargs = procedure->isVarargs;
+		t.typeCategory = TYPECATEGORY_PROCEDURE;
+		DynamicArrayInit(&t.procedureInfo.parameters, 8);
+		t.procedureInfo.isVarargs = procedure->isVarargs;
 
 		// Parameters
 		bool beginOptionalParameters = false;
@@ -1311,9 +1318,8 @@ void TypeCheckExpression(Context *context, ASTExpression *expression)
 			ProcedureParameter *procParam = DynamicArrayAdd(&procedure->parameters);
 			procParam->valueIdx = astVarDecl.valueIdx;
 			procParam->typeTableIdx = astVarDecl.typeTableIdx;
-			procParam->defaultValue = astVarDecl.astInitialValue;
 
-			*DynamicArrayAdd(&t.procedurePointerInfo.parameters) = astVarDecl.typeTableIdx;
+			*DynamicArrayAdd(&t.procedureInfo.parameters) = astVarDecl.typeTableIdx;
 
 			if (astVarDecl.isUsing)
 			{
@@ -1332,6 +1338,7 @@ void TypeCheckExpression(Context *context, ASTExpression *expression)
 			}
 			else
 			{
+				procParam->defaultValue = EvaluateConstant(context, astVarDecl.astInitialValue);
 				beginOptionalParameters = true;
 			}
 		}
@@ -1346,7 +1353,7 @@ void TypeCheckExpression(Context *context, ASTExpression *expression)
 			ProcedureParameter *procParam = DynamicArrayAdd(&procedure->parameters);
 			procParam->valueIdx = valueIdx;
 			procParam->typeTableIdx = arrayTableIdx;
-			procParam->defaultValue = nullptr;
+			procParam->defaultValue = {};
 
 			TCScope *stackTop = &context->tcStack[context->tcStack.size - 1];
 			TCScopeName newScopeName;
@@ -1363,6 +1370,7 @@ void TypeCheckExpression(Context *context, ASTExpression *expression)
 			returnType = TypeCheckType(context, expression->any.loc, procDecl->astReturnType);
 		}
 		procedure->returnTypeTableIdx = returnType;
+		t.procedureInfo.returnTypeTableIdx = returnType;
 
 		u64 oldReturnType = context->tcCurrentReturnType;
 		context->tcCurrentReturnType = returnType;
@@ -1385,7 +1393,7 @@ void TypeCheckExpression(Context *context, ASTExpression *expression)
 
 		s64 typeTableIdx = FindOrAddTypeTableIdx(context, t);
 		procedure->typeTableIdx = typeTableIdx;
-		expression->typeTableIdx = GetTypeInfoPointerOf(context, typeTableIdx);
+		expression->typeTableIdx = typeTableIdx;
 	} break;
 	case ASTNODETYPE_RETURN:
 	{
@@ -1393,8 +1401,8 @@ void TypeCheckExpression(Context *context, ASTExpression *expression)
 		if (expression->returnNode.expression != nullptr)
 		{
 			TypeCheckExpression(context, expression->returnNode.expression);
-			typeCheckResult = CheckTypesMatchAndSpecialize(context,
-					&context->tcCurrentReturnType, expression->returnNode.expression);
+			typeCheckResult = CheckTypesMatchAndSpecializeRight(context,
+					context->tcCurrentReturnType, expression->returnNode.expression);
 		}
 		else
 			typeCheckResult = CheckTypesMatch(context, context->tcCurrentReturnType, TYPETABLEIDX_VOID);
@@ -1481,6 +1489,8 @@ skipInvalidIdentifierError:
 
 		// Search backwards so we find procedures higher in the stack first.
 		s32 procedureIdx = S32_MIN;
+		s32 procedurePointerValueIdx = U32_MAX;
+		s64 procedureTypeIdx = -1;
 		for (s64 stackIdx = context->tcStack.size - 1; stackIdx >= 0; --stackIdx)
 		{
 			TCScope *currentScope = &context->tcStack[stackIdx];
@@ -1489,72 +1499,143 @@ skipInvalidIdentifierError:
 				TCScopeName currentName = currentScope->names[i];
 				if (StringEquals(procName, currentName.name))
 				{
-					if (currentName.type != NAMETYPE_STATIC_DEFINITION ||
-						currentName.staticDefinition->definitionType != STATICDEFINITIONTYPE_PROCEDURE)
-						LogError(context, expression->any.loc, "Calling a non-procedure"_s);
+					if (currentName.type == NAMETYPE_VARIABLE)
+					{
+						procedurePointerValueIdx = currentName.variableInfo.valueIdx;
+						procedureTypeIdx = currentName.variableInfo.typeTableIdx;
+						goto typeCheckProcPointerCall;
+					}
+					if (currentName.type == NAMETYPE_STATIC_DEFINITION &&
+						currentName.staticDefinition->definitionType == STATICDEFINITIONTYPE_PROCEDURE)
+					{
+						procedureIdx = currentName.staticDefinition->procedureIdx;
+						goto typeCheckProcCall;
+					}
 
-					procedureIdx = currentName.staticDefinition->procedureIdx;
-					goto skipNotFound;
+					LogError(context, expression->any.loc, "Calling a non-procedure"_s);
 				}
 			}
 		}
 
 		LogError(context, expression->any.loc, TPrintF("Invalid procedure \"%S\" called", procName));
-skipNotFound:
 
-		Procedure *procedure = GetProcedure(context, procedureIdx);
-
-		expression->procedureCall.procedureIdx = procedureIdx;
-		expression->typeTableIdx = procedure->returnTypeTableIdx;
-
-		// Type check arguments
-		s64 requiredArguments = procedure->requiredParameterCount;
-		s64 totalArguments = procedure->parameters.size - procedure->isVarargs;
-		s64 givenArguments  = expression->procedureCall.arguments.size;
-		if (procedure->isVarargs)
+typeCheckProcCall:
 		{
-			if (requiredArguments > givenArguments)
-				LogError(context, expression->any.loc,
-						TPrintF("Procedure \"%S\" needs at least %d arguments but only %d were given",
-							procName, requiredArguments, givenArguments));
-		}
-		else
-		{
-			if (requiredArguments > givenArguments)
-				LogError(context, expression->any.loc,
-						TPrintF("Procedure \"%S\" needs at least %d arguments but only %d were given",
-						procName, requiredArguments, givenArguments));
+			Procedure *procedure = GetProcedure(context, procedureIdx);
 
-			if (givenArguments > totalArguments)
-				LogError(context, expression->any.loc,
-						TPrintF("Procedure \"%S\" needs %d arguments but %d were given",
-						procName, totalArguments, givenArguments));
-		}
+			expression->procedureCall.isIndirect = false;
+			expression->procedureCall.procedureIdx = procedureIdx;
+			expression->typeTableIdx = procedure->returnTypeTableIdx;
 
-		for (int argIdx = 0; argIdx < givenArguments; ++argIdx)
-		{
-			ASTExpression *arg = &expression->procedureCall.arguments[argIdx];
-			TypeCheckExpression(context, arg);
-		}
-
-		s64 argsToCheck = Min(givenArguments, totalArguments);
-		for (int argIdx = 0; argIdx < argsToCheck; ++argIdx)
-		{
-			ASTExpression *arg = &expression->procedureCall.arguments[argIdx];
-			s64 *paramTypeIdx = &procedure->parameters[argIdx].typeTableIdx;
-			TypeCheckErrorCode typeCheckResult = CheckTypesMatchAndSpecialize(context,
-					paramTypeIdx, arg);
-
-			if (typeCheckResult != TYPECHECK_COOL)
+			// Type check arguments
+			s64 requiredArguments = procedure->requiredParameterCount;
+			s64 totalArguments = procedure->parameters.size - procedure->isVarargs;
+			s64 givenArguments  = expression->procedureCall.arguments.size;
+			if (procedure->isVarargs)
 			{
-				String paramStr = TypeInfoToString(context, *paramTypeIdx);
-				String givenStr = TypeInfoToString(context, arg->typeTableIdx);
-				LogError(context, arg->any.loc, TPrintF("When calling procedure \"%S\": type of "
-							"parameter #%d didn't match (parameter is %S but %S was given)",
-							procName, argIdx, paramStr, givenStr));
+				if (requiredArguments > givenArguments)
+					LogError(context, expression->any.loc,
+							TPrintF("Procedure \"%S\" needs at least %d arguments but only %d were given",
+								procName, requiredArguments, givenArguments));
 			}
+			else
+			{
+				if (requiredArguments > givenArguments)
+					LogError(context, expression->any.loc,
+							TPrintF("Procedure \"%S\" needs at least %d arguments but only %d were given",
+							procName, requiredArguments, givenArguments));
+
+				if (givenArguments > totalArguments)
+					LogError(context, expression->any.loc,
+							TPrintF("Procedure \"%S\" needs %d arguments but %d were given",
+							procName, totalArguments, givenArguments));
+			}
+
+			for (int argIdx = 0; argIdx < givenArguments; ++argIdx)
+			{
+				ASTExpression *arg = &expression->procedureCall.arguments[argIdx];
+				TypeCheckExpression(context, arg);
+			}
+
+			s64 argsToCheck = Min(givenArguments, totalArguments);
+			for (int argIdx = 0; argIdx < argsToCheck; ++argIdx)
+			{
+				ASTExpression *arg = &expression->procedureCall.arguments[argIdx];
+				s64 paramTypeIdx = procedure->parameters[argIdx].typeTableIdx;
+				TypeCheckErrorCode typeCheckResult = CheckTypesMatchAndSpecializeRight(context,
+						paramTypeIdx, arg);
+
+				if (typeCheckResult != TYPECHECK_COOL)
+				{
+					String paramStr = TypeInfoToString(context, paramTypeIdx);
+					String givenStr = TypeInfoToString(context, arg->typeTableIdx);
+					LogError(context, arg->any.loc, TPrintF("When calling procedure \"%S\": type of "
+								"parameter #%d didn't match (parameter is %S but %S was given)",
+								procName, argIdx, paramStr, givenStr));
+				}
+			}
+			break;
 		}
-	} break;
+
+typeCheckProcPointerCall:
+		{
+			TypeInfo procTypeInfo = context->typeTable[procedureTypeIdx];
+
+			expression->procedureCall.isIndirect = true;
+			expression->procedureCall.valueIdx = procedurePointerValueIdx;
+			expression->typeTableIdx = procTypeInfo.procedureInfo.returnTypeTableIdx;
+
+			// Type check arguments
+			s64 requiredArguments = procTypeInfo.procedureInfo.parameters.size;
+			s64 totalArguments = requiredArguments - procTypeInfo.procedureInfo.isVarargs;
+			s64 givenArguments  = expression->procedureCall.arguments.size;
+			if (procTypeInfo.procedureInfo.isVarargs)
+			{
+				if (requiredArguments > givenArguments)
+					LogError(context, expression->any.loc,
+							TPrintF("Procedure \"%S\" needs at least %d arguments but only %d were given",
+								procName, requiredArguments, givenArguments));
+			}
+			else
+			{
+				if (requiredArguments > givenArguments)
+					LogError(context, expression->any.loc,
+							TPrintF("Procedure \"%S\" needs at least %d arguments but only %d were given",
+							procName, requiredArguments, givenArguments));
+
+				if (givenArguments > totalArguments)
+					LogError(context, expression->any.loc,
+							TPrintF("Procedure \"%S\" needs %d arguments but %d were given",
+							procName, totalArguments, givenArguments));
+			}
+
+			for (int argIdx = 0; argIdx < givenArguments; ++argIdx)
+			{
+				ASTExpression *arg = &expression->procedureCall.arguments[argIdx];
+				TypeCheckExpression(context, arg);
+			}
+
+			s64 argsToCheck = Min(givenArguments, totalArguments);
+			for (int argIdx = 0; argIdx < argsToCheck; ++argIdx)
+			{
+				ASTExpression *arg = &expression->procedureCall.arguments[argIdx];
+				s64 paramTypeIdx = procTypeInfo.procedureInfo.parameters[argIdx];
+				TypeCheckErrorCode typeCheckResult = CheckTypesMatchAndSpecializeRight(context,
+						paramTypeIdx, arg);
+
+				if (typeCheckResult != TYPECHECK_COOL)
+				{
+					String paramStr = TypeInfoToString(context, paramTypeIdx);
+					String givenStr = TypeInfoToString(context, arg->typeTableIdx);
+					LogError(context, arg->any.loc, TPrintF("When calling procedure pointer \"%S\": "
+							"type of parameter #%d didn't match (parameter is %S but %S was given)",
+							procName, argIdx, paramStr, givenStr));
+				}
+			}
+
+			break;
+		}
+	}
 	case ASTNODETYPE_UNARY_OPERATION:
 	{
 		TypeCheckExpression(context, expression->unaryOperation.expression);

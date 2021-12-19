@@ -28,6 +28,7 @@ enum X64InstructionType
 	X64_JE,
 	X64_JNE,
 	X64_CALL,
+	X64_CALL_Indirect,
 	X64_LEAVE,
 	X64_RET,
 	X64_LEA,
@@ -1079,6 +1080,54 @@ void X64ConvertInstruction(Context *context, IRInstruction inst, X64Procedure *x
 			X64Mov(context, x64Proc, inst.procedureCall.out, RAX);
 		return;
 	}
+	case IRINSTRUCTIONTYPE_PROCEDURE_CALL_INDIRECT:
+	{
+		u32 valueIdx = inst.procedureCallIndirect.valueIdx;
+
+		s64 procTypeIdx = context->values[valueIdx].typeTableIdx;
+		TypeInfo procTypeInfo = context->typeTable[procTypeIdx];
+		ASSERT(procTypeInfo.typeCategory == TYPECATEGORY_PROCEDURE);
+
+		// @Incomplete: implement calling conventions other than MS ABI
+		for (int i = 0; i < procTypeInfo.procedureInfo.parameters.size +
+				procTypeInfo.procedureInfo.isVarargs; ++i)
+		{
+			IRValue param = inst.procedureCallIndirect.parameters[i];
+			//s64 paramType = context->values[GetProcedure(context, procIdx)->parameters[i].valueIdx].typeTableIdx;
+			s64 paramType = param.typeTableIdx;
+			bool floating = context->typeTable[paramType].typeCategory == TYPECATEGORY_FLOATING;
+
+			IRValue dst;
+			switch(i)
+			{
+			case 0:
+				dst = floating ? XMM0 : RCX;
+				break;
+			case 1:
+				dst = floating ? XMM1 : RDX;
+				break;
+			case 2:
+				dst = floating ? XMM2 : R8;
+				break;
+			case 3:
+				dst = floating ? XMM3 : R9;
+				break;
+			default:
+				dst = IRValueMemory(x64ParameterValuesWrite[i], 0, TYPETABLEIDX_S64);
+			}
+			if (floating)
+				dst.typeTableIdx = paramType;
+			X64Mov(context, x64Proc, dst, param);
+		}
+
+		result.type = X64_CALL_Indirect;
+		result.valueIdx = valueIdx;
+		*BucketArrayAdd(&x64Proc->instructions) = result;
+
+		if (inst.procedureCallIndirect.out.valueType != IRVALUETYPE_INVALID)
+			X64Mov(context, x64Proc, inst.procedureCallIndirect.out, RAX);
+		return;
+	}
 	case IRINSTRUCTIONTYPE_INTRINSIC_MEMCPY:
 	{
 		X64Mov(context, x64Proc, RCX, inst.memcpy.dst);
@@ -1295,6 +1344,9 @@ String X64InstructionToStr(Context *context, X64Instruction inst)
 		goto printLabel;
 	case X64_CALL:
 		return TPrintF("call %S", GetProcedure(context, inst.procedureIdx)->name);
+	case X64_CALL_Indirect:
+		String proc = X64IRValueToStr(context, IRValueValue(context, inst.valueIdx));
+		return TPrintF("call %S", proc);
 	case X64_Label:
 		return TPrintF("%S:", inst.label->name);
 	case X64_Comment:
@@ -1490,9 +1542,9 @@ void BackendMain(Context *context)
 	s64 voidPtrIdx = GetTypeInfoPointerOf(context, TYPETABLEIDX_VOID);
 	DynamicArrayInit(&copyMemory->parameters, 3);
 	copyMemory->parameters.size = 3;
-	copyMemory->parameters[0] = { NewValue(context, "_dst"_s, voidPtrIdx, 0), voidPtrIdx, 0 };
-	copyMemory->parameters[1] = { NewValue(context, "_src"_s, voidPtrIdx, 0), voidPtrIdx, 0 };
-	copyMemory->parameters[2] = { NewValue(context, "_size"_s, TYPETABLEIDX_S64, 0), TYPETABLEIDX_S64, 0 };
+	copyMemory->parameters[0] = { NewValue(context, "_dst"_s, voidPtrIdx, 0), voidPtrIdx, {} };
+	copyMemory->parameters[1] = { NewValue(context, "_src"_s, voidPtrIdx, 0), voidPtrIdx, {} };
+	copyMemory->parameters[2] = { NewValue(context, "_size"_s, TYPETABLEIDX_S64, 0), TYPETABLEIDX_S64, {} };
 
 	x64InstructionInfos[X64_MOV] =       { "mov"_s,      ACCEPTEDOPERANDS_REGMEM,   ACCEPTEDOPERANDS_ALL };
 	x64InstructionInfos[X64_MOVZX] =     { "movzx"_s,    ACCEPTEDOPERANDS_REGMEM,   ACCEPTEDOPERANDS_REGMEM };
@@ -1505,6 +1557,7 @@ void BackendMain(Context *context)
 	x64InstructionInfos[X64_JE] =        { "je"_s,       ACCEPTEDOPERANDS_ALL,      ACCEPTEDOPERANDS_NONE };
 	x64InstructionInfos[X64_JNE] =       { "jne"_s,      ACCEPTEDOPERANDS_ALL,      ACCEPTEDOPERANDS_NONE };
 	x64InstructionInfos[X64_CALL] =      { "call"_s,     ACCEPTEDOPERANDS_ALL,      ACCEPTEDOPERANDS_NONE };
+	x64InstructionInfos[X64_CALL_Indirect] = { "call"_s, ACCEPTEDOPERANDS_REGMEM,   ACCEPTEDOPERANDS_NONE };
 	x64InstructionInfos[X64_LEAVE] =     { "leave"_s,    ACCEPTEDOPERANDS_NONE,     ACCEPTEDOPERANDS_NONE };
 	x64InstructionInfos[X64_RET] =       { "ret"_s,      ACCEPTEDOPERANDS_NONE,     ACCEPTEDOPERANDS_NONE };
 	x64InstructionInfos[X64_LEA] =       { "lea"_s,      ACCEPTEDOPERANDS_REGISTER, ACCEPTEDOPERANDS_MEMORY };
@@ -2062,22 +2115,22 @@ void BackendMain(Context *context)
 				*ArrayAdd(&newStaticVar.initialValue.immediateStructMembers) =
 				{ IRValueMemory(elementType.valueIdx, 0, pointerToTypeInfoIdx) };
 			} break;
-			case TYPECATEGORY_PROCEDURE_POINTER:
+			case TYPECATEGORY_PROCEDURE:
 			{
 				u32 parametersValueIdx = 0;
-				if (typeInfo.procedurePointerInfo.parameters.size > 0)
+				if (typeInfo.procedureInfo.parameters.size > 0)
 				{
 					parametersValueIdx = NewValue(context, TPrintF("_params_%lld", typeTableIdx),
 							pointerToTypeInfoIdx, VALUEFLAGS_ON_STATIC_STORAGE);
 					IRStaticVariable paramsStaticVar = { parametersValueIdx };
 					paramsStaticVar.initialValue.valueType = IRVALUETYPE_IMMEDIATE_STRUCT;
 					ArrayInit(&paramsStaticVar.initialValue.immediateStructMembers,
-							typeInfo.procedurePointerInfo.parameters.size, FrameAlloc);
-					for (s64 paramIdx = 0; paramIdx < (s64)typeInfo.procedurePointerInfo.parameters.size;
+							typeInfo.procedureInfo.parameters.size, FrameAlloc);
+					for (s64 paramIdx = 0; paramIdx < (s64)typeInfo.procedureInfo.parameters.size;
 							++paramIdx)
 					{
 						TypeInfo paramType =
-							context->typeTable[typeInfo.procedurePointerInfo.parameters[paramIdx]];
+							context->typeTable[typeInfo.procedureInfo.parameters[paramIdx]];
 						IRValue paramImm = IRValueMemory(paramType.valueIdx, 0, pointerToTypeInfoIdx);
 						*ArrayAdd(&paramsStaticVar.initialValue.immediateStructMembers) = paramImm;
 					}
@@ -2090,7 +2143,7 @@ void BackendMain(Context *context)
 				*ArrayAdd(&newStaticVar.initialValue.immediateStructMembers) =
 				{ IRValueImmediate(typeInfo.size, TYPETABLEIDX_S64) };
 				*ArrayAdd(&newStaticVar.initialValue.immediateStructMembers) =
-				{ IRValueImmediate(typeInfo.procedurePointerInfo.parameters.size, TYPETABLEIDX_S64) };
+				{ IRValueImmediate(typeInfo.procedureInfo.parameters.size, TYPETABLEIDX_S64) };
 				if (parametersValueIdx)
 					*ArrayAdd(&newStaticVar.initialValue.immediateStructMembers) =
 					{ IRValueMemory(parametersValueIdx, 0, pointerToTypeInfoIdx) };
@@ -2098,7 +2151,7 @@ void BackendMain(Context *context)
 					*ArrayAdd(&newStaticVar.initialValue.immediateStructMembers) =
 					{ IRValueImmediate(0, pointerToTypeInfoIdx) };
 				*ArrayAdd(&newStaticVar.initialValue.immediateStructMembers) =
-				{ IRValueImmediate(typeInfo.procedurePointerInfo.isVarargs, TYPETABLEIDX_BOOL) };
+				{ IRValueImmediate(typeInfo.procedureInfo.isVarargs, TYPETABLEIDX_BOOL) };
 			} break;
 			case TYPECATEGORY_INVALID:
 			{
