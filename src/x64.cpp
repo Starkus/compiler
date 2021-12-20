@@ -651,6 +651,9 @@ void X64MovNoTmp(Context *context, X64Procedure *x64Proc, IRValue dst, IRValue s
 	TypeInfo dstType = context->typeTable[dst.typeTableIdx];
 	TypeInfo srcType = context->typeTable[src.typeTableIdx];
 
+	ASSERT(dstType.size <= 8);
+	ASSERT(srcType.size <= 8);
+
 	if (dstType.typeCategory != TYPECATEGORY_FLOATING)
 	{
 		if (srcType.typeCategory != TYPECATEGORY_FLOATING)
@@ -1035,17 +1038,27 @@ void X64ConvertInstruction(Context *context, IRInstruction inst, X64Procedure *x
 		return;
 	}
 	case IRINSTRUCTIONTYPE_PROCEDURE_CALL:
+	case IRINSTRUCTIONTYPE_PROCEDURE_CALL_INDIRECT:
 	{
 		// At this point, we have the actual values that go into registers/stack slots. If something
 		// is passed by copy, we already have the pointer to the copy as argument value, so we don't
 		// care.
-		s32 procIdx = inst.procedureCall.procedureIdx;
+		if (inst.type == IRINSTRUCTIONTYPE_PROCEDURE_CALL)
+		{
+			result.type = X64_CALL;
+			result.procedureIdx = inst.procedureCall.procedureIdx;
+		}
+		else
+		{
+			u32 valueIdx = inst.procedureCall.procPointerValueIdx;
+			result.type = X64_CALL_Indirect;
+			result.valueIdx = valueIdx;
+		}
 
 		// @Incomplete: implement calling conventions other than MS ABI
 		for (int i = 0; i < inst.procedureCall.parameters.size; ++i)
 		{
 			IRValue param = inst.procedureCall.parameters[i];
-			//s64 paramType = context->values[GetProcedure(context, procIdx)->parameters[i].valueIdx].typeTableIdx;
 			s64 paramType = param.typeTableIdx;
 			bool floating = context->typeTable[paramType].typeCategory == TYPECATEGORY_FLOATING;
 
@@ -1072,60 +1085,10 @@ void X64ConvertInstruction(Context *context, IRInstruction inst, X64Procedure *x
 			X64Mov(context, x64Proc, dst, param);
 		}
 
-		result.type = X64_CALL;
-		result.procedureIdx = procIdx;
 		*BucketArrayAdd(&x64Proc->instructions) = result;
 
 		if (inst.procedureCall.out.valueType != IRVALUETYPE_INVALID)
 			X64Mov(context, x64Proc, inst.procedureCall.out, RAX);
-		return;
-	}
-	case IRINSTRUCTIONTYPE_PROCEDURE_CALL_INDIRECT:
-	{
-		u32 valueIdx = inst.procedureCallIndirect.valueIdx;
-
-		s64 procTypeIdx = context->values[valueIdx].typeTableIdx;
-		TypeInfo procTypeInfo = context->typeTable[procTypeIdx];
-		ASSERT(procTypeInfo.typeCategory == TYPECATEGORY_PROCEDURE);
-
-		// @Incomplete: implement calling conventions other than MS ABI
-		for (int i = 0; i < procTypeInfo.procedureInfo.parameters.size +
-				procTypeInfo.procedureInfo.isVarargs; ++i)
-		{
-			IRValue param = inst.procedureCallIndirect.parameters[i];
-			//s64 paramType = context->values[GetProcedure(context, procIdx)->parameters[i].valueIdx].typeTableIdx;
-			s64 paramType = param.typeTableIdx;
-			bool floating = context->typeTable[paramType].typeCategory == TYPECATEGORY_FLOATING;
-
-			IRValue dst;
-			switch(i)
-			{
-			case 0:
-				dst = floating ? XMM0 : RCX;
-				break;
-			case 1:
-				dst = floating ? XMM1 : RDX;
-				break;
-			case 2:
-				dst = floating ? XMM2 : R8;
-				break;
-			case 3:
-				dst = floating ? XMM3 : R9;
-				break;
-			default:
-				dst = IRValueMemory(x64ParameterValuesWrite[i], 0, TYPETABLEIDX_S64);
-			}
-			if (floating)
-				dst.typeTableIdx = paramType;
-			X64Mov(context, x64Proc, dst, param);
-		}
-
-		result.type = X64_CALL_Indirect;
-		result.valueIdx = valueIdx;
-		*BucketArrayAdd(&x64Proc->instructions) = result;
-
-		if (inst.procedureCallIndirect.out.valueType != IRVALUETYPE_INVALID)
-			X64Mov(context, x64Proc, inst.procedureCallIndirect.out, RAX);
 		return;
 	}
 	case IRINSTRUCTIONTYPE_INTRINSIC_MEMCPY:
@@ -1535,16 +1498,26 @@ void BackendMain(Context *context)
 {
 	BucketArrayInit(&context->bePatchedInstructions);
 
-	copyMemoryProcIdx = -(s32)BucketArrayCount(&context->externalProcedures);
-	Procedure *copyMemory = BucketArrayAdd(&context->externalProcedures);
-	copyMemory->name = "CopyMemory"_s;
-	copyMemory->returnValueIdx = U32_MAX;
-	s64 voidPtrIdx = GetTypeInfoPointerOf(context, TYPETABLEIDX_VOID);
-	DynamicArrayInit(&copyMemory->parameters, 3);
-	copyMemory->parameters.size = 3;
-	copyMemory->parameters[0] = { NewValue(context, "_dst"_s, voidPtrIdx, 0), voidPtrIdx, {} };
-	copyMemory->parameters[1] = { NewValue(context, "_src"_s, voidPtrIdx, 0), voidPtrIdx, {} };
-	copyMemory->parameters[2] = { NewValue(context, "_size"_s, TYPETABLEIDX_S64, 0), TYPETABLEIDX_S64, {} };
+	// Hard coded CopyMemory external procedure
+	{
+		s64 voidPtrIdx = GetTypeInfoPointerOf(context, TYPETABLEIDX_VOID);
+
+		TypeInfo t = { TYPECATEGORY_PROCEDURE };
+		t.procedureInfo.returnTypeTableIdx = -1;
+		DynamicArrayInit(&t.procedureInfo.parameters, 3);
+		t.procedureInfo.parameters.size = 3;
+		t.procedureInfo.parameters[0] = { voidPtrIdx, {} };
+		t.procedureInfo.parameters[1] = { voidPtrIdx, {} };
+		t.procedureInfo.parameters[2] = { TYPETABLEIDX_S64, {} };
+		s64 typeTableIdx = FindOrAddTypeTableIdx(context, t);
+
+		copyMemoryProcIdx = -(s32)BucketArrayCount(&context->externalProcedures);
+		Procedure *copyMemory = BucketArrayAdd(&context->externalProcedures);
+		*copyMemory = {};
+		copyMemory->name = "CopyMemory"_s;
+		copyMemory->typeTableIdx = typeTableIdx;
+		copyMemory->returnValueIdx = U32_MAX;
+	}
 
 	x64InstructionInfos[X64_MOV] =       { "mov"_s,      ACCEPTEDOPERANDS_REGMEM,   ACCEPTEDOPERANDS_ALL };
 	x64InstructionInfos[X64_MOVZX] =     { "movzx"_s,    ACCEPTEDOPERANDS_REGMEM,   ACCEPTEDOPERANDS_REGMEM };
@@ -1772,6 +1745,8 @@ void BackendMain(Context *context)
 	{
 		Procedure *proc = GetProcedure(context, procedureIdx);
 		X64Procedure *x64Proc = &x64Procedures[procedureIdx];
+		ASSERT(context->typeTable[proc->typeTableIdx].typeCategory == TYPECATEGORY_PROCEDURE);
+		TypeInfoProcedure procTypeInfo = context->typeTable[proc->typeTableIdx].procedureInfo;
 
 		x64Proc->name = GetProcedure(context, procedureIdx)->name;
 		x64Proc->allocatedParameterCount = proc->allocatedParameterCount;
@@ -1782,9 +1757,9 @@ void BackendMain(Context *context)
 		BucketArrayInit(&x64Proc->instructions);
 
 		// Allocate parameters
-		bool returnByCopy = IRShouldPassByCopy(context, proc->returnTypeTableIdx);
+		bool returnByCopy = IRShouldPassByCopy(context, procTypeInfo.returnTypeTableIdx);
 		int paramIdx = 0;
-		int paramCount = (int)proc->parameters.size;
+		int paramCount = (int)proc->parameterValues.size;
 		if (proc->returnValueIdx != U32_MAX && returnByCopy)
 		{
 			++paramIdx;
@@ -1792,8 +1767,8 @@ void BackendMain(Context *context)
 		}
 		for (int i = 0; i < paramCount; ++i, ++paramIdx)
 		{
-			ProcedureParameter param = proc->parameters[i];
-			s64 paramTypeIdx = context->values[param.valueIdx].typeTableIdx;
+			u32 paramValueIdx = proc->parameterValues[i];
+			s64 paramTypeIdx = context->values[paramValueIdx].typeTableIdx;
 			bool floating = context->typeTable[paramTypeIdx].typeCategory == TYPECATEGORY_FLOATING;
 
 			IRValue src;
@@ -1816,7 +1791,7 @@ void BackendMain(Context *context)
 			}
 			if (floating)
 				src.typeTableIdx = paramTypeIdx;
-			X64Mov(context, x64Proc, IRValueValue(param.valueIdx, paramTypeIdx), src);
+			X64Mov(context, x64Proc, IRValueValue(paramValueIdx, paramTypeIdx), src);
 		}
 
 		u64 instructionCount = BucketArrayCount(&proc->instructions);
@@ -2130,7 +2105,7 @@ void BackendMain(Context *context)
 							++paramIdx)
 					{
 						TypeInfo paramType =
-							context->typeTable[typeInfo.procedureInfo.parameters[paramIdx]];
+							context->typeTable[typeInfo.procedureInfo.parameters[paramIdx].typeTableIdx];
 						IRValue paramImm = IRValueMemory(paramType.valueIdx, 0, pointerToTypeInfoIdx);
 						*ArrayAdd(&paramsStaticVar.initialValue.immediateStructMembers) = paramImm;
 					}

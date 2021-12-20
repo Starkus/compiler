@@ -232,19 +232,21 @@ void DoLivenessAnalisisOnInstruction(Context *context, BasicBlock *basicBlock, X
 			inst->liveValues[i] = (*liveValues)[i];
 
 		Procedure *proc = GetProcedure(context, inst->procedureIdx);
+		ASSERT(context->typeTable[proc->typeTableIdx].typeCategory == TYPECATEGORY_PROCEDURE);
+		TypeInfoProcedure procTypeInfo = context->typeTable[proc->typeTableIdx].procedureInfo;
 
 		int paramIdx = 0;
 		// Take into account return value pointer in RCX
-		if (proc->returnValueIdx != U32_MAX && IRShouldPassByCopy(context, proc->returnTypeTableIdx))
+		if (proc->returnValueIdx != U32_MAX && IRShouldPassByCopy(context, procTypeInfo.returnTypeTableIdx))
 		{
 			AddValue(context, x64ParameterValuesWrite[0], basicBlock->procedure, liveValues);
 			++paramIdx;
 		}
 
-		for (int i = 0; i < proc->parameters.size; ++i, ++paramIdx)
+		for (int i = 0; i < procTypeInfo.parameters.size; ++i, ++paramIdx)
 		{
-			bool floating = context->typeTable[proc->parameters[i].typeTableIdx].typeCategory ==
-				TYPECATEGORY_FLOATING;
+			s64 paramTypeIdx = procTypeInfo.parameters[i].typeTableIdx;
+			bool floating = context->typeTable[paramTypeIdx].typeCategory == TYPECATEGORY_FLOATING;
 			if (!floating || paramIdx >= 4)
 				AddValue(context, x64ParameterValuesWrite[paramIdx], basicBlock->procedure, liveValues);
 			else switch (paramIdx)
@@ -256,6 +258,10 @@ void DoLivenessAnalisisOnInstruction(Context *context, BasicBlock *basicBlock, X
 				default: ASSERT(false);
 			}
 		}
+
+		// Add varargs array
+		if (procTypeInfo.isVarargs)
+			AddValue(context, x64ParameterValuesWrite[paramIdx], basicBlock->procedure, liveValues);
 	} break;
 	case X64_CALL_Indirect:
 	{
@@ -267,10 +273,10 @@ void DoLivenessAnalisisOnInstruction(Context *context, BasicBlock *basicBlock, X
 		AddValue(context, inst->valueIdx, basicBlock->procedure, liveValues);
 
 		s64 procTypeIdx = context->values[inst->valueIdx].typeTableIdx;
-		TypeInfo procTypeInfo = context->typeTable[procTypeIdx];
-		ASSERT(procTypeInfo.typeCategory == TYPECATEGORY_PROCEDURE);
+		ASSERT(context->typeTable[procTypeIdx].typeCategory == TYPECATEGORY_PROCEDURE);
+		TypeInfoProcedure procTypeInfo = context->typeTable[procTypeIdx].procedureInfo;
 
-		s64 returnTypeIdx = procTypeInfo.procedureInfo.returnTypeTableIdx;
+		s64 returnTypeIdx = procTypeInfo.returnTypeTableIdx;
 
 		int paramIdx = 0;
 		// Take into account return value pointer in RCX
@@ -280,9 +286,9 @@ void DoLivenessAnalisisOnInstruction(Context *context, BasicBlock *basicBlock, X
 			++paramIdx;
 		}
 
-		for (int i = 0; i < procTypeInfo.procedureInfo.parameters.size; ++i, ++paramIdx)
+		for (int i = 0; i < procTypeInfo.parameters.size; ++i, ++paramIdx)
 		{
-			bool floating = context->typeTable[procTypeInfo.procedureInfo.parameters[i]].typeCategory ==
+			bool floating = context->typeTable[procTypeInfo.parameters[i].typeTableIdx].typeCategory ==
 				TYPECATEGORY_FLOATING;
 			if (!floating || paramIdx >= 4)
 				AddValue(context, x64ParameterValuesWrite[paramIdx], basicBlock->procedure, liveValues);
@@ -295,6 +301,9 @@ void DoLivenessAnalisisOnInstruction(Context *context, BasicBlock *basicBlock, X
 				default: ASSERT(false);
 			}
 		}
+
+		if (procTypeInfo.isVarargs)
+			AddValue(context, x64ParameterValuesWrite[paramIdx], basicBlock->procedure, liveValues);
 	} break;
 	case X64_PUSH:
 	case X64_POP:

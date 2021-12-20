@@ -105,6 +105,16 @@ struct ASTEnumDeclaration : ASTBase
 	DynamicArray<ASTEnumMember, malloc, realloc> members;
 };
 
+struct ASTType;
+struct ASTVariableDeclaration;
+struct ASTProcedurePrototype : ASTBase
+{
+	bool isVarargs;
+	String varargsName;
+	ASTType *astReturnType;
+	DynamicArray<ASTVariableDeclaration, malloc, realloc> astParameters;
+};
+
 enum ASTTypeNodeType
 {
 	ASTTYPENODETYPE_INVALID,
@@ -112,7 +122,8 @@ enum ASTTypeNodeType
 	ASTTYPENODETYPE_POINTER,
 	ASTTYPENODETYPE_STRUCT_DECLARATION,
 	ASTTYPENODETYPE_ENUM_DECLARATION,
-	ASTTYPENODETYPE_ARRAY
+	ASTTYPENODETYPE_ARRAY,
+	ASTTYPENODETYPE_PROCEDURE
 };
 struct ASTType : ASTBase
 {
@@ -128,26 +139,27 @@ struct ASTType : ASTBase
 			ASTType *arrayType;
 			u64 arrayCount;
 		};
+		ASTProcedurePrototype procedurePrototype;
 	};
 };
 
 struct ASTVariableDeclaration : ASTBase
 {
-	u32 valueIdx;
+	String name;
 	ASTExpression *astInitialValue;
 	ASTType *astType;
+	bool isStatic;
 	bool isUsing;
 
 	// TypeCheck
+	u32 valueIdx;
 	s64 typeTableIdx;
 };
 
-struct Procedure;
 struct ASTProcedureDeclaration : ASTBase
 {
 	s32 procedureIdx;
-	ASTType *astReturnType;
-	DynamicArray<ASTVariableDeclaration, malloc, realloc> astParameters;
+	ASTProcedurePrototype prototype;
 };
 
 struct ASTStaticDefinition : ASTBase

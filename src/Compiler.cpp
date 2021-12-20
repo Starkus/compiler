@@ -79,6 +79,7 @@ struct Config
 	bool logAllocationInfo;
 };
 
+struct Procedure;
 struct TypeInfo;
 struct StaticDefinition;
 struct TCScope;

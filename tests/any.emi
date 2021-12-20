@@ -8,7 +8,7 @@ PrintType :: (param : Any)
 	}
 	else if param.typeInfo.typeKind == TypeKind_Floating
 	{
-		msg : String = "An float of size %\n";
+		msg : String = "A float of size %\n";
 		msg[msg.size - 2] = cast(u8) param.typeInfo.size + '0';
 		Print(msg);
 	}
@@ -26,8 +26,6 @@ Main :: () -> s64
 
 	PrintType(12345.6789);
 
-	//anF32 : f32;
-	//anF32 = 12345.6789;
 	anF32 : f32 = 12345.6789;
 	PrintType(anF32);
 

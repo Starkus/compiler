@@ -52,12 +52,17 @@ PrintF :: (format : String, ..args)
 			count := 0;
 
 			// Fraction
-			n : s64 = f * 10000000;
+			n : s64 = f * 10000000.0 + 0.5;
+			start : bool = false;
 			for 0..7
 			{
 				digit := n % 10;
-				buffer[31 - count] = cast(u8) digit + '0';
-				count += 1;
+				if digit > 0 start = true;
+				if start || i == 6
+				{
+					buffer[31 - count] = cast(u8) digit + '0';
+					count += 1;
+				}
 				n /= 10;
 			}
 			buffer[31 - count] = '.';
@@ -65,12 +70,13 @@ PrintF :: (format : String, ..args)
 
 			// Wholes
 			n = f;
-			while n > 0
+			while true
 			{
 				digit := n % 10;
 				buffer[31 - count] = cast(u8) digit + '0';
 				count += 1;
 				n /= 10;
+				if n <= 0 break;
 			}
 			numStr : String;
 			numStr.size = cast(u64) count;

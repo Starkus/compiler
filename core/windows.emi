@@ -16,7 +16,7 @@ WNDCLASSEXA :: struct
 {
 	cbSize : u32;
 	style : u32;
-	lpfnWndProc : ^void;
+	lpfnWndProc : (hWnd : ^void, uMsg : u32, wParam : ^void, lParam : ^void) -> u64;
 	cbClsExtra : s32;
 	cbWndExtra : s32;
 	hInstance : ^void;

@@ -44,25 +44,14 @@ struct Constant
 	};
 };
 
-struct ProcedureParameter
-{
-	u32 valueIdx;
-	s64 typeTableIdx; // This type stays the same, the type of the variable itself can change, for
-					  // example if the parameter is passed by pointer because of implementation details.
-	Constant defaultValue;
-};
 struct IRInstruction;
 struct Procedure
 {
 	String name;
-	bool isVarargs;
-	DynamicArray<ProcedureParameter, malloc, realloc> parameters;
+	DynamicArray<u32, malloc, realloc> parameterValues;
 	ASTExpression *astBody;
-	s32 requiredParameterCount;
 	u32 returnValueIdx;
 	s64 typeTableIdx; // Type of the procedure
-	s64 returnTypeTableIdx;
-	String varargsName;
 
 	// IRGen
 	BucketArray<IRInstruction, 256, malloc, realloc> instructions;
@@ -138,6 +127,7 @@ u32 NewValue(Context *context, String name, s64 typeTableIdx, u8 flags)
 
 ASTStructDeclaration ParseStructOrUnion(Context *context);
 ASTEnumDeclaration ParseEnumDeclaration(Context *context);
+ASTProcedurePrototype ParseProcedurePrototype(Context *context);
 ASTType ParseType(Context *context)
 {
 	ASTType astType;
@@ -184,9 +174,15 @@ ASTType ParseType(Context *context)
 		astType.name = context->token->string;
 		Advance(context);
 	}
+	else if (context->token->type == '(')
+	{
+		astType.nodeType = ASTTYPENODETYPE_PROCEDURE;
+		astType.procedurePrototype = ParseProcedurePrototype(context);
+	}
 	else
 	{
 		astType.nodeType = ASTTYPENODETYPE_INVALID;
+		LogError(context, context->token->loc, "Failed to parse type"_s);
 	}
 
 	return astType;
@@ -572,22 +568,27 @@ ASTVariableDeclaration ParseVariableDeclaration(Context *context)
 	ASTVariableDeclaration varDecl = {};
 	varDecl.loc = context->token->loc;
 
+	u64 startTokenIdx = context->currentTokenIdx;
+
 	AssertToken(context, context->token, TOKEN_IDENTIFIER);
-	String name = context->token->string;
+	varDecl.name = context->token->string;
 	Advance(context);
 
-	varDecl.valueIdx = NewValue(context, name, -1, 0);
-
-	if (context->token->type != TOKEN_OP_VARIABLE_DECLARATION && context->token->type !=
-			TOKEN_OP_VARIABLE_DECLARATION_STATIC)
-		UnexpectedTokenError(context, context->token);
-
-	if (context->token->type == TOKEN_OP_VARIABLE_DECLARATION_STATIC)
+	if (context->token->type == TOKEN_OP_VARIABLE_DECLARATION)
+		Advance(context);
+	else if (context->token->type == TOKEN_OP_VARIABLE_DECLARATION_STATIC)
 	{
-		context->values[varDecl.valueIdx].flags |= VALUEFLAGS_ON_STATIC_STORAGE;
+		varDecl.isStatic = true;
+		Advance(context);
 	}
-
-	Advance(context);
+	else
+	{
+		//UnexpectedTokenError(context, context->token);
+		// Rewind
+		context->currentTokenIdx = startTokenIdx;
+		context->token = &context->tokens[startTokenIdx];
+		varDecl.name = {};
+	}
 
 	if (context->token->type != TOKEN_OP_ASSIGNMENT)
 	{
@@ -603,6 +604,68 @@ ASTVariableDeclaration ParseVariableDeclaration(Context *context)
 	}
 
 	return varDecl;
+}
+
+ASTProcedurePrototype ParseProcedurePrototype(Context *context)
+{
+	ASTProcedurePrototype prototype = {};
+	prototype.loc = context->token->loc;
+
+	DynamicArrayInit(&prototype.astParameters, 4);
+
+	AssertToken(context, context->token, '(');
+	Advance(context);
+	while (context->token->type != ')')
+	{
+		if (context->token->type == TOKEN_OP_RANGE)
+		{
+			Advance(context);
+			prototype.isVarargs = true;
+
+			if (context->token->type == TOKEN_IDENTIFIER)
+			{
+				prototype.varargsName = context->token->string;
+				Advance(context);
+			}
+			break;
+		}
+
+		bool isUsing = false;
+		if (context->token->type == TOKEN_KEYWORD_USING)
+		{
+			isUsing = true;
+			Advance(context);
+		}
+		// @Improve: separate node type for procedure parameter?
+		ASTVariableDeclaration astVarDecl = ParseVariableDeclaration(context);
+		astVarDecl.isUsing = isUsing;
+		ASSERT(prototype.astParameters.size <= S8_MAX);
+
+		if (astVarDecl.isStatic)
+			LogError(context, context->token->loc, "Procedure parameters can't be static"_s);
+
+		*DynamicArrayAdd(&prototype.astParameters) = astVarDecl;
+
+		if (context->token->type != ')')
+		{
+			AssertToken(context, context->token, ',');
+			Advance(context);
+		}
+	}
+	Advance(context);
+
+	if (context->token->type == TOKEN_OP_ARROW)
+	{
+		Advance(context);
+		prototype.astReturnType = NewASTType(context);
+		*prototype.astReturnType = ParseType(context);
+	}
+	else
+	{
+		prototype.astReturnType = nullptr;
+	}
+
+	return prototype;
 }
 
 ASTProcedureDeclaration ParseProcedureDeclaration(Context *context)
@@ -628,62 +691,7 @@ ASTProcedureDeclaration ParseProcedureDeclaration(Context *context)
 	*procedure = {};
 	procDecl.procedureIdx = procedureIdx;
 
-	DynamicArrayInit(&procDecl.astParameters, 4);
-
-	AssertToken(context, context->token, '(');
-	Advance(context);
-	while (context->token->type != ')')
-	{
-		if (context->token->type == TOKEN_OP_RANGE)
-		{
-			Advance(context);
-			procedure->isVarargs = true;
-
-			if (!isExternal)
-			{
-				if (context->token->type != TOKEN_IDENTIFIER)
-					LogError(context, context->token->loc, "Name missing after varargs token (...)"_s);
-
-				procedure->varargsName = context->token->string;
-				Advance(context);
-			}
-			break;
-		}
-
-		bool isUsing = false;
-		if (context->token->type == TOKEN_KEYWORD_USING)
-		{
-			isUsing = true;
-			Advance(context);
-		}
-		// @Improve: separate node type for procedure parameter?
-		ASTVariableDeclaration astVarDecl = ParseVariableDeclaration(context);
-		astVarDecl.isUsing = isUsing;
-		ASSERT(procDecl.astParameters.size <= S8_MAX);
-
-		if (context->values[astVarDecl.valueIdx].flags & VALUEFLAGS_ON_STATIC_STORAGE)
-			LogError(context, context->token->loc, "Procedure parameters can't be static"_s);
-
-		*DynamicArrayAdd(&procDecl.astParameters) = astVarDecl;
-
-		if (context->token->type != ')')
-		{
-			AssertToken(context, context->token, ',');
-			Advance(context);
-		}
-	}
-	Advance(context);
-
-	if (context->token->type == TOKEN_OP_ARROW)
-	{
-		Advance(context);
-		procDecl.astReturnType = NewASTType(context);
-		*procDecl.astReturnType = ParseType(context);
-	}
-	else
-	{
-		procDecl.astReturnType = nullptr;
-	}
+	procDecl.prototype = ParseProcedurePrototype(context);
 
 	if (context->token->type == ';')
 		Advance(context);
@@ -1054,8 +1062,6 @@ ASTExpression ParseStatement(Context *context)
 		ASTVariableDeclaration varDecl = {};
 		varDecl.loc = context->token->loc;
 
-		varDecl.valueIdx = NewValue(context, -1, 0);
-
 		varDecl.astType = NewASTType(context);
 		*varDecl.astType = ParseType(context); // This will parse the struct/union declaration.
 
@@ -1159,8 +1165,7 @@ ASTExpression ParseStaticStatement(Context *context)
 			result.nodeType = ASTNODETYPE_VARIABLE_DECLARATION;
 			result.variableDeclaration = ParseVariableDeclaration(context);
 
-			ASSERT(context->values[result.variableDeclaration.valueIdx].flags &
-					VALUEFLAGS_ON_STATIC_STORAGE);
+			ASSERT(result.variableDeclaration.isStatic);
 
 			AssertToken(context, context->token, ';');
 			Advance(context);

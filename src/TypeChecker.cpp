@@ -73,10 +73,15 @@ struct TypeInfoArray
 	u64 count;
 };
 
+struct ProcedureParameter
+{
+	s64 typeTableIdx;
+	Constant defaultValue;
+};
 struct TypeInfoProcedure
 {
 	s64 returnTypeTableIdx;
-	DynamicArray<s64, malloc, realloc> parameters;
+	DynamicArray<ProcedureParameter, malloc, realloc> parameters;
 	bool isVarargs;
 };
 
@@ -248,6 +253,24 @@ String TypeInfoToString(Context *context, s64 typeTableIdx)
 			case 8: return "f64"_s;
 		}
 	} break;
+	case TYPECATEGORY_PROCEDURE:
+	{
+		String result = "("_s;
+		for (int i = 0; i < typeInfo.procedureInfo.parameters.size; ++i)
+		{
+			if (i) result = StringConcat(result, ", "_s);
+			String paramStr = TypeInfoToString(context, typeInfo.procedureInfo.parameters[i].typeTableIdx);
+			result = StringConcat(result, paramStr);
+			Constant defaultValue = typeInfo.procedureInfo.parameters[i].defaultValue;
+			if (defaultValue.type == CONSTANTTYPE_INTEGER)
+				result = TPrintF("%S = %lld", result, defaultValue.valueAsInt);
+			else if (defaultValue.type == CONSTANTTYPE_FLOATING)
+				result = TPrintF("%S = %f", result, defaultValue.valueAsFloat);
+		}
+		String returnStr = TypeInfoToString(context, typeInfo.procedureInfo.returnTypeTableIdx);
+		result = TPrintF("%S) -> %S", result, returnStr);
+		return result;
+	}
 	}
 	return "???TYPE"_s;
 }
@@ -583,8 +606,15 @@ bool AreTypeInfosEqual(Context *context, TypeInfo a, TypeInfo b)
 			return false;
 		for (int i = 0; i < a.procedureInfo.parameters.size; ++i)
 		{
-			TypeInfo aParamTypeInfo = context->typeTable[a.procedureInfo.parameters[i]];
-			TypeInfo bParamTypeInfo = context->typeTable[b.procedureInfo.parameters[i]];
+			ProcedureParameter aParam = a.procedureInfo.parameters[i];
+			ProcedureParameter bParam = b.procedureInfo.parameters[i];
+			if (aParam.defaultValue.type != bParam.defaultValue.type)
+				return false;
+			if (aParam.defaultValue.type != CONSTANTTYPE_INVALID &&
+					aParam.defaultValue.valueAsInt != bParam.defaultValue.valueAsInt)
+				return false;
+			TypeInfo aParamTypeInfo = context->typeTable[aParam.typeTableIdx];
+			TypeInfo bParamTypeInfo = context->typeTable[bParam.typeTableIdx];
 			if (!AreTypeInfosEqual(context, aParamTypeInfo, bParamTypeInfo))
 				return false;
 		}
@@ -882,6 +912,8 @@ error:
 	return {};
 }
 
+ASTProcedurePrototype TypeCheckProcedurePrototype(Context *context, ASTProcedurePrototype prototype);
+TypeInfo TypeInfoFromASTProcedurePrototype(Context *context, ASTProcedurePrototype prototype);
 s64 TypeCheckType(Context *context, SourceLocation loc, ASTType *astType)
 {
 	switch (astType->nodeType)
@@ -941,12 +973,13 @@ s64 TypeCheckType(Context *context, SourceLocation loc, ASTType *astType)
 
 			if (astMember.value)
 			{
-				Constant constant  = EvaluateConstant(context, astMember.value);
+				Constant constant = EvaluateConstant(context, astMember.value);
 				if (constant.type == CONSTANTTYPE_FLOATING)
 					currentValue = (s64)constant.valueAsFloat;
 				else
 					currentValue = constant.valueAsInt;
 			}
+			staticDefinition.constant.type = CONSTANTTYPE_INTEGER;
 			staticDefinition.constant.valueAsInt = currentValue;
 
 			StaticDefinition *newStaticDef = BucketArrayAdd(&context->staticDefinitions);
@@ -967,6 +1000,14 @@ s64 TypeCheckType(Context *context, SourceLocation loc, ASTType *astType)
 		AddType(context, t);
 		*DynamicArrayAdd(&context->tcStack[context->tcStack.size - 1].typeIndices) = typeTableIdx;
 
+		return typeTableIdx;
+	} break;
+	case ASTTYPENODETYPE_PROCEDURE:
+	{
+		astType->procedurePrototype = TypeCheckProcedurePrototype(context, astType->procedurePrototype);
+		TypeInfo t = TypeInfoFromASTProcedurePrototype(context, astType->procedurePrototype);
+
+		s64 typeTableIdx = FindOrAddTypeTableIdx(context, t);
 		return typeTableIdx;
 	} break;
 	default:
@@ -1064,19 +1105,16 @@ void TypeCheckExpression(Context *context, ASTExpression *expression);
 
 ASTVariableDeclaration TypeCheckVariableDeclaration(Context *context, ASTVariableDeclaration varDecl)
 {
-	Value value = context->values[varDecl.valueIdx];
-	String varName = value.name;
-
 	TCScope *stackTop = &context->tcStack[context->tcStack.size - 1];
-	if (varName.size)
+	if (varDecl.name.size)
 	{
 		// Check if name already exists
 		for (s64 i = 0; i < (s64)stackTop->names.size; ++i)
 		{
 			TCScopeName currentName = stackTop->names[i];
-			if (StringEquals(varName, currentName.name))
+			if (StringEquals(varDecl.name, currentName.name))
 			{
-				LogErrorNoCrash(context, varDecl.loc, TPrintF("Duplicate name \"%S\" in scope", varName));
+				LogErrorNoCrash(context, varDecl.loc, TPrintF("Duplicate name \"%S\" in scope", varDecl.name));
 				LogNote(context, currentName.loc, "First defined here"_s);
 				CRASH;
 			}
@@ -1115,18 +1153,6 @@ ASTVariableDeclaration TypeCheckVariableDeclaration(Context *context, ASTVariabl
 		}
 	}
 
-	if (varName.size)
-	{
-		TCScopeName newScopeName;
-		newScopeName.type = NAMETYPE_VARIABLE;
-		newScopeName.name = value.name;
-		newScopeName.variableInfo.valueIdx = varDecl.valueIdx;
-		newScopeName.variableInfo.typeTableIdx = varDecl.typeTableIdx;
-		newScopeName.loc = varDecl.loc;
-		*DynamicArrayAdd(&stackTop->names) = newScopeName;
-	}
-
-	context->values[varDecl.valueIdx].typeTableIdx = varDecl.typeTableIdx;
 	return varDecl;
 }
 
@@ -1203,6 +1229,57 @@ const StructMember *FindStructMemberByName(Context *context, TypeInfo structType
 	return nullptr;
 }
 
+ASTProcedurePrototype TypeCheckProcedurePrototype(Context *context, ASTProcedurePrototype prototype)
+{
+	// Parameters
+	bool beginOptionalParameters = false;
+	for (int i = 0; i < prototype.astParameters.size; ++i)
+	{
+		prototype.astParameters[i] = TypeCheckVariableDeclaration(context, prototype.astParameters[i]);
+
+		ASTVariableDeclaration astVarDecl = prototype.astParameters[i];
+		if (!astVarDecl.astInitialValue)
+		{
+			if (beginOptionalParameters)
+				LogError(context, astVarDecl.loc, "Non-optional parameter after optional parameter found!"_s);
+		}
+		else
+			beginOptionalParameters = true;
+	}
+
+	return prototype;
+}
+
+TypeInfo TypeInfoFromASTProcedurePrototype(Context *context, ASTProcedurePrototype prototype)
+{
+	TypeInfo t = {};
+	t.size = g_pointerSize;
+	t.typeCategory = TYPECATEGORY_PROCEDURE;
+	DynamicArrayInit(&t.procedureInfo.parameters, 8);
+	t.procedureInfo.isVarargs = prototype.isVarargs;
+
+	// Parameters
+	for (int i = 0; i < prototype.astParameters.size; ++i)
+	{
+		ASTVariableDeclaration astVarDecl = prototype.astParameters[i];
+
+		ProcedureParameter *procParam = DynamicArrayAdd(&t.procedureInfo.parameters);
+		procParam->typeTableIdx = astVarDecl.typeTableIdx;
+
+		if (!astVarDecl.astInitialValue)
+			procParam->defaultValue = {};
+		else
+			procParam->defaultValue = EvaluateConstant(context, astVarDecl.astInitialValue);
+	}
+
+	s64 returnType = TYPETABLEIDX_VOID;
+	if (prototype.astReturnType)
+		returnType = TypeCheckType(context, prototype.loc, prototype.astReturnType);
+	t.procedureInfo.returnTypeTableIdx = returnType;
+
+	return t;
+}
+
 void TypeCheckExpression(Context *context, ASTExpression *expression)
 {
 	switch (expression->nodeType)
@@ -1221,9 +1298,26 @@ void TypeCheckExpression(Context *context, ASTExpression *expression)
 		ASTVariableDeclaration varDecl = expression->variableDeclaration;
 		varDecl = TypeCheckVariableDeclaration(context, varDecl);
 		expression->typeTableIdx = varDecl.typeTableIdx;
-		Value varValue = context->values[varDecl.valueIdx];
 
-		if (varDecl.isUsing || varValue.name.size == 0)
+		u8 staticFlag = varDecl.isStatic ? VALUEFLAGS_ON_STATIC_STORAGE : 0;
+		varDecl.valueIdx = NewValue(context, varDecl.name, varDecl.typeTableIdx, staticFlag);
+
+		expression->variableDeclaration = varDecl;
+
+		if (varDecl.name.size)
+		{
+			TCScopeName newScopeName;
+			newScopeName.type = NAMETYPE_VARIABLE;
+			newScopeName.name = varDecl.name;
+			newScopeName.variableInfo.valueIdx = varDecl.valueIdx;
+			newScopeName.variableInfo.typeTableIdx = varDecl.typeTableIdx;
+			newScopeName.loc = varDecl.loc;
+
+			TCScope *stackTop = &context->tcStack[context->tcStack.size - 1];
+			*DynamicArrayAdd(&stackTop->names) = newScopeName;
+		}
+
+		if (varDecl.isUsing || varDecl.name.size == 0)
 		{
 			TypeCategory typeCat = context->typeTable[expression->typeTableIdx].typeCategory;
 			if (typeCat != TYPECATEGORY_STRUCT && typeCat != TYPECATEGORY_UNION)
@@ -1231,9 +1325,10 @@ void TypeCheckExpression(Context *context, ASTExpression *expression)
 
 			DynamicArray<const StructMember *, malloc, realloc> offsetStack;
 			DynamicArrayInit(&offsetStack, 8);
-			AddStructMembersToScope(context, varDecl.loc, varDecl.valueIdx, varDecl.typeTableIdx, &offsetStack);
+			AddStructMembersToScope(context, varDecl.loc, varDecl.valueIdx, varDecl.typeTableIdx,
+					&offsetStack);
 		}
-		else if (varValue.name.size == 0)
+		else if (varDecl.name.size == 0)
 		{
 			// Anonymous struct!
 			TypeCategory typeCat = context->typeTable[expression->typeTableIdx].typeCategory;
@@ -1242,7 +1337,8 @@ void TypeCheckExpression(Context *context, ASTExpression *expression)
 
 			DynamicArray<const StructMember *, malloc, realloc> offsetStack;
 			DynamicArrayInit(&offsetStack, 8);
-			AddStructMembersToScope(context, varDecl.loc, varDecl.valueIdx, varDecl.typeTableIdx, &offsetStack);
+			AddStructMembersToScope(context, varDecl.loc, varDecl.valueIdx, varDecl.typeTableIdx,
+					&offsetStack);
 		}
 	} break;
 	case ASTNODETYPE_STATIC_DEFINITION:
@@ -1296,81 +1392,62 @@ void TypeCheckExpression(Context *context, ASTExpression *expression)
 		ASTProcedureDeclaration *procDecl = &expression->procedureDeclaration;
 		Procedure *procedure = GetProcedure(context, procDecl->procedureIdx);
 
-		procedure->requiredParameterCount = 0;
-
 		PushTCScope(context);
 
-		TypeInfo t = {};
-		t.size = g_pointerSize;
-		t.typeCategory = TYPECATEGORY_PROCEDURE;
-		DynamicArrayInit(&t.procedureInfo.parameters, 8);
-		t.procedureInfo.isVarargs = procedure->isVarargs;
+		procDecl->prototype = TypeCheckProcedurePrototype(context, procDecl->prototype);
+		TypeInfo t = TypeInfoFromASTProcedurePrototype(context, procDecl->prototype);
+
+		TCScope *stackTop = &context->tcStack[context->tcStack.size - 1];
 
 		// Parameters
-		bool beginOptionalParameters = false;
-		DynamicArrayInit(&procedure->parameters, 8);
-		for (int i = 0; i < procDecl->astParameters.size; ++i)
+		DynamicArrayInit(&procedure->parameterValues, 8);
+		for (int i = 0; i < procDecl->prototype.astParameters.size; ++i)
 		{
-			ASTVariableDeclaration astVarDecl = procDecl->astParameters[i];
-			Value varValue = context->values[astVarDecl.valueIdx];
-
-			astVarDecl = TypeCheckVariableDeclaration(context, astVarDecl);
-			ProcedureParameter *procParam = DynamicArrayAdd(&procedure->parameters);
-			procParam->valueIdx = astVarDecl.valueIdx;
-			procParam->typeTableIdx = astVarDecl.typeTableIdx;
-
-			*DynamicArrayAdd(&t.procedureInfo.parameters) = astVarDecl.typeTableIdx;
+			ASTVariableDeclaration astVarDecl = procDecl->prototype.astParameters[i];
+			u32 paramValueIdx = NewValue(context, astVarDecl.name, astVarDecl.typeTableIdx, 0);
+			*DynamicArrayAdd(&procedure->parameterValues) = paramValueIdx;
 
 			if (astVarDecl.isUsing)
 			{
 				DynamicArray<const StructMember *, malloc, realloc> offsetStack;
 				DynamicArrayInit(&offsetStack, 8);
-				AddStructMembersToScope(context, astVarDecl.loc, astVarDecl.valueIdx,
+				AddStructMembersToScope(context, astVarDecl.loc, paramValueIdx,
 						astVarDecl.typeTableIdx, &offsetStack);
 			}
 
-			if (!astVarDecl.astInitialValue)
-			{
-				if (beginOptionalParameters)
-					LogError(context, astVarDecl.loc, "Non-optional parameter after optional parameter found!"_s);
-
-				++procedure->requiredParameterCount;
-			}
-			else
-			{
-				procParam->defaultValue = EvaluateConstant(context, astVarDecl.astInitialValue);
-				beginOptionalParameters = true;
-			}
+			TCScopeName newScopeName;
+			newScopeName.type = NAMETYPE_VARIABLE;
+			newScopeName.name = astVarDecl.name;
+			newScopeName.variableInfo.valueIdx = paramValueIdx;
+			newScopeName.variableInfo.typeTableIdx = astVarDecl.typeTableIdx;
+			*DynamicArrayAdd(&stackTop->names) = newScopeName;
 		}
 
 		// Varargs array
-		if (procedure->isVarargs)
+		if (procDecl->prototype.isVarargs)
 		{
 			s64 anyTableIdx = FindTypeInStackByName(context, {}, "Any"_s);
 			s64 arrayTableIdx = GetTypeInfoArrayOf(context, anyTableIdx, 0);
-			u32 valueIdx = NewValue(context, procedure->varargsName, arrayTableIdx, 0);
+			u32 valueIdx = NewValue(context, procDecl->prototype.varargsName, arrayTableIdx, 0);
 
-			ProcedureParameter *procParam = DynamicArrayAdd(&procedure->parameters);
-			procParam->valueIdx = valueIdx;
-			procParam->typeTableIdx = arrayTableIdx;
-			procParam->defaultValue = {};
+			*DynamicArrayAdd(&procedure->parameterValues) = valueIdx;
 
-			TCScope *stackTop = &context->tcStack[context->tcStack.size - 1];
 			TCScopeName newScopeName;
 			newScopeName.type = NAMETYPE_VARIABLE;
-			newScopeName.name = procedure->varargsName;
+			newScopeName.name = procDecl->prototype.varargsName;
 			newScopeName.variableInfo.valueIdx = valueIdx;
 			newScopeName.variableInfo.typeTableIdx = arrayTableIdx;
 			*DynamicArrayAdd(&stackTop->names) = newScopeName;
 		}
 
 		s64 returnType = TYPETABLEIDX_VOID;
-		if (procDecl->astReturnType)
-		{
-			returnType = TypeCheckType(context, expression->any.loc, procDecl->astReturnType);
-		}
-		procedure->returnTypeTableIdx = returnType;
+		if (procDecl->prototype.astReturnType)
+			returnType = TypeCheckType(context, expression->any.loc, procDecl->prototype.astReturnType);
 		t.procedureInfo.returnTypeTableIdx = returnType;
+
+		s64 typeTableIdx = FindOrAddTypeTableIdx(context, t);
+		procedure->typeTableIdx = typeTableIdx;
+		expression->typeTableIdx = typeTableIdx;
 
 		u64 oldReturnType = context->tcCurrentReturnType;
 		context->tcCurrentReturnType = returnType;
@@ -1390,10 +1467,6 @@ void TypeCheckExpression(Context *context, ASTExpression *expression)
 			else if (result == RETURNCHECKRESULT_NEVER)
 				LogError(context, expression->any.loc, "Procedure has to return a value"_s);
 		}
-
-		s64 typeTableIdx = FindOrAddTypeTableIdx(context, t);
-		procedure->typeTableIdx = typeTableIdx;
-		expression->typeTableIdx = typeTableIdx;
 	} break;
 	case ASTNODETYPE_RETURN:
 	{
@@ -1488,6 +1561,7 @@ skipInvalidIdentifierError:
 		String procName = expression->procedureCall.name;
 
 		// Search backwards so we find procedures higher in the stack first.
+		bool isIndirect = false;
 		s32 procedureIdx = S32_MIN;
 		s32 procedurePointerValueIdx = U32_MAX;
 		s64 procedureTypeIdx = -1;
@@ -1501,15 +1575,17 @@ skipInvalidIdentifierError:
 				{
 					if (currentName.type == NAMETYPE_VARIABLE)
 					{
+						isIndirect = true;
 						procedurePointerValueIdx = currentName.variableInfo.valueIdx;
 						procedureTypeIdx = currentName.variableInfo.typeTableIdx;
-						goto typeCheckProcPointerCall;
+						goto skipNotFoundError;
 					}
 					if (currentName.type == NAMETYPE_STATIC_DEFINITION &&
 						currentName.staticDefinition->definitionType == STATICDEFINITIONTYPE_PROCEDURE)
 					{
 						procedureIdx = currentName.staticDefinition->procedureIdx;
-						goto typeCheckProcCall;
+						procedureTypeIdx = GetProcedure(context, procedureIdx)->typeTableIdx;
+						goto skipNotFoundError;
 					}
 
 					LogError(context, expression->any.loc, "Calling a non-procedure"_s);
@@ -1519,19 +1595,29 @@ skipInvalidIdentifierError:
 
 		LogError(context, expression->any.loc, TPrintF("Invalid procedure \"%S\" called", procName));
 
-typeCheckProcCall:
+skipNotFoundError:
 		{
-			Procedure *procedure = GetProcedure(context, procedureIdx);
+			ASSERT(context->typeTable[procedureTypeIdx].typeCategory == TYPECATEGORY_PROCEDURE);
+			TypeInfoProcedure procTypeInfo = context->typeTable[procedureTypeIdx].procedureInfo;
 
-			expression->procedureCall.isIndirect = false;
-			expression->procedureCall.procedureIdx = procedureIdx;
-			expression->typeTableIdx = procedure->returnTypeTableIdx;
+			expression->typeTableIdx = procTypeInfo.returnTypeTableIdx;
+			expression->procedureCall.isIndirect = isIndirect;
+			if (isIndirect)
+				expression->procedureCall.valueIdx = procedurePointerValueIdx;
+			else
+				expression->procedureCall.procedureIdx = procedureIdx;
 
 			// Type check arguments
-			s64 requiredArguments = procedure->requiredParameterCount;
-			s64 totalArguments = procedure->parameters.size - procedure->isVarargs;
+			s64 requiredArguments = 0;
+			for (int i = 0; i < procTypeInfo.parameters.size; ++i)
+			{
+				if (procTypeInfo.parameters[i].defaultValue.type == CONSTANTTYPE_INVALID)
+					++requiredArguments;
+			}
+
+			s64 totalArguments = procTypeInfo.parameters.size;
 			s64 givenArguments  = expression->procedureCall.arguments.size;
-			if (procedure->isVarargs)
+			if (procTypeInfo.isVarargs)
 			{
 				if (requiredArguments > givenArguments)
 					LogError(context, expression->any.loc,
@@ -1561,7 +1647,7 @@ typeCheckProcCall:
 			for (int argIdx = 0; argIdx < argsToCheck; ++argIdx)
 			{
 				ASTExpression *arg = &expression->procedureCall.arguments[argIdx];
-				s64 paramTypeIdx = procedure->parameters[argIdx].typeTableIdx;
+				s64 paramTypeIdx = procTypeInfo.parameters[argIdx].typeTableIdx;
 				TypeCheckErrorCode typeCheckResult = CheckTypesMatchAndSpecializeRight(context,
 						paramTypeIdx, arg);
 
@@ -1574,65 +1660,6 @@ typeCheckProcCall:
 								procName, argIdx, paramStr, givenStr));
 				}
 			}
-			break;
-		}
-
-typeCheckProcPointerCall:
-		{
-			TypeInfo procTypeInfo = context->typeTable[procedureTypeIdx];
-
-			expression->procedureCall.isIndirect = true;
-			expression->procedureCall.valueIdx = procedurePointerValueIdx;
-			expression->typeTableIdx = procTypeInfo.procedureInfo.returnTypeTableIdx;
-
-			// Type check arguments
-			s64 requiredArguments = procTypeInfo.procedureInfo.parameters.size;
-			s64 totalArguments = requiredArguments - procTypeInfo.procedureInfo.isVarargs;
-			s64 givenArguments  = expression->procedureCall.arguments.size;
-			if (procTypeInfo.procedureInfo.isVarargs)
-			{
-				if (requiredArguments > givenArguments)
-					LogError(context, expression->any.loc,
-							TPrintF("Procedure \"%S\" needs at least %d arguments but only %d were given",
-								procName, requiredArguments, givenArguments));
-			}
-			else
-			{
-				if (requiredArguments > givenArguments)
-					LogError(context, expression->any.loc,
-							TPrintF("Procedure \"%S\" needs at least %d arguments but only %d were given",
-							procName, requiredArguments, givenArguments));
-
-				if (givenArguments > totalArguments)
-					LogError(context, expression->any.loc,
-							TPrintF("Procedure \"%S\" needs %d arguments but %d were given",
-							procName, totalArguments, givenArguments));
-			}
-
-			for (int argIdx = 0; argIdx < givenArguments; ++argIdx)
-			{
-				ASTExpression *arg = &expression->procedureCall.arguments[argIdx];
-				TypeCheckExpression(context, arg);
-			}
-
-			s64 argsToCheck = Min(givenArguments, totalArguments);
-			for (int argIdx = 0; argIdx < argsToCheck; ++argIdx)
-			{
-				ASTExpression *arg = &expression->procedureCall.arguments[argIdx];
-				s64 paramTypeIdx = procTypeInfo.procedureInfo.parameters[argIdx];
-				TypeCheckErrorCode typeCheckResult = CheckTypesMatchAndSpecializeRight(context,
-						paramTypeIdx, arg);
-
-				if (typeCheckResult != TYPECHECK_COOL)
-				{
-					String paramStr = TypeInfoToString(context, paramTypeIdx);
-					String givenStr = TypeInfoToString(context, arg->typeTableIdx);
-					LogError(context, arg->any.loc, TPrintF("When calling procedure pointer \"%S\": "
-							"type of parameter #%d didn't match (parameter is %S but %S was given)",
-							procName, argIdx, paramStr, givenStr));
-				}
-			}
-
 			break;
 		}
 	}

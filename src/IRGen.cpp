@@ -58,17 +58,11 @@ struct IRConditionalJump
 
 struct IRProcedureCall
 {
-	s32 procedureIdx;
-	Array<IRValue> parameters;
-	IRValue out;
-
-	// Filled during register allocation
-	u64 liveRegisters;
-};
-
-struct IRProcedureCallIndirect
-{
-	u32 valueIdx;
+	union
+	{
+		s32 procedureIdx;
+		u32 procPointerValueIdx;
+	};
 	Array<IRValue> parameters;
 	IRValue out;
 
@@ -200,7 +194,6 @@ struct IRInstruction
 		IRJump jump;
 		IRConditionalJump conditionalJump;
 		IRProcedureCall procedureCall;
-		IRProcedureCallIndirect procedureCallIndirect;
 		IRPushValue pushValue;
 		IRGetParameter getParameter;
 		IRGetTypeInfo getTypeInfo;
@@ -422,16 +415,12 @@ IRValue IRDereferenceValue(Context *context, IRValue in)
 	//ASSERT(pointedTypeIdx != TYPETABLEIDX_VOID);
 
 	// We don't know which will be memory and which registers. Do the assignment for everybody.
-#if 1
 	if (in.valueType == IRVALUETYPE_VALUE)
 	{
 		IRValue result = IRValueMemory(in.valueIdx, 0, pointedTypeIdx);
 		return result;
 	}
 	else if (in.valueType == IRVALUETYPE_MEMORY)
-#else
-	if (in.valueType == IRVALUETYPE_VALUE || in.valueType == IRVALUETYPE_MEMORY)
-#endif
 	{
 		//s64 offset = in.memory.offset;
 		//in.memory.offset = 0;
@@ -976,10 +965,10 @@ IRValue IRGenFromExpression(Context *context, ASTExpression *expression)
 		IRLabel *returnLabel = NewLabel(context, "return"_s);
 		currentProc->returnLabel = returnLabel;
 
-		for (int i = 0; i < procedure->parameters.size; ++i)
+		for (int i = 0; i < procedure->parameterValues.size; ++i)
 		{
-			ProcedureParameter param = procedure->parameters[i];
-			Value *paramValue = &context->values[param.valueIdx];
+			s32 paramValueIdx = procedure->parameterValues[i];
+			Value *paramValue = &context->values[paramValueIdx];
 
 			if (IRShouldPassByCopy(context, paramValue->typeTableIdx))
 				paramValue->typeTableIdx = GetTypeInfoPointerOf(context, paramValue->typeTableIdx);
@@ -1083,13 +1072,12 @@ IRValue IRGenFromExpression(Context *context, ASTExpression *expression)
 	case ASTNODETYPE_VARIABLE_DECLARATION:
 	{
 		ASTVariableDeclaration varDecl = expression->variableDeclaration;
-		Value value = context->values[varDecl.valueIdx];
 
 		bool isGlobalScope = context->irProcedureStack.size == 0;
-		if (isGlobalScope && !(value.flags & VALUEFLAGS_ON_STATIC_STORAGE))
+		if (isGlobalScope && !varDecl.isStatic)
 			LogError(context, expression->any.loc, "Global variables have to be static"_s);
 
-		if (value.flags & VALUEFLAGS_ON_STATIC_STORAGE)
+		if (varDecl.isStatic)
 		{
 			IRStaticVariable newStaticVar = {};
 			newStaticVar.valueIdx = varDecl.valueIdx;
@@ -1189,377 +1177,209 @@ IRValue IRGenFromExpression(Context *context, ASTExpression *expression)
 		static u64 varargsUniqueID = 0;
 
 		ASTProcedureCall *astProcCall = &expression->procedureCall;
+		IRInstruction procCallInst = {};
+		s64 procTypeIdx;
 		if (!astProcCall->isIndirect)
 		{
-			s32 procedureIdx = astProcCall->procedureIdx;
-			Procedure *procedure = GetProcedure(context, procedureIdx);
-
-			IRInstruction procCallInst = {};
 			procCallInst.type = IRINSTRUCTIONTYPE_PROCEDURE_CALL;
-			procCallInst.procedureCall.procedureIdx = procedureIdx;
-
-			bool isReturnByCopy = IRShouldPassByCopy(context, expression->typeTableIdx);
-
-			// Support both varargs and default parameters here
-			s32 totalParamCount = (s32)procedure->parameters.size;
-			s32 callParamCount = (s32)astProcCall->arguments.size;
-			s32 paramCount = Max(totalParamCount, callParamCount) + isReturnByCopy;
-			ArrayInit(&procCallInst.procedureCall.parameters, paramCount, malloc);
-
-			// Remember parameter count because we need space for them in the stack
-			IRProcedureScope stackTop = context->irProcedureStack[context->irProcedureStack.size - 1];
-			Procedure *currentProc = GetProcedure(context, stackTop.procedureIdx);
-			if (currentProc->allocatedParameterCount < paramCount)
-				currentProc->allocatedParameterCount = paramCount;
-
-			// Return value
-			procCallInst.procedureCall.out.valueType = IRVALUETYPE_INVALID;
-			if (expression->typeTableIdx != TYPETABLEIDX_VOID)
-			{
-				if (isReturnByCopy)
-				{
-					static u64 returnByCopyDeclarationUniqueID = 0;
-
-					// Allocate stack for return value
-					String tempVarName = TPrintF("_returnByCopy%llu", returnByCopyDeclarationUniqueID++);
-					u32 tempValueIdx = IRAddTempValue(context, tempVarName, expression->typeTableIdx,
-							VALUEFLAGS_FORCE_MEMORY);
-					IRValue tempVarIRValue = IRValueValue(context, tempValueIdx);
-
-					// Add register as parameter
-					*ArrayAdd(&procCallInst.procedureCall.parameters) =
-						IRPointerToValue(context, tempVarIRValue);
-
-					result = IRValueMemory(tempValueIdx, 0, expression->typeTableIdx);
-				}
-				else
-				{
-					procCallInst.procedureCall.out = IRValueNewValue(context, "_return"_s,
-							expression->typeTableIdx, 0);
-					result = procCallInst.procedureCall.out;
-				}
-			}
-
-			// Set up parameters
-			s64 normalArgumentsCount = Min(astProcCall->arguments.size,
-					procedure->parameters.size - procedure->isVarargs);
-			for (int argIdx = 0; argIdx < normalArgumentsCount; ++argIdx)
-			{
-				ASTExpression *arg = &astProcCall->arguments[argIdx];
-				ProcedureParameter originalParam = procedure->parameters[argIdx];
-
-				if (IRShouldPassByCopy(context, originalParam.typeTableIdx))
-				{
-					// Struct/array by copy:
-					// Declare a variable in the stack, copy the struct/array to it, then pass the new
-					// variable as parameter to the procedure.
-					static u64 structByCopyDeclarationUniqueID = 0;
-
-					IRAddComment(context, "Copy argument to the stack to pass as pointer"_s);
-					// Allocate stack space for temp struct
-					String tempVarName = TPrintF("_valueByCopy%llu", structByCopyDeclarationUniqueID++);
-					u32 tempValueIdx = IRAddTempValue(context, tempVarName, originalParam.typeTableIdx,
-							VALUEFLAGS_FORCE_MEMORY);
-					IRValue tempVarIRValue = IRValueValue(tempValueIdx, originalParam.typeTableIdx);
-
-					// Copy
-					IRValue argValue = IRGenFromExpression(context, arg);
-
-					// This happens if the value was also passed as pointer to copy to this
-					// procedure. If user tried to do this the type checker would throw an error.
-					if (context->typeTable[argValue.typeTableIdx].typeCategory ==
-							TYPECATEGORY_POINTER)
-						argValue = IRDereferenceValue(context, argValue);
-
-					IRDoAssignment(context, tempVarIRValue, argValue);
-
-					IRValue pointerToVarValue = IRPointerToValue(context, tempVarIRValue);
-
-					// Add register as parameter
-					*ArrayAdd(&procCallInst.procedureCall.parameters) = pointerToVarValue;
-				}
-				else
-				{
-					IRValue param = IRGenFromExpression(context, arg);
-					*ArrayAdd(&procCallInst.procedureCall.parameters) = param;
-				}
-			}
-
-			// Default parameters
-			for (u64 argIdx = astProcCall->arguments.size; argIdx < (procedure->parameters.size -
-					procedure->isVarargs);
-					++argIdx)
-			{
-				ProcedureParameter procParam = procedure->parameters[argIdx];
-				Constant constant = procParam.defaultValue;
-				IRValue param = {};
-				if (constant.type == CONSTANTTYPE_INTEGER)
-					param = IRValueImmediate(constant.valueAsInt, procParam.typeTableIdx);
-				else if (constant.type == CONSTANTTYPE_FLOATING)
-					param = IRValueImmediateFloat(context, constant.valueAsFloat, procParam.typeTableIdx);
-				else
-					ASSERT(!"Invalid constant type");
-				*ArrayAdd(&procCallInst.procedureCall.parameters) = param;
-			}
-
-			// Varargs
-			if (procedure->isVarargs)
-			{
-				s64 varargsCount = astProcCall->arguments.size - (procedure->parameters.size - 1);
-
-				s64 anyTableIdx = FindTypeInStackByName(context, {}, "Any"_s);
-				s64 arrayOfAnyTableIdx = GetTypeInfoArrayOf(context, anyTableIdx, 0);
-
-				if (varargsCount == 1)
-				{
-					ASTExpression *varargsArrayExp = &astProcCall->arguments[procedure->parameters.size - 1];
-					if (varargsArrayExp->typeTableIdx == arrayOfAnyTableIdx)
-					{
-						IRValue varargsArray = IRGenFromExpression(context, varargsArrayExp);
-						*ArrayAdd(&procCallInst.procedureCall.parameters) = varargsArray;
-						goto skipGeneratingVarargsArray;
-					}
-				}
-
-				IRAddComment(context, "Build varargs array"_s);
-
-				IRValue pointerToBuffer;
-				if (varargsCount > 0)
-				{
-					// Allocate stack space for buffer
-					String tempVarName = TPrintF("_varargsBuffer%llu", varargsUniqueID);
-					u32 bufferValueIdx = IRAddTempValue(context, tempVarName,
-							GetTypeInfoArrayOf(context, anyTableIdx, varargsCount), VALUEFLAGS_FORCE_MEMORY);
-					IRValue bufferIRValue = IRValueValue(context, bufferValueIdx);
-
-					// Fill the buffer
-					int nonVarargs = (int)procedure->parameters.size - 1;
-					for (int argIdx = 0; argIdx < varargsCount; ++argIdx)
-					{
-						ASTExpression *arg = &astProcCall->arguments[argIdx + nonVarargs];
-
-						IRValue bufferIndexValue = IRValueImmediate(argIdx);
-						IRValue bufferSlotValue = IRDoArrayAccess(context, bufferIRValue, bufferIndexValue,
-								anyTableIdx);
-
-						IRValue rightValue = IRGenFromExpression(context, arg);
-						IRDoAssignment(context, bufferSlotValue, rightValue);
-					}
-
-					pointerToBuffer = IRPointerToValue(context, bufferIRValue);
-				}
-				else
-					pointerToBuffer = IRValueImmediate(0, GetTypeInfoPointerOf(context, anyTableIdx));
-
-				// By now we should have the buffer with all the varargs as Any structs.
-				// Now we put it into a dynamic array struct.
-				s64 dynamicArrayTableIdx = FindTypeInStackByName(context, {}, "Array"_s);
-
-				// Allocate stack space for array
-				String tempVarName = TPrintF("_varargsArray%llu", varargsUniqueID++);
-				u32 arrayValueIdx = IRAddTempValue(context, tempVarName,
-						arrayOfAnyTableIdx, VALUEFLAGS_FORCE_MEMORY);
-				IRValue arrayIRValue = IRValueValue(context, arrayValueIdx);
-
-				TypeInfo dynamicArrayTypeInfo = context->typeTable[dynamicArrayTableIdx];
-				// Size
-				{
-					StructMember sizeStructMember = dynamicArrayTypeInfo.structInfo.members[0];
-					IRValue sizeMember = IRDoMemberAccess(context, arrayIRValue, sizeStructMember);
-					IRValue sizeValue = IRValueImmediate(varargsCount);
-					IRDoAssignment(context, sizeMember, sizeValue);
-				}
-
-				// Data
-				{
-					StructMember dataStructMember = dynamicArrayTypeInfo.structInfo.members[1];
-					IRValue dataMember = IRDoMemberAccess(context, arrayIRValue, dataStructMember);
-					IRValue dataValue = pointerToBuffer;
-					IRDoAssignment(context, dataMember, dataValue);
-				}
-
-				// Pass array as parameter!
-				*ArrayAdd(&procCallInst.procedureCall.parameters) = IRPointerToValue(context, arrayIRValue);
-			}
-
-skipGeneratingVarargsArray:
-			*AddInstruction(context) = procCallInst;
-			break;
+			procCallInst.procedureCall.procedureIdx = astProcCall->procedureIdx;
+			procTypeIdx = GetProcedure(context, astProcCall->procedureIdx)->typeTableIdx;
 		}
 		else
 		{
-			IRInstruction procCallInst = {};
 			procCallInst.type = IRINSTRUCTIONTYPE_PROCEDURE_CALL_INDIRECT;
-			procCallInst.procedureCallIndirect.valueIdx = astProcCall->valueIdx;
-
-			bool isReturnByCopy = IRShouldPassByCopy(context, expression->typeTableIdx);
-
-			s64 procTypeIdx = context->values[astProcCall->valueIdx].typeTableIdx;
-			TypeInfo procTypeInfo = context->typeTable[procTypeIdx];
-			ASSERT(procTypeInfo.typeCategory == TYPECATEGORY_PROCEDURE);
-			bool isVarargs = procTypeInfo.procedureInfo.isVarargs;
-
-			// Support both varargs and default parameters here
-			s32 procParamCount = (s32)procTypeInfo.procedureInfo.parameters.size;
-			s32 callParamCount = (s32)astProcCall->arguments.size;
-			s32 paramCount = Max(procParamCount, callParamCount) + isReturnByCopy;
-			ArrayInit(&procCallInst.procedureCallIndirect.parameters, paramCount, malloc);
-
-			// Remember parameter count because we need space for them in the stack
-			IRProcedureScope stackTop = context->irProcedureStack[context->irProcedureStack.size - 1];
-			Procedure *currentProc = GetProcedure(context, stackTop.procedureIdx);
-			if (currentProc->allocatedParameterCount < paramCount)
-				currentProc->allocatedParameterCount = paramCount;
-
-			// Return value
-			procCallInst.procedureCallIndirect.out.valueType = IRVALUETYPE_INVALID;
-			if (expression->typeTableIdx != TYPETABLEIDX_VOID)
-			{
-				if (isReturnByCopy)
-				{
-					static u64 returnByCopyDeclarationUniqueID = 0;
-
-					// Allocate stack for return value
-					String tempVarName = TPrintF("_returnByCopy%llu", returnByCopyDeclarationUniqueID++);
-					u32 tempValueIdx = IRAddTempValue(context, tempVarName, expression->typeTableIdx,
-							VALUEFLAGS_FORCE_MEMORY);
-					IRValue tempVarIRValue = IRValueValue(context, tempValueIdx);
-
-					// Add register as parameter
-					*ArrayAdd(&procCallInst.procedureCallIndirect.parameters) =
-						IRPointerToValue(context, tempVarIRValue);
-
-					result = IRValueMemory(tempValueIdx, 0, expression->typeTableIdx);
-				}
-				else
-				{
-					procCallInst.procedureCallIndirect.out = IRValueNewValue(context, "_return"_s,
-							expression->typeTableIdx, 0);
-					result = procCallInst.procedureCallIndirect.out;
-				}
-			}
-
-			// Set up parameters
-			s64 normalArgumentsCount = Min(callParamCount, procParamCount);
-			for (int argIdx = 0; argIdx < normalArgumentsCount; ++argIdx)
-			{
-				ASTExpression *arg = &astProcCall->arguments[argIdx];
-				s64 argTypeTableIdx = arg->typeTableIdx;
-
-				if (IRShouldPassByCopy(context, argTypeTableIdx))
-				{
-					// Struct/array by copy:
-					// Declare a variable in the stack, copy the struct/array to it, then pass the new
-					// variable as parameter to the procedure.
-					static u64 structByCopyDeclarationUniqueID = 0;
-
-					IRAddComment(context, "Copy argument to the stack to pass as pointer"_s);
-					// Allocate stack space for temp struct
-					String tempVarName = TPrintF("_valueByCopy%llu", structByCopyDeclarationUniqueID++);
-					u32 tempValueIdx = IRAddTempValue(context, tempVarName, argTypeTableIdx,
-							VALUEFLAGS_FORCE_MEMORY);
-					IRValue tempVarIRValue = IRValueValue(context, tempValueIdx);
-
-					// Copy
-					IRValue argValue = IRGenFromExpression(context, arg);
-					IRDoAssignment(context, tempVarIRValue, argValue);
-
-					IRValue pointerToVarValue = IRPointerToValue(context, tempVarIRValue);
-
-					// Add register as parameter
-					*ArrayAdd(&procCallInst.procedureCallIndirect.parameters) = pointerToVarValue;
-				}
-				else
-				{
-					IRValue param = IRGenFromExpression(context, arg);
-					*ArrayAdd(&procCallInst.procedureCallIndirect.parameters) = param;
-				}
-			}
-
-			// Varargs
-			if (isVarargs)
-			{
-				s64 varargsCount = astProcCall->arguments.size - procParamCount;
-
-				s64 anyTableIdx = FindTypeInStackByName(context, {}, "Any"_s);
-				s64 arrayOfAnyTableIdx = GetTypeInfoArrayOf(context, anyTableIdx, 0);
-
-				if (varargsCount == 1)
-				{
-					ASTExpression *varargsArrayExp = &astProcCall->arguments[procParamCount - 1];
-					if (varargsArrayExp->typeTableIdx == arrayOfAnyTableIdx)
-					{
-						IRValue varargsArray = IRGenFromExpression(context, varargsArrayExp);
-						*ArrayAdd(&procCallInst.procedureCall.parameters) = varargsArray;
-						goto skipGeneratingVarargsArray2;
-					}
-				}
-
-				IRAddComment(context, "Build varargs array"_s);
-
-				IRValue pointerToBuffer;
-				if (varargsCount > 0)
-				{
-					// Allocate stack space for buffer
-					String tempVarName = TPrintF("_varargsBuffer%llu", varargsUniqueID);
-					u32 bufferValueIdx = IRAddTempValue(context, tempVarName,
-							GetTypeInfoArrayOf(context, anyTableIdx, varargsCount), VALUEFLAGS_FORCE_MEMORY);
-					IRValue bufferIRValue = IRValueValue(context, bufferValueIdx);
-
-					// Fill the buffer
-					int nonVarargs = (int)procParamCount;
-					for (int argIdx = 0; argIdx < varargsCount; ++argIdx)
-					{
-						ASTExpression *arg = &astProcCall->arguments[argIdx + nonVarargs];
-
-						IRValue bufferIndexValue = IRValueImmediate(argIdx);
-						IRValue bufferSlotValue = IRDoArrayAccess(context, bufferIRValue, bufferIndexValue,
-								anyTableIdx);
-
-						IRValue rightValue = IRGenFromExpression(context, arg);
-						IRDoAssignment(context, bufferSlotValue, rightValue);
-					}
-
-					pointerToBuffer = IRPointerToValue(context, bufferIRValue);
-				}
-				else
-					pointerToBuffer = IRValueImmediate(0, GetTypeInfoPointerOf(context, anyTableIdx));
-
-				// By now we should have the buffer with all the varargs as Any structs.
-				// Now we put it into a dynamic array struct.
-				s64 dynamicArrayTableIdx = FindTypeInStackByName(context, {}, "Array"_s);
-
-				// Allocate stack space for array
-				String tempVarName = TPrintF("_varargsArray%llu", varargsUniqueID++);
-				u32 arrayValueIdx = IRAddTempValue(context, tempVarName,
-						arrayOfAnyTableIdx, VALUEFLAGS_FORCE_MEMORY);
-				IRValue arrayIRValue = IRValueValue(context, arrayValueIdx);
-
-				TypeInfo dynamicArrayTypeInfo = context->typeTable[dynamicArrayTableIdx];
-				// Size
-				{
-					StructMember sizeStructMember = dynamicArrayTypeInfo.structInfo.members[0];
-					IRValue sizeMember = IRDoMemberAccess(context, arrayIRValue, sizeStructMember);
-					IRValue sizeValue = IRValueImmediate(varargsCount);
-					IRDoAssignment(context, sizeMember, sizeValue);
-				}
-
-				// Data
-				{
-					StructMember dataStructMember = dynamicArrayTypeInfo.structInfo.members[1];
-					IRValue dataMember = IRDoMemberAccess(context, arrayIRValue, dataStructMember);
-					IRValue dataValue = pointerToBuffer;
-					IRDoAssignment(context, dataMember, dataValue);
-				}
-
-				// Pass array as parameter!
-				*ArrayAdd(&procCallInst.procedureCall.parameters) = IRPointerToValue(context, arrayIRValue);
-			}
-
-skipGeneratingVarargsArray2:
-			*AddInstruction(context) = procCallInst;
-			break;
+			procCallInst.procedureCall.procPointerValueIdx = astProcCall->valueIdx;
+			procTypeIdx = context->values[astProcCall->valueIdx].typeTableIdx;
 		}
+
+		bool isReturnByCopy = IRShouldPassByCopy(context, expression->typeTableIdx);
+
+		ASSERT(context->typeTable[procTypeIdx].typeCategory == TYPECATEGORY_PROCEDURE);
+		TypeInfoProcedure procTypeInfo = context->typeTable[procTypeIdx].procedureInfo;
+		bool isVarargs = procTypeInfo.isVarargs;
+
+		// Support both varargs and default parameters here
+		s32 procParamCount = (s32)procTypeInfo.parameters.size;
+		s32 callParamCount = (s32)astProcCall->arguments.size;
+		s32 paramCount = Max(procParamCount, callParamCount) + isReturnByCopy + isVarargs;
+		ArrayInit(&procCallInst.procedureCall.parameters, paramCount, malloc);
+
+		// Remember parameter count because we need space for them in the stack
+		IRProcedureScope stackTop = context->irProcedureStack[context->irProcedureStack.size - 1];
+		Procedure *currentProc = GetProcedure(context, stackTop.procedureIdx);
+		if (currentProc->allocatedParameterCount < paramCount)
+			currentProc->allocatedParameterCount = paramCount;
+
+		// Return value
+		procCallInst.procedureCall.out.valueType = IRVALUETYPE_INVALID;
+		if (expression->typeTableIdx != TYPETABLEIDX_VOID)
+		{
+			if (isReturnByCopy)
+			{
+				static u64 returnByCopyDeclarationUniqueID = 0;
+
+				// Allocate stack for return value
+				String tempVarName = TPrintF("_returnByCopy%llu", returnByCopyDeclarationUniqueID++);
+				u32 tempValueIdx = IRAddTempValue(context, tempVarName, expression->typeTableIdx,
+						VALUEFLAGS_FORCE_MEMORY);
+				IRValue tempVarIRValue = IRValueValue(context, tempValueIdx);
+
+				// Add register as parameter
+				*ArrayAdd(&procCallInst.procedureCall.parameters) =
+					IRPointerToValue(context, tempVarIRValue);
+
+				result = IRValueMemory(tempValueIdx, 0, expression->typeTableIdx);
+			}
+			else
+			{
+				procCallInst.procedureCall.out = IRValueNewValue(context, "_return"_s,
+						expression->typeTableIdx, 0);
+				result = procCallInst.procedureCall.out;
+			}
+		}
+
+		// Set up parameters
+		s64 normalArgumentsCount = Min(callParamCount, procParamCount);
+		for (int argIdx = 0; argIdx < normalArgumentsCount; ++argIdx)
+		{
+			ASTExpression *arg = &astProcCall->arguments[argIdx];
+			s64 argTypeTableIdx = procTypeInfo.parameters[argIdx].typeTableIdx;
+
+			if (IRShouldPassByCopy(context, argTypeTableIdx))
+			{
+				// Struct/array by copy:
+				// Declare a variable in the stack, copy the struct/array to it, then pass the new
+				// variable as parameter to the procedure.
+				static u64 structByCopyDeclarationUniqueID = 0;
+
+				IRAddComment(context, "Copy argument to the stack to pass as pointer"_s);
+				// Allocate stack space for temp struct
+				String tempVarName = TPrintF("_valueByCopy%llu", structByCopyDeclarationUniqueID++);
+				u32 tempValueIdx = IRAddTempValue(context, tempVarName, argTypeTableIdx,
+						VALUEFLAGS_FORCE_MEMORY);
+				IRValue tempVarIRValue = IRValueValue(context, tempValueIdx);
+
+				IRValue argValue = IRGenFromExpression(context, arg);
+				// If argValue comes from an argument too, it was passed by pointer and is actually
+				// a pointer, through the type system doesn't know!
+				if (context->typeTable[argValue.typeTableIdx].typeCategory == TYPECATEGORY_POINTER)
+					argValue = IRDereferenceValue(context, argValue);
+
+				// Copy
+				IRDoAssignment(context, tempVarIRValue, argValue);
+
+				IRValue pointerToVarValue = IRPointerToValue(context, tempVarIRValue);
+
+				// Add register as parameter
+				*ArrayAdd(&procCallInst.procedureCall.parameters) = pointerToVarValue;
+			}
+			else
+			{
+				IRValue param = IRGenFromExpression(context, arg);
+				*ArrayAdd(&procCallInst.procedureCall.parameters) = param;
+			}
+		}
+
+		// Default parameters
+		for (u64 argIdx = astProcCall->arguments.size; argIdx < procParamCount;
+				++argIdx)
+		{
+			ProcedureParameter procParam = procTypeInfo.parameters[argIdx];
+			Constant constant = procParam.defaultValue;
+			IRValue param = {};
+			if (constant.type == CONSTANTTYPE_INTEGER)
+				param = IRValueImmediate(constant.valueAsInt, procParam.typeTableIdx);
+			else if (constant.type == CONSTANTTYPE_FLOATING)
+				param = IRValueImmediateFloat(context, constant.valueAsFloat,
+						procParam.typeTableIdx);
+			else
+				ASSERT(!"Invalid constant type");
+			*ArrayAdd(&procCallInst.procedureCall.parameters) = param;
+		}
+
+		// Varargs
+		if (isVarargs)
+		{
+			s64 varargsCount = astProcCall->arguments.size - procParamCount;
+
+			s64 anyTableIdx = FindTypeInStackByName(context, {}, "Any"_s);
+			s64 arrayOfAnyTableIdx = GetTypeInfoArrayOf(context, anyTableIdx, 0);
+
+			if (varargsCount == 1)
+			{
+				ASTExpression *varargsArrayExp = &astProcCall->arguments[procParamCount];
+				if (varargsArrayExp->typeTableIdx == arrayOfAnyTableIdx)
+				{
+					IRValue varargsArray = IRGenFromExpression(context, varargsArrayExp);
+					*ArrayAdd(&procCallInst.procedureCall.parameters) = varargsArray;
+					goto skipGeneratingVarargsArray;
+				}
+			}
+
+			IRAddComment(context, "Build varargs array"_s);
+
+			IRValue pointerToBuffer;
+			if (varargsCount > 0)
+			{
+				// Allocate stack space for buffer
+				String tempVarName = TPrintF("_varargsBuffer%llu", varargsUniqueID);
+				u32 bufferValueIdx = IRAddTempValue(context, tempVarName,
+						GetTypeInfoArrayOf(context, anyTableIdx, varargsCount), VALUEFLAGS_FORCE_MEMORY);
+				IRValue bufferIRValue = IRValueValue(context, bufferValueIdx);
+
+				// Fill the buffer
+				int nonVarargs = (int)procParamCount;
+				for (int argIdx = 0; argIdx < varargsCount; ++argIdx)
+				{
+					ASTExpression *arg = &astProcCall->arguments[argIdx + nonVarargs];
+
+					IRValue bufferIndexValue = IRValueImmediate(argIdx);
+					IRValue bufferSlotValue = IRDoArrayAccess(context, bufferIRValue, bufferIndexValue,
+							anyTableIdx);
+
+					IRValue rightValue = IRGenFromExpression(context, arg);
+					IRDoAssignment(context, bufferSlotValue, rightValue);
+				}
+
+				pointerToBuffer = IRPointerToValue(context, bufferIRValue);
+			}
+			else
+				pointerToBuffer = IRValueImmediate(0, GetTypeInfoPointerOf(context, anyTableIdx));
+
+			// By now we should have the buffer with all the varargs as Any structs.
+			// Now we put it into a dynamic array struct.
+			s64 dynamicArrayTableIdx = FindTypeInStackByName(context, {}, "Array"_s);
+
+			// Allocate stack space for array
+			String tempVarName = TPrintF("_varargsArray%llu", varargsUniqueID++);
+			u32 arrayValueIdx = IRAddTempValue(context, tempVarName,
+					arrayOfAnyTableIdx, VALUEFLAGS_FORCE_MEMORY);
+			IRValue arrayIRValue = IRValueValue(context, arrayValueIdx);
+
+			TypeInfo dynamicArrayTypeInfo = context->typeTable[dynamicArrayTableIdx];
+			// Size
+			{
+				StructMember sizeStructMember = dynamicArrayTypeInfo.structInfo.members[0];
+				IRValue sizeMember = IRDoMemberAccess(context, arrayIRValue, sizeStructMember);
+				IRValue sizeValue = IRValueImmediate(varargsCount);
+				IRDoAssignment(context, sizeMember, sizeValue);
+			}
+
+			// Data
+			{
+				StructMember dataStructMember = dynamicArrayTypeInfo.structInfo.members[1];
+				IRValue dataMember = IRDoMemberAccess(context, arrayIRValue, dataStructMember);
+				IRValue dataValue = pointerToBuffer;
+				IRDoAssignment(context, dataMember, dataValue);
+			}
+
+			// Pass array as parameter!
+			*ArrayAdd(&procCallInst.procedureCall.parameters) = IRPointerToValue(context, arrayIRValue);
+		}
+
+skipGeneratingVarargsArray:
+		*AddInstruction(context) = procCallInst;
+		break;
 	}
 	case ASTNODETYPE_UNARY_OPERATION:
 	{
@@ -1907,7 +1727,7 @@ skipGeneratingVarargsArray2:
 			s64 returnTypeTableIdx = expression->returnNode.expression->typeTableIdx;
 			ASSERT(returnTypeTableIdx > 0);
 			if (currentProc->returnValueIdx == U32_MAX)
-				currentProc->returnValueIdx = NewValue(context, "_return_value"_s, returnTypeTableIdx, 0);
+				currentProc->returnValueIdx = NewValue(context, "_returnValue"_s, returnTypeTableIdx, 0);
 
 			if (IRShouldPassByCopy(context, returnTypeTableIdx))
 			{
@@ -1917,7 +1737,8 @@ skipGeneratingVarargsArray2:
 				IRInstruction memcpyInst = {};
 				memcpyInst.type = IRINSTRUCTIONTYPE_INTRINSIC_MEMCPY;
 				memcpyInst.memcpy.src = IRPointerToValue(context, returnValue);
-				memcpyInst.memcpy.dst = IRValueValue(currentProc->returnValueIdx, returnTypeTableIdx);
+				memcpyInst.memcpy.dst = IRValueValue(currentProc->returnValueIdx,
+						GetTypeInfoPointerOf(context, returnTypeTableIdx));
 				memcpyInst.memcpy.size = sizeValue;
 
 				*AddInstruction(context) = memcpyInst;

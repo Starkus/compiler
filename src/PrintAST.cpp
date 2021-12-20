@@ -270,13 +270,12 @@ void PrintExpression(Context *context, ASTExpression *e)
 	{
 	case ASTNODETYPE_VARIABLE_DECLARATION:
 	{
-		Value value = context->values[e->variableDeclaration.valueIdx];
-		if (value.flags & VALUEFLAGS_ON_STATIC_STORAGE)
+		if (e->variableDeclaration.isStatic)
 			Print("Static variable declaration ");
 		else
 			Print("Variable declaration ");
 		String typeStr = ASTTypeToString(e->variableDeclaration.astType);
-		Print("\"%S\" of type \"%S\"", value.name, typeStr);
+		Print("\"%S\" of type \"%S\"", e->variableDeclaration.name, typeStr);
 
 		PrintSourceLocation(context, e->any.loc);
 		Print("\n");
@@ -298,11 +297,11 @@ void PrintExpression(Context *context, ASTExpression *e)
 
 		Indent();
 		Print("Parameters:\n");
-		for (int i = 0; i < e->procedureDeclaration.astParameters.size; ++i)
+		for (int i = 0; i < e->procedureDeclaration.prototype.astParameters.size; ++i)
 		{
 			ASTExpression pexp = {};
 			pexp.nodeType = ASTNODETYPE_VARIABLE_DECLARATION;
-			pexp.variableDeclaration = e->procedureDeclaration.astParameters[i];
+			pexp.variableDeclaration = e->procedureDeclaration.prototype.astParameters[i];
 			PrintExpression(context, &pexp);
 		}
 

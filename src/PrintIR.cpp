@@ -175,17 +175,17 @@ void PrintIRInstruction(Context *context, IRInstruction inst)
 	} break;
 	case IRINSTRUCTIONTYPE_PROCEDURE_CALL_INDIRECT:
 	{
-		if (inst.procedureCallIndirect.out.valueType != IRVALUETYPE_INVALID)
+		if (inst.procedureCall.out.valueType != IRVALUETYPE_INVALID)
 		{
-			PrintIRValue(context, inst.procedureCallIndirect.out);
+			PrintIRValue(context, inst.procedureCall.out);
 			Print(" := ");
 		}
-		Print("call %S(", PIRValueToStr(context, inst.procedureCallIndirect.valueIdx));
+		Print("call %S(", PIRValueToStr(context, inst.procedureCall.procPointerValueIdx));
 
-		for (int i = 0; i < inst.procedureCallIndirect.parameters.size; ++i)
+		for (int i = 0; i < inst.procedureCall.parameters.size; ++i)
 		{
 			if (i) Print(", ");
-			PrintIRValue(context, inst.procedureCallIndirect.parameters[i]);
+			PrintIRValue(context, inst.procedureCall.parameters[i]);
 		}
 		Print(")\n");
 	} break;
@@ -243,22 +243,23 @@ void PrintIRInstructions(Context *context)
 	for (int procedureIdx = 1; procedureIdx < procedureCount; ++procedureIdx)
 	{
 		Procedure *proc = GetProcedure(context, procedureIdx);
+		TypeInfoProcedure procTypeInfo = context->typeTable[proc->typeTableIdx].procedureInfo;
 
-		String returnTypeStr = TypeInfoToString(context, proc->returnTypeTableIdx);
+		String returnTypeStr = TypeInfoToString(context, procTypeInfo.returnTypeTableIdx);
 
 		String name = GetProcedure(context, procedureIdx)->name;
 		Print("proc %S(", name);
 
-		for (int paramIdx = 0; paramIdx < proc->parameters.size; ++paramIdx)
+		for (int paramIdx = 0; paramIdx < proc->parameterValues.size; ++paramIdx)
 		{
 			if (paramIdx) Print(", ");
-			u32 paramValueIdx = proc->parameters[paramIdx].valueIdx;
+			u32 paramValueIdx = proc->parameterValues[paramIdx];
 			Value paramValue = context->values[paramValueIdx];
 			String typeStr = TypeInfoToString(context, paramValue.typeTableIdx);
 			Print("%S : %S", paramValue.name, typeStr);
 		}
 		Print(")");
-		if (proc->returnTypeTableIdx != TYPETABLEIDX_VOID)
+		if (procTypeInfo.returnTypeTableIdx != TYPETABLEIDX_VOID)
 			Print(" -> %S", returnTypeStr);
 		Print("\n");
 
