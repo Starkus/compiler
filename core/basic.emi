@@ -2,6 +2,12 @@ false :: 0;
 true  :: 1;
 null  :: 0;
 
+Compiler_Subsystems :: enum
+{
+	COMPILER_SUBSYSTEM_CONSOLE = 0,
+	COMPILER_SUBSYSTEM_WINDOWS = 1
+};
+
 // @Todo: replace
 String :: struct
 {

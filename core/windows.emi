@@ -1,8 +1,15 @@
 ATTACH_PARENT_PROCESS :: -1;
-WS_CLIPCHILDREN :: 0x02000000;
-WS_CLIPSIBLINGS :: 0x04000000;
-WS_SIZEBOX      :: 0x00040000;
-WS_SYSMENU      :: 0x00080000;
+WS_OVERLAPPED       :: 0x00000000;
+WS_CLIPCHILDREN     :: 0x02000000;
+WS_CLIPSIBLINGS     :: 0x04000000;
+WS_MAXIMIZEBOX      :: 0x00100000;
+WS_MINIMIZEBOX      :: 0x00200000;
+WS_THICKFRAME       :: 0x00400000;
+WS_CAPTION          :: 0x00C00000;
+WS_SIZEBOX          :: 0x00040000;
+WS_SYSMENU          :: 0x00080000;
+WS_VISIBLE          :: 0x10000000;
+WS_OVERLAPPEDWINDOW :: WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU | WS_THICKFRAME | WS_MINIMIZEBOX | WS_MAXIMIZEBOX;
 CS_VREDRAW :: 0x0001;
 CS_HREDRAW :: 0x0002;
 CS_OWNDC   :: 0x0020;
@@ -11,6 +18,10 @@ PM_REMOVE  :: 0x0001;
 WM_DESTROY :: 0x0002;
 WM_CLOSE   :: 0x0010;
 WM_QUIT    :: 0x0012;
+PFD_DOUBLEBUFFER   :: 0x00000001;
+PFD_DRAW_TO_WINDOW :: 0x00000004;
+PFD_SUPPORT_OPENGL :: 0x00000020;
+PFD_TYPE_RGBA :: 0;
 
 WNDCLASSEXA :: struct
 {
@@ -42,6 +53,35 @@ MSG :: struct
 	pt : POINT;
 	lPrivate : u32;
 };
+PIXELFORMATDESCRIPTOR :: struct
+{
+	nSize : u16;
+	nVersion : u16;
+	dwFlags : u32;
+	iPixelType : u8;
+	cColorBits : u8;
+	cRedBits : u8;
+	cRedShift : u8;
+	cGreenBits : u8;
+	cGreenShift : u8;
+	cBlueBits : u8;
+	cBlueShift : u8;
+	cAlphaBits : u8;
+	cAlphaShift : u8;
+	cAccumBits : u8;
+	cAccumRedBits : u8;
+	cAccumGreenBits : u8;
+	cAccumBlueBits : u8;
+	cAccumAlphaBits : u8;
+	cDepthBits : u8;
+	cStencilBits : u8;
+	cAuxBuffers : u8;
+	iLayerType : u8;
+	bReserved : u8;
+	dwLayerMask : u32;
+	dwVisibleMask : u32;
+	dwDamageMask : u32;
+};
 
 AttachConsole :: external (handle : ^void);
 GetModuleHandleA :: external (lpModuleName : ^void) -> ^void;
@@ -67,4 +107,13 @@ PeekMessageA :: external (lpMsg : ^MSG, hWnd : ^void, wMsgFilterMin : u32, wMsgF
 		wRemoveMsg : u32) -> bool;
 TranslateMessage :: external (message : ^MSG) -> bool;
 DispatchMessageA :: external (message : ^MSG) -> s64;
-
+LoadModule :: external (lpLibFileName : ^u8) -> ^void;
+GetProcAddress :: external (hModule : ^void, lpProcName : ^u8) -> ^void;
+GetDC :: external (hWnd : ^void) -> ^void;
+ReleaseDC :: external (hWnd : ^void, hdc : ^void);
+ChoosePixelFormat :: external (hdc : ^void, ppfd : ^PIXELFORMATDESCRIPTOR) -> s64;
+SetPixelFormat :: external (hdc : ^void, format : s64, ppfd : ^PIXELFORMATDESCRIPTOR);
+PostQuitMessage :: external (nExitCode : s64);
+DestroyWindow :: external (hWnd : ^void) -> bool;
+TerminateProcess :: external (uExitCode : u32);
+ExitProcess :: external (uExitCode : u32);

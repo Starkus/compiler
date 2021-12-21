@@ -1086,6 +1086,7 @@ void AddStructMembersToScope(Context *context, SourceLocation loc, u32 baseValue
 			newScopeName.type = NAMETYPE_STRUCT_MEMBER_CHAIN;
 			newScopeName.name = member->name;
 			newScopeName.structMemberChain.baseValueIdx = baseValueIdx;
+			newScopeName.loc = loc;
 
 			ArrayInit(&newScopeName.structMemberChain.offsets, offsetStack->size, malloc);
 			for (int i = 0; i < offsetStack->size; ++i)
@@ -1355,6 +1356,7 @@ void TypeCheckExpression(Context *context, ASTExpression *expression)
 				LogErrorNoCrash(context, expression->any.loc,
 						TPrintF("Duplicate static definition \"%S\"", astStaticDef.name));
 				LogNote(context, currentName.loc, "First defined here"_s);
+				CRASH;
 			}
 		}
 
@@ -1365,6 +1367,7 @@ void TypeCheckExpression(Context *context, ASTExpression *expression)
 		newScopeName.type = NAMETYPE_STATIC_DEFINITION;
 		newScopeName.name = astStaticDef.name;
 		newScopeName.staticDefinition = newStaticDef;
+		newScopeName.loc = astStaticDef.loc;
 		*DynamicArrayAdd(&stackTop->names) = newScopeName;
 
 		if (astStaticDef.expression->nodeType == ASTNODETYPE_PROCEDURE_DECLARATION)
@@ -1420,6 +1423,7 @@ void TypeCheckExpression(Context *context, ASTExpression *expression)
 			newScopeName.name = astVarDecl.name;
 			newScopeName.variableInfo.valueIdx = paramValueIdx;
 			newScopeName.variableInfo.typeTableIdx = astVarDecl.typeTableIdx;
+			newScopeName.loc = astVarDecl.loc;
 			*DynamicArrayAdd(&stackTop->names) = newScopeName;
 		}
 
@@ -1437,6 +1441,7 @@ void TypeCheckExpression(Context *context, ASTExpression *expression)
 			newScopeName.name = procDecl->prototype.varargsName;
 			newScopeName.variableInfo.valueIdx = valueIdx;
 			newScopeName.variableInfo.typeTableIdx = arrayTableIdx;
+			newScopeName.loc = procDecl->loc;
 			*DynamicArrayAdd(&stackTop->names) = newScopeName;
 		}
 
@@ -1888,6 +1893,7 @@ skipNotFoundError:
 		newScopeName.name = indexValueName;
 		newScopeName.variableInfo.valueIdx = indexValueIdx;
 		newScopeName.variableInfo.typeTableIdx = TYPETABLEIDX_S64;
+		newScopeName.loc = expression->any.loc;
 		*DynamicArrayAdd(&stackTop->names) = newScopeName;
 
 		ASTExpression *rangeExp = expression->forNode.range;
@@ -1902,8 +1908,8 @@ skipNotFoundError:
 			{
 				TypeInfo rangeTypeInfo = context->typeTable[rangeExp->typeTableIdx];
 				if (rangeTypeInfo.typeCategory != TYPECATEGORY_ARRAY)
-					LogError(context, expression->forNode.range->any.loc, "'for' range expression does"
-							"not evaluate to an array nor is it a number range (..)"_s);
+					LogError(context, expression->forNode.range->any.loc, "'for' range expression "
+							"does not evaluate to an array nor is it a number range (..)"_s);
 				elementTypeTableIdx = rangeTypeInfo.arrayInfo.elementTypeTableIdx;
 			}
 
@@ -1915,6 +1921,7 @@ skipNotFoundError:
 			newScopeName.name = elementValueName;
 			newScopeName.variableInfo.valueIdx = elementValueIdx;
 			newScopeName.variableInfo.typeTableIdx = pointerToElementTypeTableIdx;
+			newScopeName.loc = expression->any.loc;
 			*DynamicArrayAdd(&stackTop->names) = newScopeName;
 		}
 

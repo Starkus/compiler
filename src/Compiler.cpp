@@ -96,6 +96,7 @@ struct Context
 	Config config;
 
 	DynamicArray<SourceFile, malloc, realloc> sourceFiles;
+	DynamicArray<String, malloc, realloc> libsToLink;
 	s32 currentFileIdx;
 
 	// Parsing
@@ -131,6 +132,12 @@ struct Context
 	DynamicArray<InterferenceGraphNode, malloc, realloc> beInterferenceGraph;
 	BucketArray<BEInstruction, 128, malloc, realloc> bePatchedInstructions;
 };
+
+inline bool Win32FileExists(const char *filename)
+{
+	DWORD attrib = GetFileAttributes(filename);
+	return attrib != INVALID_FILE_ATTRIBUTES && attrib != FILE_ATTRIBUTE_DIRECTORY;
+}
 
 bool Win32ReadEntireFile(const char *filename, u8 **fileBuffer, u64 *fileSize, void *(*allocFunc)(u64))
 {
@@ -391,6 +398,7 @@ int main(int argc, char **argv)
 
 	Context context = {};
 	DynamicArrayInit(&context.sourceFiles, 8);
+	DynamicArrayInit(&context.libsToLink, 8);
 	BucketArrayInit(&context.tokens);
 
 	DynamicArray<String, FrameAlloc, FrameRealloc> inputFiles;
@@ -420,8 +428,12 @@ int main(int argc, char **argv)
 
 	for (int i = 0; i < inputFiles.size; ++i)
 	{
+		const char *filenameCstr = StringToCStr(inputFiles[i], FrameAlloc);
+		if (!Win32FileExists(filenameCstr))
+			LogError(&context, {}, TPrintF("Input source file \"%S\" doesn't exist!", inputFiles[i]));
+
 		SourceFile newSourceFile = { inputFiles[i] };
-		Win32ReadEntireFile(StringToCStr(inputFiles[i], FrameAlloc), &newSourceFile.buffer,
+		Win32ReadEntireFile(filenameCstr, &newSourceFile.buffer,
 				&newSourceFile.size, FrameAlloc);
 		context.currentFileIdx = (s32)context.sourceFiles.size;
 		*DynamicArrayAdd(&context.sourceFiles) = newSourceFile;

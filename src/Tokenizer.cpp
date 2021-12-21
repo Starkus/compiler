@@ -164,7 +164,6 @@ Token ReadTokenAndAdvance(Context *context, Tokenizer *tokenizer)
 	result.loc.fileIdx = context->currentFileIdx;
 	result.loc.line = tokenizer->line;
 	result.loc.character = (s32)(tokenizer->cursor - tokenizer->beginningOfLine);
-	result.loc.size = result.size;
 
 	if (!*tokenizer->cursor || tokenizer->cursor >= tokenizer->end)
 	{
@@ -190,19 +189,25 @@ Token ReadTokenAndAdvance(Context *context, Tokenizer *tokenizer)
 			if (!*tokenizer->cursor || tokenizer->cursor >= tokenizer->end)
 				LogError(context, result.loc, "String literal never closed!"_s);
 		}
+		result.loc.size = result.size + 2;
 		++tokenizer->cursor;
 	}
 	else if (*tokenizer->cursor == '\'')
 	{
 		result.type = TOKEN_LITERAL_CHARACTER;
+		result.size = 3;
+		result.begin = tokenizer->cursor;
 		++tokenizer->cursor;
 		if (*tokenizer->cursor == '\\')
 		{
 			++tokenizer->cursor;
+			++result.size;
 		}
 		++tokenizer->cursor;
 		ASSERT(*tokenizer->cursor == '\'');
 		++tokenizer->cursor;
+
+		result.loc.size = result.size;
 	}
 	else if (IsAlpha(*tokenizer->cursor) || *tokenizer->cursor == '_')
 	{
@@ -212,6 +217,7 @@ Token ReadTokenAndAdvance(Context *context, Tokenizer *tokenizer)
 			++result.size;
 			++tokenizer->cursor;
 		}
+		result.loc.size = result.size;
 
 		// Keywords
 		if (TokenIsStr(&result, "if"))
@@ -303,10 +309,11 @@ Token ReadTokenAndAdvance(Context *context, Tokenizer *tokenizer)
 			}
 		}
 numberDone:
-		;
+		result.loc.size = result.size;
 	}
 	else if (*tokenizer->cursor >= TOKEN_ASCII_Begin && *tokenizer->cursor <= TOKEN_ASCII_End)
 	{
+		result.begin = tokenizer->cursor;
 		char next = *(tokenizer->cursor + 1);
 		switch (*tokenizer->cursor)
 		{
@@ -325,6 +332,11 @@ numberDone:
 				if (sourceFileToken.type != TOKEN_LITERAL_STRING)
 					LogError(context, sourceFileToken.loc, "ERROR! #include must be followed by string literal"_s);
 
+				const char *filenameCstr = StringToCStr(sourceFileToken.string, FrameAlloc);
+				if (!Win32FileExists(filenameCstr))
+					LogError(context, sourceFileToken.loc,
+							TPrintF("Included source file \"%S\" doesn't exist!", sourceFileToken.string));
+
 				SourceFile newSourceFile = { sourceFileToken.string };
 				Win32ReadEntireFile(StringToCStr(sourceFileToken.string, FrameAlloc), &newSourceFile.buffer,
 					&newSourceFile.size, FrameAlloc);
@@ -339,6 +351,18 @@ numberDone:
 
 				return ReadTokenAndAdvance(context, tokenizer);
 			}
+			else if (StringEquals(result.string, "#linklib"_s))
+			{
+				Token libNameToken = ReadTokenAndAdvance(context, tokenizer);
+				if (libNameToken.type != TOKEN_LITERAL_STRING)
+					LogError(context, libNameToken.loc, "ERROR! #linklib must be followed by string literal"_s);
+
+				*DynamicArrayAdd(&context->libsToLink) = libNameToken.string;
+
+				return ReadTokenAndAdvance(context, tokenizer);
+			}
+			else
+				LogError(context, result.loc, "Invalid parser directive"_s);
 		} break;
 		case '=':
 		{

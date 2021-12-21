@@ -1,3 +1,21 @@
+// Include non existent source file
+/*
+#include "noexist.emi"
+*/
+
+AProc :: (arg : s32) -> bool
+{
+	return true;
+}
+
+// Declare procedure twice
+/*
+AProc :: (arg : s32) -> bool
+{
+	return true;
+}
+*/
+
 Main :: () -> s64
 {
 	bar : s64;

@@ -2357,34 +2357,39 @@ nextTuple:
 	else
 		subsystemArgument = "/subsystem:CONSOLE "_s;
 
+	String libsToLinkStr = {};
+	for (int i = 0; i < context->libsToLink.size; ++i)
+		libsToLinkStr = TPrintF("%S %S", libsToLinkStr, context->libsToLink[i]);
+
 	String commandLine = TPrintF(
-			"%S\\bin\\Hostx64\\x64\\ml64.exe "
+			"%S\\bin\\Hostx64\\x64\\ml64.exe " // msvcPath
 			"out.asm "
 			"/nologo "
 			"/Zd "
 			"/Zi "
 			"/Fm "
-			"/I \"%S\\include\" "
-			"/I \"%S\\include\\%S\\ucrt\" "
-			"/I \"%S\\include\\%S\\shared\" "
-			"/I \"%S\\include\\%S\\um\" "
-			"/I \"%S\\include\\%S\\winrt\" "
-			"/I \"%S\\include\\%S\\cppwinrt\" "
+			"/I \"%S\\include\" " // msvcPath
+			"/I \"%S\\include\\%S\\ucrt\" " // windowsSDKPath, windowsSDKVersion
+			"/I \"%S\\include\\%S\\shared\" " // windowsSDKPath, windowsSDKVersion
+			"/I \"%S\\include\\%S\\um\" " // windowsSDKPath, windowsSDKVersion
+			"/I \"%S\\include\\%S\\winrt\" " // windowsSDKPath, windowsSDKVersion
+			"/I \"%S\\include\\%S\\cppwinrt\" " // windowsSDKPath, windowsSDKVersion
 			"/link "
-			"%S "
+			"%S " // subsystemArgument
 			"kernel32.lib "
 			"user32.lib "
 			"gdi32.lib "
 			"winmm.lib "
+			"%S " // libsToLinkStr
 			"/nologo "
 			"/debug:full "
 			"/entry:Main "
 			"/opt:ref "
 			"/incremental:no "
 			"/dynamicbase:no "
-			"/libpath:\"%S\\lib\\x64\" "
-			"/libpath:\"%S\\lib\\%S\\ucrt\\x64\" "
-			"/libpath:\"%S\\lib\\%S\\um\\x64\" "
+			"/libpath:\"%S\\lib\\x64\" " // msvcPath
+			"/libpath:\"%S\\lib\\%S\\ucrt\\x64\" " // windowsSDKPath, windowsSDKVersion
+			"/libpath:\"%S\\lib\\%S\\um\\x64\" " // windowsSDKPath, windowsSDKVersion
 			"/out:out.exe%c",
 			msvcPath,
 			msvcPath,
@@ -2394,6 +2399,7 @@ nextTuple:
 			windowsSDKPath, windowsSDKVersion,
 			windowsSDKPath, windowsSDKVersion,
 			subsystemArgument,
+			libsToLinkStr,
 			msvcPath,
 			windowsSDKPath, windowsSDKVersion,
 			windowsSDKPath, windowsSDKVersion,
