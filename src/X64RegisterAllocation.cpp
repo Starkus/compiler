@@ -72,7 +72,8 @@ BasicBlock *PushBasicBlock(BasicBlock *currentBasicBlock,
 bool CanBeRegister(Context *context, u32 valueIdx)
 {
 	Value v = context->values[valueIdx];
-	if (v.flags & (VALUEFLAGS_FORCE_MEMORY | VALUEFLAGS_ON_STATIC_STORAGE))
+	if (v.flags & (VALUEFLAGS_FORCE_MEMORY | VALUEFLAGS_ON_STATIC_STORAGE |
+				VALUEFLAGS_IS_EXTERNAL))
 		return false;
 	TypeInfo typeInfo = context->typeTable[v.typeTableIdx];
 	if (typeInfo.typeCategory == TYPECATEGORY_STRUCT ||
@@ -91,7 +92,8 @@ inline bool AddValue(Context *context, u32 valueIdx, X64Procedure *proc,
 	// Nonsense to take these into account
 	if (!CanBeRegister(context, valueIdx))
 	{
-		if (!(context->values[valueIdx].flags & VALUEFLAGS_ON_STATIC_STORAGE))
+		if (!(context->values[valueIdx].flags & VALUEFLAGS_ON_STATIC_STORAGE |
+					VALUEFLAGS_IS_EXTERNAL))
 			DynamicArrayAddUnique(&proc->spilledValues, valueIdx);
 		return false;
 	}
@@ -568,6 +570,7 @@ void ResolveStackOffsets(Context *context, Array<X64Procedure> x64Procedures)
 				}
 				// We don't allocate static values, the assembler/linker does.
 				ASSERT(!(value->flags & VALUEFLAGS_ON_STATIC_STORAGE));
+				ASSERT(!(value->flags & VALUEFLAGS_IS_EXTERNAL));
 
 				u64 size = context->typeTable[value->typeTableIdx].size;
 				int alignment = size > 8 ? 8 : NextPowerOf2((int)size);
@@ -861,6 +864,7 @@ void X64AllocateRegisters(Context *context, Array<X64Procedure> x64Procedures)
 
 				// We don't allocate static values, the assembler/linker does.
 				ASSERT(!(v->flags & VALUEFLAGS_ON_STATIC_STORAGE));
+				ASSERT(!(v->flags & VALUEFLAGS_IS_EXTERNAL));
 
 				v->flags &= ~VALUEFLAGS_IS_MEMORY;
 				v->flags |= VALUEFLAGS_IS_ALLOCATED;

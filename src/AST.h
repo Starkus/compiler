@@ -149,6 +149,7 @@ struct ASTVariableDeclaration : ASTBase
 	ASTExpression *astInitialValue;
 	ASTType *astType;
 	bool isStatic;
+	bool isExternal;
 	bool isUsing;
 
 	// TypeCheck

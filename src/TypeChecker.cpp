@@ -1300,8 +1300,10 @@ void TypeCheckExpression(Context *context, ASTExpression *expression)
 		varDecl = TypeCheckVariableDeclaration(context, varDecl);
 		expression->typeTableIdx = varDecl.typeTableIdx;
 
-		u8 staticFlag = varDecl.isStatic ? VALUEFLAGS_ON_STATIC_STORAGE : 0;
-		varDecl.valueIdx = NewValue(context, varDecl.name, varDecl.typeTableIdx, staticFlag);
+		u32 staticFlag   = varDecl.isStatic   ? VALUEFLAGS_ON_STATIC_STORAGE : 0;
+		u32 externalFlag = varDecl.isExternal ? VALUEFLAGS_IS_EXTERNAL       : 0;
+		varDecl.valueIdx = NewValue(context, varDecl.name, varDecl.typeTableIdx,
+				staticFlag | externalFlag);
 
 		expression->variableDeclaration = varDecl;
 

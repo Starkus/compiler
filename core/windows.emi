@@ -1,3 +1,5 @@
+__ImageBase : external ^void;
+
 ATTACH_PARENT_PROCESS :: -1;
 WS_OVERLAPPED       :: 0x00000000;
 WS_CLIPCHILDREN     :: 0x02000000;

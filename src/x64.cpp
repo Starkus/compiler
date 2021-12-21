@@ -395,7 +395,7 @@ String X64IRValueToStr(Context *context, IRValue value)
 	size = typeInfo.size;
 	Value v = context->values[value.valueIdx];
 
-	if (v.flags & VALUEFLAGS_ON_STATIC_STORAGE)
+	if (v.flags & (VALUEFLAGS_ON_STATIC_STORAGE | VALUEFLAGS_IS_EXTERNAL))
 	{
 		result = v.name;
 		goto decoratePtr;
@@ -727,7 +727,7 @@ void X64Mov(Context *context, X64Procedure *x64Proc, IRValue dst, IRValue src)
 	if (CanValueBeMemory(context, dst) && CanValueBeMemory(context, src))
 	//if (IsValueInMemory(context, dst) && IsValueInMemory(context, src))
 	{
-		u8 srcUsedFlag = context->values[src.valueIdx].flags & VALUEFLAGS_IS_USED;
+		u32 srcUsedFlag = context->values[src.valueIdx].flags & VALUEFLAGS_IS_USED;
 		IRValue tmp = IRValueNewValue(context, "_movtmp"_s, dst.typeTableIdx,
 				VALUEFLAGS_FORCE_REGISTER | srcUsedFlag);
 		X64MovNoTmp(context, x64Proc, tmp, src);
@@ -2226,6 +2226,22 @@ void BackendMain(Context *context)
 		StaticDefinition *staticDef = FindStaticDefinitionByProcedure(context, procedureIdx);
 		if (staticDef)
 			PrintOut(context, "PUBLIC %S\n", staticDef->name);
+	}
+
+	for (int varIdx = 0; varIdx < context->irExternalVariables.size; ++varIdx)
+	{
+		Value v = context->values[context->irExternalVariables[varIdx]];
+		s64 size = context->typeTable[v.typeTableIdx].size;
+		String type;
+		switch (size)
+		{
+			case 1: type = "BYTE"_s; break;
+			case 2: type = "WORD"_s; break;
+			case 4: type = "DWORD"_s; break;
+			case 8: type = "QWORD"_s; break;
+			default: type = "QWORD"_s;
+		}
+		PrintOut(context, "EXTRN %S:%S\n", v.name, type);
 	}
 
 	u64 externalProcedureCount = BucketArrayCount(&context->externalProcedures);

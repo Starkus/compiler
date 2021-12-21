@@ -119,6 +119,7 @@ struct Context
 
 	// IR
 	DynamicArray<IRStaticVariable, malloc, realloc> irStaticVariables;
+	DynamicArray<u32, malloc, realloc> irExternalVariables;
 	DynamicArray<IRScope, malloc, realloc> irStack;
 	DynamicArray<IRProcedureScope, malloc, realloc> irProcedureStack;
 	BucketArray<IRLabel, 1024, malloc, realloc> irLabels;

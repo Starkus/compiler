@@ -9,16 +9,17 @@ enum ValueFlags
 	VALUEFLAGS_FORCE_MEMORY         = 4,
 	VALUEFLAGS_IS_MEMORY            = 8,
 	VALUEFLAGS_IS_ALLOCATED         = 16,
-	VALUEFLAGS_ON_STATIC_STORAGE    = 32,
-	VALUEFLAGS_BASE_RELATIVE        = 64,
-	VALUEFLAGS_HAS_PUSH_INSTRUCTION = 128
+	VALUEFLAGS_IS_EXTERNAL          = 32,
+	VALUEFLAGS_ON_STATIC_STORAGE    = 64,
+	VALUEFLAGS_BASE_RELATIVE        = 128,
+	VALUEFLAGS_HAS_PUSH_INSTRUCTION = 256
 };
 
 struct Value
 {
 	String name;
 	s64 typeTableIdx;
-	u8 flags;
+	u32 flags;
 
 	// IRGen
 	union
@@ -99,7 +100,7 @@ ASTType *NewASTType(Context *context)
 	return BucketArrayAdd(&context->astTypeNodes);
 }
 
-u32 NewValue(Context *context, s64 typeTableIdx, u8 flags)
+u32 NewValue(Context *context, s64 typeTableIdx, u32 flags)
 {
 	ASSERT(typeTableIdx != 0);
 	u64 idx = BucketArrayCount(&context->values);
@@ -112,7 +113,7 @@ u32 NewValue(Context *context, s64 typeTableIdx, u8 flags)
 	return (u32)idx;
 }
 
-u32 NewValue(Context *context, String name, s64 typeTableIdx, u8 flags)
+u32 NewValue(Context *context, String name, s64 typeTableIdx, u32 flags)
 {
 	ASSERT(typeTableIdx != 0);
 	u64 idx = BucketArrayCount(&context->values);
@@ -590,6 +591,12 @@ ASTVariableDeclaration ParseVariableDeclaration(Context *context)
 		varDecl.name = {};
 	}
 
+	if (context->token->type == TOKEN_KEYWORD_EXTERNAL)
+	{
+		varDecl.isExternal = true;
+		Advance(context);
+	}
+
 	if (context->token->type != TOKEN_OP_ASSIGNMENT)
 	{
 		varDecl.astType = NewASTType(context);
@@ -598,6 +605,9 @@ ASTVariableDeclaration ParseVariableDeclaration(Context *context)
 
 	if (context->token->type == TOKEN_OP_ASSIGNMENT)
 	{
+		if (varDecl.isExternal)
+			LogError(context, context->token->loc, "Can't assign value to external variable"_s);
+
 		Advance(context);
 		varDecl.astInitialValue = NewTreeNode(context);
 		*varDecl.astInitialValue = ParseExpression(context, -1);
@@ -666,42 +676,6 @@ ASTProcedurePrototype ParseProcedurePrototype(Context *context)
 	}
 
 	return prototype;
-}
-
-ASTProcedureDeclaration ParseProcedureDeclaration(Context *context)
-{
-	ASTProcedureDeclaration procDecl = {};
-	procDecl.loc = context->token->loc;
-
-	s32 procedureIdx;
-	Procedure *procedure;
-	bool isExternal = false;
-	if (context->token->type == TOKEN_KEYWORD_EXTERNAL)
-	{
-		isExternal = true;
-		procedureIdx = -(s32)BucketArrayCount(&context->externalProcedures);
-		procedure = BucketArrayAdd(&context->externalProcedures);
-		Advance(context);
-	}
-	else
-	{
-		procedureIdx = (s32)BucketArrayCount(&context->procedures);
-		procedure = BucketArrayAdd(&context->procedures);
-	}
-	*procedure = {};
-	procDecl.procedureIdx = procedureIdx;
-
-	procDecl.prototype = ParseProcedurePrototype(context);
-
-	if (context->token->type == ';')
-		Advance(context);
-	else
-	{
-		procedure->astBody = NewTreeNode(context);
-		*procedure->astBody = ParseStatement(context);
-	}
-
-	return procDecl;
 }
 
 ASTExpression ParseExpression(Context *context, s32 precedence)
@@ -942,25 +916,58 @@ ASTStaticDefinition ParseStaticDefinition(Context *context)
 	ASTExpression expression = {};
 	expression.any.loc = context->token->loc;
 
-	if (context->token->type == '(' || (context->token)->type == TOKEN_KEYWORD_EXTERNAL)
+	if (context->token->type == '(')
 	{
 		expression.nodeType = ASTNODETYPE_PROCEDURE_DECLARATION;
-		expression.procedureDeclaration = ParseProcedureDeclaration(context);
-		GetProcedure(context, expression.procedureDeclaration.procedureIdx)->name = result.name;
+
+		s32 procedureIdx = (s32)BucketArrayCount(&context->procedures);
+		Procedure *procedure = BucketArrayAdd(&context->procedures);
+		*procedure = {};
+		procedure->returnValueIdx = U32_MAX;
+		procedure->name = result.name;
+
+		ASTProcedureDeclaration procDecl = {};
+		procDecl.loc = context->token->loc;
+		procDecl.procedureIdx = procedureIdx;
+		procDecl.prototype = ParseProcedurePrototype(context);
+		expression.procedureDeclaration = procDecl;
+
+		if (context->token->type == ';')
+			Advance(context);
+		else
+		{
+			procedure->astBody = NewTreeNode(context);
+			*procedure->astBody = ParseStatement(context);
+		}
+	}
+	else if (context->token->type == TOKEN_KEYWORD_EXTERNAL)
+	{
+		Advance(context);
+
+		expression.nodeType = ASTNODETYPE_PROCEDURE_DECLARATION;
+
+		s32 procedureIdx = -(s32)BucketArrayCount(&context->externalProcedures);
+		Procedure *procedure = BucketArrayAdd(&context->externalProcedures);
+		*procedure = {};
+		procedure->name = result.name;
+		procedure->returnValueIdx = U32_MAX;
+
+		ASTProcedureDeclaration procDecl = {};
+		procDecl.loc = context->token->loc;
+		procDecl.procedureIdx = procedureIdx;
+		procDecl.prototype = ParseProcedurePrototype(context);
+		expression.procedureDeclaration = procDecl;
+
+		if (context->token->type != ';')
+			LogError(context, context->token->loc, "External procedure declaration can't have a body"_s);
+
+		Advance(context);
 	}
 	else if (context->token->type == TOKEN_KEYWORD_STRUCT ||
 			 context->token->type == TOKEN_KEYWORD_UNION ||
-			 context->token->type == TOKEN_KEYWORD_ENUM)
+			 context->token->type == TOKEN_KEYWORD_ENUM ||
+			 context->token->type == TOKEN_KEYWORD_TYPE)
 	{
-		expression.nodeType = ASTNODETYPE_TYPE;
-		expression.astType = ParseType(context);
-
-		AssertToken(context, context->token, ';');
-		Advance(context);
-	}
-	else if (context->token->type == TOKEN_KEYWORD_TYPE)
-	{
-		Advance(context);
 		expression.nodeType = ASTNODETYPE_TYPE;
 		expression.astType = ParseType(context);
 
@@ -1165,7 +1172,8 @@ ASTExpression ParseStaticStatement(Context *context)
 			result.nodeType = ASTNODETYPE_VARIABLE_DECLARATION;
 			result.variableDeclaration = ParseVariableDeclaration(context);
 
-			ASSERT(result.variableDeclaration.isStatic);
+			ASSERT(result.variableDeclaration.isStatic ||
+				   result.variableDeclaration.isExternal);
 
 			AssertToken(context, context->token, ';');
 			Advance(context);

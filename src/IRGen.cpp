@@ -264,7 +264,6 @@ IRProcedureScope *PushIRProcedure(Context *context, s32 procedureIdx)
 	IRProcedureScope procScope;
 	procScope.procedureIdx = procedureIdx;
 	procScope.irStackBase = context->irStack.size;
-	GetProcedure(context, procedureIdx)->returnValueIdx = U32_MAX; // @Cleanup: move
 	procScope.shouldReturnValueIdx = U32_MAX;
 
 	IRProcedureScope *newProcScope = DynamicArrayAdd(&context->irProcedureStack);
@@ -372,7 +371,7 @@ IRValue IRValueProcedure(Context *context, s32 procedureIdx)
 	return result;
 }
 
-IRValue IRValueNewValue(Context *context, s64 typeTableIdx, u8 flags)
+IRValue IRValueNewValue(Context *context, s64 typeTableIdx, u32 flags)
 {
 	u32 newValue = NewValue(context, typeTableIdx, flags);
 
@@ -383,7 +382,7 @@ IRValue IRValueNewValue(Context *context, s64 typeTableIdx, u8 flags)
 	return result;
 }
 
-IRValue IRValueNewValue(Context *context, String name, s64 typeTableIdx, u8 flags)
+IRValue IRValueNewValue(Context *context, String name, s64 typeTableIdx, u32 flags)
 {
 	u32 newValue = NewValue(context, name, typeTableIdx, flags);
 
@@ -1074,8 +1073,8 @@ IRValue IRGenFromExpression(Context *context, ASTExpression *expression)
 		ASTVariableDeclaration varDecl = expression->variableDeclaration;
 
 		bool isGlobalScope = context->irProcedureStack.size == 0;
-		if (isGlobalScope && !varDecl.isStatic)
-			LogError(context, expression->any.loc, "Global variables have to be static"_s);
+		if (isGlobalScope && !varDecl.isStatic && !varDecl.isExternal)
+			LogError(context, expression->any.loc, "Global variables have to be static or external"_s);
 
 		if (varDecl.isStatic)
 		{
@@ -1106,6 +1105,8 @@ IRValue IRGenFromExpression(Context *context, ASTExpression *expression)
 
 			*DynamicArrayAdd(&context->irStaticVariables) = newStaticVar;
 		}
+		else if (varDecl.isExternal)
+			*DynamicArrayAdd(&context->irExternalVariables) = varDecl.valueIdx;
 		else
 		{
 			IRPushValueIntoStack(context, varDecl.valueIdx);
@@ -1809,6 +1810,7 @@ skipGeneratingVarargsArray:
 void IRGenMain(Context *context)
 {
 	DynamicArrayInit(&context->irStaticVariables, 64);
+	DynamicArrayInit(&context->irExternalVariables, 32);
 	DynamicArrayInit(&context->irStack, 64);
 	DynamicArrayInit(&context->irProcedureStack, 8);
 	BucketArrayInit(&context->irLabels);

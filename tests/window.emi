@@ -17,9 +17,7 @@ Win32WindowCallback :: (hWnd : ^void, uMsg : u32, wParam : ^void, lParam : ^void
 
 Main :: () -> s64
 {
-	AttachConsole(ATTACH_PARENT_PROCESS);
-
-	hInstance := GetModuleHandleA(null);
+	hInstance := ^__ImageBase;
 
 	windowClassName := "window\0";
 	windowTitle := "Hello, Sailor!\0";
