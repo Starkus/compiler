@@ -21,7 +21,7 @@ struct Value
 	s64 typeTableIdx;
 	u32 flags;
 
-	// IRGen
+	// Back end
 	union
 	{
 		s32 allocatedRegister;
@@ -965,9 +965,17 @@ ASTStaticDefinition ParseStaticDefinition(Context *context)
 	}
 	else if (context->token->type == TOKEN_KEYWORD_STRUCT ||
 			 context->token->type == TOKEN_KEYWORD_UNION ||
-			 context->token->type == TOKEN_KEYWORD_ENUM ||
-			 context->token->type == TOKEN_KEYWORD_TYPE)
+			 context->token->type == TOKEN_KEYWORD_ENUM)
 	{
+		expression.nodeType = ASTNODETYPE_TYPE;
+		expression.astType = ParseType(context);
+
+		AssertToken(context, context->token, ';');
+		Advance(context);
+	}
+	else if (context->token->type == TOKEN_KEYWORD_TYPE)
+	{
+		Advance(context);
 		expression.nodeType = ASTNODETYPE_TYPE;
 		expression.astType = ParseType(context);
 

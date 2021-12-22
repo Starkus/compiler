@@ -1727,11 +1727,15 @@ skipGeneratingVarargsArray:
 			IRValue returnValue = IRGenFromExpression(context, expression->returnNode.expression);
 			s64 returnTypeTableIdx = expression->returnNode.expression->typeTableIdx;
 			ASSERT(returnTypeTableIdx > 0);
-			if (currentProc->returnValueIdx == U32_MAX)
-				currentProc->returnValueIdx = NewValue(context, "_returnValue"_s, returnTypeTableIdx, 0);
 
 			if (IRShouldPassByCopy(context, returnTypeTableIdx))
 			{
+				if (currentProc->returnValueIdx == U32_MAX)
+				{
+					s64 ptrTypeIdx = GetTypeInfoPointerOf(context, returnTypeTableIdx);
+					currentProc->returnValueIdx = NewValue(context, "_returnValuePtr"_s, ptrTypeIdx, 0);
+				}
+
 				u64 size = context->typeTable[returnTypeTableIdx].size;
 				IRValue sizeValue = IRValueImmediate(size);
 
@@ -1746,6 +1750,9 @@ skipGeneratingVarargsArray:
 			}
 			else
 			{
+				if (currentProc->returnValueIdx == U32_MAX)
+					currentProc->returnValueIdx = NewValue(context, "_returnValue"_s, returnTypeTableIdx, 0);
+
 				IRValue dst = IRValueValue(currentProc->returnValueIdx, returnValue.typeTableIdx);
 				IRDoAssignment(context, dst, returnValue);
 			}

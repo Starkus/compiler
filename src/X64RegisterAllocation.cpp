@@ -75,6 +75,8 @@ bool CanBeRegister(Context *context, u32 valueIdx)
 	if (v.flags & (VALUEFLAGS_FORCE_MEMORY | VALUEFLAGS_ON_STATIC_STORAGE |
 				VALUEFLAGS_IS_EXTERNAL))
 		return false;
+	if (v.typeTableIdx == TYPETABLEIDX_128)
+		return true;
 	TypeInfo typeInfo = context->typeTable[v.typeTableIdx];
 	if (typeInfo.typeCategory == TYPECATEGORY_STRUCT ||
 		typeInfo.typeCategory == TYPECATEGORY_UNION)
@@ -188,6 +190,7 @@ void DoLivenessAnalisisOnInstruction(Context *context, BasicBlock *basicBlock, X
 	case X64_CVTTSD2SI:
 	case X64_CVTSS2SD:
 	case X64_CVTSD2SS:
+	case X64_MOVUPS:
 	{
 		RemoveIfValue(context, inst->dst, basicBlock->procedure, liveValues);
 		AddIfValue   (context, inst->src, basicBlock->procedure, liveValues);
@@ -248,8 +251,8 @@ void DoLivenessAnalisisOnInstruction(Context *context, BasicBlock *basicBlock, X
 		for (int i = 0; i < procTypeInfo.parameters.size; ++i, ++paramIdx)
 		{
 			s64 paramTypeIdx = procTypeInfo.parameters[i].typeTableIdx;
-			bool floating = context->typeTable[paramTypeIdx].typeCategory == TYPECATEGORY_FLOATING;
-			if (!floating || paramIdx >= 4)
+			bool isXMM = context->typeTable[paramTypeIdx].typeCategory == TYPECATEGORY_FLOATING;
+			if (!isXMM || paramIdx >= 4)
 				AddValue(context, x64ParameterValuesWrite[paramIdx], basicBlock->procedure, liveValues);
 			else switch (paramIdx)
 			{
@@ -290,9 +293,9 @@ void DoLivenessAnalisisOnInstruction(Context *context, BasicBlock *basicBlock, X
 
 		for (int i = 0; i < procTypeInfo.parameters.size; ++i, ++paramIdx)
 		{
-			bool floating = context->typeTable[procTypeInfo.parameters[i].typeTableIdx].typeCategory ==
+			bool isXMM = context->typeTable[procTypeInfo.parameters[i].typeTableIdx].typeCategory ==
 				TYPECATEGORY_FLOATING;
-			if (!floating || paramIdx >= 4)
+			if (!isXMM || paramIdx >= 4)
 				AddValue(context, x64ParameterValuesWrite[paramIdx], basicBlock->procedure, liveValues);
 			else switch (paramIdx)
 			{
@@ -368,18 +371,18 @@ void DoLivenessAnalisisOnInstruction(Context *context, BasicBlock *basicBlock, X
 nodeFound:
 		ASSERT(node);
 		Value value = context->values[valueIdx];
-		bool floating = context->typeTable[value.typeTableIdx].typeCategory ==
-						TYPECATEGORY_FLOATING;
+		TypeInfo typeInfo = context->typeTable[value.typeTableIdx];
+		bool isXMM = typeInfo.size > 8 || typeInfo.typeCategory == TYPECATEGORY_FLOATING;
 		for (int j = 0; j < liveValues->size; ++j)
 		{
 			if (i == j) continue;
 			u32 edgeValueIdx = (*liveValues)[j];
 			Value edgeValue = context->values[edgeValueIdx];
-			bool edgeFloating = context->typeTable[edgeValue.typeTableIdx].typeCategory ==
+			bool edgeIsXMM = context->typeTable[edgeValue.typeTableIdx].typeCategory ==
 								TYPECATEGORY_FLOATING;
 			// Add only other values that compete for the same pool of registers.
 			// Floating point values use a different set of registers (xmmX).
-			if (floating == edgeFloating)
+			if (isXMM == edgeIsXMM)
 				DynamicArrayAddUnique(&node->edges, edgeValueIdx);
 		}
 
@@ -444,6 +447,11 @@ void GenerateBasicBlocks(Context *context, Array<X64Procedure> x64Procedures)
 	{
 		X64Procedure *proc = &x64Procedures[procedureIdx];
 
+		if (context->config.logAllocationInfo)
+		{
+			Print("GENERATING BASIC BLOCKS FOR %S\n", proc->name);
+		}
+
 		BasicBlock *currentBasicBlock = PushBasicBlock(nullptr, &context->beBasicBlocks);
 		currentBasicBlock->procedure = proc;
 
@@ -451,10 +459,17 @@ void GenerateBasicBlocks(Context *context, Array<X64Procedure> x64Procedures)
 		for (int instructionIdx = 0; instructionIdx < instructionCount; ++instructionIdx)
 		{
 			X64Instruction inst = proc->instructions[instructionIdx];
+
+			if (context->config.logAllocationInfo)
+				Print("\t%S\n", X64InstructionToStr(context, inst));
+
 			switch (inst.type)
 			{
 			case X64_Label:
 			{
+				if (context->config.logAllocationInfo)
+					Print("- Split\n");
+
 				currentBasicBlock->endIdx = instructionIdx - 1;
 				BasicBlock *previousBlock = currentBasicBlock;
 				currentBasicBlock = PushBasicBlock(currentBasicBlock, &context->beBasicBlocks);
@@ -465,6 +480,9 @@ void GenerateBasicBlocks(Context *context, Array<X64Procedure> x64Procedures)
 			case X64_JNE:
 			case X64_JMP:
 			{
+				if (context->config.logAllocationInfo)
+					Print("- Split\n");
+
 				currentBasicBlock->endIdx = instructionIdx;
 				BasicBlock *previousBlock = currentBasicBlock;
 				currentBasicBlock = PushBasicBlock(currentBasicBlock, &context->beBasicBlocks);
@@ -476,7 +494,12 @@ void GenerateBasicBlocks(Context *context, Array<X64Procedure> x64Procedures)
 				ASSERT(!"Patches not supported here!");
 			}
 		}
+
+		currentBasicBlock->endIdx = instructionCount - 1;
 		*DynamicArrayAdd(&context->beLeafBasicBlocks) = currentBasicBlock;
+
+		if (context->config.logAllocationInfo)
+			Print("- End\n\n");
 	}
 
 	const u64 basicBlockCount = BucketArrayCount(&context->beBasicBlocks);
@@ -658,6 +681,7 @@ inline u64 RegisterSavingInstruction(Context *context, X64Instruction *inst, u64
 	case X64_CMP:
 	case X64_COMISS:
 	case X64_COMISD:
+	case X64_MOVUPS:
 	{
 		usedRegisters |= BitIfRegister(context, inst->dst);
 		usedRegisters |= BitIfRegister(context, inst->src);
@@ -843,13 +867,13 @@ void X64AllocateRegisters(Context *context, Array<X64Procedure> x64Procedures)
 			if (v->flags & VALUEFLAGS_IS_ALLOCATED)
 				continue;
 
-			bool floating = context->typeTable[v->typeTableIdx].typeCategory ==
-				TYPECATEGORY_FLOATING;
+			TypeInfo typeInfo = context->typeTable[v->typeTableIdx];
+			bool isXMM = typeInfo.size > 8 || typeInfo.typeCategory == TYPECATEGORY_FLOATING;
 
-			int max = floating ? availableRegistersFP : availableRegisters;
+			int max = isXMM ? availableRegistersFP : availableRegisters;
 			for (int candidateIdx = 0; candidateIdx < max; ++candidateIdx)
 			{
-				s32 candidate = floating ? XMM0_idx + candidateIdx : x64ScratchRegisters[candidateIdx];
+				s32 candidate = isXMM ? XMM0_idx + candidateIdx : x64ScratchRegisters[candidateIdx];
 				for (int edgeIdx = 0; edgeIdx < currentNode->edges.size; ++edgeIdx)
 				{
 					u32 edgeValueIdx = currentNode->edges[edgeIdx];

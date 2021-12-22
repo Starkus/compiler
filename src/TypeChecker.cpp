@@ -20,6 +20,8 @@ enum TypeTableIndices
 	TYPETABLEIDX_FLOATING,
 	TYPETABLEIDX_VOID,
 
+	TYPETABLEIDX_128,
+
 	TYPETABLEIDX_COUNT
 };
 
@@ -1079,9 +1081,6 @@ void AddStructMembersToScope(Context *context, SourceLocation loc, u32 baseValue
 				}
 			}
 
-			// This variable can't be a register
-			baseValue->flags |= VALUEFLAGS_FORCE_MEMORY;
-
 			TCScopeName newScopeName;
 			newScopeName.type = NAMETYPE_STRUCT_MEMBER_CHAIN;
 			newScopeName.name = member->name;
@@ -2013,6 +2012,10 @@ void TypeCheckMain(Context *context)
 		t.size = 8;
 		t.valueIdx = NewValue(context, "_typeInfo_u64"_s, -1, VALUEFLAGS_ON_STATIC_STORAGE);
 		typeTable[TYPETABLEIDX_U64] = t;
+
+		t.size = 16;
+		t.valueIdx = NewValue(context, "_typeInfo_128"_s, -1, VALUEFLAGS_ON_STATIC_STORAGE);
+		typeTable[TYPETABLEIDX_128] = t;
 
 		t.typeCategory = TYPECATEGORY_FLOATING;
 		t.size = 4;

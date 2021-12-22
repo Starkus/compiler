@@ -1,4 +1,4 @@
-AnonReturn :: () -> struct { one : s32; two : s32; }
+AnonReturn :: () -> struct { one : s64; two : s32; }
 {
 	return { 1, 2 };
 }

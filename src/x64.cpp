@@ -72,6 +72,7 @@ enum X64InstructionType
 	X64_CVTTSD2SI,
 	X64_CVTSS2SD,
 	X64_CVTSD2SS,
+	X64_MOVUPS,
 	X64_Count,
 	X64_Ignore = X64_Count,
 	X64_Comment,
@@ -401,7 +402,7 @@ String X64IRValueToStr(Context *context, IRValue value)
 		goto decoratePtr;
 	}
 
-	bool floating = typeInfo.typeCategory == TYPECATEGORY_FLOATING;
+	bool isXMM = typeInfo.size > 8 || typeInfo.typeCategory == TYPECATEGORY_FLOATING;
 
 	s64 offset = 0;
 	if (value.valueType == IRVALUETYPE_MEMORY)
@@ -454,7 +455,7 @@ String X64IRValueToStr(Context *context, IRValue value)
 			else if (offset < 0)
 				result = TPrintF("%S-0%xh", result, -offset);
 		}
-		else if (!floating)
+		else if (!isXMM)
 		{
 			s32 registerIdx = v.allocatedRegister;
 			switch (size)
@@ -600,8 +601,13 @@ decoratePtr:
 			result = TPrintF("DWORD PTR [%S]", result);
 			break;
 		case 8:
-		default:
 			result = TPrintF("QWORD PTR [%S]", result);
+			break;
+		case 16:
+			result = TPrintF("XMMWORD PTR [%S]", result);
+			break;
+		default:
+			ASSERT(!"Invalid register size");
 		}
 	}
 	return result;
@@ -650,6 +656,17 @@ void X64MovNoTmp(Context *context, X64Procedure *x64Proc, IRValue dst, IRValue s
 	X64Instruction result;
 	TypeInfo dstType = context->typeTable[dst.typeTableIdx];
 	TypeInfo srcType = context->typeTable[src.typeTableIdx];
+
+	// MOVUPS
+	if (dstType.size == 16)
+	{
+		ASSERT(srcType.size == 16);
+		result.type = X64_MOVUPS;
+		result.dst = dst;
+		result.src = src;
+		*BucketArrayAdd(&x64Proc->instructions) = result;
+		return;
+	}
 
 	ASSERT(dstType.size <= 8);
 	ASSERT(srcType.size <= 8);
@@ -772,8 +789,11 @@ void X64ConvertInstruction(Context *context, IRInstruction inst, X64Procedure *x
 	}
 	case IRINSTRUCTIONTYPE_LOAD_EFFECTIVE_ADDRESS:
 	{
+		static s64 voidPtrTypeIdx = GetTypeInfoPointerOf(context, TYPETABLEIDX_VOID);
+
 		IRValue dst = inst.assignment.dst;
 		IRValue src = inst.assignment.src;
+		src.typeTableIdx = voidPtrTypeIdx;
 		if (IsValueInMemory(context, dst))
 		{
 			IRValue tmp = IRValueNewValue(context, "_lea_mm_tmp"_s, dst.typeTableIdx, VALUEFLAGS_FORCE_REGISTER);
@@ -1060,27 +1080,27 @@ void X64ConvertInstruction(Context *context, IRInstruction inst, X64Procedure *x
 		{
 			IRValue param = inst.procedureCall.parameters[i];
 			s64 paramType = param.typeTableIdx;
-			bool floating = context->typeTable[paramType].typeCategory == TYPECATEGORY_FLOATING;
+			bool isXMM = context->typeTable[paramType].typeCategory == TYPECATEGORY_FLOATING;
 
 			IRValue dst;
 			switch(i)
 			{
 			case 0:
-				dst = floating ? XMM0 : RCX;
+				dst = isXMM ? XMM0 : RCX;
 				break;
 			case 1:
-				dst = floating ? XMM1 : RDX;
+				dst = isXMM ? XMM1 : RDX;
 				break;
 			case 2:
-				dst = floating ? XMM2 : R8;
+				dst = isXMM ? XMM2 : R8;
 				break;
 			case 3:
-				dst = floating ? XMM3 : R9;
+				dst = isXMM ? XMM3 : R9;
 				break;
 			default:
 				dst = IRValueMemory(x64ParameterValuesWrite[i], 0, TYPETABLEIDX_S64);
 			}
-			if (floating)
+			if (isXMM)
 				dst.typeTableIdx = paramType;
 			X64Mov(context, x64Proc, dst, param);
 		}
@@ -1093,6 +1113,52 @@ void X64ConvertInstruction(Context *context, IRInstruction inst, X64Procedure *x
 	}
 	case IRINSTRUCTIONTYPE_INTRINSIC_MEMCPY:
 	{
+		ASSERT(inst.memcpy.dst.valueType  == IRVALUETYPE_VALUE ||
+			   inst.memcpy.dst.valueType  == IRVALUETYPE_MEMORY);
+		ASSERT(inst.memcpy.src.valueType  == IRVALUETYPE_VALUE ||
+			   inst.memcpy.src.valueType  == IRVALUETYPE_MEMORY);
+		u32 dstIdx = inst.memcpy.dst.valueIdx;
+		u32 srcIdx = inst.memcpy.src.valueIdx;
+
+		// First attempt to copy manually
+		if (inst.memcpy.size.valueType == IRVALUETYPE_IMMEDIATE_INTEGER)
+		{
+			TypeInfo dstTypeInfo = context->typeTable[context->values[dstIdx].typeTableIdx];
+			TypeInfo srcTypeInfo = context->typeTable[context->values[srcIdx].typeTableIdx];
+			s64 size = inst.memcpy.size.immediate;
+
+			s64 copiedBytes = 0;
+			while (size - copiedBytes >= 16)
+			{
+				X64Mov(context, x64Proc,
+						IRValueMemory(dstIdx, copiedBytes, TYPETABLEIDX_128),
+						IRValueMemory(srcIdx, copiedBytes, TYPETABLEIDX_128));
+				copiedBytes += 16;
+			}
+			while (size - copiedBytes >= 8)
+			{
+				X64Mov(context, x64Proc,
+						IRValueMemory(dstIdx, copiedBytes, TYPETABLEIDX_S64),
+						IRValueMemory(srcIdx, copiedBytes, TYPETABLEIDX_S64));
+				copiedBytes += 8;
+			}
+			while (size - copiedBytes >= 4)
+			{
+				X64Mov(context, x64Proc,
+						IRValueMemory(dstIdx, copiedBytes, TYPETABLEIDX_S32),
+						IRValueMemory(srcIdx, copiedBytes, TYPETABLEIDX_S32));
+				copiedBytes += 4;
+			}
+			while (size - copiedBytes >= 1)
+			{
+				X64Mov(context, x64Proc,
+						IRValueMemory(dstIdx, copiedBytes, TYPETABLEIDX_S8),
+						IRValueMemory(srcIdx, copiedBytes, TYPETABLEIDX_S8));
+				++copiedBytes;
+			}
+			return;
+		}
+
 		X64Mov(context, x64Proc, RCX, inst.memcpy.dst);
 		X64Mov(context, x64Proc, RDX, inst.memcpy.src);
 		X64Mov(context, x64Proc, R8,  inst.memcpy.size);
@@ -1282,6 +1348,7 @@ String X64InstructionToStr(Context *context, X64Instruction inst)
 	case X64_CVTTSD2SI:
 	case X64_CVTSS2SD:
 	case X64_CVTSD2SS:
+	case X64_MOVUPS:
 		goto printDstSrc;
 	// One arg
 	case X64_PUSH:
@@ -1574,6 +1641,7 @@ void BackendMain(Context *context)
 	x64InstructionInfos[X64_CVTTSD2SI] = { "cvttsd2si"_s, ACCEPTEDOPERANDS_REGISTER, ACCEPTEDOPERANDS_REGMEM };
 	x64InstructionInfos[X64_CVTSS2SD] =  { "cvtss2sd"_s, ACCEPTEDOPERANDS_REGISTER, ACCEPTEDOPERANDS_REGMEM };
 	x64InstructionInfos[X64_CVTSD2SS] =  { "cvtsd2ss"_s, ACCEPTEDOPERANDS_REGISTER, ACCEPTEDOPERANDS_REGMEM };
+	x64InstructionInfos[X64_MOVUPS] =    { "movups"_s,   ACCEPTEDOPERANDS_REGMEM,   ACCEPTEDOPERANDS_REGMEM };
 
 	const u8 regValueFlags = VALUEFLAGS_IS_USED | VALUEFLAGS_IS_ALLOCATED;
 	u32 RAX_valueIdx = NewValue(context, "RAX"_s, TYPETABLEIDX_S64, regValueFlags);
@@ -1803,11 +1871,17 @@ void BackendMain(Context *context)
 
 		if (proc->returnValueIdx != U32_MAX)
 		{
-			IRValue returnValue = IRValueValue(context, proc->returnValueIdx);
+			s64 returnTypeTableIdx = context->values[proc->returnValueIdx].typeTableIdx;
 			if (returnByCopy)
+			{
+				IRValue returnValue = IRValueMemory(proc->returnValueIdx, 0, returnTypeTableIdx);
 				*BucketArrayAdd(&x64Proc->instructions) = { X64_LEA, RAX, returnValue };
+			}
 			else
+			{
+				IRValue returnValue = IRValueValue(proc->returnValueIdx, returnTypeTableIdx);
 				X64Mov(context, x64Proc, RAX, returnValue);
+			}
 		}
 	}
 
@@ -1836,6 +1910,7 @@ void BackendMain(Context *context)
 			{
 			// dst write, src read
 			case X64_MOV:
+			case X64_MOVUPS:
 			{
 				// Ignore mov thing into itself
 				if (inst->dst.valueType == IRVALUETYPE_VALUE &&
