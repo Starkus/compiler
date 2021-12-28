@@ -191,6 +191,7 @@ void DoLivenessAnalisisOnInstruction(Context *context, BasicBlock *basicBlock, X
 	case X64_CVTSS2SD:
 	case X64_CVTSD2SS:
 	case X64_MOVUPS:
+	case X64_MOVAPS:
 	{
 		RemoveIfValue(context, inst->dst, basicBlock->procedure, liveValues);
 		AddIfValue   (context, inst->src, basicBlock->procedure, liveValues);
@@ -682,6 +683,7 @@ inline u64 RegisterSavingInstruction(Context *context, X64Instruction *inst, u64
 	case X64_COMISS:
 	case X64_COMISD:
 	case X64_MOVUPS:
+	case X64_MOVAPS:
 	{
 		usedRegisters |= BitIfRegister(context, inst->dst);
 		usedRegisters |= BitIfRegister(context, inst->src);

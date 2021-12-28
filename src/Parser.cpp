@@ -785,7 +785,7 @@ ASTExpression ParseExpression(Context *context, s32 precedence)
 		else
 		{
 			result.literal.type = LITERALTYPE_FLOATING;
-			result.literal.floating = atof(context->token->string.data); // @Todo: replace atof
+			result.literal.floating = F64FromString(context->token->string);
 		}
 		Advance(context);
 	}

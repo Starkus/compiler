@@ -1,3 +1,8 @@
+inline String operator""_s(const char *str, u64 size)
+{
+	return { (s64)size, str };
+}
+
 inline String StringConcat(String a, String b)
 {
 	s64 size = a.size + b.size;
@@ -107,7 +112,71 @@ s64 IntFromStringHex(String string)
 	return result;
 }
 
-inline String operator""_s(const char *str, u64 size)
+f64 F64FromString(String string)
 {
-	return { (s64)size, str };
+	s64 leftPart;
+	s64 rightPart;
+	s64 fractionDigits = 0;
+	for (int i = 0; i < string.size; ++i)
+		if (string.data[i] == '.')
+		{
+			leftPart  = IntFromString({ i, string.data });
+			++i;
+			fractionDigits = string.size - i;
+			rightPart = IntFromString({ fractionDigits, string.data + i });
+			goto foundDot;
+		}
+	leftPart  = IntFromString(string);
+	rightPart = 0;
+foundDot:
+
+	int exponent = 0;
+	if (leftPart) exponent = 63 - Nlz64(leftPart);
+
+	u64 mantissa = leftPart;
+	u64 fraction = rightPart;
+	u64 divTable[] = {
+		1,					10,					100,				1000,
+		10000,				100000,				1000000,			10000000,
+		100000000,			1000000000,			10000000000,		100000000000,
+		1000000000000,		10000000000000,		100000000000000,	1000000000000000,
+		10000000000000000,	100000000000000000,	1000000000000000000,10000000000000000000 };
+	u64 div = divTable[fractionDigits];
+	while (true)
+	{
+		if (fraction >= div)
+		{
+			mantissa |= 1;
+			fraction -= div;
+		}
+		if (fraction <= 0) break;
+		if (mantissa & 0x0010000000000000)
+		{
+			// Rounding
+			if ((fraction << 1) >= div / 2)
+				mantissa |= 1;
+			break;
+		}
+		fraction *= 2;
+		mantissa <<= 1;
+
+		if (mantissa == 0) --exponent;
+	}
+
+	s8 mantissaShift = Nlz64(mantissa) - 11;
+	if (mantissaShift > 0)
+		mantissa <<= mantissaShift;
+	else
+		mantissa >>= -mantissaShift;
+
+	u64 biasedExponent = 1023 + exponent;
+	u64 shiftedExponent = biasedExponent << 52;
+
+	union
+	{
+		u64 floatBits;
+		f64 result;
+	};
+	floatBits = (shiftedExponent & 0x7FF0000000000000) | (mantissa & 0xFFFFFFFFFFFFF);
+	return result;
 }

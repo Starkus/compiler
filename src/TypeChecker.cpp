@@ -495,11 +495,20 @@ TypeCheckErrorCode CheckTypesMatch(Context *context, s64 leftTableIdx, s64 right
 	return TYPECHECK_MISC_ERROR;
 }
 
-TypeCheckErrorCode CheckTypesMatchAndSpecialize(Context *context, s64 *leftTableIdx, ASTExpression *rightHand)
+struct TypeCheckResult
 {
-	if (rightHand->typeTableIdx == TYPETABLEIDX_STRUCT_LITERAL)
+	TypeCheckErrorCode errorCode;
+	s64 leftTableIdx;
+	s64 rightTableIdx;
+};
+TypeCheckResult CheckTypesMatchAndSpecialize(Context *context, s64 leftTableIdx, const ASTExpression *rightHand)
+{
+	s64 rightTableIdx = rightHand->typeTableIdx;
+	TypeCheckResult result = { TYPECHECK_COOL, leftTableIdx, rightTableIdx };
+
+	if (rightTableIdx == TYPETABLEIDX_STRUCT_LITERAL)
 	{
-		s64 structTypeIdx = *leftTableIdx;
+		s64 structTypeIdx = leftTableIdx;
 		TypeInfo structTypeInfo = context->typeTable[structTypeIdx];
 		ASSERT(structTypeInfo.typeCategory == TYPECATEGORY_STRUCT);
 
@@ -509,59 +518,54 @@ TypeCheckErrorCode CheckTypesMatchAndSpecialize(Context *context, s64 *leftTable
 			LogError(context, rightHand->any.loc, "Too many values in struct literal"_s);
 		for (int memberIdx = 0; memberIdx < rightHand->literal.members.size; ++memberIdx)
 		{
-			TypeCheckErrorCode errorCode = CheckTypesMatchAndSpecialize(context,
-					&structTypeInfo.structInfo.members[memberIdx].typeTableIdx,
-					rightHand->literal.members[memberIdx]);
-			if (errorCode != TYPECHECK_COOL)
+			ASTExpression *literalMemberExp = rightHand->literal.members[memberIdx];
+			TypeCheckResult typeCheckResult = CheckTypesMatchAndSpecialize(context,
+					structTypeInfo.structInfo.members[memberIdx].typeTableIdx,
+					literalMemberExp);
+			literalMemberExp->typeTableIdx = typeCheckResult.rightTableIdx;
+			if (typeCheckResult.errorCode != TYPECHECK_COOL)
+			{
 				Print("Type of struct literal value in position %d and "
 						"type of struct member number %d don't match\n", memberIdx, memberIdx);
-				ReportTypeCheckError(context, errorCode, rightHand->any.loc,
+				ReportTypeCheckError(context, typeCheckResult.errorCode, rightHand->any.loc,
 						structTypeInfo.structInfo.members[memberIdx].typeTableIdx,
 						rightHand->literal.members[memberIdx]->typeTableIdx);
+			}
 		}
 
-		rightHand->typeTableIdx = structTypeIdx;
-		return TYPECHECK_COOL;
+		result.rightTableIdx = structTypeIdx;
+		return result;
 	}
 
-	TypeCategory leftTypeCat  = context->typeTable[*leftTableIdx].typeCategory;
-	TypeCategory rightTypeCat = context->typeTable[rightHand->typeTableIdx].typeCategory;
+	TypeCategory leftTypeCat  = context->typeTable[leftTableIdx].typeCategory;
+	TypeCategory rightTypeCat = context->typeTable[rightTableIdx].typeCategory;
 
-	if (*leftTableIdx == TYPETABLEIDX_INTEGER && (rightTypeCat == TYPECATEGORY_INTEGER ||
-				rightTypeCat == TYPECATEGORY_POINTER || rightTypeCat == TYPECATEGORY_FLOATING))
+	if (leftTableIdx == TYPETABLEIDX_INTEGER && (rightTypeCat == TYPECATEGORY_INTEGER ||
+		rightTypeCat == TYPECATEGORY_POINTER || rightTypeCat == TYPECATEGORY_FLOATING))
 	{
-		*leftTableIdx = rightHand->typeTableIdx;
-		return TYPECHECK_COOL;
+		result.leftTableIdx = rightTableIdx;
+		return result;
 	}
-	if (rightHand->typeTableIdx == TYPETABLEIDX_INTEGER && (leftTypeCat == TYPECATEGORY_INTEGER ||
+	if (rightTableIdx == TYPETABLEIDX_INTEGER && (leftTypeCat == TYPECATEGORY_INTEGER ||
 				leftTypeCat == TYPECATEGORY_POINTER || leftTypeCat == TYPECATEGORY_FLOATING))
 	{
-		rightHand->typeTableIdx = *leftTableIdx;
-		return TYPECHECK_COOL;
+		result.rightTableIdx = leftTableIdx;
+		return result;
 	}
 
-	if (*leftTableIdx == TYPETABLEIDX_FLOATING && rightTypeCat == TYPECATEGORY_FLOATING)
+	if (leftTableIdx == TYPETABLEIDX_FLOATING && rightTypeCat == TYPECATEGORY_FLOATING)
 	{
-		*leftTableIdx = rightHand->typeTableIdx;
-		return TYPECHECK_COOL;
+		result.leftTableIdx = rightTableIdx;
+		return result;
 	}
-	if (rightHand->typeTableIdx == TYPETABLEIDX_FLOATING && leftTypeCat == TYPECATEGORY_FLOATING)
+	if (rightTableIdx == TYPETABLEIDX_FLOATING && leftTypeCat == TYPECATEGORY_FLOATING)
 	{
-		rightHand->typeTableIdx = *leftTableIdx;
-		return TYPECHECK_COOL;
+		result.rightTableIdx = leftTableIdx;
+		return result;
 	}
 
-	TypeCheckErrorCode typeCheckResult = CheckTypesMatch(context, *leftTableIdx, rightHand->typeTableIdx);
-	if (typeCheckResult == TYPECHECK_COOL)
-		return TYPECHECK_COOL;
-
-	return TYPECHECK_MISC_ERROR;
-}
-
-// @Improve
-TypeCheckErrorCode CheckTypesMatchAndSpecializeRight(Context *context, s64 leftTableIdx, ASTExpression *rightHand)
-{
-	return CheckTypesMatchAndSpecialize(context, &leftTableIdx, rightHand);
+	result.errorCode = CheckTypesMatch(context, leftTableIdx, rightTableIdx);
+	return result;
 }
 
 bool AreTypeInfosEqual(Context *context, TypeInfo a, TypeInfo b)
@@ -1135,14 +1139,16 @@ ASTVariableDeclaration TypeCheckVariableDeclaration(Context *context, ASTVariabl
 
 		if (varDecl.astType)
 		{
-			TypeCheckErrorCode typeCheckResult = CheckTypesMatchAndSpecialize(context,
-					&varDecl.typeTableIdx, varDecl.astInitialValue);
-			if (typeCheckResult != TYPECHECK_COOL)
+			TypeCheckResult typeCheckResult = CheckTypesMatchAndSpecialize(context,
+					varDecl.typeTableIdx, varDecl.astInitialValue);
+			if (typeCheckResult.errorCode != TYPECHECK_COOL)
 			{
 				Print("Variable declaration type and initial type don't match\n");
-				ReportTypeCheckError(context, typeCheckResult, varDecl.loc, varDecl.typeTableIdx,
-						varDecl.astInitialValue->typeTableIdx);
+				ReportTypeCheckError(context, typeCheckResult.errorCode, varDecl.loc,
+						varDecl.typeTableIdx, varDecl.astInitialValue->typeTableIdx);
 			}
+			varDecl.typeTableIdx = typeCheckResult.leftTableIdx;
+			varDecl.astInitialValue->typeTableIdx = typeCheckResult.rightTableIdx;
 		}
 		else
 		{
@@ -1476,17 +1482,19 @@ void TypeCheckExpression(Context *context, ASTExpression *expression)
 	} break;
 	case ASTNODETYPE_RETURN:
 	{
-		TypeCheckErrorCode typeCheckResult;
+		TypeCheckErrorCode errorCode;
 		if (expression->returnNode.expression != nullptr)
 		{
 			TypeCheckExpression(context, expression->returnNode.expression);
-			typeCheckResult = CheckTypesMatchAndSpecializeRight(context,
+			TypeCheckResult typeCheckResult = CheckTypesMatchAndSpecialize(context,
 					context->tcCurrentReturnType, expression->returnNode.expression);
+			expression->returnNode.expression->typeTableIdx = typeCheckResult.rightTableIdx;
+			errorCode = typeCheckResult.errorCode;
 		}
 		else
-			typeCheckResult = CheckTypesMatch(context, context->tcCurrentReturnType, TYPETABLEIDX_VOID);
+			errorCode = CheckTypesMatch(context, context->tcCurrentReturnType, TYPETABLEIDX_VOID);
 
-		if (typeCheckResult != TYPECHECK_COOL)
+		if (errorCode != TYPECHECK_COOL)
 			LogError(context, expression->any.loc, "Incorrect return type"_s);
 	} break;
 	case ASTNODETYPE_DEFER:
@@ -1654,10 +1662,11 @@ skipNotFoundError:
 			{
 				ASTExpression *arg = &expression->procedureCall.arguments[argIdx];
 				s64 paramTypeIdx = procTypeInfo.parameters[argIdx].typeTableIdx;
-				TypeCheckErrorCode typeCheckResult = CheckTypesMatchAndSpecializeRight(context,
+				TypeCheckResult typeCheckResult = CheckTypesMatchAndSpecialize(context,
 						paramTypeIdx, arg);
+				arg->typeTableIdx = typeCheckResult.rightTableIdx;
 
-				if (typeCheckResult != TYPECHECK_COOL)
+				if (typeCheckResult.errorCode != TYPECHECK_COOL)
 				{
 					String paramStr = TypeInfoToString(context, paramTypeIdx);
 					String givenStr = TypeInfoToString(context, arg->typeTableIdx);
@@ -1799,16 +1808,17 @@ skipNotFoundError:
 			TypeCheckExpression(context, leftHand);
 			TypeCheckExpression(context, rightHand);
 
-			TypeCheckErrorCode typeCheckResult = CheckTypesMatchAndSpecialize(context,
-					&leftHand->typeTableIdx, rightHand);
-
-			if (typeCheckResult != TYPECHECK_COOL)
+			TypeCheckResult typeCheckResult = CheckTypesMatchAndSpecialize(context,
+					leftHand->typeTableIdx, rightHand);
+			if (typeCheckResult.errorCode != TYPECHECK_COOL)
 			{
 				String leftStr =  TypeInfoToString(context, leftHand->typeTableIdx);
 				String rightStr = TypeInfoToString(context, rightHand->typeTableIdx);
 				LogError(context, expression->any.loc, TPrintF("Type mismatch! (%S and %S)",
 							leftStr, rightStr));
 			}
+			leftHand->typeTableIdx  = typeCheckResult.leftTableIdx;
+			rightHand->typeTableIdx = typeCheckResult.rightTableIdx;
 
 			switch (expression->binaryOperation.op)
 			{

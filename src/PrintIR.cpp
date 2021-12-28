@@ -219,14 +219,14 @@ void PrintIRInstruction(Context *context, IRInstruction inst)
 		PrintIRValue(context, inst.assignment.src);
 		Print("\n");
 	} break;
-	case IRINSTRUCTIONTYPE_INTRINSIC_MEMCPY:
+	case IRINSTRUCTIONTYPE_COPY_MEMORY:
 	{
-		Print("memcpy(");
-		PrintIRValue(context, inst.memcpy.dst);
+		Print("copyMemory(");
+		PrintIRValue(context, inst.copyMemory.dst);
 		Print(", ");
-		PrintIRValue(context, inst.memcpy.src);
+		PrintIRValue(context, inst.copyMemory.src);
 		Print(", ");
-		PrintIRValue(context, inst.memcpy.size);
+		PrintIRValue(context, inst.copyMemory.size);
 		Print(")\n");
 	} break;
 	default:

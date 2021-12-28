@@ -73,6 +73,7 @@ enum X64InstructionType
 	X64_CVTSS2SD,
 	X64_CVTSD2SS,
 	X64_MOVUPS,
+	X64_MOVAPS,
 	X64_Count,
 	X64_Ignore = X64_Count,
 	X64_Comment,
@@ -1111,21 +1112,21 @@ void X64ConvertInstruction(Context *context, IRInstruction inst, X64Procedure *x
 			X64Mov(context, x64Proc, inst.procedureCall.out, RAX);
 		return;
 	}
-	case IRINSTRUCTIONTYPE_INTRINSIC_MEMCPY:
+	case IRINSTRUCTIONTYPE_COPY_MEMORY:
 	{
-		ASSERT(inst.memcpy.dst.valueType  == IRVALUETYPE_VALUE ||
-			   inst.memcpy.dst.valueType  == IRVALUETYPE_MEMORY);
-		ASSERT(inst.memcpy.src.valueType  == IRVALUETYPE_VALUE ||
-			   inst.memcpy.src.valueType  == IRVALUETYPE_MEMORY);
-		u32 dstIdx = inst.memcpy.dst.valueIdx;
-		u32 srcIdx = inst.memcpy.src.valueIdx;
+		ASSERT(inst.copyMemory.dst.valueType  == IRVALUETYPE_VALUE ||
+			   inst.copyMemory.dst.valueType  == IRVALUETYPE_MEMORY);
+		ASSERT(inst.copyMemory.src.valueType  == IRVALUETYPE_VALUE ||
+			   inst.copyMemory.src.valueType  == IRVALUETYPE_MEMORY);
+		u32 dstIdx = inst.copyMemory.dst.valueIdx;
+		u32 srcIdx = inst.copyMemory.src.valueIdx;
 
 		// First attempt to copy manually
-		if (inst.memcpy.size.valueType == IRVALUETYPE_IMMEDIATE_INTEGER)
+		if (inst.copyMemory.size.valueType == IRVALUETYPE_IMMEDIATE_INTEGER)
 		{
 			TypeInfo dstTypeInfo = context->typeTable[context->values[dstIdx].typeTableIdx];
 			TypeInfo srcTypeInfo = context->typeTable[context->values[srcIdx].typeTableIdx];
-			s64 size = inst.memcpy.size.immediate;
+			s64 size = inst.copyMemory.size.immediate;
 
 			s64 copiedBytes = 0;
 			while (size - copiedBytes >= 16)
@@ -1159,9 +1160,9 @@ void X64ConvertInstruction(Context *context, IRInstruction inst, X64Procedure *x
 			return;
 		}
 
-		X64Mov(context, x64Proc, RCX, inst.memcpy.dst);
-		X64Mov(context, x64Proc, RDX, inst.memcpy.src);
-		X64Mov(context, x64Proc, R8,  inst.memcpy.size);
+		X64Mov(context, x64Proc, RCX, inst.copyMemory.dst);
+		X64Mov(context, x64Proc, RDX, inst.copyMemory.src);
+		X64Mov(context, x64Proc, R8,  inst.copyMemory.size);
 		result.type = X64_CALL;
 		result.procedureIdx = copyMemoryProcIdx;
 		*BucketArrayAdd(&x64Proc->instructions) = result;
@@ -1349,6 +1350,7 @@ String X64InstructionToStr(Context *context, X64Instruction inst)
 	case X64_CVTSS2SD:
 	case X64_CVTSD2SS:
 	case X64_MOVUPS:
+	case X64_MOVAPS:
 		goto printDstSrc;
 	// One arg
 	case X64_PUSH:
@@ -1642,6 +1644,7 @@ void BackendMain(Context *context)
 	x64InstructionInfos[X64_CVTSS2SD] =  { "cvtss2sd"_s, ACCEPTEDOPERANDS_REGISTER, ACCEPTEDOPERANDS_REGMEM };
 	x64InstructionInfos[X64_CVTSD2SS] =  { "cvtsd2ss"_s, ACCEPTEDOPERANDS_REGISTER, ACCEPTEDOPERANDS_REGMEM };
 	x64InstructionInfos[X64_MOVUPS] =    { "movups"_s,   ACCEPTEDOPERANDS_REGMEM,   ACCEPTEDOPERANDS_REGMEM };
+	x64InstructionInfos[X64_MOVAPS] =    { "movaps"_s,   ACCEPTEDOPERANDS_REGMEM,   ACCEPTEDOPERANDS_REGMEM };
 
 	const u8 regValueFlags = VALUEFLAGS_IS_USED | VALUEFLAGS_IS_ALLOCATED;
 	u32 RAX_valueIdx = NewValue(context, "RAX"_s, TYPETABLEIDX_S64, regValueFlags);
@@ -1909,8 +1912,31 @@ void BackendMain(Context *context)
 			switch (inst->type)
 			{
 			// dst write, src read
-			case X64_MOV:
 			case X64_MOVUPS:
+			{
+				// If aligned change to MOVAPS
+				ASSERT((inst->dst.valueType == IRVALUETYPE_VALUE ||
+					 inst->dst.valueType == IRVALUETYPE_MEMORY) &&
+					(inst->src.valueType == IRVALUETYPE_VALUE ||
+					 inst->src.valueType == IRVALUETYPE_MEMORY));
+
+				Value dst = context->values[inst->dst.valueIdx];
+				Value src = context->values[inst->src.valueIdx];
+				if (dst.flags & VALUEFLAGS_IS_ALLOCATED && src.flags & VALUEFLAGS_IS_ALLOCATED)
+				{
+					if (!(dst.flags & VALUEFLAGS_IS_MEMORY) ||
+						(dst.stackOffset & 15))
+						goto unalignedMovups;
+
+					if (!(src.flags & VALUEFLAGS_IS_MEMORY) ||
+						(src.stackOffset & 15))
+						goto unalignedMovups;
+
+					inst->type = X64_MOVAPS;
+				}
+unalignedMovups:;
+			} // fall through
+			case X64_MOV:
 			{
 				// Ignore mov thing into itself
 				if (inst->dst.valueType == IRVALUETYPE_VALUE &&

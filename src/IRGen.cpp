@@ -127,7 +127,7 @@ struct IRVariableDeclaration
 	u32 valueIdx;
 };
 
-struct IRIntrinsicMemcpy
+struct IRCopyMemory
 {
 	IRValue src;
 	IRValue dst;
@@ -182,7 +182,7 @@ enum IRInstructionType
 	IRINSTRUCTIONTYPE_LESS_THAN_OR_EQUALS,
 	IRINSTRUCTIONTYPE_BINARY_END,
 
-	IRINSTRUCTIONTYPE_INTRINSIC_MEMCPY,
+	IRINSTRUCTIONTYPE_COPY_MEMORY,
 };
 struct IRInstruction
 {
@@ -204,7 +204,7 @@ struct IRInstruction
 		IRUnaryOperation unaryOperation;
 		IRBinaryOperation binaryOperation;
 
-		IRIntrinsicMemcpy memcpy;
+		IRCopyMemory copyMemory;
 	};
 };
 
@@ -631,10 +631,10 @@ void IRDoAssignment(Context *context, IRValue dstValue, IRValue srcValue)
 		IRValue sizeValue = IRValueImmediate(size);
 
 		IRInstruction inst = {};
-		inst.type = IRINSTRUCTIONTYPE_INTRINSIC_MEMCPY;
-		inst.memcpy.src = IRPointerToValue(context, srcValue);
-		inst.memcpy.dst = IRPointerToValue(context, dstValue);
-		inst.memcpy.size = sizeValue;
+		inst.type = IRINSTRUCTIONTYPE_COPY_MEMORY;
+		inst.copyMemory.src = IRPointerToValue(context, srcValue);
+		inst.copyMemory.dst = IRPointerToValue(context, dstValue);
+		inst.copyMemory.size = sizeValue;
 
 		*AddInstruction(context) = inst;
 	}
@@ -1740,11 +1740,11 @@ skipGeneratingVarargsArray:
 				IRValue sizeValue = IRValueImmediate(size);
 
 				IRInstruction memcpyInst = {};
-				memcpyInst.type = IRINSTRUCTIONTYPE_INTRINSIC_MEMCPY;
-				memcpyInst.memcpy.src = IRPointerToValue(context, returnValue);
-				memcpyInst.memcpy.dst = IRValueValue(currentProc->returnValueIdx,
+				memcpyInst.type = IRINSTRUCTIONTYPE_COPY_MEMORY;
+				memcpyInst.copyMemory.src = IRPointerToValue(context, returnValue);
+				memcpyInst.copyMemory.dst = IRValueValue(currentProc->returnValueIdx,
 						GetTypeInfoPointerOf(context, returnTypeTableIdx));
-				memcpyInst.memcpy.size = sizeValue;
+				memcpyInst.copyMemory.size = sizeValue;
 
 				*AddInstruction(context) = memcpyInst;
 			}
