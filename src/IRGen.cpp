@@ -1053,10 +1053,20 @@ IRValue IRGenFromExpression(Context *context, ASTExpression *expression)
 				jumpIfShouldntReturnInst.conditionalJump.condition = shouldReturnRegister;
 				*AddInstruction(context) = jumpIfShouldntReturnInst;
 
-				// Jump to closing of next scope
+				// Jump to closing of next scope with deferred statements
 				IRInstruction jumpInst;
 				jumpInst.type = IRINSTRUCTIONTYPE_JUMP;
-				jumpInst.jump.label = context->irStack[context->irStack.size - 2].closeLabel;
+				for (int scopeIdx = (int)context->irStack.size - 2; ; --scopeIdx)
+				{
+					IRScope *scope = &context->irStack[scopeIdx];
+					if (scopeIdx == stackTop.irStackBase || scope->deferredStatements.size > 0)
+					{
+						jumpInst.jump.label = scope->closeLabel;
+						break;
+					}
+				}
+				if (jumpInst.jump.label == nullptr)
+					jumpInst.jump.label = stackTop.returnLabel;
 				*AddInstruction(context) = jumpInst;
 
 				IRInstruction *skipLabelInst = AddInstruction(context);

@@ -395,8 +395,11 @@ void ReportTypeCheckError(Context *context, TypeCheckErrorCode errorCode, Source
 	}
 }
 
+s64 GetTypeInfoPointerOf(Context *context, s64 inType);
 TypeCheckErrorCode CheckTypesMatch(Context *context, s64 leftTableIdx, s64 rightTableIdx)
 {
+	static s64 voidPointerIdx = GetTypeInfoPointerOf(context, TYPETABLEIDX_VOID);
+
 	if (leftTableIdx == rightTableIdx)
 		return TYPECHECK_COOL;
 
@@ -432,8 +435,8 @@ TypeCheckErrorCode CheckTypesMatch(Context *context, s64 leftTableIdx, s64 right
 
 	if (left.typeCategory != right.typeCategory)
 	{
-#if 1
 		// Allow int->float and float->int
+#if 1
 		if ((left.typeCategory == TYPECATEGORY_INTEGER ||
 			left.typeCategory == TYPECATEGORY_FLOATING) &&
 			right.typeCategory == TYPECATEGORY_INTEGER ||
@@ -441,12 +444,21 @@ TypeCheckErrorCode CheckTypesMatch(Context *context, s64 leftTableIdx, s64 right
 			return TYPECHECK_COOL;
 #endif
 
-		// Allow ptr = int? Confusing.
+		// @Check: Allow ptr = int? Confusing.
 #if 1
 		if ((left.typeCategory == TYPECATEGORY_POINTER &&
 			right.typeCategory == TYPECATEGORY_INTEGER) ||
 			(right.typeCategory == TYPECATEGORY_POINTER &&
 			left.typeCategory == TYPECATEGORY_INTEGER))
+			return TYPECHECK_COOL;
+#endif
+
+		// Allow proc = ^void
+#if 1
+		if ((leftTableIdx == voidPointerIdx &&
+			right.typeCategory == TYPECATEGORY_PROCEDURE) ||
+			(rightTableIdx == voidPointerIdx &&
+			left.typeCategory == TYPECATEGORY_PROCEDURE))
 			return TYPECHECK_COOL;
 #endif
 
@@ -463,6 +475,22 @@ TypeCheckErrorCode CheckTypesMatch(Context *context, s64 leftTableIdx, s64 right
 
 		if (left.pointerInfo.pointedTypeTableIdx == right.pointerInfo.pointedTypeTableIdx)
 			return TYPECHECK_COOL;
+
+		// Allow implicit ^[T] -> ^T
+		TypeInfo pointedLeft  = context->typeTable[left .pointerInfo.pointedTypeTableIdx];
+		TypeInfo pointedRight = context->typeTable[right.pointerInfo.pointedTypeTableIdx];
+		if (pointedLeft.typeCategory == TYPECATEGORY_ARRAY &&
+			pointedRight.typeCategory != TYPECATEGORY_ARRAY)
+		{
+			return CheckTypesMatch(context, pointedLeft.arrayInfo.elementTypeTableIdx,
+				right.pointerInfo.pointedTypeTableIdx);
+		}
+		if (pointedRight.typeCategory == TYPECATEGORY_ARRAY &&
+			pointedLeft.typeCategory != TYPECATEGORY_ARRAY)
+		{
+			return CheckTypesMatch(context, pointedRight.arrayInfo.elementTypeTableIdx,
+			left.pointerInfo.pointedTypeTableIdx);
+		}
 
 		return TYPECHECK_POINTED_TYPE_MISMATCH;
 	} break;

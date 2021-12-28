@@ -1,5 +1,49 @@
 __ImageBase : external ^void;
 
+INVALID_HANDLE_VALUE :: 0xFFFFFFFFFFFFFFFF;
+MEM_COMMIT      :: 0x00001000;
+MEM_RESERVE     :: 0x00002000;
+MEM_RESET       :: 0x00080000;
+MEM_TOP_DOWN    :: 0x00100000;
+MEM_WRTIE_WATCH :: 0x00200000;
+MEM_PHYSICAL    :: 0x00400000;
+MEM_RESET_UNDO  :: 0x01000000;
+MEM_LARGE_PAGES :: 0x20000000;
+MEM_DECOMMIT    :: 0x00004000;
+MEM_RELEASE     :: 0x00008000;
+PAGE_NOACCESS          :: 0x01;
+PAGE_READONLY          :: 0x02;
+PAGE_READWRITE         :: 0x04;
+PAGE_WRITECOPY         :: 0x08;
+PAGE_EXECUTE           :: 0x10;
+PAGE_EXECUTE_READ      :: 0x20;
+PAGE_EXECUTE_READWRITE :: 0x40;
+PAGE_EXECUTE_WRITECOPY :: 0x80;
+PAGE_GUARD             :: 0x100;
+PAGE_NOCACHE           :: 0x200;
+PAGE_WRITECOMBINE      :: 0x400;
+PAGE_TARGETS_INVALID   :: 0x40000000;
+PAGE_TARGETS_NO_UPDATE :: 0x40000000;
+GENERIC_READ    :: 0x80000000;
+GENERIC_WRITE   :: 0x40000000;
+GENERIC_EXECUTE :: 0x20000000;
+GENERIC_ALL     :: 0x10000000;
+CREATE_NEW        :: 1;
+CREATE_ALWAYS     :: 2;
+OPEN_EXISTING     :: 3;
+OPEN_ALWAYS       :: 4;
+TRUNCATE_EXISTING :: 5;
+FILE_SHARE_READ   :: 1;
+FILE_SHARE_WRITE  :: 2;
+FILE_SHARE_DELETE :: 4;
+FILE_ATTRIBUTE_READONLY  :: 0x1;
+FILE_ATTRIBUTE_HIDDEN    :: 0x2;
+FILE_ATTRIBUTE_SYSTEM    :: 0x4;
+FILE_ATTRIBUTE_ARCHIVE   :: 0x20;
+FILE_ATTRIBUTE_NORMAL    :: 0x80;
+FILE_ATTRIBUTE_TEMPORARY :: 0x100;
+FILE_ATTRIBUTE_OFFLINE   :: 0x1000;
+FILE_ATTRIBUTE_ENCRYPTED :: 0x4000;
 ATTACH_PARENT_PROCESS :: -1;
 WS_OVERLAPPED       :: 0x00000000;
 WS_CLIPCHILDREN     :: 0x02000000;
@@ -18,6 +62,7 @@ CS_OWNDC   :: 0x0020;
 SW_SHOW    :: 5;
 PM_REMOVE  :: 0x0001;
 WM_DESTROY :: 0x0002;
+WM_SIZE    :: 0x0005;
 WM_CLOSE   :: 0x0010;
 WM_QUIT    :: 0x0012;
 PFD_DOUBLEBUFFER   :: 0x00000001;
@@ -29,7 +74,7 @@ WNDCLASSEXA :: struct
 {
 	cbSize : u32;
 	style : u32;
-	lpfnWndProc : (hWnd : ^void, uMsg : u32, wParam : ^void, lParam : ^void) -> u64;
+	lpfnWndProc : (hWnd : ^void, uMsg : u32, wParam : u64, lParam : u64) -> u64;
 	cbClsExtra : s32;
 	cbWndExtra : s32;
 	hInstance : ^void;
@@ -85,6 +130,19 @@ PIXELFORMATDESCRIPTOR :: struct
 	dwDamageMask : u32;
 };
 
+CreateFileA :: external (
+		lpFileName : ^u8,
+		dwDesiredAccess : u32,
+		dwShareMode : u32,
+		lpSecurityAttributes : ^void,
+		dwCreationDisposition : u32,
+		dwFlagsAndAttributes : u32,
+		hTemplateFile : ^void) -> ^void;
+CloseHandle :: external (handle : ^void);
+GetFileSize :: external (handle : ^void, lpFileSizeHigh : ^u32) -> u32;
+ReadFile :: external (hFile : ^void, lpBuffer : ^void, nNumberOfBytesToRead : u32, lpNumberOfBytesRead : ^u32, lpOverlapped : ^void) -> bool;
+VirtualAlloc :: external (lpAddress : ^void, dwSize : u64, flAllocationType : u32, flProtect : u32) -> ^void;
+VirtualFree :: external (lpAddress : ^void, dwSize : u64, dwFreeType : u32) -> bool;
 AttachConsole :: external (handle : ^void);
 GetModuleHandleA :: external (lpModuleName : ^void) -> ^void;
 RegisterClassExA :: external (wndClass : ^WNDCLASSEXA) -> u16;
@@ -104,7 +162,7 @@ CreateWindowExA :: external (
 	) -> ^void;
 ShowWindow :: external (hWnd : ^void, nCmdShow : s32);
 GetLastError :: external () -> u32;
-DefWindowProcA :: external (hWnd : ^void, uMsg : u32, wParam : ^void, lParam : ^void) -> u64;
+DefWindowProcA :: external (hWnd : ^void, uMsg : u32, wParam : u64, lParam : u64) -> u64;
 PeekMessageA :: external (lpMsg : ^MSG, hWnd : ^void, wMsgFilterMin : u32, wMsgFilterMax : u32,
 		wRemoveMsg : u32) -> bool;
 TranslateMessage :: external (message : ^MSG) -> bool;

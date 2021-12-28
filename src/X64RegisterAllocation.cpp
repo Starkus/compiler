@@ -388,7 +388,7 @@ nodeFound:
 		}
 
 		// No live values that cross a procedure call can be stored in RAX.
-		if (inst->type == X64_CALL)
+		if (inst->type == X64_CALL || inst->type == X64_CALL_Indirect)
 			DynamicArrayAddUnique(&node->edges, RAX.valueIdx);
 	}
 }
@@ -695,6 +695,7 @@ inline u64 RegisterSavingInstruction(Context *context, X64Instruction *inst, u64
 		usedRegisters |= BitIfRegister(context, inst->dst);
 	} break;
 	case X64_CALL:
+	case X64_CALL_Indirect:
 	{
 		// Callee save registers
 		u64 liveRegisterBits = 0;

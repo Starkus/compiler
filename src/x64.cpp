@@ -834,6 +834,7 @@ void X64ConvertInstruction(Context *context, IRInstruction inst, X64Procedure *x
 		}
 	case IRINSTRUCTIONTYPE_SUBTRACT_UNARY:
 	{
+		X64Mov(context, x64Proc, inst.unaryOperation.out, inst.unaryOperation.in);
 		switch (floatingType)
 		{
 		case X64FLOATINGTYPE_NONE:
@@ -841,11 +842,11 @@ void X64ConvertInstruction(Context *context, IRInstruction inst, X64Procedure *x
 			goto doRM;
 		case X64FLOATINGTYPE_F32:
 			result.type = X64_XORPS;
-			result.src = IRValueImmediate(0x80000000);
+			result.src = IRValueImmediateFloat(context, -0.0, TYPETABLEIDX_F32);
 			break;
 		case X64FLOATINGTYPE_F64:
 			result.type = X64_XORPD;
-			result.src = IRValueImmediate(0x8000000000000000);
+			result.src = IRValueImmediateFloat(context, -0.0);
 			break;
 		}
 		result.dst = inst.unaryOperation.out;
@@ -1343,6 +1344,8 @@ String X64InstructionToStr(Context *context, X64Instruction inst)
 	case X64_MULSD:
 	case X64_DIVSS:
 	case X64_DIVSD:
+	case X64_XORPS:
+	case X64_XORPD:
 	case X64_CVTSI2SS:
 	case X64_CVTSI2SD:
 	case X64_CVTTSS2SI:
@@ -1486,7 +1489,7 @@ void X64PrintStaticData(Context *context, String name, IRValue value, s64 typeTa
 	case IRVALUETYPE_IMMEDIATE_FLOAT:
 	{
 		TypeInfo typeInfo = context->typeTable[typeTableIdx];
-		bytesSoFar = X64StaticDataAlignTo(context, bytesSoFar, typeInfo.size);
+		bytesSoFar = X64StaticDataAlignTo(context, bytesSoFar, 16);
 		switch (typeInfo.size)
 		{
 		case 4:
