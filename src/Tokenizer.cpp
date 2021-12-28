@@ -238,8 +238,6 @@ Token ReadTokenAndAdvance(Context *context, Tokenizer *tokenizer)
 			result.type = TOKEN_KEYWORD_UNION;
 		else if (TokenIsStr(&result, "enum"))
 			result.type = TOKEN_KEYWORD_ENUM;
-		else if (TokenIsStr(&result, "type"))
-			result.type = TOKEN_KEYWORD_TYPE;
 		else if (TokenIsStr(&result, "external"))
 			result.type = TOKEN_KEYWORD_EXTERNAL;
 		else if (TokenIsStr(&result, "defer"))
@@ -361,6 +359,8 @@ numberDone:
 
 				return ReadTokenAndAdvance(context, tokenizer);
 			}
+			else if (StringEquals(result.string, "#type"_s))
+				result.type = TOKEN_KEYWORD_TYPE;
 			else
 				LogError(context, result.loc, "Invalid parser directive"_s);
 		} break;
