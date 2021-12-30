@@ -41,7 +41,7 @@ PrintF :: (format : String, ..args)
 		}
 		else if arg.typeInfo.typeKind == TypeKind_Floating
 		{
-			f : f64;
+			f : f64 = ?;
 			if arg.typeInfo.size == 4
 				f = @ cast(^f32) arg.data;
 			else if arg.typeInfo.size == 8
@@ -78,9 +78,7 @@ PrintF :: (format : String, ..args)
 				n /= 10;
 				if n <= 0 break;
 			}
-			numStr : String;
-			numStr.size = cast(u64) count;
-			numStr.data = ^buffer[32 - count];
+			numStr : String = { cast(u64) count, ^buffer[32 - count] };
 			Print(numStr);
 		}
 		else if arg.typeInfo.typeKind == TypeKind_Struct
@@ -89,14 +87,10 @@ PrintF :: (format : String, ..args)
 			Print("{ ");
 			for structInfo.members
 			{
-				member : Any;
-				member.typeInfo = it.typeInfo;
-				member.data = arg.data + it.offset;
+				member : Any = { it.typeInfo, arg.data + it.offset };
 
-				buffer : [128] u8;
-				str : String;
-				str.data = ^buffer[0];
-				str.size = 0;
+				buffer : [128] u8 = ?;
+				str : String = { 0, ^buffer[0] };
 				if i > 0
 				{
 					@(cast(^u32) str.data) = 0x202C;
@@ -131,7 +125,7 @@ PrintF :: (format : String, ..args)
 		{
 			arrayInfo := cast(^TypeInfoArray) arg.typeInfo;
 			Print("{ ");
-			element : Any;
+			element : Any = ?;
 			element.typeInfo = arrayInfo.elementTypeInfo;
 			elementSize := arrayInfo.elementTypeInfo.size;
 			buffer : ^u8 = cast(^u8) arg.data;
@@ -158,9 +152,7 @@ PrintF :: (format : String, ..args)
 			{
 				pointerInfo := cast(^TypeInfoPointer) arg.typeInfo;
 				Print("^");
-				pointedThing : Any;
-				pointedThing.typeInfo = pointerInfo.typeInfo;
-				pointedThing.data = pointer;
+				pointedThing : Any = { pointerInfo.typeInfo, pointer };
 				PrintArgument(pointedThing);
 			}
 		}
@@ -169,7 +161,7 @@ PrintF :: (format : String, ..args)
 	}
 
 	stdOut := GetStdHandle(-11);
-	bytesWritten : s64;
+	bytesWritten : s64 = ?;
 	argIdx := 0;
 	for (0..format.size)
 	{

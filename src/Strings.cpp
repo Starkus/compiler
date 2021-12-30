@@ -81,8 +81,16 @@ inline bool IsWhitespace(char c)
 s64 IntFromString(String string)
 {
 	s64 result = 0;
+	int i = 0;
 	const char *scan = string.data;
-	for (int i = 0; i < string.size; ++i)
+	bool isNegative = false;
+	if (*scan == '-')
+	{
+		isNegative = true;
+		++i;
+		++scan;
+	}
+	for (; i < string.size; ++i)
 	{
 		char c = *scan++;
 		ASSERT(IsNumeric(c));
@@ -90,15 +98,26 @@ s64 IntFromString(String string)
 		result *= 10;
 		result += digit;
 	}
+	if (isNegative)
+		result = -result;
 	return result;
 }
 
 s64 IntFromStringHex(String string)
 {
 	s64 result = 0;
-	for (int i = 0; i < string.size; ++i)
+	int i = 0;
+	const char *scan = string.data;
+	bool isNegative = false;
+	if (*scan == '-')
 	{
-		char c = string.data[i];
+		isNegative = true;
+		++i;
+		++scan;
+	}
+	for (; i < string.size; ++i)
+	{
+		char c = *scan++;
 
 		s64 digit = -1;
 		digit = c - '0' * (c >= '0' && c <= '9');
@@ -109,16 +128,27 @@ s64 IntFromStringHex(String string)
 		result = result << 4;
 		result += digit;
 	}
+	if (isNegative)
+		result = -result;
 	return result;
 }
 
 f64 F64FromString(String string)
 {
+	bool isNegative = false;
+	if (string.data[0] == '-')
+	{
+		isNegative = true;
+		++string.data;
+		--string.size;
+	}
+
 	s64 leftPart;
 	s64 rightPart;
 	s64 fractionDigits = 0;
+	const char *scan = string.data;
 	for (int i = 0; i < string.size; ++i)
-		if (string.data[i] == '.')
+		if (*scan++ == '.')
 		{
 			leftPart  = IntFromString({ i, string.data });
 			++i;
@@ -129,6 +159,9 @@ f64 F64FromString(String string)
 	leftPart  = IntFromString(string);
 	rightPart = 0;
 foundDot:
+
+	if (leftPart == 0 && rightPart == 0)
+		return 0;
 
 	int exponent = 0;
 	if (leftPart) exponent = 63 - Nlz64(leftPart);
@@ -172,11 +205,13 @@ foundDot:
 	u64 biasedExponent = 1023 + exponent;
 	u64 shiftedExponent = biasedExponent << 52;
 
+	u64 signBit = (u64)isNegative << 63;
+
 	union
 	{
 		u64 floatBits;
 		f64 result;
 	};
-	floatBits = (shiftedExponent & 0x7FF0000000000000) | (mantissa & 0xFFFFFFFFFFFFF);
+	floatBits = signBit | (shiftedExponent & 0x7FF0000000000000) | (mantissa & 0xFFFFFFFFFFFFF);
 	return result;
 }

@@ -271,6 +271,7 @@ bool TryParseBinaryOperation(Context *context, ASTExpression leftHand, s32 prevP
 	case TOKEN_OP_ASSIGNMENT_BITWISE_XOR:
 	case TOKEN_OP_ASSIGNMENT_BITWISE_AND:
 	case TOKEN_OP_EQUALS:
+	case TOKEN_OP_NOT_EQUALS:
 	case TOKEN_OP_GREATER_THAN:
 	case TOKEN_OP_GREATER_THAN_OR_EQUAL:
 	case TOKEN_OP_LESS_THAN:
@@ -706,6 +707,12 @@ ASTExpression ParseExpression(Context *context, s32 precedence)
 		AssertToken(context, context->token, '}');
 		Advance(context);
 	}
+	else if (context->token->type == '?')
+	{
+		result.any.loc = context->token->loc;
+		result.nodeType = ASTNODETYPE_GARBAGE;
+		Advance(context);
+	}
 	else if (context->token->type == TOKEN_IDENTIFIER)
 	{
 		result.any.loc = context->token->loc;
@@ -809,17 +816,10 @@ ASTExpression ParseExpression(Context *context, s32 precedence)
 	{
 		Advance(context);
 
-		// Parenthesis should actually not be necessary here...
-		//AssertToken(context, context->token, '(');
-		//Advance(context);
-
 		result.any.loc = context->token->loc;
 		result.nodeType = ASTNODETYPE_TYPEOF;
 		result.typeOfNode.expression = NewTreeNode(context);
 		*result.typeOfNode.expression = ParseExpression(context, -1);
-
-		//AssertToken(context, context->token, ')');
-		//Advance(context);
 	}
 	else if (context->token->type == TOKEN_KEYWORD_SIZEOF)
 	{

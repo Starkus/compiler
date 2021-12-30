@@ -1,5 +1,6 @@
 enum TypeTableIndices
 {
+	TYPETABLEIDX_ANYTHING = -6,
 	TYPETABLEIDX_STRUCT_LITERAL = -5,
 
 	TYPETABLEIDX_PRIMITIVE_BEGIN = 1,
@@ -362,6 +363,7 @@ enum TypeCheckErrorCode
 	TYPECHECK_POINTED_TYPE_MISMATCH,
 	TYPECHECK_ARRAY_SIZE_MISMATCH,
 	TYPECHECK_STRUCT_MISMATCH,
+	TYPECHECK_CANT_DEDUCE_TYPE
 };
 
 void ReportTypeCheckError(Context *context, TypeCheckErrorCode errorCode, SourceLocation sourceLoc,
@@ -392,6 +394,8 @@ void ReportTypeCheckError(Context *context, TypeCheckErrorCode errorCode, Source
 	case TYPECHECK_MISC_ERROR:
 		LogError(context, sourceLoc, TPrintF(
 			"Expression type mismatch! (left is %S and right is %S)", leftStr, rightStr));
+	default:
+		ASSERT(errorCode == TYPECHECK_COOL);
 	}
 }
 
@@ -536,32 +540,105 @@ TypeCheckResult CheckTypesMatchAndSpecialize(Context *context, s64 leftTableIdx,
 
 	if (rightTableIdx == TYPETABLEIDX_STRUCT_LITERAL)
 	{
-		s64 structTypeIdx = leftTableIdx;
-		TypeInfo structTypeInfo = context->typeTable[structTypeIdx];
-		ASSERT(structTypeInfo.typeCategory == TYPECATEGORY_STRUCT);
-
 		ASSERT(rightHand->nodeType == ASTNODETYPE_LITERAL);
 		ASSERT(rightHand->literal.type == LITERALTYPE_STRUCT);
-		if (structTypeInfo.structInfo.members.size < rightHand->literal.members.size)
-			LogError(context, rightHand->any.loc, "Too many values in struct literal"_s);
-		for (int memberIdx = 0; memberIdx < rightHand->literal.members.size; ++memberIdx)
-		{
-			ASTExpression *literalMemberExp = rightHand->literal.members[memberIdx];
-			TypeCheckResult typeCheckResult = CheckTypesMatchAndSpecialize(context,
-					structTypeInfo.structInfo.members[memberIdx].typeTableIdx,
-					literalMemberExp);
-			literalMemberExp->typeTableIdx = typeCheckResult.rightTableIdx;
-			if (typeCheckResult.errorCode != TYPECHECK_COOL)
-			{
-				Print("Type of struct literal value in position %d and "
-						"type of struct member number %d don't match\n", memberIdx, memberIdx);
-				ReportTypeCheckError(context, typeCheckResult.errorCode, rightHand->any.loc,
-						structTypeInfo.structInfo.members[memberIdx].typeTableIdx,
-						rightHand->literal.members[memberIdx]->typeTableIdx);
-			}
-		}
 
-		result.rightTableIdx = structTypeIdx;
+		s64 structTypeIdx = leftTableIdx;
+		TypeInfo structTypeInfo = context->typeTable[structTypeIdx];
+		if (structTypeInfo.typeCategory == TYPECATEGORY_STRUCT ||
+			structTypeInfo.typeCategory == TYPECATEGORY_UNION)
+		{
+			struct StructStackFrame
+			{
+				s64 structTypeIdx;
+				int idx;
+			};
+			DynamicArray<StructStackFrame, FrameAlloc, FrameRealloc> structStack;
+			DynamicArrayInit(&structStack, 8);
+			*DynamicArrayAdd(&structStack) = { structTypeIdx, 0 };
+
+			for (int memberIdx = 0; memberIdx < rightHand->literal.members.size; )
+			{
+				ASTExpression *literalMemberExp = rightHand->literal.members[memberIdx];
+				StructStackFrame currentFrame = structStack[structStack.size - 1];
+				TypeInfo currentStructTypeInfo = context->typeTable[currentFrame.structTypeIdx];
+
+				if (currentFrame.idx >= currentStructTypeInfo.structInfo.members.size)
+				{
+					// Pop struct frame
+					--structStack.size;
+					if (structStack.size == 0)
+						LogError(context, rightHand->any.loc, "Too many values in struct literal"_s);
+					continue;
+				}
+
+				s64 currentMemberTypeIdx =
+					currentStructTypeInfo.structInfo.members[currentFrame.idx].typeTableIdx;
+				TypeInfo currentMemberTypeInfo = context->typeTable[currentMemberTypeIdx];
+
+				if (currentMemberTypeInfo.typeCategory == TYPECATEGORY_STRUCT ||
+					currentMemberTypeInfo.typeCategory == TYPECATEGORY_UNION)
+				{
+					// Push struct frame
+					structStack[structStack.size++] = { currentMemberTypeIdx, 0 };
+					continue;
+				}
+
+				TypeCheckResult typeCheckResult = CheckTypesMatchAndSpecialize(context,
+						currentMemberTypeIdx, literalMemberExp);
+				literalMemberExp->typeTableIdx = typeCheckResult.rightTableIdx;
+				if (typeCheckResult.errorCode != TYPECHECK_COOL)
+				{
+					Print("Type of struct literal value in position %d and "
+							"type of struct member number %d don't match\n", memberIdx, memberIdx);
+					ReportTypeCheckError(context, typeCheckResult.errorCode, rightHand->any.loc,
+							currentMemberTypeIdx,
+							rightHand->literal.members[memberIdx]->typeTableIdx);
+				}
+				++structStack[structStack.size - 1].idx;
+				++memberIdx;
+			}
+
+			result.rightTableIdx = structTypeIdx;
+		}
+		else if (structTypeInfo.typeCategory == TYPECATEGORY_ARRAY)
+		{
+			if (structTypeInfo.arrayInfo.count < rightHand->literal.members.size)
+				LogError(context, rightHand->any.loc, "Too many values in array literal"_s);
+
+			for (int memberIdx = 0; memberIdx < rightHand->literal.members.size; ++memberIdx)
+			{
+				ASTExpression *literalMemberExp = rightHand->literal.members[memberIdx];
+				TypeCheckResult typeCheckResult = CheckTypesMatchAndSpecialize(context,
+						structTypeInfo.arrayInfo.elementTypeTableIdx,
+						literalMemberExp);
+				literalMemberExp->typeTableIdx = typeCheckResult.rightTableIdx;
+				if (typeCheckResult.errorCode != TYPECHECK_COOL)
+				{
+					Print("Type of element %d in array literal doesn't match with type of array", memberIdx);
+					ReportTypeCheckError(context, typeCheckResult.errorCode, rightHand->any.loc,
+							structTypeInfo.arrayInfo.elementTypeTableIdx,
+							rightHand->literal.members[memberIdx]->typeTableIdx);
+				}
+			}
+
+			result.rightTableIdx = structTypeIdx;
+		}
+		else
+			ASSERT(false);
+
+		return result;
+	}
+	if (rightTableIdx == TYPETABLEIDX_ANYTHING)
+	{
+		if (leftTableIdx == TYPETABLEIDX_ANYTHING)
+			result.errorCode = TYPECHECK_CANT_DEDUCE_TYPE;
+		result.rightTableIdx = leftTableIdx;
+		return result;
+	}
+	if (leftTableIdx == TYPETABLEIDX_ANYTHING)
+	{
+		result.leftTableIdx = rightTableIdx;
 		return result;
 	}
 
@@ -759,10 +836,10 @@ s64 TypeCheckStructDeclaration(Context *context, ASTStructDeclaration astStructD
 	return typeTableIdx;
 }
 
-Constant EvaluateConstant(Context *context, ASTExpression *expression)
+Constant TryEvaluateConstant(Context *context, ASTExpression *expression)
 {
 	Constant result;
-	result.type = CONSTANTTYPE_INTEGER;
+	result.type = CONSTANTTYPE_INVALID;
 	result.valueAsInt = 0xFA11FA11FA11FA11;
 
 	switch (expression->nodeType)
@@ -773,6 +850,7 @@ Constant EvaluateConstant(Context *context, ASTExpression *expression)
 		{
 		case LITERALTYPE_INTEGER:
 		case LITERALTYPE_CHARACTER:
+			result.type = CONSTANTTYPE_INTEGER;
 			result.valueAsInt = expression->literal.integer;
 			break;
 		case LITERALTYPE_FLOATING:
@@ -786,14 +864,19 @@ Constant EvaluateConstant(Context *context, ASTExpression *expression)
 	case ASTNODETYPE_IDENTIFIER:
 	{
 		if (expression->identifier.type == NAMETYPE_STATIC_DEFINITION)
+		{
+			result.type = CONSTANTTYPE_INTEGER;
 			result = expression->identifier.staticDefinition->constant;
+		}
 		else
 			goto error;
 	} break;
 	case ASTNODETYPE_UNARY_OPERATION:
 	{
 		ASTExpression *in = expression->unaryOperation.expression;
-		Constant inValue  = EvaluateConstant(context, in);
+		Constant inValue  = TryEvaluateConstant(context, in);
+		if (inValue.type == CONSTANTTYPE_INVALID)
+			goto error;
 
 		bool isFloat = inValue.type == CONSTANTTYPE_FLOATING;
 		result.type = inValue.type;
@@ -833,8 +916,10 @@ Constant EvaluateConstant(Context *context, ASTExpression *expression)
 	{
 		ASTExpression *rightHand = expression->binaryOperation.rightHand;
 		ASTExpression *leftHand  = expression->binaryOperation.leftHand;
-		Constant leftValue  = EvaluateConstant(context, leftHand);
-		Constant rightValue = EvaluateConstant(context, rightHand);
+		Constant leftValue  = TryEvaluateConstant(context, leftHand);
+		Constant rightValue = TryEvaluateConstant(context, rightHand);
+		if (leftValue.type == CONSTANTTYPE_INVALID || rightValue.type == CONSTANTTYPE_INVALID)
+			goto error;
 
 		bool isFloat = false;
 		if (leftValue.type == CONSTANTTYPE_INTEGER)
@@ -940,10 +1025,8 @@ Constant EvaluateConstant(Context *context, ASTExpression *expression)
 	default:
 		goto error;
 	}
-	return result;
 error:
-	LogError(context, expression->any.loc, "Failed to evaluate constant"_s);
-	return {};
+	return result;
 }
 
 ASTProcedurePrototype TypeCheckProcedurePrototype(Context *context, ASTProcedurePrototype prototype);
@@ -1007,8 +1090,11 @@ s64 TypeCheckType(Context *context, SourceLocation loc, ASTType *astType)
 
 			if (astMember.value)
 			{
-				Constant constant = EvaluateConstant(context, astMember.value);
-				if (constant.type == CONSTANTTYPE_FLOATING)
+				Constant constant = TryEvaluateConstant(context, astMember.value);
+				if (constant.type == CONSTANTTYPE_INVALID)
+					LogError(context, astMember.value->any.loc,
+							"Failed to evaluate constant in static definition"_s);
+				else if (constant.type == CONSTANTTYPE_FLOATING)
 					currentValue = (s64)constant.valueAsFloat;
 				else
 					currentValue = constant.valueAsInt;
@@ -1303,7 +1389,12 @@ TypeInfo TypeInfoFromASTProcedurePrototype(Context *context, ASTProcedurePrototy
 		if (!astVarDecl.astInitialValue)
 			procParam->defaultValue = {};
 		else
-			procParam->defaultValue = EvaluateConstant(context, astVarDecl.astInitialValue);
+		{
+			procParam->defaultValue = TryEvaluateConstant(context, astVarDecl.astInitialValue);
+			if (procParam->defaultValue.type == CONSTANTTYPE_INVALID)
+				LogError(context, astVarDecl.astInitialValue->any.loc,
+						"Failed to evaluate constant in default parameter"_s);
+		}
 	}
 
 	s64 returnType = TYPETABLEIDX_VOID;
@@ -1318,6 +1409,10 @@ void TypeCheckExpression(Context *context, ASTExpression *expression)
 {
 	switch (expression->nodeType)
 	{
+	case ASTNODETYPE_GARBAGE:
+	{
+		expression->typeTableIdx = TYPETABLEIDX_ANYTHING;
+	} break;
 	case ASTNODETYPE_BLOCK:
 	{
 		PushTCScope(context);
@@ -1423,7 +1518,12 @@ void TypeCheckExpression(Context *context, ASTExpression *expression)
 
 		// Need to evaluate constant AFTER type checking expression.
 		if (newStaticDef->definitionType == STATICDEFINITIONTYPE_CONSTANT)
-			newStaticDef->constant = EvaluateConstant(context, astStaticDef.expression);
+		{
+			newStaticDef->constant = TryEvaluateConstant(context, astStaticDef.expression);
+			if (newStaticDef->constant.type == CONSTANTTYPE_INVALID)
+				LogError(context, astStaticDef.expression->any.loc,
+						"Failed to evaluate constant in default parameter"_s);
+		}
 	} break;
 	case ASTNODETYPE_PROCEDURE_DECLARATION:
 	{

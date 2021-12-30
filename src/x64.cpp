@@ -27,6 +27,10 @@ enum X64InstructionType
 	X64_JMP,
 	X64_JE,
 	X64_JNE,
+	X64_JG,
+	X64_JL,
+	X64_JGE,
+	X64_JLE,
 	X64_CALL,
 	X64_CALL_Indirect,
 	X64_LEAVE,
@@ -86,6 +90,7 @@ enum X64InstructionType
 };
 
 s32 copyMemoryProcIdx;
+s32 zeroMemoryProcIdx;
 
 struct BEInstruction
 {
@@ -950,51 +955,29 @@ void X64ConvertInstruction(Context *context, IRInstruction inst, X64Procedure *x
 		*BucketArrayAdd(&x64Proc->instructions) = result;
 		return;
 	case IRINSTRUCTIONTYPE_JUMP_IF_ZERO:
-	{
-		IRValue operand = inst.conditionalJump.condition;
-		u8 accepted = x64InstructionInfos[X64_CMP].acceptedOperandsLeft;
-		if (!FitsInOperand(context, accepted, operand))
-		{
-			ASSERT(accepted & ACCEPTEDOPERANDS_REGISTER);
-			IRValue newValue = IRValueNewValue(context, "_jump_hlp"_s, operand.typeTableIdx,
-					VALUEFLAGS_FORCE_REGISTER);
-			X64Mov(context, x64Proc, newValue, operand);
-			operand = newValue;
-		}
-
-		X64Instruction cmpInst = { X64_CMP };
-		cmpInst.dst = operand;
-		cmpInst.src = IRValueImmediate(0);
 		result.type = X64_JE;
-		result.label = inst.conditionalJump.label;
-
-		*BucketArrayAdd(&x64Proc->instructions) = cmpInst;
-		*BucketArrayAdd(&x64Proc->instructions) = result;
-		return;
-	}
+		goto doConditionalJump;
 	case IRINSTRUCTIONTYPE_JUMP_IF_NOT_ZERO:
-	{
-		IRValue operand = inst.conditionalJump.condition;
-		u8 accepted = x64InstructionInfos[X64_CMP].acceptedOperandsLeft;
-		if (!FitsInOperand(context, accepted, operand))
-		{
-			ASSERT(accepted & ACCEPTEDOPERANDS_REGISTER);
-			IRValue newValue = IRValueNewValue(context, "_jump_hlp"_s, operand.typeTableIdx,
-					VALUEFLAGS_FORCE_REGISTER);
-			X64Mov(context, x64Proc, newValue, operand);
-			operand = newValue;
-		}
-
-		X64Instruction cmpInst = { X64_CMP };
-		cmpInst.dst = operand;
-		cmpInst.src = IRValueImmediate(0);
 		result.type = X64_JNE;
-		result.label = inst.conditionalJump.label;
-
-		*BucketArrayAdd(&x64Proc->instructions) = cmpInst;
-		*BucketArrayAdd(&x64Proc->instructions) = result;
-		return;
-	}
+		goto doConditionalJump;
+	case IRINSTRUCTIONTYPE_JUMP_IF_EQUALS:
+		result.type = X64_JE;
+		goto doConditionalJump2;
+	case IRINSTRUCTIONTYPE_JUMP_IF_NOT_EQUALS:
+		result.type = X64_JNE;
+		goto doConditionalJump2;
+	case IRINSTRUCTIONTYPE_JUMP_IF_GREATER_THAN:
+		result.type = X64_JG;
+		goto doConditionalJump2;
+	case IRINSTRUCTIONTYPE_JUMP_IF_LESS_THAN:
+		result.type = X64_JL;
+		goto doConditionalJump2;
+	case IRINSTRUCTIONTYPE_JUMP_IF_GREATER_THAN_OR_EQUALS:
+		result.type = X64_JGE;
+		goto doConditionalJump2;
+	case IRINSTRUCTIONTYPE_JUMP_IF_LESS_THAN_OR_EQUALS:
+		result.type = X64_JLE;
+		goto doConditionalJump2;
 	case IRINSTRUCTIONTYPE_GREATER_THAN:
 		result.type = X64_SETG;
 		goto doConditionalSet;
@@ -1009,6 +992,9 @@ void X64ConvertInstruction(Context *context, IRInstruction inst, X64Procedure *x
 		goto doConditionalSet;
 	case IRINSTRUCTIONTYPE_EQUALS:
 		result.type = X64_SETE;
+		goto doConditionalSet;
+	case IRINSTRUCTIONTYPE_NOT_EQUALS:
+		result.type = X64_SETNE;
 		goto doConditionalSet;
 	case IRINSTRUCTIONTYPE_NOT:
 	{
@@ -1169,6 +1155,65 @@ void X64ConvertInstruction(Context *context, IRInstruction inst, X64Procedure *x
 		*BucketArrayAdd(&x64Proc->instructions) = result;
 		return;
 	}
+	case IRINSTRUCTIONTYPE_ZERO_MEMORY:
+	{
+		ASSERT(inst.zeroMemory.dst.valueType  == IRVALUETYPE_VALUE ||
+			   inst.zeroMemory.dst.valueType  == IRVALUETYPE_MEMORY);
+		u32 dstIdx = inst.zeroMemory.dst.valueIdx;
+
+		// First attempt to zero manually
+		if (inst.zeroMemory.size.valueType == IRVALUETYPE_IMMEDIATE_INTEGER)
+		{
+			TypeInfo dstTypeInfo = context->typeTable[context->values[dstIdx].typeTableIdx];
+			s64 size = inst.zeroMemory.size.immediate;
+
+			s64 copiedBytes = 0;
+			if (size - copiedBytes >= 16)
+			{
+				IRValue zeroXmmReg = IRValueNewValue(context, "_zeroxmm"_s, TYPETABLEIDX_128,
+						VALUEFLAGS_FORCE_REGISTER);
+				*BucketArrayAdd(&x64Proc->instructions) = { X64_XORPS, zeroXmmReg, zeroXmmReg };
+				while (size - copiedBytes >= 16)
+				{
+					X64Mov(context, x64Proc,
+							IRValueMemory(dstIdx, copiedBytes, TYPETABLEIDX_128), zeroXmmReg);
+					copiedBytes += 16;
+				}
+			}
+			if (size - copiedBytes >= 1)
+			{
+				IRValue zeroReg = IRValueNewValue(context, "_zeroreg"_s, TYPETABLEIDX_S64,
+						VALUEFLAGS_FORCE_REGISTER);
+				*BucketArrayAdd(&x64Proc->instructions) = { X64_XOR, zeroReg, zeroReg };
+				while (size - copiedBytes >= 8)
+				{
+					X64Mov(context, x64Proc,
+							IRValueMemory(dstIdx, copiedBytes, TYPETABLEIDX_S64), zeroReg);
+					copiedBytes += 8;
+				}
+				while (size - copiedBytes >= 4)
+				{
+					X64Mov(context, x64Proc,
+							IRValueMemory(dstIdx, copiedBytes, TYPETABLEIDX_S32), zeroReg);
+					copiedBytes += 4;
+				}
+				while (size - copiedBytes >= 1)
+				{
+					X64Mov(context, x64Proc,
+							IRValueMemory(dstIdx, copiedBytes, TYPETABLEIDX_S8), zeroReg);
+					++copiedBytes;
+				}
+			}
+			return;
+		}
+
+		X64Mov(context, x64Proc, RCX, inst.zeroMemory.dst);
+		X64Mov(context, x64Proc, RDX,  inst.zeroMemory.size);
+		result.type = X64_CALL;
+		result.procedureIdx = zeroMemoryProcIdx;
+		*BucketArrayAdd(&x64Proc->instructions) = result;
+		return;
+	}
 	case IRINSTRUCTIONTYPE_PUSH_SCOPE:
 		result.type = X64_Push_Scope;
 		*BucketArrayAdd(&x64Proc->instructions) = result;
@@ -1275,6 +1320,60 @@ doShift:
 
 		return;
 	}
+doConditionalJump:
+	{
+		IRValue operand = inst.conditionalJump.condition;
+		u8 accepted = x64InstructionInfos[X64_CMP].acceptedOperandsLeft;
+		if (!FitsInOperand(context, accepted, operand))
+		{
+			ASSERT(accepted & ACCEPTEDOPERANDS_REGISTER);
+			IRValue newValue = IRValueNewValue(context, "_jump_hlp"_s, operand.typeTableIdx,
+					VALUEFLAGS_FORCE_REGISTER);
+			X64Mov(context, x64Proc, newValue, operand);
+			operand = newValue;
+		}
+
+		X64Instruction cmpInst = { X64_CMP };
+		cmpInst.dst = operand;
+		cmpInst.src = IRValueImmediate(0);
+		result.label = inst.conditionalJump.label;
+
+		*BucketArrayAdd(&x64Proc->instructions) = cmpInst;
+		*BucketArrayAdd(&x64Proc->instructions) = result;
+		return;
+	}
+doConditionalJump2:
+	{
+		IRValue left  = inst.conditionalJump2.left;
+		u8 accepted = x64InstructionInfos[X64_CMP].acceptedOperandsLeft;
+		if (!FitsInOperand(context, accepted, left))
+		{
+			ASSERT(accepted & ACCEPTEDOPERANDS_REGISTER);
+			IRValue newValue = IRValueNewValue(context, "_jump_hlp"_s, left.typeTableIdx,
+					VALUEFLAGS_FORCE_REGISTER);
+			X64Mov(context, x64Proc, newValue, left);
+			left = newValue;
+		}
+
+		IRValue right = inst.conditionalJump2.right;
+		accepted = x64InstructionInfos[X64_CMP].acceptedOperandsRight;
+		if (!FitsInOperand(context, accepted, right) ||
+			(IsValueInMemory(context, left) && IsValueInMemory(context, right)))
+		{
+			ASSERT(accepted & ACCEPTEDOPERANDS_REGISTER);
+			IRValue newValue = IRValueNewValue(context, "_jump_hlp"_s, right.typeTableIdx,
+					VALUEFLAGS_FORCE_REGISTER);
+			X64Mov(context, x64Proc, newValue, right);
+			right = newValue;
+		}
+
+		X64Instruction cmpInst = { X64_CMP, left, right };
+		result.label = inst.conditionalJump2.label;
+
+		*BucketArrayAdd(&x64Proc->instructions) = cmpInst;
+		*BucketArrayAdd(&x64Proc->instructions) = result;
+		return;
+	}
 doConditionalSet:
 	{
 		X64Instruction cmpInst;
@@ -1294,7 +1393,8 @@ doConditionalSet:
 		cmpInst.dst = inst.binaryOperation.left;
 		cmpInst.src = inst.binaryOperation.right;
 		u8 accepted = x64InstructionInfos[X64_CMP].acceptedOperandsLeft;
-		if (!FitsInOperand(context, accepted, cmpInst.dst))
+		if (!FitsInOperand(context, accepted, cmpInst.dst) ||
+			(IsValueInMemory(context, cmpInst.dst) && IsValueInMemory(context, cmpInst.src)))
 		{
 			ASSERT(accepted & ACCEPTEDOPERANDS_REGISTER);
 			IRValue newValue = IRValueNewValue(context, "_setcc_hlp"_s, cmpInst.dst.typeTableIdx,
@@ -1376,6 +1476,10 @@ String X64InstructionToStr(Context *context, X64Instruction inst)
 	case X64_JMP:
 	case X64_JE:
 	case X64_JNE:
+	case X64_JG:
+	case X64_JL:
+	case X64_JGE:
+	case X64_JLE:
 		goto printLabel;
 	case X64_CALL:
 		return TPrintF("call %S", GetProcedure(context, inst.procedureIdx)->name);
@@ -1489,17 +1593,17 @@ void X64PrintStaticData(Context *context, String name, IRValue value, s64 typeTa
 	case IRVALUETYPE_IMMEDIATE_FLOAT:
 	{
 		TypeInfo typeInfo = context->typeTable[typeTableIdx];
-		bytesSoFar = X64StaticDataAlignTo(context, bytesSoFar, 16);
+		bytesSoFar = X64StaticDataAlignTo(context, bytesSoFar, typeInfo.size);
 		switch (typeInfo.size)
 		{
 		case 4:
 		{
 			union { u32 asU32; f32 asF32; };
 			asF32 = (f32)value.immediateFloat;
-			PrintOut(context, "%S DD %.8xH\n", name, asU32);
+			PrintOut(context, "%S DD 0%.8xH\n", name, asU32);
 		} break;
 		case 8:
-			PrintOut(context, "%S DQ %.16llxH\n", name,
+			PrintOut(context, "%S DQ 0%.16llxH\n", name,
 					value.immediate);
 			break;
 		default:
@@ -1570,7 +1674,7 @@ void BackendMain(Context *context)
 {
 	BucketArrayInit(&context->bePatchedInstructions);
 
-	// Hard coded CopyMemory external procedure
+	// Hard coded CopyMemory and ZeroMemory external procedures
 	{
 		s64 voidPtrIdx = GetTypeInfoPointerOf(context, TYPETABLEIDX_VOID);
 
@@ -1589,6 +1693,13 @@ void BackendMain(Context *context)
 		copyMemory->name = "CopyMemory"_s;
 		copyMemory->typeTableIdx = typeTableIdx;
 		copyMemory->returnValueIdx = U32_MAX;
+
+		zeroMemoryProcIdx = -(s32)BucketArrayCount(&context->externalProcedures);
+		Procedure *zeroMemory = BucketArrayAdd(&context->externalProcedures);
+		*zeroMemory = {};
+		zeroMemory->name = "ZeroMemory"_s;
+		zeroMemory->typeTableIdx = typeTableIdx;
+		zeroMemory->returnValueIdx = U32_MAX;
 	}
 
 	x64InstructionInfos[X64_MOV] =       { "mov"_s,      ACCEPTEDOPERANDS_REGMEM,   ACCEPTEDOPERANDS_ALL };
@@ -1601,6 +1712,10 @@ void BackendMain(Context *context)
 	x64InstructionInfos[X64_JMP] =       { "jmp"_s,      ACCEPTEDOPERANDS_ALL,      ACCEPTEDOPERANDS_NONE };
 	x64InstructionInfos[X64_JE] =        { "je"_s,       ACCEPTEDOPERANDS_ALL,      ACCEPTEDOPERANDS_NONE };
 	x64InstructionInfos[X64_JNE] =       { "jne"_s,      ACCEPTEDOPERANDS_ALL,      ACCEPTEDOPERANDS_NONE };
+	x64InstructionInfos[X64_JG] =        { "jg"_s,       ACCEPTEDOPERANDS_ALL,      ACCEPTEDOPERANDS_NONE };
+	x64InstructionInfos[X64_JL] =        { "jl"_s,       ACCEPTEDOPERANDS_ALL,      ACCEPTEDOPERANDS_NONE };
+	x64InstructionInfos[X64_JGE] =       { "jge"_s,      ACCEPTEDOPERANDS_ALL,      ACCEPTEDOPERANDS_NONE };
+	x64InstructionInfos[X64_JLE] =       { "jle"_s,      ACCEPTEDOPERANDS_ALL,      ACCEPTEDOPERANDS_NONE };
 	x64InstructionInfos[X64_CALL] =      { "call"_s,     ACCEPTEDOPERANDS_ALL,      ACCEPTEDOPERANDS_NONE };
 	x64InstructionInfos[X64_CALL_Indirect] = { "call"_s, ACCEPTEDOPERANDS_REGMEM,   ACCEPTEDOPERANDS_NONE };
 	x64InstructionInfos[X64_LEAVE] =     { "leave"_s,    ACCEPTEDOPERANDS_NONE,     ACCEPTEDOPERANDS_NONE };
@@ -1940,6 +2055,8 @@ void BackendMain(Context *context)
 unalignedMovups:;
 			} // fall through
 			case X64_MOV:
+			case X64_MOVSS:
+			case X64_MOVSD:
 			{
 				// Ignore mov thing into itself
 				if (inst->dst.valueType == IRVALUETYPE_VALUE &&
@@ -1961,8 +2078,6 @@ unalignedMovups:;
 			case X64_MOVZX:
 			case X64_MOVSX:
 			case X64_MOVSXD:
-			case X64_MOVSS:
-			case X64_MOVSD:
 			case X64_LEA:
 			case X64_CVTSI2SS:
 			case X64_CVTSI2SD:
@@ -1980,6 +2095,30 @@ unalignedMovups:;
 				}
 			} break;
 			}
+
+			// Zero idioms
+			if (inst->type == X64_MOVSS || inst->type == X64_MOVSD)
+			{
+				if (inst->src.valueType == IRVALUETYPE_IMMEDIATE_INTEGER &&
+					inst->src.immediate == 0)
+				{
+					if (IsValueInMemory(context, inst->dst))
+						inst->type = X64_MOV;
+					else
+						*inst = { inst->type == X64_MOVSS ? X64_XORPS : X64_XORPD,
+							inst->dst, inst->dst };
+				}
+			}
+			else if (inst->type == X64_MOV)
+			{
+				if (inst->src.valueType == IRVALUETYPE_IMMEDIATE_INTEGER &&
+					inst->src.immediate == 0)
+				{
+					if (!IsValueInMemory(context, inst->dst))
+						*inst = { X64_XOR, inst->dst, inst->dst };
+				}
+			}
+
 			inst = X64InstructionStreamAdvance(&stream);
 		}
 	}

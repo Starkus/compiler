@@ -56,6 +56,13 @@ struct IRConditionalJump
 	IRValue condition;
 };
 
+struct IRConditionalJump2
+{
+	IRLabel *label;
+	IRValue left;
+	IRValue right;
+};
+
 struct IRProcedureCall
 {
 	union
@@ -134,6 +141,12 @@ struct IRCopyMemory
 	IRValue size;
 };
 
+struct IRZeroMemory
+{
+	IRValue dst;
+	IRValue size;
+};
+
 enum IRInstructionType
 {
 	IRINSTRUCTIONTYPE_INVALID = -1,
@@ -146,6 +159,12 @@ enum IRInstructionType
 	IRINSTRUCTIONTYPE_JUMP,
 	IRINSTRUCTIONTYPE_JUMP_IF_ZERO,
 	IRINSTRUCTIONTYPE_JUMP_IF_NOT_ZERO,
+	IRINSTRUCTIONTYPE_JUMP_IF_EQUALS,
+	IRINSTRUCTIONTYPE_JUMP_IF_NOT_EQUALS,
+	IRINSTRUCTIONTYPE_JUMP_IF_GREATER_THAN,
+	IRINSTRUCTIONTYPE_JUMP_IF_GREATER_THAN_OR_EQUALS,
+	IRINSTRUCTIONTYPE_JUMP_IF_LESS_THAN,
+	IRINSTRUCTIONTYPE_JUMP_IF_LESS_THAN_OR_EQUALS,
 	IRINSTRUCTIONTYPE_RETURN,
 	IRINSTRUCTIONTYPE_PROCEDURE_CALL,
 	IRINSTRUCTIONTYPE_PROCEDURE_CALL_INDIRECT,
@@ -176,6 +195,7 @@ enum IRInstructionType
 	IRINSTRUCTIONTYPE_BITWISE_XOR,
 	IRINSTRUCTIONTYPE_BITWISE_AND,
 	IRINSTRUCTIONTYPE_EQUALS,
+	IRINSTRUCTIONTYPE_NOT_EQUALS,
 	IRINSTRUCTIONTYPE_GREATER_THAN,
 	IRINSTRUCTIONTYPE_GREATER_THAN_OR_EQUALS,
 	IRINSTRUCTIONTYPE_LESS_THAN,
@@ -183,6 +203,7 @@ enum IRInstructionType
 	IRINSTRUCTIONTYPE_BINARY_END,
 
 	IRINSTRUCTIONTYPE_COPY_MEMORY,
+	IRINSTRUCTIONTYPE_ZERO_MEMORY,
 };
 struct IRInstruction
 {
@@ -193,6 +214,7 @@ struct IRInstruction
 		IRLabel *label;
 		IRJump jump;
 		IRConditionalJump conditionalJump;
+		IRConditionalJump2 conditionalJump2;
 		IRProcedureCall procedureCall;
 		IRPushValue pushValue;
 		IRGetParameter getParameter;
@@ -205,6 +227,7 @@ struct IRInstruction
 		IRBinaryOperation binaryOperation;
 
 		IRCopyMemory copyMemory;
+		IRZeroMemory zeroMemory;
 	};
 };
 
@@ -662,7 +685,7 @@ void IRInsertLabelInstruction(Context *context, IRLabel *label)
 	*AddInstruction(context) = result;
 }
 
-IRValue IRInstructionFromBinaryOperation(Context *context, ASTExpression *expression)
+IRValue IRInstructionFromBinaryOperation(Context *context, ASTExpression *expression, IRValue outValue)
 {
 	IRValue result = {};
 
@@ -673,13 +696,6 @@ IRValue IRInstructionFromBinaryOperation(Context *context, ASTExpression *expres
 	{
 		IRValue value = IRGenFromExpression(context, leftHand);
 
-#if 0
-		if (context->typeTable[value.typeTableIdx].typeCategory == TYPECATEGORY_POINTER)
-		{
-			// Dereference the pointer to the struct
-			value = IRDereferenceValue(context, value);
-		}
-#endif
 		TypeInfo structTypeInfo = context->typeTable[value.typeTableIdx];
 		if (structTypeInfo.typeCategory == TYPECATEGORY_POINTER)
 		{
@@ -735,7 +751,6 @@ IRValue IRInstructionFromBinaryOperation(Context *context, ASTExpression *expres
 		jumpIfZeroInst2->conditionalJump.label = assignZeroLabel;
 		jumpIfZeroInst2->conditionalJump.condition = rightValue;
 
-		IRValue outValue = IRValueNewValue(context, "_and"_s, leftHand->typeTableIdx, 0);
 		IRDoAssignment(context, outValue, IRValueImmediate(1));
 
 		IRLabel *skipAssignZeroLabel = NewLabel(context, "skipAssignZero"_s);
@@ -773,7 +788,6 @@ IRValue IRInstructionFromBinaryOperation(Context *context, ASTExpression *expres
 
 		IRInsertLabelInstruction(context, skipRightLabel);
 
-		IRValue outValue = IRValueNewValue(context, "_or"_s, leftHand->typeTableIdx, 0);
 		IRDoAssignment(context, outValue, IRValueImmediate(1));
 
 		IRLabel *skipAssignZeroLabel = NewLabel(context, "skipAssignZero"_s);
@@ -840,8 +854,6 @@ IRValue IRInstructionFromBinaryOperation(Context *context, ASTExpression *expres
 		inst.binaryOperation.left  = IRGenFromExpression(context, leftHand);
 		inst.binaryOperation.right = IRGenFromExpression(context, rightHand);
 
-		//IRConvertIfNecessary(context, &inst.binaryOperation.left, &inst.binaryOperation.right);
-
 		switch (expression->binaryOperation.op)
 		{
 		case TOKEN_OP_PLUS:
@@ -898,6 +910,10 @@ IRValue IRInstructionFromBinaryOperation(Context *context, ASTExpression *expres
 		{
 			inst.type = IRINSTRUCTIONTYPE_EQUALS;
 		} break;
+		case TOKEN_OP_NOT_EQUALS:
+		{
+			inst.type = IRINSTRUCTIONTYPE_NOT_EQUALS;
+		} break;
 		case TOKEN_OP_GREATER_THAN:
 		{
 			inst.type = IRINSTRUCTIONTYPE_GREATER_THAN;
@@ -924,7 +940,6 @@ IRValue IRInstructionFromBinaryOperation(Context *context, ASTExpression *expres
 		} break;
 		}
 
-		IRValue outValue = IRValueNewValue(context, "_binaryop_result"_s, leftHand->typeTableIdx, 0);
 		inst.binaryOperation.out = outValue;
 		*AddInstruction(context) = inst;
 
@@ -939,6 +954,77 @@ IRValue IRInstructionFromBinaryOperation(Context *context, ASTExpression *expres
 	}
 
 	return result;
+}
+
+void IRConditionalJumpFromExpression(Context *context, ASTExpression *conditionExp, IRLabel *label)
+{
+	// The following tries to avoid saving condition to a bool, then comparing the bool with
+	// 0 in the conditional jump.
+	if (conditionExp->nodeType == ASTNODETYPE_BINARY_OPERATION)
+	{
+		IRInstruction jump = {};
+		switch (conditionExp->binaryOperation.op)
+		{
+		case TOKEN_OP_EQUALS:
+			jump.type = IRINSTRUCTIONTYPE_JUMP_IF_NOT_EQUALS;
+			break;
+		case TOKEN_OP_NOT_EQUALS:
+			jump.type = IRINSTRUCTIONTYPE_JUMP_IF_EQUALS;
+			break;
+		case TOKEN_OP_GREATER_THAN:
+			jump.type = IRINSTRUCTIONTYPE_JUMP_IF_LESS_THAN_OR_EQUALS;
+			break;
+		case TOKEN_OP_LESS_THAN:
+			jump.type = IRINSTRUCTIONTYPE_JUMP_IF_GREATER_THAN_OR_EQUALS;
+			break;
+		case TOKEN_OP_GREATER_THAN_OR_EQUAL:
+			jump.type = IRINSTRUCTIONTYPE_JUMP_IF_LESS_THAN;
+			break;
+		case TOKEN_OP_LESS_THAN_OR_EQUAL:
+			jump.type = IRINSTRUCTIONTYPE_JUMP_IF_LESS_THAN;
+			break;
+		default:
+			goto defaultConditionEvaluation;
+		}
+
+		IRValue leftResult  = IRGenFromExpression(context,
+				conditionExp->binaryOperation.leftHand);
+		IRValue rightResult = IRGenFromExpression(context,
+				conditionExp->binaryOperation.rightHand);
+		jump.conditionalJump2.label = label;
+		jump.conditionalJump2.left  = leftResult;
+		jump.conditionalJump2.right = rightResult;
+		*AddInstruction(context) = jump;
+		return;
+	}
+	else if (conditionExp->nodeType == ASTNODETYPE_UNARY_OPERATION)
+	{
+		IRInstruction jump = {};
+		switch (conditionExp->unaryOperation.op)
+		{
+		case TOKEN_OP_NOT:
+			jump.type = IRINSTRUCTIONTYPE_JUMP_IF_NOT_ZERO;
+			break;
+		default:
+			goto defaultConditionEvaluation;
+		}
+
+		IRValue conditionResult = IRGenFromExpression(context,
+				conditionExp->unaryOperation.expression);
+		jump.conditionalJump.label = label;
+		jump.conditionalJump.condition = conditionResult;
+		*AddInstruction(context) = jump;
+		return;
+	}
+
+defaultConditionEvaluation:
+	// Fallback path. Just save the condition to a bool, then evaluate that bool.
+	IRValue conditionResult = IRGenFromExpression(context, conditionExp);
+
+	IRInstruction *jump = AddInstruction(context);
+	jump->type = IRINSTRUCTIONTYPE_JUMP_IF_ZERO;
+	jump->conditionalJump.label = label;
+	jump->conditionalJump.condition = conditionResult;
 }
 
 IRValue IRGenFromExpression(Context *context, ASTExpression *expression)
@@ -1102,8 +1188,11 @@ IRValue IRGenFromExpression(Context *context, ASTExpression *expression)
 				}
 				else
 				{
-					Constant constant  = EvaluateConstant(context, varDecl.astInitialValue);
-					if (constant.type == CONSTANTTYPE_FLOATING)
+					Constant constant  = TryEvaluateConstant(context, varDecl.astInitialValue);
+					if (constant.type == CONSTANTTYPE_INVALID)
+						LogError(context, varDecl.astInitialValue->any.loc,
+								"Initial value of static variable isn't constant"_s);
+					else if (constant.type == CONSTANTTYPE_FLOATING)
 					{
 						newStaticVar.initialValue.valueType = IRVALUETYPE_IMMEDIATE_FLOAT;
 						newStaticVar.initialValue.immediateFloat = constant.valueAsFloat;
@@ -1124,9 +1213,37 @@ IRValue IRGenFromExpression(Context *context, ASTExpression *expression)
 			// Initial value
 			if (varDecl.astInitialValue)
 			{
-				IRValue leftValue = IRValueValue(context, varDecl.valueIdx);
-				IRValue rightValue = IRGenFromExpression(context, varDecl.astInitialValue);
-				IRDoAssignment(context, leftValue, rightValue);
+				if (varDecl.astInitialValue->nodeType != ASTNODETYPE_GARBAGE)
+				{
+					IRValue dstValue = IRValueValue(context, varDecl.valueIdx);
+					IRValue srcValue = IRGenFromExpression(context, varDecl.astInitialValue);
+					IRDoAssignment(context, dstValue, srcValue);
+				}
+			}
+			else
+			{
+				TypeCategory dstTypeCat = context->typeTable[varDecl.typeTableIdx].typeCategory;
+				if (dstTypeCat == TYPECATEGORY_STRUCT ||
+					dstTypeCat == TYPECATEGORY_UNION ||
+					dstTypeCat == TYPECATEGORY_ARRAY)
+				{
+					IRValue dstValue = IRValueValue(context, varDecl.valueIdx);
+					u64 size = context->typeTable[dstValue.typeTableIdx].size;
+					IRValue sizeValue = IRValueImmediate(size);
+
+					IRInstruction inst = {};
+					inst.type = IRINSTRUCTIONTYPE_ZERO_MEMORY;
+					inst.zeroMemory.dst = IRPointerToValue(context, dstValue);
+					inst.zeroMemory.size = sizeValue;
+
+					*AddInstruction(context) = inst;
+				}
+				else
+				{
+					IRValue dstValue = IRValueValue(context, varDecl.valueIdx);
+					IRValue srcValue = IRValueImmediate(0, varDecl.typeTableIdx);
+					IRDoAssignment(context, dstValue, srcValue);
+				}
 			}
 		}
 	} break;
@@ -1443,14 +1560,26 @@ skipGeneratingVarargsArray:
 
 		if (expression->binaryOperation.op == TOKEN_OP_ASSIGNMENT)
 		{
-			IRValue leftValue = IRGenFromExpression(context, leftHand);
-			IRValue rightValue = IRGenFromExpression(context, rightHand);
-			IRDoAssignment(context, leftValue, rightValue);
-			result = leftValue;
+			if (rightHand->nodeType == ASTNODETYPE_BINARY_OPERATION &&
+				rightHand->binaryOperation.op != TOKEN_OP_MEMBER_ACCESS &&
+				rightHand->binaryOperation.op != TOKEN_OP_ARRAY_ACCESS &&
+				rightHand->binaryOperation.op != TOKEN_OP_ASSIGNMENT)
+			{
+				IRValue leftValue = IRGenFromExpression(context, leftHand);
+				result = IRInstructionFromBinaryOperation(context, rightHand, leftValue);
+			}
+			else
+			{
+				IRValue leftValue = IRGenFromExpression(context, leftHand);
+				IRValue rightValue = IRGenFromExpression(context, rightHand);
+				IRDoAssignment(context, leftValue, rightValue);
+				result = leftValue;
+			}
 		}
 		else
 		{
-			result = IRInstructionFromBinaryOperation(context, expression);
+			IRValue outValue = IRValueNewValue(context, "_binaryop_result"_s, leftHand->typeTableIdx, 0);
+			result = IRInstructionFromBinaryOperation(context, expression, outValue);
 		}
 	} break;
 	case ASTNODETYPE_LITERAL:
@@ -1491,31 +1620,54 @@ skipGeneratingVarargsArray:
 		} break;
 		case LITERALTYPE_STRUCT:
 		{
-			static u64 structStaticVarUniqueID = 0;
-
 			s64 structTypeIdx = expression->typeTableIdx;
 			ASSERT(structTypeIdx > 0);
 
-			IRValue structIRValue = { IRVALUETYPE_IMMEDIATE_STRUCT };
-			structIRValue.typeTableIdx = structTypeIdx;
-			ArrayInit(&structIRValue.immediateStructMembers, expression->literal.members.size,
-					FrameAlloc);
-			for (int memberIdx = 0; memberIdx < expression->literal.members.size; ++memberIdx)
+			IRValue structIRValue = IRValueNewValue(context, "_structLiteral"_s, structTypeIdx, 0);
+			IRPushValueIntoStack(context, structIRValue.valueIdx);
+
+			struct StructStackFrame
 			{
-				IRValue memberIRValue = IRGenFromExpression(context,
-						expression->literal.members[memberIdx]);
-				*ArrayAdd(&structIRValue.immediateStructMembers) = memberIRValue;
+				s64 structTypeIdx;
+				int idx;
+			};
+			DynamicArray<StructStackFrame, FrameAlloc, FrameRealloc> structStack;
+			DynamicArrayInit(&structStack, 8);
+			*DynamicArrayAdd(&structStack) = { structTypeIdx, 0 };
+
+			for (int memberIdx = 0; memberIdx < expression->literal.members.size; )
+			{
+				ASTExpression *literalMemberExp = expression->literal.members[memberIdx];
+				StructStackFrame currentFrame = structStack[structStack.size - 1];
+				TypeInfo currentStructTypeInfo = context->typeTable[currentFrame.structTypeIdx];
+
+				if (currentFrame.idx >= currentStructTypeInfo.structInfo.members.size)
+				{
+					// Pop struct frame
+					--structStack.size;
+					ASSERT(structStack.size > 0);
+					continue;
+				}
+
+				StructMember currentMember = currentStructTypeInfo.structInfo.members[currentFrame.idx];
+				TypeCategory memberTypeCat = context->typeTable[currentMember.typeTableIdx].typeCategory;
+
+				if (memberTypeCat == TYPECATEGORY_STRUCT || memberTypeCat == TYPECATEGORY_UNION)
+				{
+					// Push struct frame
+					structStack[structStack.size++] = { currentMember.typeTableIdx, 0 };
+					continue;
+				}
+
+				IRValue memberValue = IRDoMemberAccess(context, structIRValue, currentMember);
+				IRValue src = IRGenFromExpression(context, literalMemberExp);
+				IRDoAssignment(context, memberValue, src);
+
+				++structStack[structStack.size - 1].idx;
+				++memberIdx;
 			}
 
-			IRStaticVariable newStaticVar = {};
-			newStaticVar.valueIdx = NewValue(context,
-					TPrintF("staticStruct%d", structStaticVarUniqueID++),
-					structTypeIdx, VALUEFLAGS_ON_STATIC_STORAGE);
-			newStaticVar.initialValue = structIRValue;
-			newStaticVar.initialValue.typeTableIdx = structTypeIdx;
-			*DynamicArrayAdd(&context->irStaticVariables) = newStaticVar;
-
-			result = IRValueValue(newStaticVar.valueIdx, structTypeIdx);
+			result = structIRValue;
 		} break;
 		default:
 			ASSERT(!"Unexpected literal type");
@@ -1524,14 +1676,8 @@ skipGeneratingVarargsArray:
 	} break;
 	case ASTNODETYPE_IF:
 	{
-		IRValue conditionResult = IRGenFromExpression(context, expression->ifNode.condition);
-
 		IRLabel *skipLabel = NewLabel(context, "skipIf"_s);
-
-		IRInstruction *jump = AddInstruction(context);
-		jump->type = IRINSTRUCTIONTYPE_JUMP_IF_ZERO;
-		jump->conditionalJump.label = skipLabel;
-		jump->conditionalJump.condition = conditionResult;
+		IRConditionalJumpFromExpression(context, expression->ifNode.condition, skipLabel);
 
 		// Body!
 		IRGenFromExpression(context, expression->ifNode.body);
@@ -1559,29 +1705,23 @@ skipGeneratingVarargsArray:
 	case ASTNODETYPE_WHILE:
 	{
 		IRLabel *loopLabel = NewLabel(context, "loop"_s);
-		IRInsertLabelInstruction(context, loopLabel);
-
-		IRValue condition = IRGenFromExpression(context, expression->whileNode.condition);
-
 		IRLabel *breakLabel = NewLabel(context, "break"_s);
+		IRInsertLabelInstruction(context, loopLabel);
 
 		IRLabel *oldBreakLabel = context->currentBreakLabel;
 		context->currentBreakLabel = breakLabel;
 
-		IRInstruction *jump = AddInstruction(context);
+		IRConditionalJumpFromExpression(context, expression->whileNode.condition, breakLabel);
+
 		IRGenFromExpression(context, expression->whileNode.body);
+
 		IRInstruction *loopJump = AddInstruction(context);
+		loopJump->type = IRINSTRUCTIONTYPE_JUMP;
+		loopJump->jump.label = loopLabel;
 
 		IRInsertLabelInstruction(context, breakLabel);
 
 		context->currentBreakLabel = oldBreakLabel;
-
-		jump->type = IRINSTRUCTIONTYPE_JUMP_IF_ZERO;
-		jump->conditionalJump.label = breakLabel;
-		jump->conditionalJump.condition = condition;
-
-		loopJump->type = IRINSTRUCTIONTYPE_JUMP;
-		loopJump->jump.label = loopLabel;
 	} break;
 	case ASTNODETYPE_FOR:
 	{
@@ -1646,21 +1786,18 @@ skipGeneratingVarargsArray:
 		IRLabel *loopLabel = NewLabel(context, "loop"_s);
 		IRInsertLabelInstruction(context, loopLabel);
 
-		IRValue condition = IRValueNewValue(context, "_for_condition"_s, TYPETABLEIDX_BOOL, 0);
-		IRInstruction compareInst = {};
-		compareInst.type = IRINSTRUCTIONTYPE_LESS_THAN;
-		compareInst.binaryOperation.left = indexValue;
-		compareInst.binaryOperation.right = to;
-		compareInst.binaryOperation.out = condition;
-		*AddInstruction(context) = compareInst;
-
 		IRLabel *breakLabel = NewLabel(context, "break"_s);
 
 		IRLabel *oldBreakLabel = context->currentBreakLabel;
 		context->currentBreakLabel = breakLabel;
 
-		IRInstruction *jump = AddInstruction(context);
-		IRGenFromExpression(context, expression->whileNode.body);
+		IRInstruction *breakJump = AddInstruction(context);
+		breakJump->type = IRINSTRUCTIONTYPE_JUMP_IF_GREATER_THAN_OR_EQUALS;
+		breakJump->conditionalJump2.label = breakLabel;
+		breakJump->conditionalJump2.left  = indexValue;
+		breakJump->conditionalJump2.right = to;
+
+		IRGenFromExpression(context, expression->forNode.body);
 
 		// Increment 'i'
 		IRInstruction incrementInst = {};
@@ -1688,10 +1825,6 @@ skipGeneratingVarargsArray:
 		IRInsertLabelInstruction(context, breakLabel);
 
 		context->currentBreakLabel = oldBreakLabel;
-
-		jump->type = IRINSTRUCTIONTYPE_JUMP_IF_ZERO;
-		jump->conditionalJump.label = breakLabel;
-		jump->conditionalJump.condition = condition;
 
 		loopJump->type = IRINSTRUCTIONTYPE_JUMP;
 		loopJump->jump.label = loopLabel;
@@ -1818,6 +1951,10 @@ skipGeneratingVarargsArray:
 	} break;
 	case ASTNODETYPE_ENUM_DECLARATION:
 	{
+	} break;
+	case ASTNODETYPE_GARBAGE:
+	{
+		ASSERT(!"Shouldn't attempt to generate IR from GARBAGE node");
 	} break;
 	}
 

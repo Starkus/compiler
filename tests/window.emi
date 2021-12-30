@@ -4,7 +4,7 @@ compiler_subsystem :: COMPILER_SUBSYSTEM_WINDOWS;
 
 running :s bool = true;
 
-Win32WindowCallback :: (hWnd : ^void, uMsg : u32, wParam : ^void, lParam : ^void) -> u64
+Win32WindowCallback :: (hWnd : ^void, uMsg : u32, wParam : u64, lParam : u64) -> u64
 {
 	if (uMsg == WM_DESTROY || uMsg == WM_CLOSE)
 	{
@@ -26,15 +26,8 @@ Main :: () -> s64
 	windowClass.cbSize = cast(u32)sizeof(windowClass);
 	windowClass.style = CS_HREDRAW | CS_VREDRAW | CS_OWNDC;
 	windowClass.lpfnWndProc = Win32WindowCallback;
-	windowClass.cbClsExtra = 0;
-	windowClass.cbWndExtra = 0;
 	windowClass.hInstance = hInstance;
-	windowClass.hIcon = null;
-	windowClass.hCursor = null;
-	windowClass.hBrush = null;
-	windowClass.lpszMenuName = null;
 	windowClass.lpszClassName = windowClassName.data;
-	windowClass.hIconSm = null;
 
 	success : bool = RegisterClassExA(^windowClass);
 	PrintF("Window succeded: % Last error: %\n", success, GetLastError());
@@ -45,7 +38,7 @@ Main :: () -> s64
 
 	ShowWindow(window, SW_SHOW);
 
-	message : MSG;
+	message : MSG = ?;
 
 	while running
 	{

@@ -137,6 +137,72 @@ inline bool TokenIsEqual(Token *a, Token *b)
 	return true;
 }
 
+Token ParseNumber(Context *context, Tokenizer *tokenizer, Token baseToken)
+{
+	Token result = baseToken;
+	result.type = TOKEN_LITERAL_NUMBER;
+	if (*tokenizer->cursor == '-')
+	{
+		++result.size;
+		++tokenizer->cursor;
+	}
+	if (*tokenizer->cursor == '0')
+	{
+		++result.size;
+		++tokenizer->cursor;
+
+		switch (*tokenizer->cursor)
+		{
+		case 'x':
+		case 'X':
+		{
+			++result.size;
+			++tokenizer->cursor;
+			while (IsNumericHex(*tokenizer->cursor))
+			{
+				++result.size;
+				++tokenizer->cursor;
+			}
+		} goto numberDone;
+		case 'b':
+		{
+			++result.size;
+			++tokenizer->cursor;
+			while (*tokenizer->cursor == '0' || *tokenizer->cursor == '1')
+			{
+				++result.size;
+				++tokenizer->cursor;
+			}
+		} goto numberDone;
+		}
+	}
+	// Normal base parsing
+	{
+		bool foundADot = false;
+		while (true)
+		{
+			if (*tokenizer->cursor == '.')
+			{
+				if (foundADot)
+					goto numberDone;
+				else if (*(tokenizer->cursor + 1) == '.')
+					// .. is an operator
+					goto numberDone;
+
+				foundADot = true;
+			}
+			else if (!IsNumeric(*tokenizer->cursor))
+				goto numberDone;
+
+			++result.size;
+			++tokenizer->cursor;
+		}
+	}
+numberDone:
+	result.loc.size = result.size;
+	return result;
+}
+
 void TokenizeFile(Context *context);
 Token ReadTokenAndAdvance(Context *context, Tokenizer *tokenizer)
 {
@@ -253,61 +319,7 @@ Token ReadTokenAndAdvance(Context *context, Tokenizer *tokenizer)
 	}
 	else if (IsNumeric(*tokenizer->cursor))
 	{
-		result.type = TOKEN_LITERAL_NUMBER;
-		if (*tokenizer->cursor == '0')
-		{
-			++result.size;
-			++tokenizer->cursor;
-
-			switch (*tokenizer->cursor)
-			{
-			case 'x':
-			case 'X':
-			{
-				++result.size;
-				++tokenizer->cursor;
-				while (IsNumericHex(*tokenizer->cursor))
-				{
-					++result.size;
-					++tokenizer->cursor;
-				}
-			} goto numberDone;
-			case 'b':
-			{
-				++result.size;
-				++tokenizer->cursor;
-				while (*tokenizer->cursor == '0' || *tokenizer->cursor == '1')
-				{
-					++result.size;
-					++tokenizer->cursor;
-				}
-			} goto numberDone;
-			}
-		}
-		// Normal base parsing
-		{
-			bool foundADot = false;
-			while (true)
-			{
-				if (*tokenizer->cursor == '.')
-				{
-					if (foundADot)
-						goto numberDone;
-					else if (*(tokenizer->cursor + 1) == '.')
-						// .. is an operator
-						goto numberDone;
-
-					foundADot = true;
-				}
-				else if (!IsNumeric(*tokenizer->cursor))
-					goto numberDone;
-
-				++result.size;
-				++tokenizer->cursor;
-			}
-		}
-numberDone:
-		result.loc.size = result.size;
+		result = ParseNumber(context, tokenizer, result);
 	}
 	else if (*tokenizer->cursor >= TOKEN_ASCII_Begin && *tokenizer->cursor <= TOKEN_ASCII_End)
 	{
@@ -457,6 +469,8 @@ numberDone:
 				result.type = TOKEN_OP_ARROW;
 				++tokenizer->cursor;
 			}
+			else if (IsNumeric(next))
+				return ParseNumber(context, tokenizer, result);
 			else
 				result.type = TOKEN_OP_MINUS;
 		} break;
@@ -556,7 +570,13 @@ numberDone:
 		} break;
 		case '!':
 		{
-			result.type = TOKEN_OP_NOT;
+			if (next == '=')
+			{
+				result.type = TOKEN_OP_NOT_EQUALS;
+				++tokenizer->cursor;
+			}
+			else
+				result.type = TOKEN_OP_NOT;
 		} break;
 		case '~':
 		{
@@ -569,6 +589,8 @@ numberDone:
 				result.type = TOKEN_OP_RANGE;
 				++tokenizer->cursor;
 			}
+			else if (IsNumeric(next))
+				return ParseNumber(context, tokenizer, result);
 			else
 				result.type = TOKEN_OP_MEMBER_ACCESS;
 		} break;

@@ -1,7 +1,7 @@
-MyType :: type s16;
-PointerType :: type ^s64;
-Nested :: type ^MyType;
-ProcType :: type (s32, u64, bool) -> f32;
+MyType :: #type s16;
+PointerType :: #type ^s64;
+Nested :: #type ^MyType;
+ProcType :: #type (s32, u64, bool) -> f32;
 
 AProc :: (a : s32, b : u64, bool) -> f32
 {
@@ -19,7 +19,7 @@ Main :: () -> s64
 	anF32 : f32 = aProcPointer(5, 6, true);
 
 	{
-		ScopedType :: type ^^MyType;
+		ScopedType :: #type ^^MyType;
 	}
 	//outOfScope : ScopedType;
 

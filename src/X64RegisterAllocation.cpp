@@ -176,6 +176,19 @@ void DoLivenessAnalisisOnInstruction(Context *context, BasicBlock *basicBlock, X
 				(*liveValues)[i--] = (*liveValues)[--liveValues->size];
 		}
 	} break;
+	case X64_XORPS:
+	case X64_XORPD:
+	{
+		// Detect xors of same thing (zero-ing)
+		if (inst->src.valueType != IRVALUETYPE_IMMEDIATE_INTEGER &&
+			inst->dst.valueIdx == inst->src.valueIdx)
+			RemoveIfValue(context, inst->dst, basicBlock->procedure, liveValues);
+		else
+		{
+			AddIfValue(context, inst->dst, basicBlock->procedure, liveValues);
+			AddIfValue(context, inst->src, basicBlock->procedure, liveValues);
+		}
+	} break;
 	// dst write, src read
 	case X64_MOV:
 	case X64_MOVZX:
@@ -213,8 +226,6 @@ void DoLivenessAnalisisOnInstruction(Context *context, BasicBlock *basicBlock, X
 	case X64_MULSD:
 	case X64_DIVSS:
 	case X64_DIVSD:
-	case X64_XORPS:
-	case X64_XORPD:
 	// dst read, src read
 	case X64_CMP:
 	case X64_COMISS:
@@ -316,6 +327,10 @@ void DoLivenessAnalisisOnInstruction(Context *context, BasicBlock *basicBlock, X
 	case X64_JMP:
 	case X64_JE:
 	case X64_JNE:
+	case X64_JG:
+	case X64_JL:
+	case X64_JGE:
+	case X64_JLE:
 	case X64_LEAVE:
 	case X64_RET:
 	case X64_SETG:
@@ -479,6 +494,10 @@ void GenerateBasicBlocks(Context *context, Array<X64Procedure> x64Procedures)
 			} break;
 			case X64_JE:
 			case X64_JNE:
+			case X64_JG:
+			case X64_JL:
+			case X64_JGE:
+			case X64_JLE:
 			case X64_JMP:
 			{
 				if (context->config.logAllocationInfo)
@@ -512,7 +531,11 @@ void GenerateBasicBlocks(Context *context, Array<X64Procedure> x64Procedures)
 		X64Instruction endInstruction = jumpBlock->procedure->instructions[jumpBlock->endIdx];
 		if (endInstruction.type == X64_JMP ||
 			endInstruction.type == X64_JE ||
-			endInstruction.type == X64_JNE)
+			endInstruction.type == X64_JNE ||
+			endInstruction.type == X64_JG ||
+			endInstruction.type == X64_JL ||
+			endInstruction.type == X64_JGE ||
+			endInstruction.type == X64_JLE)
 			label = endInstruction.label;
 		else
 			continue;

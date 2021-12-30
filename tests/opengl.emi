@@ -7,7 +7,7 @@
 windowHandle :s ^void;
 running :s bool = true;
 
-Win32WindowCallback :: (hWnd : ^void, uMsg : u32, wParam : ^void, lParam : ^void) -> u64
+Win32WindowCallback :: (hWnd : ^void, uMsg : u32, wParam : u64, lParam : u64) -> u64
 {
 	if (uMsg == WM_DESTROY || uMsg == WM_CLOSE)
 	{
@@ -31,15 +31,8 @@ Main :: () -> s64
 	windowClass.cbSize = cast(u32)sizeof(windowClass);
 	windowClass.style = CS_HREDRAW | CS_VREDRAW | CS_OWNDC;
 	windowClass.lpfnWndProc = Win32WindowCallback;
-	windowClass.cbClsExtra = 0;
-	windowClass.cbWndExtra = 0;
 	windowClass.hInstance = hInstance;
-	windowClass.hIcon = null;
-	windowClass.hCursor = null;
-	windowClass.hBrush = null;
-	windowClass.lpszMenuName = null;
 	windowClass.lpszClassName = windowClassName.data;
-	windowClass.hIconSm = null;
 
 	success := RegisterClassExA(^windowClass);
 
@@ -49,27 +42,7 @@ Main :: () -> s64
 	pfd.dwFlags = PFD_DOUBLEBUFFER | PFD_SUPPORT_OPENGL | PFD_DRAW_TO_WINDOW;
 	pfd.iPixelType = PFD_TYPE_RGBA;
 	pfd.cColorBits = 32;
-	pfd.cRedBits = 0;
-	pfd.cRedShift = 0;
-	pfd.cGreenBits = 0;
-	pfd.cGreenShift = 0;
-	pfd.cBlueBits = 0;
-	pfd.cBlueShift = 0;
-	pfd.cAlphaBits = 0;
-	pfd.cAlphaShift = 0;
-	pfd.cAccumBits = 0;
-	pfd.cAccumRedBits = 0;
-	pfd.cAccumGreenBits = 0;
-	pfd.cAccumBlueBits = 0;
-	pfd.cAccumAlphaBits = 0;
 	pfd.cDepthBits = 32;
-	pfd.cStencilBits = 0;
-	pfd.cAuxBuffers = 0;
-	pfd.iLayerType = 0;
-	pfd.bReserved = 0;
-	pfd.dwLayerMask = 0;
-	pfd.dwVisibleMask = 0;
-	pfd.dwDamageMask = 0;
 
 	windowHandle = CreateWindowExA(0, windowClassName.data, windowTitle.data, WS_OVERLAPPEDWINDOW | WS_VISIBLE,
 					16, 16, 800, 600, 0, 0, hInstance, 0);
@@ -82,7 +55,7 @@ Main :: () -> s64
 
 	glViewport(0, 0, 800, 600);
 
-	message : MSG;
+	message : MSG = ?;
 	while running
 	{
 		glClearColor(0.8, 0.6, 0.0, 0.0);
