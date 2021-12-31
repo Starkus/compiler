@@ -51,6 +51,7 @@ struct Procedure
 	String name;
 	DynamicArray<u32, malloc, realloc> parameterValues;
 	ASTExpression *astBody;
+	bool isInline;
 	u32 returnValueIdx;
 	s64 typeTableIdx; // Type of the procedure
 
@@ -916,16 +917,48 @@ ASTStaticDefinition ParseStaticDefinition(Context *context)
 	ASTExpression expression = {};
 	expression.any.loc = context->token->loc;
 
-	if (context->token->type == '(')
+	bool isInline = false;
+	bool isExternal = false;
+	while (true)
+	{
+		if (context->token->type == TOKEN_KEYWORD_INLINE)
+		{
+			if (isInline) LogError(context, context->token->loc, "'inline' used twice"_s);
+			isInline = true;
+			Advance(context);
+		}
+		else if (context->token->type == TOKEN_KEYWORD_EXTERNAL)
+		{
+			if (isExternal) LogError(context, context->token->loc, "'external' used twice"_s);
+			isExternal = true;
+			Advance(context);
+		}
+		else
+			break;
+	}
+
+	if (context->token->type == '(' ||
+		context->token->type == TOKEN_KEYWORD_INLINE ||
+		context->token->type == TOKEN_KEYWORD_EXTERNAL)
 	{
 		expression.nodeType = ASTNODETYPE_PROCEDURE_DECLARATION;
 
-		s32 procedureIdx = (s32)BucketArrayCount(&context->procedures);
-		Procedure *procedure = BucketArrayAdd(&context->procedures);
+		s32 procedureIdx;
+		Procedure *procedure;
+		if (isExternal)
+		{
+			procedureIdx = -(s32)BucketArrayCount(&context->externalProcedures);
+			procedure = BucketArrayAdd(&context->externalProcedures);
+		}
+		else
+		{
+			procedureIdx = (s32)BucketArrayCount(&context->procedures);
+			procedure = BucketArrayAdd(&context->procedures);
+		}
 		*procedure = {};
 		procedure->returnValueIdx = U32_MAX;
 		procedure->name = result.name;
-
+		procedure->isInline = isInline;
 		ASTProcedureDeclaration procDecl = {};
 		procDecl.loc = context->token->loc;
 		procDecl.procedureIdx = procedureIdx;
@@ -936,6 +969,8 @@ ASTStaticDefinition ParseStaticDefinition(Context *context)
 			Advance(context);
 		else
 		{
+			if (isExternal)
+				LogError(context, context->token->loc, "External procedure declaration can't have a body"_s);
 			procedure->astBody = NewTreeNode(context);
 			*procedure->astBody = ParseStatement(context);
 		}
@@ -1033,6 +1068,14 @@ ASTExpression ParseStatement(Context *context)
 	{
 		result.nodeType = ASTNODETYPE_FOR;
 		result.forNode = ParseFor(context);
+	} break;
+	case TOKEN_KEYWORD_CONTINUE:
+	{
+		result.nodeType = ASTNODETYPE_CONTINUE;
+		Advance(context);
+
+		AssertToken(context, context->token, ';');
+		Advance(context);
 	} break;
 	case TOKEN_KEYWORD_BREAK:
 	{

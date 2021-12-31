@@ -1,4 +1,4 @@
-__ImageBase : external ^void;
+__ImageBase : #external ^void;
 
 INVALID_HANDLE_VALUE :: 0xFFFFFFFFFFFFFFFF;
 MEM_COMMIT      :: 0x00001000;
@@ -130,7 +130,7 @@ PIXELFORMATDESCRIPTOR :: struct
 	dwDamageMask : u32;
 };
 
-CreateFileA :: external (
+CreateFileA :: #external (
 		lpFileName : ^u8,
 		dwDesiredAccess : u32,
 		dwShareMode : u32,
@@ -138,15 +138,15 @@ CreateFileA :: external (
 		dwCreationDisposition : u32,
 		dwFlagsAndAttributes : u32,
 		hTemplateFile : ^void) -> ^void;
-CloseHandle :: external (handle : ^void);
-GetFileSize :: external (handle : ^void, lpFileSizeHigh : ^u32) -> u32;
-ReadFile :: external (hFile : ^void, lpBuffer : ^void, nNumberOfBytesToRead : u32, lpNumberOfBytesRead : ^u32, lpOverlapped : ^void) -> bool;
-VirtualAlloc :: external (lpAddress : ^void, dwSize : u64, flAllocationType : u32, flProtect : u32) -> ^void;
-VirtualFree :: external (lpAddress : ^void, dwSize : u64, dwFreeType : u32) -> bool;
-AttachConsole :: external (handle : ^void);
-GetModuleHandleA :: external (lpModuleName : ^void) -> ^void;
-RegisterClassExA :: external (wndClass : ^WNDCLASSEXA) -> u16;
-CreateWindowExA :: external (
+CloseHandle :: #external (handle : ^void);
+GetFileSize :: #external (handle : ^void, lpFileSizeHigh : ^u32) -> u32;
+ReadFile :: #external (hFile : ^void, lpBuffer : ^void, nNumberOfBytesToRead : u32, lpNumberOfBytesRead : ^u32, lpOverlapped : ^void) -> bool;
+VirtualAlloc :: #external (lpAddress : ^void, dwSize : u64, flAllocationType : u32, flProtect : u32) -> ^void;
+VirtualFree :: #external (lpAddress : ^void, dwSize : u64, dwFreeType : u32) -> bool;
+AttachConsole :: #external (handle : ^void);
+GetModuleHandleA :: #external (lpModuleName : ^void) -> ^void;
+RegisterClassExA :: #external (wndClass : ^WNDCLASSEXA) -> u16;
+CreateWindowExA :: #external (
 		dwExStyle : u32,
 		lpClassName : ^u8,
 		lpWindowName : ^u8,
@@ -160,20 +160,20 @@ CreateWindowExA :: external (
 		hInstance : ^void,
 		lpParam : ^void
 	) -> ^void;
-ShowWindow :: external (hWnd : ^void, nCmdShow : s32);
-GetLastError :: external () -> u32;
-DefWindowProcA :: external (hWnd : ^void, uMsg : u32, wParam : u64, lParam : u64) -> u64;
-PeekMessageA :: external (lpMsg : ^MSG, hWnd : ^void, wMsgFilterMin : u32, wMsgFilterMax : u32,
+ShowWindow :: #external (hWnd : ^void, nCmdShow : s32);
+GetLastError :: #external () -> u32;
+DefWindowProcA :: #external (hWnd : ^void, uMsg : u32, wParam : u64, lParam : u64) -> u64;
+PeekMessageA :: #external (lpMsg : ^MSG, hWnd : ^void, wMsgFilterMin : u32, wMsgFilterMax : u32,
 		wRemoveMsg : u32) -> bool;
-TranslateMessage :: external (message : ^MSG) -> bool;
-DispatchMessageA :: external (message : ^MSG) -> s64;
-LoadModule :: external (lpLibFileName : ^u8) -> ^void;
-GetProcAddress :: external (hModule : ^void, lpProcName : ^u8) -> ^void;
-GetDC :: external (hWnd : ^void) -> ^void;
-ReleaseDC :: external (hWnd : ^void, hdc : ^void);
-ChoosePixelFormat :: external (hdc : ^void, ppfd : ^PIXELFORMATDESCRIPTOR) -> s64;
-SetPixelFormat :: external (hdc : ^void, format : s64, ppfd : ^PIXELFORMATDESCRIPTOR);
-PostQuitMessage :: external (nExitCode : s64);
-DestroyWindow :: external (hWnd : ^void) -> bool;
-TerminateProcess :: external (uExitCode : u32);
-ExitProcess :: external (uExitCode : u32);
+TranslateMessage :: #external (message : ^MSG) -> bool;
+DispatchMessageA :: #external (message : ^MSG) -> s64;
+LoadModule :: #external (lpLibFileName : ^u8) -> ^void;
+GetProcAddress :: #external (hModule : ^void, lpProcName : ^u8) -> ^void;
+GetDC :: #external (hWnd : ^void) -> ^void;
+ReleaseDC :: #external (hWnd : ^void, hdc : ^void);
+ChoosePixelFormat :: #external (hdc : ^void, ppfd : ^PIXELFORMATDESCRIPTOR) -> s64;
+SetPixelFormat :: #external (hdc : ^void, format : s64, ppfd : ^PIXELFORMATDESCRIPTOR);
+PostQuitMessage :: #external (nExitCode : s64);
+DestroyWindow :: #external (hWnd : ^void) -> bool;
+TerminateProcess :: #external (uExitCode : u32);
+ExitProcess :: #external (uExitCode : u32);

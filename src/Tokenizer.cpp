@@ -298,14 +298,14 @@ Token ReadTokenAndAdvance(Context *context, Tokenizer *tokenizer)
 			result.type = TOKEN_KEYWORD_FOR;
 		else if (TokenIsStr(&result, "break"))
 			result.type = TOKEN_KEYWORD_BREAK;
+		else if (TokenIsStr(&result, "continue"))
+			result.type = TOKEN_KEYWORD_CONTINUE;
 		else if (TokenIsStr(&result, "struct"))
 			result.type = TOKEN_KEYWORD_STRUCT;
 		else if (TokenIsStr(&result, "union"))
 			result.type = TOKEN_KEYWORD_UNION;
 		else if (TokenIsStr(&result, "enum"))
 			result.type = TOKEN_KEYWORD_ENUM;
-		else if (TokenIsStr(&result, "external"))
-			result.type = TOKEN_KEYWORD_EXTERNAL;
 		else if (TokenIsStr(&result, "defer"))
 			result.type = TOKEN_KEYWORD_DEFER;
 		else if (TokenIsStr(&result, "using"))
@@ -373,6 +373,10 @@ Token ReadTokenAndAdvance(Context *context, Tokenizer *tokenizer)
 			}
 			else if (StringEquals(result.string, "#type"_s))
 				result.type = TOKEN_KEYWORD_TYPE;
+			else if (StringEquals(result.string, "#inline"_s))
+				result.type = TOKEN_KEYWORD_INLINE;
+			else if (StringEquals(result.string, "#external"_s))
+				result.type = TOKEN_KEYWORD_EXTERNAL;
 			else
 				LogError(context, result.loc, "Invalid parser directive"_s);
 		} break;

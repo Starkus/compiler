@@ -148,6 +148,7 @@ struct ASTVariableDeclaration : ASTBase
 	String name;
 	ASTExpression *astInitialValue;
 	ASTType *astType;
+	bool isInline;
 	bool isStatic;
 	bool isExternal;
 	bool isUsing;
@@ -255,6 +256,7 @@ enum ASTNodeType
 	ASTNODETYPE_IF,
 	ASTNODETYPE_WHILE,
 	ASTNODETYPE_FOR,
+	ASTNODETYPE_CONTINUE,
 	ASTNODETYPE_BREAK,
 	ASTNODETYPE_RETURN,
 	ASTNODETYPE_DEFER,

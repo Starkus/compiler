@@ -1,0 +1,30 @@
+AProc :: #inline ()
+{
+	Print("Hey there\n");
+}
+
+Params :: #inline (five : u32, threeHalves : f32, big : u64)
+{
+	PrintF("Inlined arguments: %, %, %\n", five, threeHalves, big);
+}
+
+ReturnSomething :: #inline () -> s32
+{
+	return 25;
+}
+
+/*
+Cyclic :: #inline (i : s32)
+{
+	if i > 0 Cyclic(i - 1);
+}
+*/
+
+Main :: () -> s64
+{
+	AProc();
+	Params(5, 1.5, 123456789);
+	inlineRet := ReturnSomething();
+	PrintF("Inline return: %\n", inlineRet);
+	return 0;
+}

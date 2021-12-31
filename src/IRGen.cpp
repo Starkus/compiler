@@ -244,6 +244,8 @@ struct IRProcedureScope
 	s64 irStackBase;
 	IRLabel *returnLabel;
 	u32 shouldReturnValueIdx;
+
+	SourceLocation definitionLoc;
 };
 
 struct IRStaticVariable
@@ -282,12 +284,13 @@ void PopIRScope(Context *context)
 	--context->irStack.size;
 }
 
-IRProcedureScope *PushIRProcedure(Context *context, s32 procedureIdx)
+IRProcedureScope *PushIRProcedure(Context *context, SourceLocation definitionLoc, s32 procedureIdx)
 {
 	IRProcedureScope procScope;
 	procScope.procedureIdx = procedureIdx;
 	procScope.irStackBase = context->irStack.size;
 	procScope.shouldReturnValueIdx = U32_MAX;
+	procScope.definitionLoc = definitionLoc;
 
 	IRProcedureScope *newProcScope = DynamicArrayAdd(&context->irProcedureStack);
 	*newProcScope = procScope;
@@ -316,7 +319,7 @@ void IRAddComment(Context *context, String comment)
 	*AddInstruction(context) = result;
 }
 
-IRValue IRValueValue(u32 valueIdx, s64 typeTableIdx = TYPETABLEIDX_S64)
+IRValue IRValueValue(u32 valueIdx, s64 typeTableIdx)
 {
 	IRValue result;
 	result.valueType = IRVALUETYPE_VALUE;
@@ -981,7 +984,7 @@ void IRConditionalJumpFromExpression(Context *context, ASTExpression *conditionE
 			jump.type = IRINSTRUCTIONTYPE_JUMP_IF_LESS_THAN;
 			break;
 		case TOKEN_OP_LESS_THAN_OR_EQUAL:
-			jump.type = IRINSTRUCTIONTYPE_JUMP_IF_LESS_THAN;
+			jump.type = IRINSTRUCTIONTYPE_JUMP_IF_GREATER_THAN;
 			break;
 		default:
 			goto defaultConditionEvaluation;
@@ -1027,6 +1030,166 @@ defaultConditionEvaluation:
 	jump->conditionalJump.condition = conditionResult;
 }
 
+IRValue IRDoInlineProcedureCall(Context *context, ASTProcedureCall astProcCall)
+{
+	ASSERT(!astProcCall.isIndirect);
+	Procedure *procedure = GetProcedure(context, astProcCall.procedureIdx);
+
+	// Check for cyclic inline procedure calls
+	for (int i = 0; i < context->irProcedureStack.size; ++i)
+	{
+		if (context->irProcedureStack[i].procedureIdx == astProcCall.procedureIdx)
+		{
+			LogErrorNoCrash(context, astProcCall.loc, "Cyclic inlined procedure call"_s);
+			LogNote(context, context->irProcedureStack[i].definitionLoc, "First called here"_s);
+			CRASH;
+		}
+	}
+
+	TypeInfoProcedure procTypeInfo = context->typeTable[procedure->typeTableIdx].procedureInfo;
+	bool isVarargs = procTypeInfo.isVarargs;
+
+	// Support both varargs and default parameters here
+	s32 procParamCount = (s32)procTypeInfo.parameters.size;
+	s32 callParamCount = (s32)astProcCall.arguments.size;
+
+	// Set up parameters
+	s64 normalArgumentsCount = Min(callParamCount, procParamCount);
+	for (int argIdx = 0; argIdx < normalArgumentsCount; ++argIdx)
+	{
+		ASTExpression *arg = &astProcCall.arguments[argIdx];
+		IRValue argValue = IRGenFromExpression(context, arg);
+
+		IRValue param = IRValueValue(context, procedure->parameterValues[argIdx]);
+		IRDoAssignment(context, param, argValue);
+	}
+
+	// Default parameters
+	for (u64 argIdx = astProcCall.arguments.size; argIdx < procParamCount;
+			++argIdx)
+	{
+		ProcedureParameter procParam = procTypeInfo.parameters[argIdx];
+		Constant constant = procParam.defaultValue;
+		IRValue arg = {};
+		if (constant.type == CONSTANTTYPE_INTEGER)
+			arg = IRValueImmediate(constant.valueAsInt, procParam.typeTableIdx);
+		else if (constant.type == CONSTANTTYPE_FLOATING)
+			arg = IRValueImmediateFloat(context, constant.valueAsFloat,
+					procParam.typeTableIdx);
+		else
+			ASSERT(!"Invalid constant type");
+		IRValue param = IRValueValue(context, procedure->parameterValues[argIdx]);
+		IRDoAssignment(context, param, arg);
+	}
+
+	// Varargs
+	if (isVarargs)
+	{
+		s64 varargsCount = astProcCall.arguments.size - procParamCount;
+		IRValue varargsParam = IRValueValue(context, procedure->parameterValues[procParamCount - 1]);
+
+		s64 anyTableIdx = FindTypeInStackByName(context, {}, "Any"_s);
+		s64 arrayOfAnyTableIdx = GetTypeInfoArrayOf(context, anyTableIdx, 0);
+
+		if (varargsCount == 1)
+		{
+			ASTExpression *varargsArrayExp = &astProcCall.arguments[procParamCount];
+			if (varargsArrayExp->typeTableIdx == arrayOfAnyTableIdx)
+			{
+				IRValue varargsArray = IRGenFromExpression(context, varargsArrayExp);
+				IRDoAssignment(context, varargsParam, varargsArray);
+				goto skipGeneratingVarargsArray;
+			}
+		}
+
+		IRAddComment(context, "Build varargs array"_s);
+
+		IRValue pointerToBuffer;
+		if (varargsCount > 0)
+		{
+			// Allocate stack space for buffer
+			u32 bufferValueIdx = IRAddTempValue(context, "_varargsBuffer"_s,
+					GetTypeInfoArrayOf(context, anyTableIdx, varargsCount), VALUEFLAGS_FORCE_MEMORY);
+			IRValue bufferIRValue = IRValueValue(context, bufferValueIdx);
+
+			// Fill the buffer
+			int nonVarargs = (int)procParamCount;
+			for (int argIdx = 0; argIdx < varargsCount; ++argIdx)
+			{
+				ASTExpression *arg = &astProcCall.arguments[argIdx + nonVarargs];
+
+				IRValue bufferIndexValue = IRValueImmediate(argIdx);
+				IRValue bufferSlotValue = IRDoArrayAccess(context, bufferIRValue, bufferIndexValue,
+						anyTableIdx);
+
+				IRValue rightValue = IRGenFromExpression(context, arg);
+				IRDoAssignment(context, bufferSlotValue, rightValue);
+			}
+
+			pointerToBuffer = IRPointerToValue(context, bufferIRValue);
+		}
+		else
+			pointerToBuffer = IRValueImmediate(0, GetTypeInfoPointerOf(context, anyTableIdx));
+
+		// By now we should have the buffer with all the varargs as Any structs.
+		// Now we put it into a dynamic array struct.
+		s64 dynamicArrayTableIdx = FindTypeInStackByName(context, {}, "Array"_s);
+
+		// Allocate stack space for array
+		u32 arrayValueIdx = IRAddTempValue(context, "_varargsArray"_s, arrayOfAnyTableIdx,
+				VALUEFLAGS_FORCE_MEMORY);
+		IRValue arrayIRValue = IRValueValue(context, arrayValueIdx);
+
+		TypeInfo dynamicArrayTypeInfo = context->typeTable[dynamicArrayTableIdx];
+		// Size
+		{
+			StructMember sizeStructMember = dynamicArrayTypeInfo.structInfo.members[0];
+			IRValue sizeMember = IRDoMemberAccess(context, arrayIRValue, sizeStructMember);
+			IRValue sizeValue = IRValueImmediate(varargsCount);
+			IRDoAssignment(context, sizeMember, sizeValue);
+		}
+
+		// Data
+		{
+			StructMember dataStructMember = dynamicArrayTypeInfo.structInfo.members[1];
+			IRValue dataMember = IRDoMemberAccess(context, arrayIRValue, dataStructMember);
+			IRValue dataValue = pointerToBuffer;
+			IRDoAssignment(context, dataMember, dataValue);
+		}
+
+		// Pass array as parameter!
+		IRDoAssignment(context, varargsParam, IRPointerToValue(context, arrayIRValue));
+	}
+skipGeneratingVarargsArray:
+
+	// Temporarily make procedure's instruction array that of the calling procedure
+	BucketArray<IRInstruction, 256, malloc, realloc> prevInstructionArray = procedure->instructions;
+	IRProcedureScope *stackTop = &context->irProcedureStack[context->irProcedureStack.size - 1];
+	Procedure *callingProcedure = GetProcedure(context, stackTop->procedureIdx);
+	procedure->instructions = callingProcedure->instructions;
+
+	IRProcedureScope *newScope = PushIRProcedure(context, astProcCall.loc, astProcCall.procedureIdx);
+	IRLabel *returnLabel = NewLabel(context, "inline_return"_s);
+	newScope->returnLabel = returnLabel;
+
+	ASSERT(procedure->astBody);
+	IRGenFromExpression(context, procedure->astBody);
+
+	IRInstruction *returnLabelInst = AddInstruction(context);
+	returnLabel->instructionIdx = BucketArrayCount(&procedure->instructions) - 1;
+	returnLabelInst->type = IRINSTRUCTIONTYPE_LABEL;
+	returnLabelInst->label = returnLabel;
+
+	PopIRProcedure(context);
+	callingProcedure->instructions = procedure->instructions;
+	procedure->instructions = prevInstructionArray;
+
+	if (procedure->returnValueIdx != U32_MAX)
+		return IRValueValue(context, procedure->returnValueIdx);
+	else
+		return {};
+}
+
 IRValue IRGenFromExpression(Context *context, ASTExpression *expression)
 {
 	IRValue result = {};
@@ -1046,7 +1209,8 @@ IRValue IRGenFromExpression(Context *context, ASTExpression *expression)
 		Procedure *procedure = GetProcedure(context, procedureIdx);
 		BucketArrayInit(&procedure->instructions);
 
-		IRProcedureScope *currentProc = PushIRProcedure(context, procedureIdx);
+		IRProcedureScope *currentProc = PushIRProcedure(context, expression->any.loc,
+				procedureIdx);
 		IRLabel *returnLabel = NewLabel(context, "return"_s);
 		currentProc->returnLabel = returnLabel;
 
@@ -1309,9 +1473,15 @@ IRValue IRGenFromExpression(Context *context, ASTExpression *expression)
 		s64 procTypeIdx;
 		if (!astProcCall->isIndirect)
 		{
+			Procedure *proc = GetProcedure(context, astProcCall->procedureIdx);
+			if (proc->isInline)
+			{
+				return IRDoInlineProcedureCall(context, *astProcCall);
+			}
+
 			procCallInst.type = IRINSTRUCTIONTYPE_PROCEDURE_CALL;
 			procCallInst.procedureCall.procedureIdx = astProcCall->procedureIdx;
-			procTypeIdx = GetProcedure(context, astProcCall->procedureIdx)->typeTableIdx;
+			procTypeIdx = proc->typeTableIdx;
 		}
 		else
 		{
@@ -1620,54 +1790,79 @@ skipGeneratingVarargsArray:
 		} break;
 		case LITERALTYPE_STRUCT:
 		{
-			s64 structTypeIdx = expression->typeTableIdx;
-			ASSERT(structTypeIdx > 0);
+			s64 groupTypeIdx = expression->typeTableIdx;
+			ASSERT(groupTypeIdx > 0);
+			TypeInfo groupTypeInfo = context->typeTable[groupTypeIdx];
 
-			IRValue structIRValue = IRValueNewValue(context, "_structLiteral"_s, structTypeIdx, 0);
-			IRPushValueIntoStack(context, structIRValue.valueIdx);
-
-			struct StructStackFrame
+			if (groupTypeInfo.typeCategory == TYPECATEGORY_STRUCT)
 			{
-				s64 structTypeIdx;
-				int idx;
-			};
-			DynamicArray<StructStackFrame, FrameAlloc, FrameRealloc> structStack;
-			DynamicArrayInit(&structStack, 8);
-			*DynamicArrayAdd(&structStack) = { structTypeIdx, 0 };
+				IRValue structIRValue = IRValueNewValue(context, "_structLiteral"_s, groupTypeIdx, 0);
+				IRPushValueIntoStack(context, structIRValue.valueIdx);
 
-			for (int memberIdx = 0; memberIdx < expression->literal.members.size; )
-			{
-				ASTExpression *literalMemberExp = expression->literal.members[memberIdx];
-				StructStackFrame currentFrame = structStack[structStack.size - 1];
-				TypeInfo currentStructTypeInfo = context->typeTable[currentFrame.structTypeIdx];
-
-				if (currentFrame.idx >= currentStructTypeInfo.structInfo.members.size)
+				struct StructStackFrame
 				{
-					// Pop struct frame
-					--structStack.size;
-					ASSERT(structStack.size > 0);
-					continue;
+					s64 structTypeIdx;
+					int idx;
+				};
+				DynamicArray<StructStackFrame, FrameAlloc, FrameRealloc> structStack;
+				DynamicArrayInit(&structStack, 8);
+				*DynamicArrayAdd(&structStack) = { groupTypeIdx, 0 };
+
+				for (int memberIdx = 0; memberIdx < expression->literal.members.size; )
+				{
+					ASTExpression *literalMemberExp = expression->literal.members[memberIdx];
+					StructStackFrame currentFrame = structStack[structStack.size - 1];
+					TypeInfo currentStructTypeInfo = context->typeTable[currentFrame.structTypeIdx];
+
+					if (currentFrame.idx >= currentStructTypeInfo.structInfo.members.size)
+					{
+						// Pop struct frame
+						--structStack.size;
+						ASSERT(structStack.size > 0);
+						continue;
+					}
+
+					StructMember currentMember = currentStructTypeInfo.structInfo.members[currentFrame.idx];
+					TypeCategory memberTypeCat = context->typeTable[currentMember.typeTableIdx].typeCategory;
+
+					if (memberTypeCat == TYPECATEGORY_STRUCT || memberTypeCat == TYPECATEGORY_UNION)
+					{
+						// Push struct frame
+						structStack[structStack.size++] = { currentMember.typeTableIdx, 0 };
+						continue;
+					}
+
+					IRValue memberValue = IRDoMemberAccess(context, structIRValue, currentMember);
+					IRValue src = IRGenFromExpression(context, literalMemberExp);
+					IRDoAssignment(context, memberValue, src);
+
+					++structStack[structStack.size - 1].idx;
+					++memberIdx;
 				}
 
-				StructMember currentMember = currentStructTypeInfo.structInfo.members[currentFrame.idx];
-				TypeCategory memberTypeCat = context->typeTable[currentMember.typeTableIdx].typeCategory;
-
-				if (memberTypeCat == TYPECATEGORY_STRUCT || memberTypeCat == TYPECATEGORY_UNION)
-				{
-					// Push struct frame
-					structStack[structStack.size++] = { currentMember.typeTableIdx, 0 };
-					continue;
-				}
-
-				IRValue memberValue = IRDoMemberAccess(context, structIRValue, currentMember);
-				IRValue src = IRGenFromExpression(context, literalMemberExp);
-				IRDoAssignment(context, memberValue, src);
-
-				++structStack[structStack.size - 1].idx;
-				++memberIdx;
+				result = structIRValue;
 			}
+			else if (groupTypeInfo.typeCategory == TYPECATEGORY_ARRAY)
+			{
+				IRValue arrayIRValue = IRValueNewValue(context, "_arrayLiteral"_s, groupTypeIdx, 0);
+				IRPushValueIntoStack(context, arrayIRValue.valueIdx);
 
-			result = structIRValue;
+				s64 elementTypeIdx = groupTypeInfo.arrayInfo.elementTypeTableIdx;
+				for (int memberIdx = 0; memberIdx < expression->literal.members.size; ++memberIdx)
+				{
+					ASTExpression *literalMemberExp = expression->literal.members[memberIdx];
+
+					IRValue indexIRValue = IRValueImmediate(memberIdx);
+					IRValue elementValue = IRDoArrayAccess(context, arrayIRValue, indexIRValue,
+							elementTypeIdx);
+					IRValue src = IRGenFromExpression(context, literalMemberExp);
+					IRDoAssignment(context, elementValue, src);
+				}
+
+				result = arrayIRValue;
+			}
+			else
+				ASSERT(!"Invalid type to the left of group literal. Type checking should catch this");
 		} break;
 		default:
 			ASSERT(!"Unexpected literal type");
@@ -1704,12 +1899,14 @@ skipGeneratingVarargsArray:
 	} break;
 	case ASTNODETYPE_WHILE:
 	{
-		IRLabel *loopLabel = NewLabel(context, "loop"_s);
-		IRLabel *breakLabel = NewLabel(context, "break"_s);
+		IRLabel *loopLabel     = NewLabel(context, "loop"_s);
+		IRLabel *breakLabel    = NewLabel(context, "break"_s);
 		IRInsertLabelInstruction(context, loopLabel);
 
-		IRLabel *oldBreakLabel = context->currentBreakLabel;
-		context->currentBreakLabel = breakLabel;
+		IRLabel *oldBreakLabel    = context->currentBreakLabel;
+		IRLabel *oldContinueLabel = context->currentContinueLabel;
+		context->currentBreakLabel    = breakLabel;
+		context->currentContinueLabel = loopLabel;
 
 		IRConditionalJumpFromExpression(context, expression->whileNode.condition, breakLabel);
 
@@ -1721,7 +1918,8 @@ skipGeneratingVarargsArray:
 
 		IRInsertLabelInstruction(context, breakLabel);
 
-		context->currentBreakLabel = oldBreakLabel;
+		context->currentBreakLabel    = oldBreakLabel;
+		context->currentContinueLabel = oldContinueLabel;
 	} break;
 	case ASTNODETYPE_FOR:
 	{
@@ -1783,13 +1981,16 @@ skipGeneratingVarargsArray:
 		else
 			CRASH;
 
-		IRLabel *loopLabel = NewLabel(context, "loop"_s);
+		IRLabel *loopLabel     = NewLabel(context, "loop"_s);
+		IRLabel *breakLabel    = NewLabel(context, "break"_s);
+		IRLabel *continueLabel = NewLabel(context, "continue"_s);
+
 		IRInsertLabelInstruction(context, loopLabel);
 
-		IRLabel *breakLabel = NewLabel(context, "break"_s);
-
-		IRLabel *oldBreakLabel = context->currentBreakLabel;
-		context->currentBreakLabel = breakLabel;
+		IRLabel *oldBreakLabel    = context->currentBreakLabel;
+		IRLabel *oldContinueLabel = context->currentContinueLabel;
+		context->currentBreakLabel    = breakLabel;
+		context->currentContinueLabel = continueLabel;
 
 		IRInstruction *breakJump = AddInstruction(context);
 		breakJump->type = IRINSTRUCTIONTYPE_JUMP_IF_GREATER_THAN_OR_EQUALS;
@@ -1798,6 +1999,8 @@ skipGeneratingVarargsArray:
 		breakJump->conditionalJump2.right = to;
 
 		IRGenFromExpression(context, expression->forNode.body);
+
+		IRInsertLabelInstruction(context, continueLabel);
 
 		// Increment 'i'
 		IRInstruction incrementInst = {};
@@ -1824,12 +2027,20 @@ skipGeneratingVarargsArray:
 		IRInstruction *loopJump = AddInstruction(context);
 		IRInsertLabelInstruction(context, breakLabel);
 
-		context->currentBreakLabel = oldBreakLabel;
+		context->currentBreakLabel    = oldBreakLabel;
+		context->currentContinueLabel = oldContinueLabel;
 
 		loopJump->type = IRINSTRUCTIONTYPE_JUMP;
 		loopJump->jump.label = loopLabel;
 
 		PopIRScope(context);
+	} break;
+	case ASTNODETYPE_CONTINUE:
+	{
+		IRInstruction inst;
+		inst.type = IRINSTRUCTIONTYPE_JUMP;
+		inst.jump.label = context->currentContinueLabel;
+		*AddInstruction(context) = inst;
 	} break;
 	case ASTNODETYPE_BREAK:
 	{

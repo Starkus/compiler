@@ -124,6 +124,7 @@ struct Context
 	DynamicArray<IRProcedureScope, malloc, realloc> irProcedureStack;
 	BucketArray<IRLabel, 1024, malloc, realloc> irLabels;
 	IRLabel *currentBreakLabel;
+	IRLabel *currentContinueLabel;
 
 	// Backend
 	HANDLE outputFile;

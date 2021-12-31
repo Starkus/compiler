@@ -92,8 +92,8 @@ Any :: struct
 	data : ^void;
 };
 
-GetStdHandle :: external (handle: s64) -> s64;
-WriteFile :: external (handle: s64, buffer: ^void, bytesToWrite: s64, bytesWritten: ^s64,
+GetStdHandle :: #external (handle: s64) -> s64;
+WriteFile :: #external (handle: s64, buffer: ^void, bytesToWrite: s64, bytesWritten: ^s64,
 		overlapped: ^void) -> bool;
 Print :: (string: String)
 {

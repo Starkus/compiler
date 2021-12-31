@@ -723,16 +723,16 @@ WGL_TYPE_RGBA_ARB                 :: 0x202B;
 WGL_TYPE_COLORINDEX_ARB           :: 0x202C;
 
 // Windows
-SwapBuffers :: external (hdc : ^void) -> bool;
-DescribePixelFormat :: external (hdc : ^void, iPixelFormat : s32, nBytes : u32, ppfd : ^PIXELFORMATDESCRIPTOR) -> s32;
+SwapBuffers :: #external (hdc : ^void) -> bool;
+DescribePixelFormat :: #external (hdc : ^void, iPixelFormat : s32, nBytes : u32, ppfd : ^PIXELFORMATDESCRIPTOR) -> s32;
 
-glViewport :: external (x : s32, y : s32, width : s32, height : s32);
-glClearColor :: external (red : f32, green : f32, blue : f32, alpha : f32);
-glClear :: external (GLbitfieldmask : u32);
-wglGetProcAddress :: external (procName : ^u8) -> ^void;
-wglCreateContext :: external (hdc : ^void) -> ^void;
-wglMakeCurrent :: external (hdc : ^void, hglc : ^void) -> bool;
-wglDeleteContext :: external (hglc : ^void) -> bool;
+glViewport :: #external (x : s32, y : s32, width : s32, height : s32);
+glClearColor :: #external (red : f32, green : f32, blue : f32, alpha : f32);
+glClear :: #external (GLbitfieldmask : u32);
+wglGetProcAddress :: #external (procName : ^u8) -> ^void;
+wglCreateContext :: #external (hdc : ^void) -> ^void;
+wglMakeCurrent :: #external (hdc : ^void, hglc : ^void) -> bool;
+wglDeleteContext :: #external (hglc : ^void) -> bool;
 
 // Linked at runtime
 glGenVertexArrays :s (n : GLsizei, arrays : ^GLuint);

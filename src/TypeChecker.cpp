@@ -1758,7 +1758,7 @@ skipNotFoundError:
 			}
 
 			s64 totalArguments = procTypeInfo.parameters.size;
-			s64 givenArguments  = expression->procedureCall.arguments.size;
+			s64 givenArguments = expression->procedureCall.arguments.size;
 			if (procTypeInfo.isVarargs)
 			{
 				if (requiredArguments > givenArguments)
@@ -2069,6 +2069,9 @@ skipNotFoundError:
 		PopTCScope(context);
 	} break;
 	case ASTNODETYPE_BREAK:
+	{
+	} break;
+	case ASTNODETYPE_CONTINUE:
 	{
 	} break;
 	case ASTNODETYPE_TYPE:

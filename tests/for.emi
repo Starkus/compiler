@@ -43,6 +43,14 @@ Main :: () -> s64
 	}
 	Print("\n");
 
+	// Continue test
+	for 0..16
+	{
+		if i % 2 continue;
+		PrintF("i = %, ", i);
+	}
+	Print("\n");
+
 	Print("Test ok\n");
 	return 0;
 }
