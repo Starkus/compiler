@@ -1,0 +1,22 @@
+Main :: () -> s64
+{
+	n : f64 = 25.0;
+	#intrinsic(sqrt64, n, n);
+	PrintF("Sqrt of 25 is %\n", n);
+
+	struct {
+		n2 : f64;
+	};
+	n2 = 36.0;
+	#intrinsic(sqrt64, n2, n2);
+	PrintF("Sqrt of 36 is %\n", n2);
+
+	for 0..31416
+	{
+		f := cast(f64)i * 0.0001;
+		sin := Sin64(f);
+		PrintF("Sin64(%) = %\n", f, sin);
+	}
+
+	return 0;
+}

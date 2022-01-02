@@ -72,6 +72,18 @@ Mat4Scale :: (a : mat4, b : f32) -> mat4
 	return result;
 }
 
+Mat4Divide :: (a : mat4, b : f32) -> mat4
+{
+	result : mat4 =
+	{
+		a.m00 / b, a.m01 / b, a.m02 / b, a.m03 / b,
+		a.m10 / b, a.m11 / b, a.m12 / b, a.m13 / b,
+		a.m20 / b, a.m21 / b, a.m22 / b, a.m23 / b,
+		a.m30 / b, a.m31 / b, a.m32 / b, a.m33 / b
+	};
+	return result;
+}
+
 Mat4MakeTranslation :: (translation : v3, scale : f32 = 1.0) -> mat4
 {
 	result : mat4 =
@@ -143,7 +155,7 @@ V2SqrLen :: (a : v2) -> f32
 
 V2Length :: (a : v2) -> f32
 {
-	return Sqrt(a.x * a.x + a.y * a.y);
+	return Sqrt32(a.x * a.x + a.y * a.y);
 }
 
 V2Normalize :: (a : v2) -> v2
@@ -168,7 +180,7 @@ V3Cross :: (a : v3, b : v3) -> v3
 	return result;
 }
 
-V3Scale :: (v : v3, scale : v3) -> v3
+V3MakeScale :: (v : v3, scale : v3) -> v3
 {
 	result : v3 = { v.x * scale.x, v.y * scale.y, v.z * scale.z };
 	return result;
@@ -189,6 +201,12 @@ V3Subtract :: (a : v3, b : v3) -> v3
 V3Negate :: (v : v3) -> v3
 {
 	result : v3 = { -v.x, -v.y, -v.z };
+	return result;
+}
+
+V3Multiply :: (a : v3, b : v3) -> v3
+{
+	result : v3 = { a.x * b.x, a.y * b.y, a.z * b.z };
 	return result;
 }
 
@@ -216,7 +234,7 @@ V3SqrLen :: (a : v3) -> f32
 
 V3Length :: (a : v3) -> f32
 {
-	return Sqrt(V3SqrLen(a));
+	return Sqrt32(V3SqrLen(a));
 }
 
 V3Normalize :: (a : v3) -> v3
@@ -255,7 +273,7 @@ V4SqrLen :: (a : v4) -> f32
 
 V4Length :: (a : v4) -> f32
 {
-	return Sqrt(V4SqrLen(a));
+	return Sqrt32(V4SqrLen(a));
 }
 
 V4Normalize :: (a : v4) -> v4
@@ -350,7 +368,7 @@ Mat4Inverse :: (m : mat4) -> mat4
 	det : f32 = Mat4Determinant(m);
 	unit : mat4 = Mat4Divide(m, det);
 	result : mat4 = Mat4Adjugate(unit);
-	result = Mat4Multiply(result, det * det);
+	result = Mat4Scale(result, det * det);
 	return result;
 }
 
@@ -487,15 +505,15 @@ QuaternionFromRotationMatrix :: (m : mat4) -> v4
 			result = { m.m12 - m.m21, m.m20 - m.m02, m.m01 - m.m10, t };
 		}
 	}
-	result = V4Multiply(result, 0.5 / Sqrt(t));
+	result = V4Scale(result, 0.5 / Sqrt32(t));
 	return result;
 }
 
 QuaternionFromAxisAngle :: (axis : v3, angle : f32) -> v4
 {
 	halfAngle : f32 = angle * 0.5;
-	s : f32 = Sin(halfAngle);
-	c : f32 = Cos(halfAngle);
+	s : f32 = Sin32(halfAngle);
+	c : f32 = Cos32(halfAngle);
 	result : v4 = { axis.x * s, axis.y * s, axis.z * s, c };
 	return result;
 }
@@ -505,9 +523,13 @@ QuaternionRotateVector :: (q : v4, v : v3) -> v3
 	vectorPart : v3 = { q.x, q.y, q.z };
 	scalarPart : f32 = q.w;
 
-	result : v3 = vectorPart * 2.0 * V3Dot(vectorPart, v) +
-			v * (scalarPart * scalarPart - V3SqrLen(vectorPart)) +
-			V3Cross(vectorPart, v) * 2.0 * scalarPart;
+	result : v3 = V3Scale(vectorPart, 2.0 * V3Dot(vectorPart, v));
+	result = V3Add(result, V3Scale(v, scalarPart * scalarPart - V3SqrLen(vectorPart)));
+	result = V3Add(result, V3Scale(V3Cross(vectorPart, v), 2.0 * scalarPart));
+
+	//result : v3 = vectorPart * 2.0 * V3Dot(vectorPart, v) +
+			//v * (scalarPart * scalarPart - V3SqrLen(vectorPart)) +
+			//V3Cross(vectorPart, v) * 2.0 * scalarPart;
 
 	return result;
 }
@@ -530,12 +552,12 @@ QuaternionFromEulerXYZ :: (euler : v3) -> v4
 	halfPitch : f32 = euler.y * 0.5;
 	halfRoll : f32 = euler.x * 0.5;
 
-	cosYaw : f32 = Cos(halfYaw);
-	sinYaw : f32 = Sin(halfYaw);
-	cosPitch : f32 = Cos(halfPitch);
-	sinPitch : f32 = Sin(halfPitch);
-	cosRoll : f32 = Cos(halfRoll);
-	sinRoll : f32 = Sin(halfRoll);
+	cosYaw   : f32 = Cos32(halfYaw);
+	sinYaw   : f32 = Sin32(halfYaw);
+	cosPitch : f32 = Cos32(halfPitch);
+	sinPitch : f32 = Sin32(halfPitch);
+	cosRoll  : f32 = Cos32(halfRoll);
+	sinRoll  : f32 = Sin32(halfRoll);
 
 	result : v4 = ?;
 	result.x = sinRoll * cosPitch * cosYaw - cosRoll * sinPitch * sinYaw;
@@ -552,12 +574,12 @@ QuaternionFromEulerZYX :: (euler : v3) -> v4
 	halfPitch : f32 = euler.y * 0.5;
 	halfRoll : f32 = euler.x * 0.5;
 
-	cosYaw : f32 = Cos(halfYaw);
-	sinYaw : f32 = Sin(halfYaw);
-	cosPitch : f32 = Cos(halfPitch);
-	sinPitch : f32 = Sin(halfPitch);
-	cosRoll : f32 = Cos(halfRoll);
-	sinRoll : f32 = Sin(halfRoll);
+	cosYaw   : f32 = Cos32(halfYaw);
+	sinYaw   : f32 = Sin32(halfYaw);
+	cosPitch : f32 = Cos32(halfPitch);
+	sinPitch : f32 = Sin32(halfPitch);
+	cosRoll  : f32 = Cos32(halfRoll);
+	sinRoll  : f32 = Sin32(halfRoll);
 
 	result : v4 = ?;
 	result.x = sinRoll * cosPitch * cosYaw + cosRoll * sinPitch * sinYaw;
@@ -575,7 +597,7 @@ Transform :: struct
 	scale : v3;
 };
 
-Mat4ColumnV3 :: (m : mat4, column : i32) -> v3
+Mat4ColumnV3 :: (m : mat4, column : s32) -> v3
 {
 	result : v3 =
 	{
@@ -586,7 +608,7 @@ Mat4ColumnV3 :: (m : mat4, column : i32) -> v3
 	return result;
 }
 
-Mat4ColumnV4 :: (m : mat4, column : i32) -> v4
+Mat4ColumnV4 :: (m : mat4, column : s32) -> v4
 {
 	result : v4 =
 	{
@@ -607,9 +629,9 @@ Mat4Decompose :: (m : mat4, transform : Transform) -> void
 	m.m32 = 0;
 	transform.scale =
 	{
-		Sqrt(m.m00 * m.m00 + m.m10 * m.m10 + m.m20 * m.m20),
-		Sqrt(m.m01 * m.m01 + m.m11 * m.m11 + m.m21 * m.m21),
-		Sqrt(m.m02 * m.m02 + m.m12 * m.m12 + m.m22 * m.m22)
+		Sqrt32(m.m00 * m.m00 + m.m10 * m.m10 + m.m20 * m.m20),
+		Sqrt32(m.m01 * m.m01 + m.m11 * m.m11 + m.m21 * m.m21),
+		Sqrt32(m.m02 * m.m02 + m.m12 * m.m12 + m.m22 * m.m22)
 	};
 	m.m00 /= transform.scale.x;
 	m.m10 /= transform.scale.x;
@@ -623,7 +645,7 @@ Mat4Decompose :: (m : mat4, transform : Transform) -> void
 	transform.rotation = QuaternionFromRotationMatrix(m);
 }
 
-Mat4Compose :: (translation : v3, rotation : v4) -> mat4
+Mat4TranslationRotation :: (translation : v3, rotation : v4) -> mat4
 {
 	m : mat4 = ?;
 	m = Mat4FromQuaternion(rotation);
@@ -633,7 +655,7 @@ Mat4Compose :: (translation : v3, rotation : v4) -> mat4
 	return m;
 }
 
-Mat4Compose :: (t : Transform) -> mat4
+TranformToMat4 :: (t : Transform) -> mat4
 {
 	m : mat4 = ?;
 	m = Mat4FromQuaternion(t.rotation);
@@ -654,9 +676,22 @@ Mat4Compose :: (t : Transform) -> mat4
 
 Mat4Compose :: (translation : v3, rotation : v4, scale : f32) -> mat4
 {
-	s : v3 = { scale, scale, scale };
-	t : Transform = { translation, rotation, s };
-	return Mat4Compose(t);
+	m : mat4 = ?;
+	m = Mat4FromQuaternion(rotation);
+	m.m00 *= scale;
+	m.m10 *= scale;
+	m.m20 *= scale;
+	m.m01 *= scale;
+	m.m11 *= scale;
+	m.m21 *= scale;
+	m.m02 *= scale;
+	m.m12 *= scale;
+	m.m22 *= scale;
+	m.m30 = translation.x;
+	m.m31 = translation.y;
+	m.m32 = translation.z;
+
+	return m;
 }
 
 Mat4ChangeOfBases :: (fw : v3, up : v3, pos : v3) -> mat4
@@ -677,8 +712,10 @@ Mat4ChangeOfBases :: (fw : v3, up : v3, pos : v3) -> mat4
 TransformChain :: (a : Transform, b : Transform) -> Transform
 {
 	result : Transform ;
-	result.translation = V3Scale(QuaternionRotateVector(a.rotation, b.translation), a.scale) + a.translation;
+	result.translation = V3Add(
+			V3Multiply(QuaternionRotateVector(a.rotation, b.translation), a.scale),
+			a.translation);
 	result.rotation = QuaternionMultiply(a.rotation, b.rotation);
-	result.scale = V3Scale(a.scale, b.scale);
+	result.scale = V3Multiply(a.scale, b.scale);
 	return result;
 }

@@ -77,6 +77,12 @@ struct IRProcedureCall
 	u64 liveRegisters;
 };
 
+struct IRIntrinsic
+{
+	IntrinsicType type;
+	Array<IRValue> parameters;
+};
+
 struct IRPushValue
 {
 	u32 valueIdx;
@@ -168,6 +174,7 @@ enum IRInstructionType
 	IRINSTRUCTIONTYPE_RETURN,
 	IRINSTRUCTIONTYPE_PROCEDURE_CALL,
 	IRINSTRUCTIONTYPE_PROCEDURE_CALL_INDIRECT,
+	IRINSTRUCTIONTYPE_INTRINSIC,
 	IRINSTRUCTIONTYPE_PUSH_VALUE,
 	IRINSTRUCTIONTYPE_PUSH_SCOPE,
 	IRINSTRUCTIONTYPE_POP_SCOPE,
@@ -216,6 +223,7 @@ struct IRInstruction
 		IRConditionalJump conditionalJump;
 		IRConditionalJump2 conditionalJump2;
 		IRProcedureCall procedureCall;
+		IRIntrinsic intrinsic;
 		IRPushValue pushValue;
 		IRGetParameter getParameter;
 		IRGetTypeInfo getTypeInfo;
@@ -447,8 +455,6 @@ IRValue IRDereferenceValue(Context *context, IRValue in)
 	}
 	else if (in.valueType == IRVALUETYPE_MEMORY)
 	{
-		//s64 offset = in.memory.offset;
-		//in.memory.offset = 0;
 		String name = TPrintF("_deref_%S", context->values[in.valueIdx].name);
 		u32 newValueIdx = NewValue(context, name, in.typeTableIdx, 0);
 		IRValue value = IRValueValue(newValueIdx, in.typeTableIdx);
@@ -1679,6 +1685,24 @@ skipGeneratingVarargsArray:
 		*AddInstruction(context) = procCallInst;
 		break;
 	}
+	case ASTNODETYPE_INTRINSIC:
+	{
+		ASTIntrinsic astIntrinsic = expression->intrinsic;
+		IRInstruction inst = { IRINSTRUCTIONTYPE_INTRINSIC };
+		inst.intrinsic.type = astIntrinsic.type;
+		ArrayInit(&inst.intrinsic.parameters, astIntrinsic.arguments.size, malloc);
+
+		// Set up parameters
+		for (int argIdx = 0; argIdx < astIntrinsic.arguments.size; ++argIdx)
+		{
+			ASTExpression *arg = &astIntrinsic.arguments[argIdx];
+			IRValue param = IRGenFromExpression(context, arg);
+			*ArrayAdd(&inst.intrinsic.parameters) = param;
+		}
+
+		*AddInstruction(context) = inst;
+		break;
+	}
 	case ASTNODETYPE_UNARY_OPERATION:
 	{
 		if (expression->unaryOperation.op == TOKEN_OP_POINTER_TO)
@@ -2167,6 +2191,8 @@ skipGeneratingVarargsArray:
 	{
 		ASSERT(!"Shouldn't attempt to generate IR from GARBAGE node");
 	} break;
+	default:
+		ASSERT(!"Unknown ast node found type while generating IR");
 	}
 
 	return result;

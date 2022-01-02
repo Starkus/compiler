@@ -1,5 +1,7 @@
 * Reduce moving things from one register to another unnecessarily
 * Set members by name in struct literals
-* Can't use literal as pointer?
 * Verify small structs are passed properly through parameters
 * Some allocator that gets reset after each stage.
+* Operator overloading?
+* Struct literals for static variable initial value.
+* Rename struct literals to group literals? They can also be arrays.

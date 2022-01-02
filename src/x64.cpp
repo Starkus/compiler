@@ -68,6 +68,8 @@ enum X64InstructionType
 	X64_DIVSD,
 	X64_XORPS,
 	X64_XORPD,
+	X64_SQRTSS,
+	X64_SQRTSD,
 	X64_COMISS,
 	X64_COMISD,
 	X64_CVTSI2SS,
@@ -1099,12 +1101,27 @@ void X64ConvertInstruction(Context *context, IRInstruction inst, X64Procedure *x
 			X64Mov(context, x64Proc, inst.procedureCall.out, RAX);
 		return;
 	}
+	case IRINSTRUCTIONTYPE_INTRINSIC:
+	{
+		switch (inst.intrinsic.type)
+		{
+		case INTRINSIC_SQRT32:
+			result.type = X64_SQRTSS;
+			goto doTwoArgIntrinsic;
+		case INTRINSIC_SQRT64:
+			result.type = X64_SQRTSD;
+			goto doTwoArgIntrinsic;
+		default:
+			ASSERT(!"Invalid intrinsic");
+		}
+		return;
+	}
 	case IRINSTRUCTIONTYPE_COPY_MEMORY:
 	{
-		ASSERT(inst.copyMemory.dst.valueType  == IRVALUETYPE_VALUE ||
-			   inst.copyMemory.dst.valueType  == IRVALUETYPE_MEMORY);
-		ASSERT(inst.copyMemory.src.valueType  == IRVALUETYPE_VALUE ||
-			   inst.copyMemory.src.valueType  == IRVALUETYPE_MEMORY);
+		ASSERT(inst.copyMemory.dst.valueType == IRVALUETYPE_VALUE ||
+			   inst.copyMemory.dst.valueType == IRVALUETYPE_MEMORY);
+		ASSERT(inst.copyMemory.src.valueType == IRVALUETYPE_VALUE ||
+			   inst.copyMemory.src.valueType == IRVALUETYPE_MEMORY);
 		u32 dstIdx = inst.copyMemory.dst.valueIdx;
 		u32 srcIdx = inst.copyMemory.src.valueIdx;
 
@@ -1412,6 +1429,22 @@ doConditionalSet:
 
 		*BucketArrayAdd(&x64Proc->instructions) = cmpInst;
 		*BucketArrayAdd(&x64Proc->instructions) = result;
+		return;
+	}
+doTwoArgIntrinsic:
+	{
+		IRValue left  = inst.intrinsic.parameters[0];
+		IRValue right = inst.intrinsic.parameters[1];
+		IRValue out   = inst.intrinsic.parameters[0];
+
+		IRValue tmp = IRValueNewValue(context, left.typeTableIdx, 0);
+
+		result.dst = tmp;
+		result.src = right;
+		*BucketArrayAdd(&x64Proc->instructions) = result;
+
+		X64Mov(context, x64Proc, out, tmp);
+		return;
 	}
 }
 
@@ -1446,6 +1479,8 @@ String X64InstructionToStr(Context *context, X64Instruction inst)
 	case X64_DIVSD:
 	case X64_XORPS:
 	case X64_XORPD:
+	case X64_SQRTSS:
+	case X64_SQRTSD:
 	case X64_CVTSI2SS:
 	case X64_CVTSI2SD:
 	case X64_CVTTSS2SI:
@@ -1753,6 +1788,8 @@ void BackendMain(Context *context)
 	x64InstructionInfos[X64_DIVSD] =     { "divsd"_s,    ACCEPTEDOPERANDS_REGISTER, ACCEPTEDOPERANDS_REGMEM };
 	x64InstructionInfos[X64_XORPS] =     { "xorps"_s,    ACCEPTEDOPERANDS_REGISTER, ACCEPTEDOPERANDS_REGMEM };
 	x64InstructionInfos[X64_XORPD] =     { "xorpd"_s,    ACCEPTEDOPERANDS_REGISTER, ACCEPTEDOPERANDS_REGMEM };
+	x64InstructionInfos[X64_SQRTSS] =    { "sqrtss"_s,   ACCEPTEDOPERANDS_REGISTER, ACCEPTEDOPERANDS_REGMEM };
+	x64InstructionInfos[X64_SQRTSD] =    { "sqrtsd"_s,   ACCEPTEDOPERANDS_REGISTER, ACCEPTEDOPERANDS_REGMEM };
 	x64InstructionInfos[X64_COMISS] =    { "comiss"_s,   ACCEPTEDOPERANDS_REGMEM,   ACCEPTEDOPERANDS_REGMEM };
 	x64InstructionInfos[X64_COMISD] =    { "comisd"_s,   ACCEPTEDOPERANDS_REGMEM,   ACCEPTEDOPERANDS_REGMEM };
 	x64InstructionInfos[X64_CVTSI2SS] =  { "cvtsi2ss"_s, ACCEPTEDOPERANDS_REGISTER, ACCEPTEDOPERANDS_REGMEM };

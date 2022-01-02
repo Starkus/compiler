@@ -182,6 +182,20 @@ struct ASTProcedureCall : ASTBase
 	DynamicArray<ASTExpression, malloc, realloc> arguments;
 };
 
+enum IntrinsicType
+{
+	INTRINSIC_SQRT32,
+	INTRINSIC_SQRT64,
+};
+struct ASTIntrinsic : ASTBase
+{
+	String name;
+	DynamicArray<ASTExpression, malloc, realloc> arguments;
+
+	// Type check
+	IntrinsicType type;
+};
+
 struct ASTIf : ASTBase
 {
 	ASTExpression *condition;
@@ -253,6 +267,7 @@ enum ASTNodeType
 	ASTNODETYPE_ENUM_DECLARATION,
 	ASTNODETYPE_STATIC_DEFINITION,
 	ASTNODETYPE_PROCEDURE_CALL,
+	ASTNODETYPE_INTRINSIC,
 	ASTNODETYPE_IF,
 	ASTNODETYPE_WHILE,
 	ASTNODETYPE_FOR,
@@ -283,6 +298,7 @@ struct ASTExpression
 		ASTEnumDeclaration enumDeclaration;
 		ASTStaticDefinition staticDefinition;
 		ASTProcedureCall procedureCall;
+		ASTIntrinsic intrinsic;
 		ASTIf ifNode;
 		ASTWhile whileNode;
 		ASTFor forNode;

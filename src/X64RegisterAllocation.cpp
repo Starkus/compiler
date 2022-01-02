@@ -197,6 +197,8 @@ void DoLivenessAnalisisOnInstruction(Context *context, BasicBlock *basicBlock, X
 	case X64_MOVSS:
 	case X64_MOVSD:
 	case X64_LEA:
+	case X64_SQRTSS:
+	case X64_SQRTSD:
 	case X64_CVTSI2SS:
 	case X64_CVTSI2SD:
 	case X64_CVTTSS2SI:
@@ -394,8 +396,9 @@ nodeFound:
 			if (i == j) continue;
 			u32 edgeValueIdx = (*liveValues)[j];
 			Value edgeValue = context->values[edgeValueIdx];
-			bool edgeIsXMM = context->typeTable[edgeValue.typeTableIdx].typeCategory ==
-								TYPECATEGORY_FLOATING;
+			TypeInfo edgeTypeInfo = context->typeTable[edgeValue.typeTableIdx];
+			bool edgeIsXMM = edgeTypeInfo.size > 8 ||
+				edgeTypeInfo.typeCategory == TYPECATEGORY_FLOATING;
 			// Add only other values that compete for the same pool of registers.
 			// Floating point values use a different set of registers (xmmX).
 			if (isXMM == edgeIsXMM)
@@ -702,6 +705,8 @@ inline u64 RegisterSavingInstruction(Context *context, X64Instruction *inst, u64
 	case X64_DIVSD:
 	case X64_XORPS:
 	case X64_XORPD:
+	case X64_SQRTSS:
+	case X64_SQRTSD:
 	case X64_CMP:
 	case X64_COMISS:
 	case X64_COMISD:

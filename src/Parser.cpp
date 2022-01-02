@@ -846,7 +846,48 @@ ASTExpression ParseExpression(Context *context, s32 precedence)
 		Advance(context);
 
 		result.castNode.expression = NewTreeNode(context);
-		*result.castNode.expression = ParseExpression(context, -1);
+		int castPrecedence = GetOperatorPrecedence(TOKEN_KEYWORD_CAST);
+		*result.castNode.expression = ParseExpression(context, castPrecedence);
+	}
+	else if (context->token->type == TOKEN_KEYWORD_INTRINSIC)
+	{
+		Advance(context);
+		result.any.loc = context->token->loc;
+		result.nodeType = ASTNODETYPE_INTRINSIC;
+
+		AssertToken(context, context->token, '(');
+		Advance(context);
+
+		AssertToken(context, context->token, TOKEN_IDENTIFIER);
+		result.intrinsic.name = context->token->string;
+		Advance(context);
+
+		if (context->token->type == ',')
+		{
+			// Parse arguments
+			Advance(context);
+			DynamicArrayInit(&result.intrinsic.arguments, 4);
+			while (context->token->type != ')')
+			{
+				ASTExpression arg = ParseExpression(context, -1);
+				*DynamicArrayAdd(&result.intrinsic.arguments) = arg;
+
+				if (context->token->type != ')')
+				{
+					if (context->token->type != ',')
+					{
+						const String tokenTypeGot = TokenToString(context->token);
+						const String errorStr = TPrintF("Expected ')' or ',' but got %S",
+								tokenTypeGot);
+						LogError(context, context->token->loc, errorStr);
+					}
+					Advance(context);
+				}
+			}
+		}
+
+		AssertToken(context, context->token, ')');
+		Advance(context);
 	}
 	else if (context->token->type == TOKEN_KEYWORD_IF)
 	{
@@ -952,9 +993,21 @@ ASTStaticDefinition ParseStaticDefinition(Context *context)
 		}
 		else
 		{
-			procedureIdx = (s32)BucketArrayCount(&context->procedures);
+			s64 procedureCount = BucketArrayCount(&context->procedures);
+			for (int i = 1; i < procedureCount; ++i)
+			{
+				Procedure *proc = GetProcedure(context, i);
+				if (StringEquals(proc->name, result.name))
+				{
+					procedureIdx = i;
+					procedure = proc;
+					goto procFound;
+				}
+			}
+			procedureIdx = (s32)procedureCount;
 			procedure = BucketArrayAdd(&context->procedures);
 		}
+procFound:
 		*procedure = {};
 		procedure->returnValueIdx = U32_MAX;
 		procedure->name = result.name;
@@ -974,29 +1027,6 @@ ASTStaticDefinition ParseStaticDefinition(Context *context)
 			procedure->astBody = NewTreeNode(context);
 			*procedure->astBody = ParseStatement(context);
 		}
-	}
-	else if (context->token->type == TOKEN_KEYWORD_EXTERNAL)
-	{
-		Advance(context);
-
-		expression.nodeType = ASTNODETYPE_PROCEDURE_DECLARATION;
-
-		s32 procedureIdx = -(s32)BucketArrayCount(&context->externalProcedures);
-		Procedure *procedure = BucketArrayAdd(&context->externalProcedures);
-		*procedure = {};
-		procedure->name = result.name;
-		procedure->returnValueIdx = U32_MAX;
-
-		ASTProcedureDeclaration procDecl = {};
-		procDecl.loc = context->token->loc;
-		procDecl.procedureIdx = procedureIdx;
-		procDecl.prototype = ParseProcedurePrototype(context);
-		expression.procedureDeclaration = procDecl;
-
-		if (context->token->type != ';')
-			LogError(context, context->token->loc, "External procedure declaration can't have a body"_s);
-
-		Advance(context);
 	}
 	else if (context->token->type == TOKEN_KEYWORD_STRUCT ||
 			 context->token->type == TOKEN_KEYWORD_UNION ||

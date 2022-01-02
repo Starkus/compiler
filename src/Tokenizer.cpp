@@ -8,7 +8,7 @@ inline bool IsTokenOperator(Token *token)
 	return token->type >= TOKEN_OP_Begin && token->type <= TOKEN_OP_End;
 }
 
-s32 GetOperatorPrecedence(s32 op)
+int GetOperatorPrecedence(s32 op)
 {
 	// Even means evaluated left to right with things of same precedence.
 	// Odd means evaluated right to left with things of same precedence.
@@ -44,9 +44,11 @@ s32 GetOperatorPrecedence(s32 op)
 		case TOKEN_OP_POINTER_TO:
 		case TOKEN_OP_DEREFERENCE:
 			return 14;
+		case TOKEN_KEYWORD_CAST:
+			return 16;
 		case TOKEN_OP_ARRAY_ACCESS:
 		case TOKEN_OP_MEMBER_ACCESS:
-			return 16;
+			return 18;
 	}
 	return -1;
 }
@@ -377,8 +379,11 @@ Token ReadTokenAndAdvance(Context *context, Tokenizer *tokenizer)
 				result.type = TOKEN_KEYWORD_INLINE;
 			else if (StringEquals(result.string, "#external"_s))
 				result.type = TOKEN_KEYWORD_EXTERNAL;
+			else if (StringEquals(result.string, "#intrinsic"_s))
+				result.type = TOKEN_KEYWORD_INTRINSIC;
 			else
 				LogError(context, result.loc, "Invalid parser directive"_s);
+			return result;
 		} break;
 		case '=':
 		{

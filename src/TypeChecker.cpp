@@ -2095,6 +2095,47 @@ skipNotFoundError:
 		TypeCheckExpression(context, expression->castNode.expression);
 		expression->typeTableIdx = TypeCheckType(context, expression->any.loc, &expression->castNode.astType);
 	} break;
+	case ASTNODETYPE_INTRINSIC:
+	{
+		FixedArray<s64, 4> argTypes;
+		if (StringEquals(expression->intrinsic.name, "sqrt32"_s))
+		{
+			expression->intrinsic.type = INTRINSIC_SQRT32;
+			argTypes[0] = TYPETABLEIDX_F32;
+			argTypes[1] = TYPETABLEIDX_F32;
+			argTypes.size = 2;
+		}
+		else if (StringEquals(expression->intrinsic.name, "sqrt64"_s))
+		{
+			expression->intrinsic.type = INTRINSIC_SQRT64;
+			argTypes[0] = TYPETABLEIDX_F64;
+			argTypes[1] = TYPETABLEIDX_F64;
+			argTypes.size = 2;
+		}
+		else
+			LogError(context, expression->any.loc, "Invalid compiler intrinsic"_s);
+
+		if (expression->intrinsic.arguments.size > ArrayCount(argTypes))
+			LogError(context, expression->any.loc, "Too many arguments for intrinsic"_s);
+		for (int argIdx = 0; argIdx < expression->intrinsic.arguments.size; ++argIdx)
+		{
+			ASTExpression *arg = &expression->intrinsic.arguments[argIdx];
+			TypeCheckExpression(context, arg);
+			TypeCheckResult typeCheckResult = CheckTypesMatchAndSpecialize(context,
+					argTypes[argIdx], arg);
+			arg->typeTableIdx = typeCheckResult.rightTableIdx;
+
+			if (typeCheckResult.errorCode != TYPECHECK_COOL)
+			{
+				String paramStr = TypeInfoToString(context, argTypes[argIdx]);
+				String givenStr = TypeInfoToString(context, arg->typeTableIdx);
+				LogError(context, arg->any.loc, TPrintF("When calling procedure \"%S\": type of "
+							"parameter #%d didn't match (parameter is %S but %S was given)",
+							expression->intrinsic.name, argIdx, paramStr, givenStr));
+			}
+		}
+		expression->typeTableIdx = TYPETABLEIDX_VOID;
+	} break;
 	default:
 	{
 		LogError(context, expression->any.loc, "COMPILER ERROR! Unknown expression type on type checking"_s);
