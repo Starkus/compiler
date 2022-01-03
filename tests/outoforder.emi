@@ -1,0 +1,13 @@
+PrintConstant :: ()
+{
+	PrintF("Constant is %\n", ANOTHER_CONSTANT);
+}
+
+ANOTHER_CONSTANT :: A_CONSTANT;
+A_CONSTANT :: 5;
+
+Main :: () -> s64
+{
+	PrintConstant();
+	return 0;
+}

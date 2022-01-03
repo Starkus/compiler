@@ -1,8 +1,0 @@
-#version 330 core
-// Shader stolen from opengl-tutorials.org
-
-layout(location = 0) in vec3 vertexPosition_modelspace;
-
-void main() {
-	gl_Position = vec4(vertexPosition_modelspace, 1);
-}

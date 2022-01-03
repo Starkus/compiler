@@ -1,5 +1,27 @@
 int indentLevels;
 
+String ASTTypeToString(ASTType *type)
+{
+	if (!type)
+		return "<inferred>"_s;
+
+	switch (type->nodeType)
+	{
+	case ASTTYPENODETYPE_IDENTIFIER:
+		return type->name;
+	case ASTTYPENODETYPE_POINTER:
+		return StringConcat("^"_s, ASTTypeToString(type->pointedType));
+	case ASTTYPENODETYPE_ARRAY:
+	{
+		String typeStr = ASTTypeToString(type->arrayType);
+		return TPrintF("[%d] %S", type->arrayCount, typeStr);
+	}
+	case ASTTYPENODETYPE_STRUCT_DECLARATION:
+		return "Struct"_s;
+	}
+	return "???TYPE"_s;
+}
+
 String OperatorToString(s32 op)
 {
 	switch (op)

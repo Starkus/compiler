@@ -79,6 +79,7 @@ struct Config
 	bool logAllocationInfo;
 };
 
+struct TypeCheckJob;
 struct Procedure;
 struct TypeInfo;
 struct StaticDefinition;
@@ -109,12 +110,14 @@ struct Context
 	BucketArray<String, 1024, malloc, realloc> stringLiterals;
 
 	// Type check
+	DynamicArray<TypeCheckJob, malloc, realloc> typeCheckJobs;
+	s32 currentTypeCheckJob;
 	BucketArray<Value, 512, malloc, realloc> values;
 	BucketArray<Procedure, 512, malloc, realloc> procedures;
 	BucketArray<Procedure, 128, malloc, realloc> externalProcedures;
 	BucketArray<StaticDefinition, 512, malloc, realloc> staticDefinitions;
 	BucketArray<const TypeInfo, 1024, malloc, realloc> typeTable;
-	DynamicArray<TCScope, malloc, realloc> tcStack;
+	TCScope *tcGlobalScope;
 	s64 tcCurrentReturnType;
 
 	// IR
@@ -378,8 +381,8 @@ void UnexpectedTokenError(Context *context, Token *token)
 
 #include "Tokenizer.cpp"
 #include "Parser.cpp"
-#include "PrintAST.cpp"
 #include "TypeChecker.cpp"
+#include "PrintAST.cpp"
 #include "IRGen.cpp"
 #include "PrintIR.cpp"
 #include "x64.cpp"

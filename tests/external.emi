@@ -1,4 +1,4 @@
-OutputDebugStringA :: external (message : ^u8);
+OutputDebugStringA :: #external (message : ^u8);
 
 Main :: () -> s64
 {

@@ -133,7 +133,7 @@ PrintF :: (format : String, ..args)
 			if count == 0
 			{
 				count = @ cast(^u64) arg.data;
-				buffer = @ cast(^^u8) arg.data + 8;
+				buffer = @ (cast(^^u8) arg.data + 8);
 			}
 			for 0..count
 			{

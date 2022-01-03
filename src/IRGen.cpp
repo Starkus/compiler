@@ -659,6 +659,10 @@ void IRDoAssignment(Context *context, IRValue dstValue, IRValue srcValue)
 		srcTypeInfo.typeCategory == TYPECATEGORY_UNION ||
 		srcTypeInfo.typeCategory == TYPECATEGORY_ARRAY)
 	{
+		ASSERT(dstTypeInfo.typeCategory == TYPECATEGORY_STRUCT ||
+			   dstTypeInfo.typeCategory == TYPECATEGORY_UNION ||
+			   dstTypeInfo.typeCategory == TYPECATEGORY_ARRAY);
+
 		u64 size = context->typeTable[srcValue.typeTableIdx].size;
 		IRValue sizeValue = IRValueImmediate(size);
 
@@ -1223,8 +1227,8 @@ IRValue IRGenFromExpression(Context *context, ASTExpression *expression)
 		for (int i = 0; i < procedure->parameterValues.size; ++i)
 		{
 			s32 paramValueIdx = procedure->parameterValues[i];
-			Value *paramValue = &context->values[paramValueIdx];
 
+			Value *paramValue = &context->values[paramValueIdx];
 			if (IRShouldPassByCopy(context, paramValue->typeTableIdx))
 				paramValue->typeTableIdx = GetTypeInfoPointerOf(context, paramValue->typeTableIdx);
 		}
@@ -1818,7 +1822,8 @@ skipGeneratingVarargsArray:
 			ASSERT(groupTypeIdx > 0);
 			TypeInfo groupTypeInfo = context->typeTable[groupTypeIdx];
 
-			if (groupTypeInfo.typeCategory == TYPECATEGORY_STRUCT)
+			if (groupTypeInfo.typeCategory == TYPECATEGORY_STRUCT ||
+				groupTypeInfo.typeCategory == TYPECATEGORY_UNION)
 			{
 				IRValue structIRValue = IRValueNewValue(context, "_structLiteral"_s, groupTypeIdx, 0);
 				IRPushValueIntoStack(context, structIRValue.valueIdx);

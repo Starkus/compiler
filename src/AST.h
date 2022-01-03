@@ -76,6 +76,10 @@ struct ASTIdentifier : ASTBase
 struct ASTBlock : ASTBase
 {
 	DynamicArray<ASTExpression, malloc, realloc> statements;
+
+	// Type check
+	bool scopePushed;
+	s32 typeCheckingIdx;
 };
 
 struct ASTType;
@@ -154,20 +158,31 @@ struct ASTVariableDeclaration : ASTBase
 	bool isUsing;
 
 	// TypeCheck
+	bool addedScopeName;
 	u32 valueIdx;
 	s64 typeTableIdx;
 };
 
 struct ASTProcedureDeclaration : ASTBase
 {
-	s32 procedureIdx;
 	ASTProcedurePrototype prototype;
+	String name;
+	bool isInline;
+	bool isExternal;
+	ASTExpression *astBody;
+
+	// Type check
+	s32 procedureIdx;
+	bool checkedPrototype;
 };
 
 struct ASTStaticDefinition : ASTBase
 {
 	String name;
 	ASTExpression *expression;
+
+	// Type check
+	StaticDefinition *staticDef;
 };
 
 struct ASTProcedureCall : ASTBase

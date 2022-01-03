@@ -2,64 +2,6 @@ ASTExpression ParseExpression(Context *context, s32 precedence);
 ASTExpression ParseStatement(Context *context);
 ASTVariableDeclaration ParseVariableDeclaration(Context *context);
 
-enum ValueFlags
-{
-	VALUEFLAGS_IS_USED              = 1,
-	VALUEFLAGS_FORCE_REGISTER       = 2,
-	VALUEFLAGS_FORCE_MEMORY         = 4,
-	VALUEFLAGS_IS_MEMORY            = 8,
-	VALUEFLAGS_IS_ALLOCATED         = 16,
-	VALUEFLAGS_IS_EXTERNAL          = 32,
-	VALUEFLAGS_ON_STATIC_STORAGE    = 64,
-	VALUEFLAGS_BASE_RELATIVE        = 128,
-	VALUEFLAGS_HAS_PUSH_INSTRUCTION = 256
-};
-
-struct Value
-{
-	String name;
-	s64 typeTableIdx;
-	u32 flags;
-
-	// Back end
-	union
-	{
-		s32 allocatedRegister;
-		s32 stackOffset;
-	};
-};
-
-enum ConstantType
-{
-	CONSTANTTYPE_INVALID = 0,
-	CONSTANTTYPE_INTEGER,
-	CONSTANTTYPE_FLOATING
-};
-struct Constant
-{
-	ConstantType type;
-	union
-	{
-		s64 valueAsInt;
-		f64 valueAsFloat;
-	};
-};
-
-struct IRInstruction;
-struct Procedure
-{
-	String name;
-	DynamicArray<u32, malloc, realloc> parameterValues;
-	ASTExpression *astBody;
-	bool isInline;
-	u32 returnValueIdx;
-	s64 typeTableIdx; // Type of the procedure
-
-	// IRGen
-	BucketArray<IRInstruction, 256, malloc, realloc> instructions;
-	s64 allocatedParameterCount;
-};
-
 void Advance(Context *context)
 {
 	ASSERT(context->token == &context->tokens[context->currentTokenIdx]);
@@ -67,28 +9,6 @@ void Advance(Context *context)
 	++context->currentTokenIdx;
 	ASSERT(context->currentTokenIdx < BucketArrayCount(&context->tokens));
 	context->token = &context->tokens[context->currentTokenIdx];
-}
-
-String ASTTypeToString(ASTType *type)
-{
-	if (!type)
-		return "<inferred>"_s;
-
-	switch (type->nodeType)
-	{
-	case ASTTYPENODETYPE_IDENTIFIER:
-		return type->name;
-	case ASTTYPENODETYPE_POINTER:
-		return StringConcat("^"_s, ASTTypeToString(type->pointedType));
-	case ASTTYPENODETYPE_ARRAY:
-	{
-		String typeStr = ASTTypeToString(type->arrayType);
-		return TPrintF("[%d] %S", type->arrayCount, typeStr);
-	}
-	case ASTTYPENODETYPE_STRUCT_DECLARATION:
-		return "Struct"_s;
-	}
-	return "???TYPE"_s;
 }
 
 ASTExpression *NewTreeNode(Context *context)
@@ -99,32 +19,6 @@ ASTExpression *NewTreeNode(Context *context)
 ASTType *NewASTType(Context *context)
 {
 	return BucketArrayAdd(&context->astTypeNodes);
-}
-
-u32 NewValue(Context *context, s64 typeTableIdx, u32 flags)
-{
-	ASSERT(typeTableIdx != 0);
-	u64 idx = BucketArrayCount(&context->values);
-	Value *result = BucketArrayAdd(&context->values);
-	result->name = {};
-	result->typeTableIdx = typeTableIdx;
-	result->flags = flags;
-
-	ASSERT(idx < U32_MAX);
-	return (u32)idx;
-}
-
-u32 NewValue(Context *context, String name, s64 typeTableIdx, u32 flags)
-{
-	ASSERT(typeTableIdx != 0);
-	u64 idx = BucketArrayCount(&context->values);
-	Value *result = BucketArrayAdd(&context->values);
-	result->name = name;
-	result->typeTableIdx = typeTableIdx;
-	result->flags = flags;
-
-	ASSERT(idx < U32_MAX);
-	return (u32)idx;
 }
 
 ASTStructDeclaration ParseStructOrUnion(Context *context);
@@ -318,15 +212,6 @@ bool TryParseBinaryOperation(Context *context, ASTExpression leftHand, s32 prevP
 	context->token = oldToken;
 	context->currentTokenIdx = oldTokenIdx;
 	return false;
-}
-
-inline Procedure *GetProcedure(Context *context, s32 procedureIdx)
-{
-	ASSERT(procedureIdx != 0);
-	if (procedureIdx > 0)
-		return &context->procedures[procedureIdx];
-	else
-		return &context->externalProcedures[-procedureIdx];
 }
 
 ASTIf ParseIf(Context *context)
@@ -947,7 +832,7 @@ ASTExpression ParseExpression(Context *context, s32 precedence)
 
 ASTStaticDefinition ParseStaticDefinition(Context *context)
 {
-	ASTStaticDefinition result;
+	ASTStaticDefinition result = {};
 
 	AssertToken(context, context->token, TOKEN_IDENTIFIER);
 	result.name = context->token->string;
@@ -978,45 +863,16 @@ ASTStaticDefinition ParseStaticDefinition(Context *context)
 			break;
 	}
 
-	if (context->token->type == '(' ||
-		context->token->type == TOKEN_KEYWORD_INLINE ||
-		context->token->type == TOKEN_KEYWORD_EXTERNAL)
+	if (context->token->type == '(')
 	{
 		expression.nodeType = ASTNODETYPE_PROCEDURE_DECLARATION;
 
-		s32 procedureIdx;
-		Procedure *procedure;
-		if (isExternal)
-		{
-			procedureIdx = -(s32)BucketArrayCount(&context->externalProcedures);
-			procedure = BucketArrayAdd(&context->externalProcedures);
-		}
-		else
-		{
-			s64 procedureCount = BucketArrayCount(&context->procedures);
-			for (int i = 1; i < procedureCount; ++i)
-			{
-				Procedure *proc = GetProcedure(context, i);
-				if (StringEquals(proc->name, result.name))
-				{
-					procedureIdx = i;
-					procedure = proc;
-					goto procFound;
-				}
-			}
-			procedureIdx = (s32)procedureCount;
-			procedure = BucketArrayAdd(&context->procedures);
-		}
-procFound:
-		*procedure = {};
-		procedure->returnValueIdx = U32_MAX;
-		procedure->name = result.name;
-		procedure->isInline = isInline;
 		ASTProcedureDeclaration procDecl = {};
 		procDecl.loc = context->token->loc;
-		procDecl.procedureIdx = procedureIdx;
+		procDecl.name = result.name;
+		procDecl.isInline = isInline;
+		procDecl.isExternal = isExternal;
 		procDecl.prototype = ParseProcedurePrototype(context);
-		expression.procedureDeclaration = procDecl;
 
 		if (context->token->type == ';')
 			Advance(context);
@@ -1024,9 +880,11 @@ procFound:
 		{
 			if (isExternal)
 				LogError(context, context->token->loc, "External procedure declaration can't have a body"_s);
-			procedure->astBody = NewTreeNode(context);
-			*procedure->astBody = ParseStatement(context);
+			procDecl.astBody = NewTreeNode(context);
+			*procDecl.astBody = ParseStatement(context);
 		}
+
+		expression.procedureDeclaration = procDecl;
 	}
 	else if (context->token->type == TOKEN_KEYWORD_STRUCT ||
 			 context->token->type == TOKEN_KEYWORD_UNION ||
@@ -1280,16 +1138,11 @@ ASTRoot *GenerateSyntaxTree(Context *context)
 	BucketArrayInit(&context->treeNodes);
 	BucketArrayInit(&context->astTypeNodes);
 	BucketArrayInit(&context->values);
-	BucketArrayInit(&context->procedures);
 	BucketArrayInit(&context->externalProcedures);
 	BucketArrayInit(&context->stringLiterals);
 
 	// Empty string
 	*BucketArrayAdd(&context->stringLiterals) = {};
-
-	// Procedure 0 is invalid
-	*BucketArrayAdd(&context->procedures) = {};
-	*BucketArrayAdd(&context->externalProcedures) = {};
 
 	context->currentTokenIdx = 0;
 	context->token = &context->tokens[0];

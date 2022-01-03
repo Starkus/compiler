@@ -40,6 +40,13 @@ T *ArrayAdd(Array<T> *array)
 	return result;
 }
 
+template <typename T>
+inline T *ArrayBack(Array<T> *array)
+{
+	ASSERT(array->size > 0);
+	return &array->data[array->size - 1];
+}
+
 template <typename T, u64 capacity>
 struct FixedArray
 {
@@ -65,6 +72,13 @@ T *FixedArrayAdd(FixedArray<T, capacity> *array)
 	T *result = &array->data[array->size++];
 	ASSERT(array->size < capacity);
 	return result;
+}
+
+template <typename T, u64 capacity>
+inline T *FixedArrayBack(FixedArray<T, capacity> *array)
+{
+	ASSERT(array->size > 0);
+	return &array->data[array->size - 1];
 }
 
 template <typename T, void *(*allocFunc)(u64), void *(*reallocFunc)(void *, u64)>
@@ -99,6 +113,7 @@ void DynamicArrayInit(DynamicArray<T, allocFunc, reallocFunc> *array, u64 initia
 template <typename T, void *(*allocFunc)(u64), void *(*reallocFunc)(void *, u64)>
 T *DynamicArrayAdd(DynamicArray<T, allocFunc, reallocFunc> *array)
 {
+	ASSERT(array->capacity != 0);
 	if (array->size >= array->capacity)
 	{
 		array->capacity *= 2;
@@ -139,6 +154,13 @@ bool DynamicArrayAddUnique(DynamicArray<T, allocFunc, reallocFunc> *array, T val
 	}
 	array->data[array->size++] = value;
 	return true;
+}
+
+template <typename T, void *(*allocFunc)(u64), void *(*reallocFunc)(void *, u64)>
+T *DynamicArrayBack(DynamicArray<T, allocFunc, reallocFunc> *array)
+{
+	ASSERT(array->size > 0);
+	return &array->data[array->size - 1];
 }
 
 template <typename T, void *(*allocFunc)(u64), void *(*reallocFunc)(void *, u64)>
@@ -188,6 +210,13 @@ T *BucketArrayAdd(BucketArray<T, bucketSize, allocFunc, reallocFunc> *bucketArra
 	}
 
 	return ArrayAdd(lastBucket);
+}
+
+template <typename T, u64 bucketSize, void *(*allocFunc)(u64), void *(*reallocFunc)(void *, u64)>
+T *BucketArrayBack(BucketArray<T, bucketSize, allocFunc, reallocFunc> *bucketArray)
+{
+	ASSERT(bucketArray->buckets.size > 0);
+	return DynamicArrayBack(&bucketArray->buckets[bucketArray->buckets.size - 1]);
 }
 
 template <typename T, u64 bucketSize, void *(*allocFunc)(u64), void *(*reallocFunc)(void *, u64)>

@@ -2184,7 +2184,7 @@ unalignedMovups:;
 			nullptr
 			);
 
-	PrintOut(context, "include ..\\core\\basic.asm\n\n");
+	PrintOut(context, "include ..\\core\\memory.asm\n\n");
 
 	PrintOut(context, "_DATA SEGMENT\n");
 
