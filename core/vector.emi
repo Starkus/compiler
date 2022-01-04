@@ -52,6 +52,7 @@ mat4 :: union
 	m : [16] f32;
 };
 
+/*
 MAT4_IDENTITY :s mat4 =
 {
 	1.0,	0.0,	0.0,	0.0,
@@ -59,6 +60,7 @@ MAT4_IDENTITY :s mat4 =
 	0.0,	0.0,	1.0,	0.0,
 	0.0,	0.0,	0.0,	1.0
 };
+*/
 
 Mat4Scale :: (a : mat4, b : f32) -> mat4
 {
@@ -261,6 +263,18 @@ V4Negate :: (v : v4) -> v4
 	return result;
 }
 
+V4Scale :: (a : v4, b : f32) -> v4
+{
+	result : v4 = { a.x * b, a.y * b, a.z * b, a.w * b };
+	return result;
+}
+
+V4Divide :: (a : v4, b : f32) -> v4
+{
+	result : v4 = { a.x / b, a.y / b, a.z / b, a.w / b };
+	return result;
+}
+
 V4Dot :: (a : v4, b : v4) -> f32
 {
 	return a.x * b.x + a.y * b.y + a.z * b.z + a.w * b.w;
@@ -278,11 +292,11 @@ V4Length :: (a : v4) -> f32
 
 V4Normalize :: (a : v4) -> v4
 {
-	result : v4 = a / V4Length(a);
+	result : v4 = V4Divide(a, V4Length(a));
 	return result;
 }
 
-V4Scale :: (v : v4, scale : v4) -> v4
+V4Multiply :: (v : v4, scale : v4) -> v4
 {
 	result : v4 = { v.x * scale.x, v.y * scale.y, v.z * scale.z, v.w * scale.w };
 	return result;
@@ -307,16 +321,16 @@ V4Direction :: (v : v3) -> v4
 Mat4Determinant :: (m : mat4) -> f32
 {
 	result : f32 = m.m00 *
-		(m.m11 * m.m22 * m.m33 + m.m12 * m.m23 * m.m31 + m.m13 * m.m21 * m.m32
+		 (m.m11 * m.m22 * m.m33 + m.m12 * m.m23 * m.m31 + m.m13 * m.m21 * m.m32
 		- m.m13 * m.m22 * m.m31 - m.m12 * m.m21 * m.m33 - m.m11 * m.m23 * m.m32);
 	result -= m.m10 *
-		(m.m01 * m.m22 * m.m33 + m.m02 * m.m23 * m.m31 + m.m03 * m.m21 * m.m32
+		 (m.m01 * m.m22 * m.m33 + m.m02 * m.m23 * m.m31 + m.m03 * m.m21 * m.m32
 		- m.m03 * m.m22 * m.m31 - m.m02 * m.m21 * m.m33 - m.m01 * m.m23 * m.m32);
 	result += m.m20 *
-		(m.m01 * m.m12 * m.m33 + m.m02 * m.m13 * m.m31 + m.m03 * m.m11 * m.m32
+		 (m.m01 * m.m12 * m.m33 + m.m02 * m.m13 * m.m31 + m.m03 * m.m11 * m.m32
 		- m.m03 * m.m12 * m.m31 - m.m02 * m.m11 * m.m33 - m.m01 * m.m13 * m.m32);
 	result -= m.m30 *
-		(m.m01 * m.m12 * m.m23 + m.m02 * m.m13 * m.m21 + m.m03 * m.m11 * m.m22
+		 (m.m01 * m.m12 * m.m23 + m.m02 * m.m13 * m.m21 + m.m03 * m.m11 * m.m22
 		- m.m03 * m.m12 * m.m21 - m.m02 * m.m11 * m.m23 - m.m01 * m.m13 * m.m22);
 	return result;
 }
@@ -509,6 +523,7 @@ QuaternionFromRotationMatrix :: (m : mat4) -> v4
 	return result;
 }
 
+/*
 QuaternionFromAxisAngle :: (axis : v3, angle : f32) -> v4
 {
 	halfAngle : f32 = angle * 0.5;
@@ -517,6 +532,7 @@ QuaternionFromAxisAngle :: (axis : v3, angle : f32) -> v4
 	result : v4 = { axis.x * s, axis.y * s, axis.z * s, c };
 	return result;
 }
+*/
 
 QuaternionRotateVector :: (q : v4, v : v3) -> v3
 {
@@ -526,10 +542,6 @@ QuaternionRotateVector :: (q : v4, v : v3) -> v3
 	result : v3 = V3Scale(vectorPart, 2.0 * V3Dot(vectorPart, v));
 	result = V3Add(result, V3Scale(v, scalarPart * scalarPart - V3SqrLen(vectorPart)));
 	result = V3Add(result, V3Scale(V3Cross(vectorPart, v), 2.0 * scalarPart));
-
-	//result : v3 = vectorPart * 2.0 * V3Dot(vectorPart, v) +
-			//v * (scalarPart * scalarPart - V3SqrLen(vectorPart)) +
-			//V3Cross(vectorPart, v) * 2.0 * scalarPart;
 
 	return result;
 }
@@ -546,6 +558,7 @@ QuaternionMultiply :: (a : v4, b : v4) -> v4
 	return result;
 }
 
+/*
 QuaternionFromEulerXYZ :: (euler : v3) -> v4
 {
 	halfYaw : f32 = euler.z * 0.5;
@@ -589,6 +602,7 @@ QuaternionFromEulerZYX :: (euler : v3) -> v4
 
 	return result;
 }
+*/
 
 Transform :: struct
 {

@@ -51,6 +51,13 @@ PrintF :: (format : String, ..args)
 			buffer : [32] u8;
 			count := 0;
 
+			isNegative : bool = false;
+			if f < 0
+			{
+				isNegative = true;
+				f = -f;
+			}
+
 			// Fraction
 			n : s64 = f * 10000000.0 + 0.5;
 			start : bool = false;
@@ -77,6 +84,11 @@ PrintF :: (format : String, ..args)
 				count += 1;
 				n /= 10;
 				if n <= 0 break;
+			}
+			if isNegative
+			{
+				buffer[31 - count] = '-';
+				count += 1;
 			}
 			numStr : String = { cast(u64) count, ^buffer[32 - count] };
 			Print(numStr);

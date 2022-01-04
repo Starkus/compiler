@@ -1,5 +1,6 @@
 #include "core/windows.emi"
 #include "core/opengl.emi"
+#include "core/vector.emi"
 #linklib "opengl32.lib"
 
 //compiler_subsystem :: COMPILER_SUBSYSTEM_WINDOWS;
@@ -186,23 +187,36 @@ Main :: () -> s64
 	};
 
 	// Projection matrix
-	projectionMatrix : mat4 = &gameState->projMatrix;
+	projectionMatrix : mat4 = ?;
 	{
-		const f32 fov = HALFPI;
-		const f32 near = 0.01f;
-		const f32 far = 2000.0f;
-		const f32 aspectRatio = (16.0f / 9.0f);
-
-		const f32 top = Tan(HALFPI - fov / 2.0f);
-		const f32 right = top / aspectRatio;
-
-		*proj =
+		near : f32 = 0.01;
+		far : f32 = 2000.0;
+		projectionMatrix =
 		{
-			right, 0.0f, 0.0f, 0.0f,
-			0.0f, top, 0.0f, 0.0f,
-			0.0f, 0.0f, -(far + near) / (far - near), -1.0f,
-			0.0f, 0.0f, -(2.0f * far * near) / (far - near), 0.0f
+			0.5625, 0.0, 0.0, 0.0,
+			0.0, 1.0, 0.0, 0.0,
+			0.0, 0.0, -(far + near) / (far - near), -1.0,
+			0.0, 0.0, -(2.0 * far * near) / (far - near), 0.0
 		};
+	}
+
+	// View matrix
+	viewMatrix : mat4 = ?;
+	{
+		pos : v3 = { 2, 1, 3 };
+		camFw := V3Normalize(V3Negate(pos));
+		z : v3 = { 0, 0, 1 };
+		right : v3 = V3Normalize(V3Cross(camFw, z));
+		up : v3 = V3Cross(right, camFw);
+		invViewMatrix : mat4 =
+		{
+			right.x,	right.y,	right.z,	0.0,
+			up.x,		up.y,		up.z,		0.0,
+			-camFw.x,	-camFw.y,	-camFw.z,	0.0,
+			pos.x,		pos.y,		pos.z,		1.0
+		};
+
+		viewMatrix = Mat4Inverse(invViewMatrix);
 	}
 
 	vertexBuffer : GLuint = ?;
@@ -210,8 +224,8 @@ Main :: () -> s64
 	glBindBuffer(GL_ARRAY_BUFFER, vertexBuffer);
 	glBufferData(GL_ARRAY_BUFFER, sizeof(vertexBufferData), ^vertexBufferData, GL_STATIC_DRAW);
 
-	vertexShaderId   := LoadShader("tests/opengl3example_vertexshader.glsl",   GL_VERTEX_SHADER);
-	fragmentShaderId := LoadShader("tests/opengl3example_fragmentshader.glsl", GL_FRAGMENT_SHADER);
+	vertexShaderId   := LoadShader("examples/opengl3example_vertexshader.glsl",   GL_VERTEX_SHADER);
+	fragmentShaderId := LoadShader("examples/opengl3example_fragmentshader.glsl", GL_FRAGMENT_SHADER);
 	programId := glCreateProgram();
 	glAttachShader(programId, vertexShaderId);
 	glAttachShader(programId, fragmentShaderId);
@@ -231,6 +245,14 @@ Main :: () -> s64
 
 	glUseProgram(programId);
 
+	uniformName := "projectionMatrix\0";
+	projectionUniform := glGetUniformLocation(programId, uniformName.data);
+	glUniformMatrix4fv(projectionUniform, 1, false, ^projectionMatrix.m00);
+
+	uniformName = "viewMatrix\0";
+	viewUniform := glGetUniformLocation(programId, uniformName.data);
+	glUniformMatrix4fv(viewUniform, 1, false, ^viewMatrix.m00);
+
 	message : MSG = ?;
 	while running
 	{
@@ -241,7 +263,7 @@ Main :: () -> s64
 		glEnableVertexAttribArray(1);
 		glBindBuffer(GL_ARRAY_BUFFER, vertexBuffer);
 		stride := cast(s32) sizeof(Vertex);
-		glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, stride, null);
+		glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, stride, 0);
 		glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, stride, 12);
 		glDrawArrays(GL_TRIANGLES, 0, 3);
 		glDisableVertexAttribArray(0);

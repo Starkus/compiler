@@ -106,7 +106,8 @@ bool TryParseUnaryOperation(Context *context, s32 prevPrecedence, ASTUnaryOperat
 		result->op = op;
 		Advance(context);
 
-		s32 precedence = GetOperatorPrecedence(op);
+		int precedenceOf = op == TOKEN_OP_MINUS ? PRECEDENCE_UNARY_SUBTRACT : op;
+		s32 precedence = GetOperatorPrecedence(precedenceOf);
 		result->expression = NewTreeNode(context);
 		*result->expression = ParseExpression(context, precedence);
 

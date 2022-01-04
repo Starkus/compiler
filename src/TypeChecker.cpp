@@ -8,7 +8,8 @@ enum ValueFlags
 	VALUEFLAGS_IS_EXTERNAL          = 32,
 	VALUEFLAGS_ON_STATIC_STORAGE    = 64,
 	VALUEFLAGS_BASE_RELATIVE        = 128,
-	VALUEFLAGS_HAS_PUSH_INSTRUCTION = 256
+	VALUEFLAGS_HAS_PUSH_INSTRUCTION = 256,
+	VALUEFLAGS_PARAMETER_BY_COPY    = 512 // These values are pointers behind the scenes
 };
 
 struct Value
@@ -1364,19 +1365,15 @@ bool TryTypeCheckExpression(Context *context, ASTExpression *expression);
 
 bool TypeCheckVariableDeclaration(Context *context, ASTVariableDeclaration *varDecl)
 {
-	TCScope *stackTop = GetTopMostScope(context);
 	if (varDecl->name.size)
 	{
 		// Check if name already exists
-		for (s64 i = 0; i < (s64)stackTop->names.size; ++i)
+		TCScopeName *scopeName = FindScopeName(context, varDecl->name);
+		if (scopeName != nullptr)
 		{
-			TCScopeName currentName = stackTop->names[i];
-			if (StringEquals(varDecl->name, currentName.name))
-			{
-				LogErrorNoCrash(context, varDecl->loc, TPrintF("Duplicate name \"%S\" in scope", varDecl->name));
-				LogNote(context, currentName.loc, "First defined here"_s);
-				CRASH;
-			}
+			LogErrorNoCrash(context, varDecl->loc, TPrintF("Duplicate name \"%S\" in scope", varDecl->name));
+			LogNote(context, scopeName->loc, "First defined here"_s);
+			CRASH;
 		}
 	}
 
@@ -1573,14 +1570,13 @@ bool TryTypeCheckExpression(Context *context, ASTExpression *expression)
 			{
 				++astBlock->typeCheckingIdx;
 				if (astBlock->typeCheckingIdx >= astBlock->statements.size)
-				{
-					PopTCScope(context);
 					break;
-				}
 			}
 			else
 				return false;
 		}
+
+		PopTCScope(context);
 	} break;
 	case ASTNODETYPE_VARIABLE_DECLARATION:
 	{
@@ -1765,6 +1761,7 @@ bool TryTypeCheckExpression(Context *context, ASTExpression *expression)
 				if (procDecl->prototype.astReturnType)
 					returnType = TypeCheckType(context, expression->any.loc, procDecl->prototype.astReturnType);
 				t.procedureInfo.returnTypeTableIdx = returnType;
+				procedure->returnValueIdx = NewValue(context, "_returnValue"_s, returnType, 0);
 
 				s64 typeTableIdx = FindOrAddTypeTableIdx(context, t);
 				// @Check: Why so many here D:
@@ -1806,8 +1803,9 @@ bool TryTypeCheckExpression(Context *context, ASTExpression *expression)
 		{
 			if (!TryTypeCheckExpression(context, astStaticDef->expression))
 				return false;
-			expression->typeTableIdx = astStaticDef->expression->typeTableIdx;
+			staticDef->definitionType = STATICDEFINITIONTYPE_TYPE;
 			staticDef->typeTableIdx = astStaticDef->expression->typeTableIdx;
+			expression->typeTableIdx = astStaticDef->expression->typeTableIdx;
 		}
 		else
 		{
@@ -1817,10 +1815,9 @@ bool TryTypeCheckExpression(Context *context, ASTExpression *expression)
 			if (astStaticDef->expression->nodeType == ASTNODETYPE_IDENTIFIER &&
 				astStaticDef->expression->identifier.type == NAMETYPE_STATIC_DEFINITION)
 			{
-				if (!TryTypeCheckExpression(context, astStaticDef->expression))
-					return false;
-				expression->typeTableIdx = astStaticDef->expression->typeTableIdx;
+				staticDef->definitionType = STATICDEFINITIONTYPE_TYPE;
 				staticDef->typeTableIdx = astStaticDef->expression->typeTableIdx;
+				expression->typeTableIdx = astStaticDef->expression->typeTableIdx;
 			}
 			else
 			{
