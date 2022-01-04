@@ -42,34 +42,6 @@ struct Constant
 	};
 };
 
-enum TypeTableIndices
-{
-	TYPETABLEIDX_ANYTHING = -6,
-	TYPETABLEIDX_STRUCT_LITERAL = -5,
-
-	TYPETABLEIDX_PRIMITIVE_BEGIN = 1,
-	TYPETABLEIDX_S8 = TYPETABLEIDX_PRIMITIVE_BEGIN,
-	TYPETABLEIDX_S16,
-	TYPETABLEIDX_S32,
-	TYPETABLEIDX_S64,
-	TYPETABLEIDX_U8,
-	TYPETABLEIDX_U16,
-	TYPETABLEIDX_U32,
-	TYPETABLEIDX_U64,
-	TYPETABLEIDX_F32,
-	TYPETABLEIDX_F64,
-	TYPETABLEIDX_PRIMITIVE_END = TYPETABLEIDX_F64,
-
-	TYPETABLEIDX_BOOL,
-	TYPETABLEIDX_INTEGER,
-	TYPETABLEIDX_FLOATING,
-	TYPETABLEIDX_VOID,
-
-	TYPETABLEIDX_128,
-
-	TYPETABLEIDX_COUNT
-};
-
 enum TypeCategory
 {
 	TYPECATEGORY_INVALID,
@@ -217,11 +189,13 @@ enum TCYieldCause
 	TCYIELDCAUSE_NONE,
 	TCYIELDCAUSE_DONE,
 	TCYIELDCAUSE_MISSING_NAME,
+	TCYIELDCAUSE_NEED_TYPE_CHECKING
 };
 struct TCYieldInfo
 {
 	TCYieldCause cause;
 	String name;
+	SourceLocation loc;
 };
 
 struct TCJob
@@ -528,7 +502,9 @@ FindTypeResult FindTypeInStackByName(Context *context, SourceLocation loc, Strin
 
 		if (scopeName == nullptr)
 		{
+#if PRINT_DEBUG_NOTES_UPON_YIELDING
 			LogNote(context, loc, TPrintF("Type \"%S\" not in scope!", name));
+#endif
 			return {};
 		}
 		else if (scopeName->type != NAMETYPE_STATIC_DEFINITION)
@@ -541,7 +517,9 @@ FindTypeResult FindTypeInStackByName(Context *context, SourceLocation loc, Strin
 
 	if (!result.success)
 	{
+#if PRINT_DEBUG_NOTES_UPON_YIELDING
 		LogNote(context, loc, TPrintF("Type \"%S\" not in scope!", name));
+#endif
 		return {};
 	}
 
@@ -732,6 +710,10 @@ struct TypeCheckResult
 TypeCheckResult CheckTypesMatchAndSpecialize(Context *context, s64 leftTableIdx, const ASTExpression *rightHand)
 {
 	s64 rightTableIdx = rightHand->typeTableIdx;
+
+	ASSERT(leftTableIdx  != TYPETABLEIDX_UNSET);
+	ASSERT(rightTableIdx != TYPETABLEIDX_UNSET);
+
 	TypeCheckResult result = { TYPECHECK_COOL, leftTableIdx, rightTableIdx };
 
 	if (rightTableIdx == TYPETABLEIDX_STRUCT_LITERAL)
@@ -989,6 +971,14 @@ TypeCheckStructResult TypeCheckStructDeclaration(Context *context, ASTStructDecl
 	for (int memberIdx = 0; memberIdx < astStructDecl.members.size; ++memberIdx)
 	{
 		ASTStructMemberDeclaration *astMember = &astStructDecl.members[memberIdx];
+
+		if (astMember->astType == nullptr)
+			LogError(context, astMember->loc, TPrintF("Type missing in declaration of struct "
+					"member \"%S\"", astMember->name));
+
+		if (astMember->value != nullptr)
+			LogWarning(context, astMember->value->any.loc, TPrintF("Default value found on member "
+						"\"%S\". This is not yet supported", astMember->name));
 
 		TypeCheckTypeResult checkResult = TypeCheckType(context, astMember->loc, astMember->astType);
 		if (!checkResult.success)
@@ -1670,6 +1660,8 @@ TypeInfo TypeInfoFromASTProcedurePrototype(Context *context, ASTProcedurePrototy
 
 TypeCheckExpressionResult TryTypeCheckExpression(Context *context, ASTExpression *expression)
 {
+	ASSERT(expression->typeTableIdx == TYPETABLEIDX_UNSET);
+
 	switch (expression->nodeType)
 	{
 	case ASTNODETYPE_GARBAGE:
@@ -1771,6 +1763,7 @@ TypeCheckExpressionResult TryTypeCheckExpression(Context *context, ASTExpression
 
 			newStaticDef = BucketArrayAdd(&context->staticDefinitions);
 			*newStaticDef = {};
+			newStaticDef->typeTableIdx = TYPETABLEIDX_UNSET;
 			newStaticDef->name = astStaticDef->name;
 
 			// Add scope name
@@ -1817,6 +1810,7 @@ TypeCheckExpressionResult TryTypeCheckExpression(Context *context, ASTExpression
 		}
 
 		StaticDefinition *staticDef = astStaticDef->staticDef;
+		ASSERT(staticDef != nullptr);
 
 		// This can yield
 		if (astStaticDef->expression->nodeType == ASTNODETYPE_PROCEDURE_DECLARATION)
@@ -1891,7 +1885,6 @@ TypeCheckExpressionResult TryTypeCheckExpression(Context *context, ASTExpression
 				s64 typeTableIdx = FindOrAddTypeTableIdx(context, t);
 				// @Check: Why so many here D:
 				procedure->typeTableIdx = typeTableIdx;
-				expression->typeTableIdx = typeTableIdx;
 				staticDef->typeTableIdx = typeTableIdx;
 				astStaticDef->expression->typeTableIdx = typeTableIdx;
 
@@ -1915,6 +1908,7 @@ TypeCheckExpressionResult TryTypeCheckExpression(Context *context, ASTExpression
 
 			}
 
+			expression->typeTableIdx = procedure->typeTableIdx;
 			PopTCScope(context);
 
 			// Check all paths return
@@ -1947,15 +1941,17 @@ TypeCheckExpressionResult TryTypeCheckExpression(Context *context, ASTExpression
 				astStaticDef->expression->identifier.type == NAMETYPE_STATIC_DEFINITION)
 			{
 				staticDef->definitionType = astStaticDef->expression->identifier.staticDefinition->definitionType;
-				staticDef->typeTableIdx = astStaticDef->expression->typeTableIdx;
+				ASSERT(astStaticDef->expression->typeTableIdx != TYPETABLEIDX_UNSET);
 				*staticDef = *astStaticDef->expression->identifier.staticDefinition;
 				expression->typeTableIdx = astStaticDef->expression->typeTableIdx;
 			}
 			else
 			{
 				staticDef->definitionType = STATICDEFINITIONTYPE_CONSTANT;
-				expression->typeTableIdx = astStaticDef->expression->typeTableIdx;
-				staticDef->typeTableIdx = astStaticDef->expression->typeTableIdx;
+				s64 constantTypeIdx = astStaticDef->expression->typeTableIdx;
+				ASSERT(constantTypeIdx != TYPETABLEIDX_UNSET);
+				expression->typeTableIdx = constantTypeIdx;
+				staticDef->typeTableIdx = constantTypeIdx;
 
 				staticDef->constant = TryEvaluateConstant(context, astStaticDef->expression);
 				if (staticDef->constant.type == CONSTANTTYPE_INVALID)
@@ -1995,11 +1991,14 @@ TypeCheckExpressionResult TryTypeCheckExpression(Context *context, ASTExpression
 		TCScopeName *scopeName = FindScopeName(context, string);
 		if (scopeName == nullptr)
 		{
+#if PRINT_DEBUG_NOTES_UPON_YIELDING
 			LogNote(context, expression->any.loc, TPrintF("Invalid variable \"%S\" referenced",
 					string));
+#endif
 			TCYieldInfo yieldInfo = {};
 			yieldInfo.cause = TCYIELDCAUSE_MISSING_NAME;
 			yieldInfo.name = string;
+			yieldInfo.loc = expression->any.loc;
 			return { false, yieldInfo };
 		}
 
@@ -2009,7 +2008,20 @@ TypeCheckExpressionResult TryTypeCheckExpression(Context *context, ASTExpression
 		case NAMETYPE_VARIABLE:
 		{
 			expression->identifier.tcValue = scopeName->variableInfo.tcValue;
-			expression->typeTableIdx = scopeName->variableInfo.typeTableIdx;
+			s64 variableTypeIdx = scopeName->variableInfo.typeTableIdx;
+			if (variableTypeIdx == TYPETABLEIDX_UNSET)
+			{
+#if PRINT_DEBUG_NOTES_UPON_YIELDING
+				LogNote(context, expression->any.loc, TPrintF("Variable \"%S\" not type checked",
+						string));
+#endif
+				TCYieldInfo yieldInfo = {};
+				yieldInfo.cause = TCYIELDCAUSE_NEED_TYPE_CHECKING;
+				yieldInfo.name = string;
+				yieldInfo.loc = expression->any.loc;
+				return { false, yieldInfo };
+			}
+			expression->typeTableIdx = variableTypeIdx;
 		} break;
 		case NAMETYPE_STRUCT_MEMBER:
 		{
@@ -2031,12 +2043,23 @@ TypeCheckExpressionResult TryTypeCheckExpression(Context *context, ASTExpression
 		case NAMETYPE_STATIC_DEFINITION:
 		{
 			expression->identifier.staticDefinition = scopeName->staticDefinition;
-			expression->typeTableIdx = scopeName->staticDefinition->typeTableIdx;
+			s64 staticDefTypeIdx = scopeName->staticDefinition->typeTableIdx;
+			if (staticDefTypeIdx == TYPETABLEIDX_UNSET)
+			{
+#if PRINT_DEBUG_NOTES_UPON_YIELDING
+				LogNote(context, expression->any.loc, TPrintF("Static definition \"%S\" not type "
+						"checked", string));
+#endif
+				TCYieldInfo yieldInfo = {};
+				yieldInfo.cause = TCYIELDCAUSE_NEED_TYPE_CHECKING;
+				yieldInfo.name = string;
+				yieldInfo.loc = expression->any.loc;
+				return { false, yieldInfo };
+			}
+			expression->typeTableIdx = staticDefTypeIdx;
 		} break;
 		}
-		goto skipInvalidIdentifierError;
 
-skipInvalidIdentifierError:
 		if (expression->identifier.isUsing)
 		{
 			if (expression->identifier.type != NAMETYPE_VARIABLE)
@@ -2070,11 +2093,14 @@ skipInvalidIdentifierError:
 			TCScopeName *scopeName = FindScopeName(context, procName);
 			if (scopeName == nullptr)
 			{
+#if PRINT_DEBUG_NOTES_UPON_YIELDING
 				LogNote(context, expression->any.loc, TPrintF("Invalid procedure \"%S\" called",
 						procName));
+#endif
 				TCYieldInfo yieldInfo = {};
 				yieldInfo.cause = TCYIELDCAUSE_MISSING_NAME;
 				yieldInfo.name = procName;
+				yieldInfo.loc = expression->any.loc;
 				return { false, yieldInfo };
 			}
 
@@ -2094,9 +2120,10 @@ skipInvalidIdentifierError:
 				LogError(context, expression->any.loc, "Calling a non-procedure"_s);
 
 			s64 givenArguments = expression->procedureCall.arguments.size;
-			for (int argIdx = 0; argIdx < givenArguments; ++argIdx)
+			u32 *argIdx = &expression->procedureCall.parameterTypeCheckingIdx;
+			for (; *argIdx < givenArguments; ++*argIdx)
 			{
-				ASTExpression *arg = &expression->procedureCall.arguments[argIdx];
+				ASTExpression *arg = &expression->procedureCall.arguments[*argIdx];
 				TypeCheckExpressionResult result = TryTypeCheckExpression(context, arg);
 				if (!result.success)
 					return { false, result.yieldInfo };
@@ -2113,70 +2140,73 @@ skipInvalidIdentifierError:
 		}
 
 		// No yield
+		s64 procedureTypeIdx = expression->procedureCall.procedureTypeIdx;
+		ASSERT(context->typeTable[procedureTypeIdx].typeCategory == TYPECATEGORY_PROCEDURE);
+		TypeInfoProcedure procTypeInfo = context->typeTable[procedureTypeIdx].procedureInfo;
+
+		expression->typeTableIdx = procTypeInfo.returnTypeTableIdx;
+
+		// Type check arguments
+		s64 requiredArguments = 0;
+		for (int i = 0; i < procTypeInfo.parameters.size; ++i)
 		{
-			s64 procedureTypeIdx = expression->procedureCall.procedureTypeIdx;
-			ASSERT(context->typeTable[procedureTypeIdx].typeCategory == TYPECATEGORY_PROCEDURE);
-			TypeInfoProcedure procTypeInfo = context->typeTable[procedureTypeIdx].procedureInfo;
-
-			expression->typeTableIdx = procTypeInfo.returnTypeTableIdx;
-
-			// Type check arguments
-			s64 requiredArguments = 0;
-			for (int i = 0; i < procTypeInfo.parameters.size; ++i)
-			{
-				if (procTypeInfo.parameters[i].defaultValue.type == CONSTANTTYPE_INVALID)
-					++requiredArguments;
-			}
-
-			s64 totalArguments = procTypeInfo.parameters.size;
-			s64 givenArguments = expression->procedureCall.arguments.size;
-			if (procTypeInfo.isVarargs)
-			{
-				if (requiredArguments > givenArguments)
-					LogError(context, expression->any.loc,
-							TPrintF("Procedure \"%S\" needs at least %d arguments but only %d were given",
-								procName, requiredArguments, givenArguments));
-			}
-			else
-			{
-				if (requiredArguments > givenArguments)
-					LogError(context, expression->any.loc,
-							TPrintF("Procedure \"%S\" needs at least %d arguments but only %d were given",
-							procName, requiredArguments, givenArguments));
-
-				if (givenArguments > totalArguments)
-					LogError(context, expression->any.loc,
-							TPrintF("Procedure \"%S\" needs %d arguments but %d were given",
-							procName, totalArguments, givenArguments));
-			}
-
-			s64 argsToCheck = Min(givenArguments, totalArguments);
-			for (int argIdx = 0; argIdx < argsToCheck; ++argIdx)
-			{
-				ASTExpression *arg = &expression->procedureCall.arguments[argIdx];
-				s64 paramTypeIdx = procTypeInfo.parameters[argIdx].typeTableIdx;
-				TypeCheckResult typeCheckResult = CheckTypesMatchAndSpecialize(context,
-						paramTypeIdx, arg);
-				arg->typeTableIdx = typeCheckResult.rightTableIdx;
-
-				if (typeCheckResult.errorCode != TYPECHECK_COOL)
-				{
-					String paramStr = TypeInfoToString(context, paramTypeIdx);
-					String givenStr = TypeInfoToString(context, arg->typeTableIdx);
-					LogError(context, arg->any.loc, TPrintF("When calling procedure \"%S\": type of "
-								"parameter #%d didn't match (parameter is %S but %S was given)",
-								procName, argIdx, paramStr, givenStr));
-				}
-			}
-			break;
+			if (procTypeInfo.parameters[i].defaultValue.type == CONSTANTTYPE_INVALID)
+				++requiredArguments;
 		}
+
+		s64 totalArguments = procTypeInfo.parameters.size;
+		s64 givenArguments = expression->procedureCall.arguments.size;
+		if (procTypeInfo.isVarargs)
+		{
+			if (requiredArguments > givenArguments)
+				LogError(context, expression->any.loc,
+						TPrintF("Procedure \"%S\" needs at least %d arguments but only %d were given",
+							procName, requiredArguments, givenArguments));
+		}
+		else
+		{
+			if (requiredArguments > givenArguments)
+				LogError(context, expression->any.loc,
+						TPrintF("Procedure \"%S\" needs at least %d arguments but only %d were given",
+						procName, requiredArguments, givenArguments));
+
+			if (givenArguments > totalArguments)
+				LogError(context, expression->any.loc,
+						TPrintF("Procedure \"%S\" needs %d arguments but %d were given",
+						procName, totalArguments, givenArguments));
+		}
+
+		s64 argsToCheck = Min(givenArguments, totalArguments);
+		for (int argIdx = 0; argIdx < argsToCheck; ++argIdx)
+		{
+			ASTExpression *arg = &expression->procedureCall.arguments[argIdx];
+			s64 paramTypeIdx = procTypeInfo.parameters[argIdx].typeTableIdx;
+			TypeCheckResult typeCheckResult = CheckTypesMatchAndSpecialize(context,
+					paramTypeIdx, arg);
+			arg->typeTableIdx = typeCheckResult.rightTableIdx;
+
+			if (typeCheckResult.errorCode != TYPECHECK_COOL)
+			{
+				String paramStr = TypeInfoToString(context, paramTypeIdx);
+				String givenStr = TypeInfoToString(context, arg->typeTableIdx);
+				LogError(context, arg->any.loc, TPrintF("When calling procedure \"%S\": type of "
+							"parameter #%d didn't match (parameter is %S but %S was given)",
+							procName, argIdx, paramStr, givenStr));
+			}
+		}
+		break;
 	}
 	case ASTNODETYPE_UNARY_OPERATION:
 	{
-		TypeCheckExpressionResult result = TryTypeCheckExpression(context, expression->unaryOperation.expression);
-		if (!result.success)
-			return { false, result.yieldInfo };
-		u64 expressionType = expression->unaryOperation.expression->typeTableIdx;
+		ASTExpression *input = expression->unaryOperation.expression;
+		if (input->typeTableIdx == TYPETABLEIDX_UNSET)
+		{
+			TypeCheckExpressionResult result = TryTypeCheckExpression(context, input);
+			if (!result.success)
+				return { false, result.yieldInfo };
+		}
+
+		u64 expressionType = input->typeTableIdx;
 		switch (expression->unaryOperation.op)
 		{
 		case TOKEN_OP_NOT:
@@ -2190,10 +2220,10 @@ skipInvalidIdentifierError:
 		case TOKEN_OP_POINTER_TO:
 		{
 			// Forbid pointer to temporal values
-			if (IsTemporalValue(expression->unaryOperation.expression))
+			if (IsTemporalValue(input))
 				LogError(context, expression->any.loc, "Trying to get pointer to temporal value"_s);
 
-			ASTExpression *e = expression->unaryOperation.expression;
+			ASTExpression *e = input;
 			switch (e->nodeType)
 			{
 			case ASTNODETYPE_IDENTIFIER:
@@ -2226,9 +2256,12 @@ skipInvalidIdentifierError:
 
 		if (expression->binaryOperation.op == TOKEN_OP_MEMBER_ACCESS)
 		{
-			TypeCheckExpressionResult result = TryTypeCheckExpression(context, leftHand);
-			if (!result.success)
-				return { false, result.yieldInfo };
+			if (leftHand->typeTableIdx == TYPETABLEIDX_UNSET)
+			{
+				TypeCheckExpressionResult result = TryTypeCheckExpression(context, leftHand);
+				if (!result.success)
+					return { false, result.yieldInfo };
+			}
 			s64 leftHandTypeIdx = leftHand->typeTableIdx;
 
 			if (rightHand->nodeType != ASTNODETYPE_IDENTIFIER)
@@ -2277,12 +2310,18 @@ skipInvalidIdentifierError:
 		else if (expression->binaryOperation.op == TOKEN_OP_ARRAY_ACCESS)
 		{
 			TypeCheckExpressionResult result;
-			result = TryTypeCheckExpression(context, leftHand);
-			if (!result.success)
-				return { false, result.yieldInfo };
-			result = TryTypeCheckExpression(context, rightHand);
-			if (!result.success)
-				return { false, result.yieldInfo };
+			if (leftHand->typeTableIdx == TYPETABLEIDX_UNSET)
+			{
+				result = TryTypeCheckExpression(context, leftHand);
+				if (!result.success)
+					return { false, result.yieldInfo };
+			}
+			if (rightHand->typeTableIdx == TYPETABLEIDX_UNSET)
+			{
+				result = TryTypeCheckExpression(context, rightHand);
+				if (!result.success)
+					return { false, result.yieldInfo };
+			}
 
 			s64 arrayType = leftHand->typeTableIdx;
 			TypeInfo arrayTypeInfo = context->typeTable[arrayType];
@@ -2309,12 +2348,18 @@ skipInvalidIdentifierError:
 		else
 		{
 			TypeCheckExpressionResult result;
-			result = TryTypeCheckExpression(context, leftHand);
-			if (!result.success)
-				return { false, result.yieldInfo };
-			result = TryTypeCheckExpression(context, rightHand);
-			if (!result.success)
-				return { false, result.yieldInfo };
+			if (leftHand->typeTableIdx == TYPETABLEIDX_UNSET)
+			{
+				result = TryTypeCheckExpression(context, leftHand);
+				if (!result.success)
+					return { false, result.yieldInfo };
+			}
+			if (rightHand->typeTableIdx == TYPETABLEIDX_UNSET)
+			{
+				result = TryTypeCheckExpression(context, rightHand);
+				if (!result.success)
+					return { false, result.yieldInfo };
+			}
 
 			TypeCheckResult typeCheckResult = CheckTypesMatchAndSpecialize(context,
 					leftHand->typeTableIdx, rightHand);
@@ -2728,38 +2773,82 @@ void TypeCheckMain(Context *context)
 
 	while (true)
 	{
+		// @Todo: remove done jobs
 		bool finished = true;
+		bool anyJobMadeAdvancements = false;
 		for (int jobIdx = 0; jobIdx < context->tcJobs.size; ++jobIdx)
 		{
 			TCJob *job = &context->tcJobs[jobIdx];
+			TCYieldInfo newYieldInfo;
 			switch (job->yieldInfo.cause)
 			{
-				case TCYIELDCAUSE_DONE:
+			// @Todo: TCYIELDCAUSE_NEED_TYPE_CHECKING
+			case TCYIELDCAUSE_DONE:
+				continue;
+			case TCYIELDCAUSE_MISSING_NAME:
+			{
+				context->currentTCJob = jobIdx;
+				// Check if name now exists
+				TCScopeName *scopeName = FindScopeName(context, job->yieldInfo.name);
+				if (scopeName == nullptr)
+				{
+					finished = false;
 					continue;
-				case TCYIELDCAUSE_MISSING_NAME:
-				{
-					context->currentTCJob = jobIdx;
-					TCScopeName *scopeName = FindScopeName(context, job->yieldInfo.name);
-					if (scopeName != nullptr)
-					{
-						TypeCheckExpressionResult result =
-							TryTypeCheckExpression(context, job->expression);
-						job->yieldInfo = result.yieldInfo;
-						if (!result.success)
-							finished = false;
-					}
 				}
-				case TCYIELDCAUSE_NONE:
+				else
 				{
-					context->currentTCJob = jobIdx;
 					TypeCheckExpressionResult result =
 						TryTypeCheckExpression(context, job->expression);
-					job->yieldInfo = result.yieldInfo;
+					newYieldInfo = result.yieldInfo;
 					if (!result.success)
 						finished = false;
 				}
+			} break;
+			case TCYIELDCAUSE_NONE:
+			default:
+			{
+				context->currentTCJob = jobIdx;
+				TypeCheckExpressionResult result = TryTypeCheckExpression(context, job->expression);
+				newYieldInfo = result.yieldInfo;
+				if (!result.success)
+					finished = false;
 			}
+			}
+			// !!! Update if TCYieldInfo is changed!
+			if (job->yieldInfo.cause != newYieldInfo.cause &&
+				!StringEquals(job->yieldInfo.name, newYieldInfo.name))
+				anyJobMadeAdvancements = true;
+
+			job->yieldInfo = newYieldInfo;
 		}
+
 		if (finished) break;
+
+		if (!anyJobMadeAdvancements)
+		{
+			for (int jobIdx = 0; jobIdx < context->tcJobs.size; ++jobIdx)
+			{
+				TCJob *job = &context->tcJobs[jobIdx];
+				switch (job->yieldInfo.cause)
+				{
+				case TCYIELDCAUSE_DONE:
+					continue;
+				case TCYIELDCAUSE_MISSING_NAME:
+					LogErrorNoCrash(context, job->yieldInfo.loc, TPrintF("Identifier \"%S\" not found!",
+								job->yieldInfo.name));
+					break;
+				case TCYIELDCAUSE_NEED_TYPE_CHECKING:
+					LogErrorNoCrash(context, job->yieldInfo.loc, TPrintF("COMPILER: Name \"%S\" never type checked!",
+								job->yieldInfo.name));
+					break;
+				case TCYIELDCAUSE_NONE:
+				default:
+					LogErrorNoCrash(context, job->yieldInfo.loc, "COMPILER: Unspecified type checking error"_s);
+				}
+			}
+
+			Print("Compiler isn't making advancements. Stopping.\n");
+			CRASH;
+		}
 	}
 }

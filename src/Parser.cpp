@@ -569,6 +569,7 @@ ASTProcedurePrototype ParseProcedurePrototype(Context *context)
 ASTExpression ParseExpression(Context *context, s32 precedence)
 {
 	ASTExpression result = {};
+	result.typeTableIdx = TYPETABLEIDX_UNSET;
 	result.any.loc = context->token->loc;
 
 	// Parenthesis
@@ -842,6 +843,7 @@ ASTStaticDefinition ParseStaticDefinition(Context *context)
 	Advance(context);
 
 	ASTExpression expression = {};
+	expression.typeTableIdx = TYPETABLEIDX_UNSET;
 	expression.any.loc = context->token->loc;
 
 	bool isInline = false;
@@ -923,6 +925,7 @@ ASTStaticDefinition ParseStaticDefinition(Context *context)
 ASTExpression ParseStatement(Context *context)
 {
 	ASTExpression result = {};
+	result.typeTableIdx = TYPETABLEIDX_UNSET;
 	result.any.loc = context->token->loc;
 
 	switch (context->token->type)
@@ -1082,6 +1085,7 @@ ASTExpression ParseStatement(Context *context)
 ASTExpression ParseStaticStatement(Context *context)
 {
 	ASTExpression result = {};
+	result.typeTableIdx = TYPETABLEIDX_UNSET;
 
 	switch (context->token->type)
 	{

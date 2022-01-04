@@ -1,10 +1,19 @@
 PrintConstant :: ()
 {
-	PrintF("Constant is %\n", ANOTHER_CONSTANT);
+	aStruct : AStruct = { A_CONSTANT };
+	PrintF("Constant is %\n", aStruct.foo + ANOTHER_CONSTANT);
 }
 
 ANOTHER_CONSTANT :: A_CONSTANT;
 A_CONSTANT :: 5;
+
+// This should not cause a hang
+//asd :s= neverDefined;
+
+AStruct :: struct
+{
+	foo : s32;
+};
 
 Main :: () -> s64
 {
