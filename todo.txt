@@ -5,3 +5,7 @@
 * Operator overloading?
 * Struct literals for static variable initial value.
 * Rename struct literals to group literals? They can also be arrays.
+* Know why a job yielded, don't brute force until works, and detect when compilation would never
+end.
+* Add TEST instructions
+* Avoid duplicate string literals

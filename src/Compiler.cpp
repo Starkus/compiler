@@ -79,7 +79,7 @@ struct Config
 	bool logAllocationInfo;
 };
 
-struct TypeCheckJob;
+struct TCJob;
 struct Procedure;
 struct TypeInfo;
 struct StaticDefinition;
@@ -110,9 +110,9 @@ struct Context
 	BucketArray<String, 1024, malloc, realloc> stringLiterals;
 
 	// Type check
-	DynamicArray<TypeCheckJob, malloc, realloc> typeCheckJobs;
-	s32 currentTypeCheckJob;
-	BucketArray<Value, 512, malloc, realloc> values;
+	DynamicArray<TCJob, malloc, realloc> tcJobs;
+	s32 currentTCJob;
+	BucketArray<Value, 2048, malloc, realloc> values;
 	BucketArray<Procedure, 512, malloc, realloc> procedures;
 	BucketArray<Procedure, 128, malloc, realloc> externalProcedures;
 	BucketArray<StaticDefinition, 512, malloc, realloc> staticDefinitions;

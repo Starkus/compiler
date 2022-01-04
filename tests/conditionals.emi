@@ -1,0 +1,75 @@
+Main :: () -> s64
+{
+	correct := " Correct";
+	incorrect := " INCORRECT";
+
+	smallF := -2.65;
+	mediumF := 25.44;
+	bigF := 6401.51;
+
+	smallS : s64 = -2;
+	mediumS : s64 = 25;
+	bigS : s64 = 6401;
+
+	smallU : u64 = 2;
+	mediumU : u64 = 25;
+	bigU : u64 = 6401;
+
+	Print("EQUAL:\n");
+	if (mediumF == mediumF)		Print(correct); else Print(incorrect);
+	if (smallF == bigF)			Print(incorrect); else Print(correct);
+	if (mediumS == mediumS)		Print(correct); else Print(incorrect);
+	if (smallS == bigS)			Print(incorrect); else Print(correct);
+	if (mediumU == mediumU)		Print(correct); else Print(incorrect);
+	if (smallU == bigU)			Print(incorrect); else Print(correct);
+
+	Print("\nNOT EQUAL:\n");
+	if (mediumF != smallF)		Print(correct); else Print(incorrect);
+	if (mediumF != mediumF)		Print(incorrect); else Print(correct);
+	if (mediumS != smallS)		Print(correct); else Print(incorrect);
+	if (mediumS != mediumS)		Print(incorrect); else Print(correct);
+	if (mediumU != smallU)		Print(correct); else Print(incorrect);
+	if (mediumU != mediumU)		Print(incorrect); else Print(correct);
+
+	Print("\nGREATER:\n");
+	if (mediumF > smallF)		Print(correct); else Print(incorrect);
+	if (smallF > mediumF)		Print(incorrect); else Print(correct);
+	if (mediumS > smallS)		Print(correct); else Print(incorrect);
+	if (smallS > mediumS)		Print(incorrect); else Print(correct);
+	if (mediumU > smallU)		Print(correct); else Print(incorrect);
+	if (smallU > mediumU)		Print(incorrect); else Print(correct);
+
+	Print("\nLESS:\n");
+	if (mediumF < bigF)			Print(correct); else Print(incorrect);
+	if (bigF < mediumF)			Print(incorrect); else Print(correct);
+	if (mediumS < bigS)			Print(correct); else Print(incorrect);
+	if (bigS < mediumS)			Print(incorrect); else Print(correct);
+	if (mediumU < bigU)			Print(correct); else Print(incorrect);
+	if (bigU < mediumU)			Print(incorrect); else Print(correct);
+
+	Print("\nGREATER OR EQUAL:\n");
+	if (mediumF >= smallF)		Print(correct); else Print(incorrect);
+	if (smallF >= smallF)		Print(correct); else Print(incorrect);
+	if (smallF >= mediumF)		Print(incorrect); else Print(correct);
+	if (mediumS >= smallS)		Print(correct); else Print(incorrect);
+	if (smallS >= smallS)		Print(correct); else Print(incorrect);
+	if (smallS >= mediumS)		Print(incorrect); else Print(correct);
+	if (mediumU >= smallU)		Print(correct); else Print(incorrect);
+	if (smallU >= smallU)		Print(correct); else Print(incorrect);
+	if (smallU >= mediumU)		Print(incorrect); else Print(correct);
+
+	Print("\nLESS OR EQUAL:\n");
+	if (smallF <= bigF)			Print(correct); else Print(incorrect);
+	if (bigF <= bigF)			Print(correct); else Print(incorrect);
+	if (bigF <= mediumF)		Print(incorrect); else Print(correct);
+	if (smallS <= bigS)			Print(correct); else Print(incorrect);
+	if (bigS <= bigS)			Print(correct); else Print(incorrect);
+	if (bigS <= mediumS)		Print(incorrect); else Print(correct);
+	if (smallU <= bigU)			Print(correct); else Print(incorrect);
+	if (bigU <= bigU)			Print(correct); else Print(incorrect);
+	if (bigU <= mediumU)		Print(incorrect); else Print(correct);
+	Print("\n");
+
+	Print("Test ok\n");
+	return 0;
+}

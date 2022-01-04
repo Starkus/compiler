@@ -8,6 +8,8 @@ inline bool IsTokenOperator(Token *token)
 	return token->type >= TOKEN_OP_Begin && token->type <= TOKEN_OP_End;
 }
 
+const int PRECEDENCE_UNARY_SUBTRACT = TOKEN_END_OF_FILE; // @Hack
+
 int GetOperatorPrecedence(s32 op)
 {
 	// Even means evaluated left to right with things of same precedence.
@@ -40,6 +42,7 @@ int GetOperatorPrecedence(s32 op)
 			return 10;
 		case TOKEN_OP_NOT:
 		case TOKEN_OP_BITWISE_NOT:
+		case PRECEDENCE_UNARY_SUBTRACT:
 			return 12;
 		case TOKEN_OP_POINTER_TO:
 		case TOKEN_OP_DEREFERENCE:

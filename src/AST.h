@@ -39,6 +39,22 @@ struct ASTBinaryOperation : ASTBase
 	ASTExpression *rightHand;
 };
 
+enum TCValueType
+{
+	TCVALUETYPE_INVALID,
+	TCVALUETYPE_VALUE,
+	TCVALUETYPE_PARAMETER,
+};
+struct TCValue
+{
+	TCValueType type;
+	union
+	{
+		u32 valueIdx;
+		u32 parameterIdx;
+	};
+};
+
 struct Value;
 struct StructMember;
 struct StaticDefinition;
@@ -58,15 +74,15 @@ struct ASTIdentifier : ASTBase
 	NameType type;
 	union
 	{
-		u32 valueIdx;
+		TCValue tcValue;
 		struct
 		{
-			u32 baseValueIdx;
+			TCValue tcValueBase;
 			const StructMember *structMember;
 		} structMemberInfo;
 		struct
 		{
-			u32 baseValueIdx;
+			TCValue tcValueBase;
 			Array<const StructMember *> offsets;
 		} structMemberChain;
 		StaticDefinition *staticDefinition;
@@ -90,7 +106,7 @@ struct ASTStructMemberDeclaration : ASTBase
 	ASTExpression *value;
 	bool isUsing;
 
-	u64 typeTableIdx;
+	s64 typeTableIdx;
 };
 struct ASTStructDeclaration : ASTBase
 {
@@ -117,6 +133,9 @@ struct ASTProcedurePrototype : ASTBase
 	String varargsName;
 	ASTType *astReturnType;
 	DynamicArray<ASTVariableDeclaration, malloc, realloc> astParameters;
+
+	// Type check
+	s64 returnTypeIdx;
 };
 
 enum ASTTypeNodeType
@@ -188,17 +207,22 @@ struct ASTStaticDefinition : ASTBase
 struct ASTProcedureCall : ASTBase
 {
 	String name;
+	DynamicArray<ASTExpression, malloc, realloc> arguments;
+
+	// Type check
+	s64 procedureTypeIdx;
+	bool procedureFound;
 	bool isIndirect;
 	union
 	{
 		s32 procedureIdx;
-		u32 valueIdx;
+		TCValue tcValue;
 	};
-	DynamicArray<ASTExpression, malloc, realloc> arguments;
 };
 
 enum IntrinsicType
 {
+	INTRINSIC_UNSET,
 	INTRINSIC_SQRT32,
 	INTRINSIC_SQRT64,
 };
@@ -231,6 +255,7 @@ struct ASTFor : ASTBase
 	ASTExpression *body;
 
 	// Type check
+	bool scopePushed;
 	u32 indexValueIdx;
 	u32 elementValueIdx;
 	s64 elementTypeTableIdx;

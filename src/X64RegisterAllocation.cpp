@@ -1,4 +1,4 @@
-const u64 calleeSaveRegisters = 0b001111110000111100000110;
+const u64 calleeSaveRegisters = 0b001111100000111100000110;
 const u64 callerSaveRegisters = 0b110000001111000011111000;
 /* For reference
 IRValue x64Registers[X64REGISTER_Count] = {
@@ -82,6 +82,8 @@ bool CanBeRegister(Context *context, u32 valueIdx)
 		typeInfo.typeCategory == TYPECATEGORY_UNION)
 		return false;
 	if (!IsPowerOf2(typeInfo.size) || typeInfo.size > 8)
+		// @Improve: we could actually fit up to like 32/64 bytes with SIMD registers, but right now
+		// this helps find errors so it stays like this for now.
 		return false;
 	return true;
 }
@@ -333,12 +335,20 @@ void DoLivenessAnalisisOnInstruction(Context *context, BasicBlock *basicBlock, X
 	case X64_JL:
 	case X64_JGE:
 	case X64_JLE:
+	case X64_JA:
+	case X64_JB:
+	case X64_JAE:
+	case X64_JBE:
 	case X64_LEAVE:
 	case X64_RET:
 	case X64_SETG:
 	case X64_SETL:
 	case X64_SETGE:
 	case X64_SETLE:
+	case X64_SETA:
+	case X64_SETB:
+	case X64_SETAE:
+	case X64_SETBE:
 	case X64_SETE:
 	case X64_SETNE:
 	case X64_Label:
@@ -405,9 +415,12 @@ nodeFound:
 				DynamicArrayAddUnique(&node->edges, edgeValueIdx);
 		}
 
-		// No live values that cross a procedure call can be stored in RAX.
+		// No live values that cross a procedure call can be stored in RAX/XMM0.
 		if (inst->type == X64_CALL || inst->type == X64_CALL_Indirect)
+		{
 			DynamicArrayAddUnique(&node->edges, RAX.valueIdx);
+			DynamicArrayAddUnique(&node->edges, XMM0.valueIdx);
+		}
 	}
 }
 
