@@ -155,93 +155,72 @@ f64 F64FromString(String string)
 		--string.size;
 	}
 
-	String leftSideString = {};
-	String rightSideString = {};
-	String exponentString = {};
-	{
-		const char *scan = string.data;
-		for (int i = 0; i < string.size; ++i)
-		{
-			if (*scan == '.')
-			{
-				ASSERT(leftSideString.size == 0);
-				leftSideString = { i, string.data };
-				rightSideString = { string.size - i - 1, string.data + i + 1 };
-			}
-			else if (*scan == 'e' || *scan == 'E')
-			{
-				ASSERT(exponentString.size == 0);
-				exponentString = { string.size - i - 1, string.data + i + 1 };
-				if (leftSideString.size == 0)
-				{
-					leftSideString = { i, string.data };
-				}
-				else
-				{
-					rightSideString = { i - leftSideString - 1, string.data + leftSideString.size + 1 };
-				}
-			}
-			++scan;
-		}
-	}
-
-	// 32 byte margin on either side, 80 bytes total for all digits
+	int leftCount = 0;
+	int rightCount = 0;
+	int sciNot = 0;
+	// 32 byte margin on either side, 80 bytes total for all digits.
+	// The reason for the margin is so we can just start reading up to 32 bytes more to the left if
+	// we have a negative scientific notation exponent.
 	char buffer[144] = {};
 	{
+		bool foundDot = false;
 		int totalCount = 0;
 		char *cursor = buffer + 32;
-		const char *scan = leftSideString.data;
-		for (int i = 0; i < leftSideString.size && totalCount < 80; ++i, ++totalCount)
+		const char *scan = string.data;
+		for (int i = 0; i < string.size && totalCount < 80; ++i, ++scan)
 		{
-			ASSERT(IsNumeric(*scan));
-			*cursor++ = *scan++ - '0';
-		}
-		scan = rightSideString.data;
-		for (int i = 0; i < rightSideString.size && totalCount < 80; ++i, ++totalCount)
-		{
-			ASSERT(IsNumeric(*scan));
-			*cursor++ = *scan++ - '0';
+			if (*scan == '.')
+				foundDot = true;
+			else if (*scan == 'e' || *scan == 'E')
+			{
+				sciNot = (int)IntFromString({ string.size - i - 1, scan + 1 });
+				ASSERT(-32 <= sciNot && sciNot <= 32);
+				break;
+			}
+			else
+			{
+				ASSERT(IsNumeric(*scan));
+				*cursor++ = *scan - '0';
+				foundDot ? ++rightCount : ++leftCount;
+				++totalCount;
+			}
 		}
 	}
-	u64 leftPart = 0;
-	u64 rightPart = 0;
+	u64 mantissa = 0;
+	u64 fraction = 0;
 	int fractionDigits = 0;
 	int totalDigits = 0;
-	int sciNot = 0;
 	int correctionExp = 0;
-
-	if (exponentString.size) sciNot = (int)IntFromString(exponentString);
-	ASSERT(-32 <= sciNot && sciNot <= 32);
 
 	{
 		const char *scan = buffer + 32;
-		for (int i = 0; i < leftSideString.size + sciNot; ++i)
+		for (int i = 0; i < leftCount + sciNot; ++i)
 		{
 			if (totalDigits >= 20) // Limit digits to 20. It's enough resolution for the 52 bit mantissa.
 			{
 				// We will multiply by 10 the final resulting f64 for every digit we ignored.
-				correctionExp = (int)leftSideString.size + sciNot - i;
+				correctionExp = (int)leftCount + sciNot - i;
 				break;
 			}
 			u64 digit = *scan++;
-			u64 moveLeft = leftPart * 10;
-			ASSERT(moveLeft + digit >= leftPart);
-			leftPart = moveLeft + digit;
-			if (leftPart > 0)
+			u64 moveLeft = mantissa * 10;
+			ASSERT(moveLeft + digit >= mantissa);
+			mantissa = moveLeft + digit;
+			if (mantissa > 0)
 				++totalDigits;
 		}
-		scan = buffer + 32 + leftSideString.size + sciNot;
-		for (int i = sciNot; i < rightSideString.size; ++i)
+		scan = buffer + 32 + leftCount + sciNot;
+		for (int i = sciNot; i < rightCount; ++i)
 		{
 			if (totalDigits >= 20) // Limit digits to 20. It's enough resolution for the 52 bit mantissa.
 				break;
 			s64 digit = *scan++;
-			u64 moveLeft = rightPart * 10;
-			if (moveLeft / 10 != rightPart || moveLeft + digit < rightPart) // Max resolution reached
+			u64 moveLeft = fraction * 10;
+			if (moveLeft / 10 != fraction || moveLeft + digit < fraction) // Max resolution reached
 				break;
-			rightPart = moveLeft + digit;
+			fraction = moveLeft + digit;
 			++fractionDigits;
-			if (leftPart > 0 || rightPart > 0)
+			if (mantissa > 0 || fraction > 0)
 				++totalDigits;
 		}
 	}
@@ -254,14 +233,19 @@ f64 F64FromString(String string)
 		fractionDigits = 20;
 	}
 
-	if (leftPart == 0 && rightPart == 0)
-		return 0;
+	// Special case: 0
+	if (mantissa == 0 && fraction == 0)
+		return isNegative ? -0.0 : 0.0;
 
 	int exponent = 0;
-	if (leftPart) exponent = 63 - Nlz64(leftPart);
+	// We will shift mantissa until the first leading 1 is on bit 53. The effect is that we
+	// effectively divide mantissa by 2 by the number of trailing zeroes. For example, if our wholes
+	// side is 8, we will divide it until it's 1.
+	// Because of this, we set the exponent equal to the number of trailing zeroes. So in our
+	// example 8 is 0b1000, which results in 2^3 * 1 because it has 3 trailing zeroes.
+	if (mantissa) exponent = 63 - Nlz64(mantissa);
 
-	u64 mantissa = leftPart;
-	u64 fraction = rightPart;
+	// Table of multiples of 10 so we can divide/multiply by 10 many times in one go.
 	u64 divTable[] = {
 		1,					10,					100,				1000,
 		10000,				100000,				1000000,			10000000,
@@ -271,12 +255,16 @@ f64 F64FromString(String string)
 	u64 div;
 	if (fractionDigits == 20)
 	{
-		// 10^19 doesn't fit in 64 bits. Reduce instead
+		// 10^19 doesn't fit in 64 bits. We will pretend to work with 10^19.
+		// Checking if fraction is greater than our 10^19 is unnecessary since a 64 bit number can
+		// never be greater than 10^19. Nor (10^19)/2, nor (10^19)/4.
 
 		// Doubling 'fraction' here would overflow. Instead we divide 'div' by 2 until it fits in 64
 		// bits (which results in 10^19 / 8).
 		div = 12500000000000000000;
 
+		// @Check: isn't mantissa always 0 here? 20 fraction digits means all our digits went into
+		// the fraction part.
 		mantissa <<= 3; // Multiply by 2 three times
 		ASSERT(!(mantissa & 0xFFF0000000000000)); // We shouldn't run out of bits yet.
 
@@ -286,6 +274,11 @@ f64 F64FromString(String string)
 		div = divTable[fractionDigits];
 	while (true)
 	{
+		// The idea for the fraction part is:
+		//   * We multiply both the fraction part and the current mantissa by 2.
+		//   * If the fraction part begins with a 1 (in base 10) we remove it and set lowest bit on
+		// mantissa to 1.
+		//   * Repeat until fraction part is 0 or we run out of mantissa bits.
 		if (fraction >= div)
 		{
 			mantissa |= 1;
@@ -294,8 +287,9 @@ f64 F64FromString(String string)
 		if (fraction <= 0) break;
 		if (mantissa & 0x0010000000000000)
 		{
+			// We ran out of precision bits on mantissa. Just round up and get out.
 			// Rounding
-			if ((fraction << 1) >= div / 2)
+			if ((fraction << 1) >= (div >> 1))
 				mantissa |= 1;
 			break;
 		}
@@ -303,6 +297,8 @@ f64 F64FromString(String string)
 		// Prevent overflow
 		if (fraction & 0x8000000000000000)
 		{
+			// Doubling fraction would overflow the U64. We can divide 'div' by 2 instead, but it
+			// should be an even number.
 			ASSERT(!(div & 1));
 			div >>= 1;
 		}
@@ -313,6 +309,7 @@ f64 F64FromString(String string)
 		if (mantissa == 0) --exponent;
 	}
 
+	// Shift mantissa until most significant 1 is in bit 53.
 	s8 mantissaShift = Nlz64(mantissa) - 11;
 	if (mantissaShift > 0)
 		mantissa <<= mantissaShift;

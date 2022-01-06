@@ -3,8 +3,7 @@
 * Verify small structs are passed properly through parameters
 * Some allocator that gets reset after each stage.
 * Operator overloading?
-* Struct literals for static variable initial value.
-* Rename struct literals to group literals? They can also be arrays.
+* Group literals leave non specified members uninitialized.
 * Add TEST instructions
 * Avoid duplicate string literals
 * Avoid including same source file twice (ask Windows if two files are the same)

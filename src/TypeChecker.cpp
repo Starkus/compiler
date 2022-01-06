@@ -30,7 +30,8 @@ enum ConstantType
 {
 	CONSTANTTYPE_INVALID = 0,
 	CONSTANTTYPE_INTEGER,
-	CONSTANTTYPE_FLOATING
+	CONSTANTTYPE_FLOATING,
+	CONSTANTTYPE_GROUP,
 };
 struct Constant
 {
@@ -39,7 +40,9 @@ struct Constant
 	{
 		s64 valueAsInt;
 		f64 valueAsFloat;
+		Array<Constant> valueAsGroup;
 	};
+	s64 typeTableIdx;
 };
 
 enum TypeCategory
@@ -722,7 +725,7 @@ TypeCheckResult CheckTypesMatchAndSpecialize(Context *context, s64 leftTableIdx,
 	if (rightTableIdx == TYPETABLEIDX_STRUCT_LITERAL)
 	{
 		ASSERT(rightHand->nodeType == ASTNODETYPE_LITERAL);
-		ASSERT(rightHand->literal.type == LITERALTYPE_STRUCT);
+		ASSERT(rightHand->literal.type == LITERALTYPE_GROUP);
 
 		s64 structTypeIdx = leftTableIdx;
 		TypeInfo structTypeInfo = context->typeTable[structTypeIdx];
@@ -1042,6 +1045,7 @@ Constant TryEvaluateConstant(Context *context, ASTExpression *expression)
 	Constant result;
 	result.type = CONSTANTTYPE_INVALID;
 	result.valueAsInt = 0xFA11FA11FA11FA11;
+	result.typeTableIdx = expression->typeTableIdx;
 
 	switch (expression->nodeType)
 	{
@@ -1058,6 +1062,21 @@ Constant TryEvaluateConstant(Context *context, ASTExpression *expression)
 			result.type = CONSTANTTYPE_FLOATING;
 			result.valueAsFloat = expression->literal.floating;
 			break;
+		case LITERALTYPE_GROUP:
+		{
+			Array<Constant> constants;
+			u64 membersCount = expression->literal.members.size;
+			ArrayInit(&constants, membersCount, malloc);
+			constants.size = membersCount;
+			for (int i = 0; i < membersCount; ++i)
+			{
+				constants[i] = TryEvaluateConstant(context, expression->literal.members[i]);
+				if (constants[i].type == CONSTANTTYPE_INVALID)
+					goto error;
+			}
+			result.type = CONSTANTTYPE_GROUP;
+			result.valueAsGroup = constants;
+		} break;
 		default:
 			goto error;
 		}
@@ -2428,7 +2447,7 @@ TypeCheckExpressionResult TryTypeCheckExpression(Context *context, ASTExpression
 			expression->typeTableIdx = FindGlobalType(context, "String"_s);
 			ASSERT(expression->typeTableIdx > 0);
 			break;
-		case LITERALTYPE_STRUCT:
+		case LITERALTYPE_GROUP:
 			for (int memberIdx = 0; memberIdx < expression->literal.members.size; ++memberIdx)
 			{
 				TypeCheckExpressionResult result = TryTypeCheckExpression(context, expression->literal.members[memberIdx]);

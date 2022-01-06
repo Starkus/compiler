@@ -13,7 +13,7 @@ enum IRValueType
 	IRVALUETYPE_IMMEDIATE_INTEGER,
 	IRVALUETYPE_IMMEDIATE_FLOAT,
 	IRVALUETYPE_IMMEDIATE_STRING,
-	IRVALUETYPE_IMMEDIATE_STRUCT
+	IRVALUETYPE_IMMEDIATE_GROUP
 };
 struct IRValue
 {
@@ -1262,6 +1262,35 @@ skipGeneratingVarargsArray:
 	return returnValue;
 }
 
+IRValue IRValueFromConstant(Context *context, Constant constant)
+{
+	IRValue result = {};
+	result.typeTableIdx = constant.typeTableIdx;
+	switch (constant.type)
+	{
+	case CONSTANTTYPE_INTEGER:
+		result = IRValueImmediate(constant.valueAsInt);
+		break;
+	case CONSTANTTYPE_FLOATING:
+		result.valueType = IRVALUETYPE_IMMEDIATE_FLOAT;
+		result.immediateFloat = constant.valueAsFloat;
+		break;
+	case CONSTANTTYPE_GROUP:
+	{
+		result.valueType = IRVALUETYPE_IMMEDIATE_GROUP;
+		u64 membersCount = constant.valueAsGroup.size;
+		ArrayInit(&result.immediateStructMembers, membersCount, FrameAlloc);
+		result.immediateStructMembers.size = membersCount;
+		for (int i = 0; i < membersCount; ++i)
+			result.immediateStructMembers[i] =
+				IRValueFromConstant(context, constant.valueAsGroup[i]);
+	} break;
+	default:
+		ASSERT(!"Unknown constant type");
+	}
+	return result;
+}
+
 IRValue IRGenFromExpression(Context *context, ASTExpression *expression)
 {
 	IRValue result = {};
@@ -1442,13 +1471,8 @@ IRValue IRGenFromExpression(Context *context, ASTExpression *expression)
 					if (constant.type == CONSTANTTYPE_INVALID)
 						LogError(context, varDecl.astInitialValue->any.loc,
 								"Initial value of static variable isn't constant"_s);
-					else if (constant.type == CONSTANTTYPE_FLOATING)
-					{
-						newStaticVar.initialValue.valueType = IRVALUETYPE_IMMEDIATE_FLOAT;
-						newStaticVar.initialValue.immediateFloat = constant.valueAsFloat;
-					}
-					else
-						newStaticVar.initialValue = IRValueImmediate(constant.valueAsInt);
+
+					newStaticVar.initialValue = IRValueFromConstant(context, constant);
 				}
 			}
 
@@ -1892,7 +1916,7 @@ skipGeneratingVarargsArray:
 
 			result = IRValueValue(context, newStaticVar.valueIdx);
 		} break;
-		case LITERALTYPE_STRUCT:
+		case LITERALTYPE_GROUP:
 		{
 			s64 groupTypeIdx = expression->typeTableIdx;
 			ASSERT(groupTypeIdx > 0);

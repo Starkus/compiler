@@ -52,7 +52,6 @@ mat4 :: union
 	m : [16] f32;
 };
 
-/*
 MAT4_IDENTITY :s mat4 =
 {
 	1.0,	0.0,	0.0,	0.0,
@@ -60,7 +59,6 @@ MAT4_IDENTITY :s mat4 =
 	0.0,	0.0,	1.0,	0.0,
 	0.0,	0.0,	0.0,	1.0
 };
-*/
 
 Mat4Scale :: (a : mat4, b : f32) -> mat4
 {
@@ -523,16 +521,14 @@ QuaternionFromRotationMatrix :: (m : mat4) -> v4
 	return result;
 }
 
-/*
 QuaternionFromAxisAngle :: (axis : v3, angle : f32) -> v4
 {
 	halfAngle : f32 = angle * 0.5;
-	s : f32 = Sin32(halfAngle);
-	c : f32 = Cos32(halfAngle);
+	s := Sin(halfAngle);
+	c := Cos(halfAngle);
 	result : v4 = { axis.x * s, axis.y * s, axis.z * s, c };
 	return result;
 }
-*/
 
 QuaternionRotateVector :: (q : v4, v : v3) -> v3
 {
@@ -558,19 +554,18 @@ QuaternionMultiply :: (a : v4, b : v4) -> v4
 	return result;
 }
 
-/*
 QuaternionFromEulerXYZ :: (euler : v3) -> v4
 {
-	halfYaw : f32 = euler.z * 0.5;
+	halfYaw   : f32 = euler.z * 0.5;
 	halfPitch : f32 = euler.y * 0.5;
-	halfRoll : f32 = euler.x * 0.5;
+	halfRoll  : f32 = euler.x * 0.5;
 
-	cosYaw   : f32 = Cos32(halfYaw);
-	sinYaw   : f32 = Sin32(halfYaw);
-	cosPitch : f32 = Cos32(halfPitch);
-	sinPitch : f32 = Sin32(halfPitch);
-	cosRoll  : f32 = Cos32(halfRoll);
-	sinRoll  : f32 = Sin32(halfRoll);
+	cosYaw   : f32 = Cos(halfYaw);
+	sinYaw   : f32 = Sin(halfYaw);
+	cosPitch : f32 = Cos(halfPitch);
+	sinPitch : f32 = Sin(halfPitch);
+	cosRoll  : f32 = Cos(halfRoll);
+	sinRoll  : f32 = Sin(halfRoll);
 
 	result : v4 = ?;
 	result.x = sinRoll * cosPitch * cosYaw - cosRoll * sinPitch * sinYaw;
@@ -583,16 +578,16 @@ QuaternionFromEulerXYZ :: (euler : v3) -> v4
 
 QuaternionFromEulerZYX :: (euler : v3) -> v4
 {
-	halfYaw : f32 = euler.z * 0.5;
+	halfYaw   : f32 = euler.z * 0.5;
 	halfPitch : f32 = euler.y * 0.5;
-	halfRoll : f32 = euler.x * 0.5;
+	halfRoll  : f32 = euler.x * 0.5;
 
-	cosYaw   : f32 = Cos32(halfYaw);
-	sinYaw   : f32 = Sin32(halfYaw);
-	cosPitch : f32 = Cos32(halfPitch);
-	sinPitch : f32 = Sin32(halfPitch);
-	cosRoll  : f32 = Cos32(halfRoll);
-	sinRoll  : f32 = Sin32(halfRoll);
+	cosYaw   : f32 = Cos(halfYaw);
+	sinYaw   : f32 = Sin(halfYaw);
+	cosPitch : f32 = Cos(halfPitch);
+	sinPitch : f32 = Sin(halfPitch);
+	cosRoll  : f32 = Cos(halfRoll);
+	sinRoll  : f32 = Sin(halfRoll);
 
 	result : v4 = ?;
 	result.x = sinRoll * cosPitch * cosYaw + cosRoll * sinPitch * sinYaw;
@@ -602,7 +597,6 @@ QuaternionFromEulerZYX :: (euler : v3) -> v4
 
 	return result;
 }
-*/
 
 Transform :: struct
 {

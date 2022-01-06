@@ -1760,7 +1760,7 @@ void X64PrintStaticData(Context *context, String name, IRValue value, s64 typeTa
 		}
 		bytesSoFar += typeInfo.size;
 	} break;
-	case IRVALUETYPE_IMMEDIATE_STRUCT:
+	case IRVALUETYPE_IMMEDIATE_GROUP:
 	{
 		int alignment = alignmentOverride < 0 ? 8 : alignmentOverride;
 		bytesSoFar = X64StaticDataAlignTo(context, bytesSoFar, alignment);
@@ -2352,7 +2352,7 @@ unalignedMovups:;
 			context->values[typeInfo.valueIdx].typeTableIdx = typeInfoIdx;
 
 			IRStaticVariable newStaticVar = { typeInfo.valueIdx };
-			newStaticVar.initialValue.valueType = IRVALUETYPE_IMMEDIATE_STRUCT;
+			newStaticVar.initialValue.valueType = IRVALUETYPE_IMMEDIATE_GROUP;
 			newStaticVar.initialValue.typeTableIdx = -1;
 
 			switch (typeInfo.typeCategory)
@@ -2388,7 +2388,7 @@ unalignedMovups:;
 				u32 membersValueIdx = NewValue(context, TPrintF("_members_%lld", typeTableIdx),
 						structMemberInfoTypeTableIdx, VALUEFLAGS_ON_STATIC_STORAGE);
 				IRStaticVariable membersStaticVar = { membersValueIdx };
-				membersStaticVar.initialValue.valueType = IRVALUETYPE_IMMEDIATE_STRUCT;
+				membersStaticVar.initialValue.valueType = IRVALUETYPE_IMMEDIATE_GROUP;
 				ArrayInit(&membersStaticVar.initialValue.immediateStructMembers,
 						typeInfo.structInfo.members.size, FrameAlloc);
 				for (s64 memberIdx = 0; memberIdx < (s64)typeInfo.structInfo.members.size; ++memberIdx)
@@ -2397,7 +2397,7 @@ unalignedMovups:;
 					TypeInfo memberType = context->typeTable[member.typeTableIdx];
 
 					IRValue memberImm;
-					memberImm.valueType = IRVALUETYPE_IMMEDIATE_STRUCT;
+					memberImm.valueType = IRVALUETYPE_IMMEDIATE_GROUP;
 					ArrayInit(&memberImm.immediateStructMembers, 4, FrameAlloc);
 					*ArrayAdd(&memberImm.immediateStructMembers) =
 						{ IRValueImmediateString(context, member.name) };
@@ -2437,7 +2437,7 @@ unalignedMovups:;
 				u32 namesValueIdx = NewValue(context, TPrintF("_names_%lld", typeTableIdx),
 						stringTypeIdx, VALUEFLAGS_ON_STATIC_STORAGE);
 				IRStaticVariable namesStaticVar = { namesValueIdx };
-				namesStaticVar.initialValue.valueType = IRVALUETYPE_IMMEDIATE_STRUCT;
+				namesStaticVar.initialValue.valueType = IRVALUETYPE_IMMEDIATE_GROUP;
 				ArrayInit(&namesStaticVar.initialValue.immediateStructMembers,
 						typeInfo.enumInfo.names.size, FrameAlloc);
 				for (s64 nameIdx = 0; nameIdx < (s64)typeInfo.enumInfo.names.size; ++nameIdx)
@@ -2451,7 +2451,7 @@ unalignedMovups:;
 				u32 valuesValueIdx = NewValue(context, TPrintF("_values_%lld", typeTableIdx),
 						TYPETABLEIDX_S64, VALUEFLAGS_ON_STATIC_STORAGE);
 				IRStaticVariable valuesStaticVar = { valuesValueIdx };
-				valuesStaticVar.initialValue.valueType = IRVALUETYPE_IMMEDIATE_STRUCT;
+				valuesStaticVar.initialValue.valueType = IRVALUETYPE_IMMEDIATE_GROUP;
 				ArrayInit(&valuesStaticVar.initialValue.immediateStructMembers,
 						typeInfo.enumInfo.values.size, FrameAlloc);
 				for (s64 valueIdx = 0; valueIdx < (s64)typeInfo.enumInfo.values.size; ++valueIdx)
@@ -2514,7 +2514,7 @@ unalignedMovups:;
 					parametersValueIdx = NewValue(context, TPrintF("_params_%lld", typeTableIdx),
 							pointerToTypeInfoIdx, VALUEFLAGS_ON_STATIC_STORAGE);
 					IRStaticVariable paramsStaticVar = { parametersValueIdx };
-					paramsStaticVar.initialValue.valueType = IRVALUETYPE_IMMEDIATE_STRUCT;
+					paramsStaticVar.initialValue.valueType = IRVALUETYPE_IMMEDIATE_GROUP;
 					ArrayInit(&paramsStaticVar.initialValue.immediateStructMembers,
 							typeInfo.procedureInfo.parameters.size, FrameAlloc);
 					for (s64 paramIdx = 0; paramIdx < (s64)typeInfo.procedureInfo.parameters.size;

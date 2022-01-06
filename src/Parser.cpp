@@ -589,7 +589,7 @@ ASTExpression ParseExpression(Context *context, s32 precedence)
 		result.any.loc = context->token->loc;
 		result.nodeType = ASTNODETYPE_LITERAL;
 
-		result.literal.type = LITERALTYPE_STRUCT;
+		result.literal.type = LITERALTYPE_GROUP;
 		result.literal.members = ParseStructLiteral(context);
 
 		AssertToken(context, context->token, '}');
