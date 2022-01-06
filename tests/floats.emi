@@ -12,6 +12,48 @@ Main :: () -> s64
 {
 	FloatArg(2.5, 8.0);
 	AnAwfulLotOfFloatArg(0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8);
+
+	someFloats : [7] f64 = {
+		 5.00000000000000000000e-01,
+		-1.66666666666666324348e-01,
+		 8.33333333332248946124e-03,
+		-1.98412698298579493134e-04,
+		 2.75573137070700676789e-06,
+		-2.50507602534068634195e-08,
+		 1.58969099521155010221e-10
+	};
+	expectedHex : [7] u64 = {
+		0x3FE0000000000000,
+		0xBFC5555555555549,
+		0x3F8111111110F8A6,
+		0xBF2A01A019C161D5,
+		0x3EC71DE357B1FE7D,
+		0xBE5AE5E68A2B9CEB,
+		0x3DE5D93A5ACFD57C
+	};
+	floatStrings : [7] String = {
+		" 5.00000000000000000000e-01",
+		"-1.66666666666666324348e-01",
+		" 8.33333333332248946124e-03",
+		"-1.98412698298579493134e-04",
+		" 2.75573137070700676789e-06",
+		"-2.50507602534068634195e-08",
+		" 1.58969099521155010221e-10"
+	};
+	for 0..8
+	{
+		union
+		{
+			asFloat : f64;
+			asBytes : u64;
+		};
+		asFloat = someFloats[i];
+		diff := cast(s64)(expectedHex[i] - asBytes);
+		if (-4 > diff || diff > 4) // Give a little bit of slack
+			Print("!!!INCORRECT PARSING\n");
+		PrintF("Parsed number '%' is off by %\n", floatStrings[i], diff);
+	}
+
 	Print("Test ok\n");
 	return 0;
 }

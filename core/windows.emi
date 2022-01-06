@@ -176,4 +176,3 @@ SetPixelFormat :: #external (hdc : ^void, format : s64, ppfd : ^PIXELFORMATDESCR
 PostQuitMessage :: #external (nExitCode : s64);
 DestroyWindow :: #external (hWnd : ^void) -> bool;
 TerminateProcess :: #external (uExitCode : u32);
-ExitProcess :: #external (uExitCode : u32);

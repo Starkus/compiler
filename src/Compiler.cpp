@@ -98,7 +98,6 @@ struct Context
 
 	DynamicArray<SourceFile, malloc, realloc> sourceFiles;
 	DynamicArray<String, malloc, realloc> libsToLink;
-	s32 currentFileIdx;
 
 	// Parsing
 	BucketArray<Token, 1024, malloc, realloc> tokens;
@@ -440,10 +439,12 @@ int main(int argc, char **argv)
 		SourceFile newSourceFile = { inputFiles[i] };
 		Win32ReadEntireFile(filenameCstr, &newSourceFile.buffer,
 				&newSourceFile.size, FrameAlloc);
-		context.currentFileIdx = (s32)context.sourceFiles.size;
 		*DynamicArrayAdd(&context.sourceFiles) = newSourceFile;
-		TokenizeFile(&context);
 	}
+
+	for (int i = 0; i < context.sourceFiles.size; ++i)
+		TokenizeFile(&context, i);
+
 	Token eofToken = { TOKEN_END_OF_FILE };
 	*BucketArrayAdd(&context.tokens) = eofToken;
 

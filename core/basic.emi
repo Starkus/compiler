@@ -102,14 +102,9 @@ Print :: (string: String)
 	WriteFile(stdOut, string.data, cast(s64) string.size, ^bytesWritten, 0);
 }
 
-Sqrt32 :: #inline (n : f32) -> f32
+ExitProcess :: #external (uExitCode : u32);
+__WindowsMain :: ()
 {
-	#intrinsic(sqrt32, n, n);
-	return n;
-}
-
-Sqrt64 :: #inline (n : f64) -> f64
-{
-	#intrinsic(sqrt64, n, n);
-	return n;
+	errorCode := Main();
+	ExitProcess(cast(u32)errorCode);
 }

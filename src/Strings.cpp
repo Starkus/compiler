@@ -80,7 +80,7 @@ inline bool IsWhitespace(char c)
 
 s64 IntFromString(String string)
 {
-	s64 result = 0;
+	u64 resultU = 0;
 	int i = 0;
 	const char *scan = string.data;
 	bool isNegative = false;
@@ -95,11 +95,22 @@ s64 IntFromString(String string)
 		char c = *scan++;
 		ASSERT(IsNumeric(c));
 		s64 digit = c - '0';
-		result *= 10;
-		result += digit;
+		u64 moveLeft = resultU * 10;
+		// Greater or equal because resultU can be 0
+		ASSERT(moveLeft / 10 == resultU && moveLeft + digit >= resultU);
+		resultU = moveLeft + digit;
 	}
+	s64 result;
 	if (isNegative)
-		result = -result;
+	{
+		ASSERT(resultU < -S64_MIN);
+		result = -(s64)resultU;
+	}
+	else
+	{
+		ASSERT(resultU < S64_MAX);
+		result = (s64)resultU;
+	}
 	return result;
 }
 
@@ -125,6 +136,7 @@ s64 IntFromStringHex(String string)
 		digit += (0xA - 'A') * (c >= 'A' && c <= 'F');
 		ASSERT(digit >= 0);
 
+		ASSERT(!(result & 0xF000000000000000));
 		result = result << 4;
 		result += digit;
 	}
@@ -143,22 +155,104 @@ f64 F64FromString(String string)
 		--string.size;
 	}
 
-	s64 leftPart;
-	s64 rightPart;
-	s64 fractionDigits = 0;
-	const char *scan = string.data;
-	for (int i = 0; i < string.size; ++i)
-		if (*scan++ == '.')
+	String leftSideString = {};
+	String rightSideString = {};
+	String exponentString = {};
+	{
+		const char *scan = string.data;
+		for (int i = 0; i < string.size; ++i)
 		{
-			leftPart  = IntFromString({ i, string.data });
-			++i;
-			fractionDigits = string.size - i;
-			rightPart = IntFromString({ fractionDigits, string.data + i });
-			goto foundDot;
+			if (*scan == '.')
+			{
+				ASSERT(leftSideString.size == 0);
+				leftSideString = { i, string.data };
+				rightSideString = { string.size - i - 1, string.data + i + 1 };
+			}
+			else if (*scan == 'e' || *scan == 'E')
+			{
+				ASSERT(exponentString.size == 0);
+				exponentString = { string.size - i - 1, string.data + i + 1 };
+				if (leftSideString.size == 0)
+				{
+					leftSideString = { i, string.data };
+				}
+				else
+				{
+					rightSideString = { i - leftSideString - 1, string.data + leftSideString.size + 1 };
+				}
+			}
+			++scan;
 		}
-	leftPart  = IntFromString(string);
-	rightPart = 0;
-foundDot:
+	}
+
+	// 32 byte margin on either side, 80 bytes total for all digits
+	char buffer[144] = {};
+	{
+		int totalCount = 0;
+		char *cursor = buffer + 32;
+		const char *scan = leftSideString.data;
+		for (int i = 0; i < leftSideString.size && totalCount < 80; ++i, ++totalCount)
+		{
+			ASSERT(IsNumeric(*scan));
+			*cursor++ = *scan++ - '0';
+		}
+		scan = rightSideString.data;
+		for (int i = 0; i < rightSideString.size && totalCount < 80; ++i, ++totalCount)
+		{
+			ASSERT(IsNumeric(*scan));
+			*cursor++ = *scan++ - '0';
+		}
+	}
+	u64 leftPart = 0;
+	u64 rightPart = 0;
+	int fractionDigits = 0;
+	int totalDigits = 0;
+	int sciNot = 0;
+	int correctionExp = 0;
+
+	if (exponentString.size) sciNot = (int)IntFromString(exponentString);
+	ASSERT(-32 <= sciNot && sciNot <= 32);
+
+	{
+		const char *scan = buffer + 32;
+		for (int i = 0; i < leftSideString.size + sciNot; ++i)
+		{
+			if (totalDigits >= 20) // Limit digits to 20. It's enough resolution for the 52 bit mantissa.
+			{
+				// We will multiply by 10 the final resulting f64 for every digit we ignored.
+				correctionExp = (int)leftSideString.size + sciNot - i;
+				break;
+			}
+			u64 digit = *scan++;
+			u64 moveLeft = leftPart * 10;
+			ASSERT(moveLeft + digit >= leftPart);
+			leftPart = moveLeft + digit;
+			if (leftPart > 0)
+				++totalDigits;
+		}
+		scan = buffer + 32 + leftSideString.size + sciNot;
+		for (int i = sciNot; i < rightSideString.size; ++i)
+		{
+			if (totalDigits >= 20) // Limit digits to 20. It's enough resolution for the 52 bit mantissa.
+				break;
+			s64 digit = *scan++;
+			u64 moveLeft = rightPart * 10;
+			if (moveLeft / 10 != rightPart || moveLeft + digit < rightPart) // Max resolution reached
+				break;
+			rightPart = moveLeft + digit;
+			++fractionDigits;
+			if (leftPart > 0 || rightPart > 0)
+				++totalDigits;
+		}
+	}
+
+	if (fractionDigits > 20)
+	{
+		// We build the float with all the digits we have, then divide by 10 at the end until the
+		// number is correct.
+		correctionExp = 20 - fractionDigits;
+		fractionDigits = 20;
+	}
 
 	if (leftPart == 0 && rightPart == 0)
 		return 0;
@@ -174,7 +268,22 @@ foundDot:
 		100000000,			1000000000,			10000000000,		100000000000,
 		1000000000000,		10000000000000,		100000000000000,	1000000000000000,
 		10000000000000000,	100000000000000000,	1000000000000000000,10000000000000000000 };
-	u64 div = divTable[fractionDigits];
+	u64 div;
+	if (fractionDigits == 20)
+	{
+		// 10^19 doesn't fit in 64 bits. Reduce instead
+
+		// Doubling 'fraction' here would overflow. Instead we divide 'div' by 2 until it fits in 64
+		// bits (which results in 10^19 / 8).
+		div = 12500000000000000000;
+
+		mantissa <<= 3; // Multiply by 2 three times
+		ASSERT(!(mantissa & 0xFFF0000000000000)); // We shouldn't run out of bits yet.
+
+		if (mantissa == 0) exponent -= 3;
+	}
+	else
+		div = divTable[fractionDigits];
 	while (true)
 	{
 		if (fraction >= div)
@@ -190,7 +299,15 @@ foundDot:
 				mantissa |= 1;
 			break;
 		}
-		fraction *= 2;
+
+		// Prevent overflow
+		if (fraction & 0x8000000000000000)
+		{
+			ASSERT(!(div & 1));
+			div >>= 1;
+		}
+		else
+			fraction <<= 1;
 		mantissa <<= 1;
 
 		if (mantissa == 0) --exponent;
@@ -213,5 +330,11 @@ foundDot:
 		f64 result;
 	};
 	floatBits = signBit | (shiftedExponent & 0x7FF0000000000000) | (mantissa & 0xFFFFFFFFFFFFF);
+
+	if (correctionExp > 0)
+		result *= divTable[correctionExp];
+	else if (correctionExp < 0)
+		result /= divTable[-correctionExp];
+
 	return result;
 }

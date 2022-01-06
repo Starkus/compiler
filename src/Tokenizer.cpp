@@ -14,14 +14,15 @@ int GetOperatorPrecedence(s32 op)
 {
 	// Even means evaluated left to right with things of same precedence.
 	// Odd means evaluated right to left with things of same precedence.
-	switch (op)
+	if (op >= TOKEN_OP_ASSIGNMENT_Begin && op <= TOKEN_OP_ASSIGNMENT_End)
+		return 1;
+	else switch (op)
 	{
-		case TOKEN_OP_ASSIGNMENT:
-			return 1;
 		case TOKEN_OP_AND:
 		case TOKEN_OP_OR:
 			return 2;
 		case TOKEN_OP_EQUALS:
+		case TOKEN_OP_NOT_EQUALS:
 		case TOKEN_OP_GREATER_THAN:
 		case TOKEN_OP_GREATER_THAN_OR_EQUAL:
 		case TOKEN_OP_LESS_THAN:
@@ -52,8 +53,9 @@ int GetOperatorPrecedence(s32 op)
 		case TOKEN_OP_ARRAY_ACCESS:
 		case TOKEN_OP_MEMBER_ACCESS:
 			return 18;
+		default:
+			ASSERT(false);
 	}
-	return -1;
 }
 
 int EatWhitespace(Tokenizer *tokenizer)
@@ -184,8 +186,23 @@ Token ParseNumber(Context *context, Tokenizer *tokenizer, Token baseToken)
 	// Normal base parsing
 	{
 		bool foundADot = false;
+		bool foundAnE = false;
 		while (true)
 		{
+			if (*tokenizer->cursor == 'e' || *tokenizer->cursor == 'E')
+			{
+				if (foundAnE)
+					LogError(context, result.loc, "Multiple 'e' characters found while parsing number"_s);
+				foundAnE = true;
+				++result.size;
+				++tokenizer->cursor;
+				if (*tokenizer->cursor == '-')
+				{
+					++result.size;
+					++tokenizer->cursor;
+				}
+			}
+
 			if (*tokenizer->cursor == '.')
 			{
 				if (foundADot)
@@ -208,7 +225,7 @@ numberDone:
 	return result;
 }
 
-void TokenizeFile(Context *context);
+void TokenizeFile(Context *context, int fileIdx);
 Token ReadTokenAndAdvance(Context *context, Tokenizer *tokenizer)
 {
 	Token result = {};
@@ -232,7 +249,7 @@ Token ReadTokenAndAdvance(Context *context, Tokenizer *tokenizer)
 	}
 
 	result.begin = tokenizer->cursor;
-	result.loc.fileIdx = context->currentFileIdx;
+	result.loc.fileIdx = tokenizer->fileIdx;
 	result.loc.line = tokenizer->line;
 	result.loc.character = (s32)(tokenizer->cursor - tokenizer->beginningOfLine);
 
@@ -356,13 +373,7 @@ Token ReadTokenAndAdvance(Context *context, Tokenizer *tokenizer)
 				Win32ReadEntireFile(StringToCStr(sourceFileToken.string, FrameAlloc), &newSourceFile.buffer,
 					&newSourceFile.size, FrameAlloc);
 
-				s32 previousFileIdx = context->currentFileIdx;
-
-				context->currentFileIdx = (s32)context->sourceFiles.size;
 				*DynamicArrayAdd(&context->sourceFiles) = newSourceFile;
-				TokenizeFile(context);
-
-				context->currentFileIdx = previousFileIdx;
 
 				return ReadTokenAndAdvance(context, tokenizer);
 			}
@@ -625,10 +636,11 @@ Token ReadTokenAndAdvance(Context *context, Tokenizer *tokenizer)
 	return result;
 }
 
-void TokenizeFile(Context *context)
+void TokenizeFile(Context *context, int fileIdx)
 {
 	Tokenizer tokenizer = {};
-	SourceFile file = context->sourceFiles[context->currentFileIdx];
+	SourceFile file = context->sourceFiles[fileIdx];
+	tokenizer.fileIdx = fileIdx;
 	tokenizer.cursor = (char *)file.buffer;
 	tokenizer.beginningOfLine = (char *)file.buffer;
 	tokenizer.end = (char *)(file.buffer + file.size);

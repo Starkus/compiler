@@ -22,21 +22,35 @@ PrintF :: (format : String, ..args)
 			else if intInfo.size == 8
 				num = @ cast(^s64) arg.data;
 
-			buffer : [16] u8;
+			isNegative : bool = false;
+			if num < 0
+			{
+				isNegative = true;
+				num = -num;
+			}
+
+			buffer : [20] u8;
 			n := num;
 			count := 0;
 			while 1
 			{
 				digit := n % 10;
-				buffer[15 - count] = cast(u8) digit + '0';
+				buffer[19 - count] = cast(u8) digit + '0';
 				count += 1;
 
 				n /= 10;
 				if n <= 0 break;
 			}
+
+			if isNegative
+			{
+				buffer[19 - count] = '-';
+				count += 1;
+			}
+
 			numStr : String;
 			numStr.size = cast(u64) count;
-			numStr.data = ^buffer[16 - count];
+			numStr.data = ^buffer[20 - count];
 			Print(numStr);
 		}
 		else if arg.typeInfo.typeKind == TypeKind_Floating

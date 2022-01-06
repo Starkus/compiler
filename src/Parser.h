@@ -3,6 +3,7 @@ struct Tokenizer
 	const char *cursor;
 	const char *end;
 	s32 line;
+	s32 fileIdx;
 	const char *beginningOfLine;
 };
 

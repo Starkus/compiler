@@ -222,7 +222,10 @@ T *BucketArrayBack(BucketArray<T, bucketSize, allocFunc, reallocFunc> *bucketArr
 template <typename T, u64 bucketSize, void *(*allocFunc)(u64), void *(*reallocFunc)(void *, u64)>
 u64 BucketArrayCount(BucketArray<T, bucketSize, allocFunc, reallocFunc> *bucketArray)
 {
-	u64 count = (bucketArray->buckets.size - 1) * bucketSize;
-	count += bucketArray->buckets[bucketArray->buckets.size - 1].size;
+	if (bucketArray->buckets.size == 0)
+		return 0;
+	u64 lastBucket = bucketArray->buckets.size - 1;
+	u64 count = lastBucket * bucketSize;
+	count += bucketArray->buckets[lastBucket].size;
 	return count;
 }

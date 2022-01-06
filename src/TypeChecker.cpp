@@ -577,6 +577,9 @@ TypeCheckErrorCode CheckTypesMatch(Context *context, s64 leftTableIdx, s64 right
 {
 	static s64 voidPointerIdx = GetTypeInfoPointerOf(context, TYPETABLEIDX_VOID);
 
+	if ((leftTableIdx == TYPETABLEIDX_VOID) != (rightTableIdx == TYPETABLEIDX_VOID))
+		return TYPECHECK_TYPE_CATEGORY_MISMATCH;
+
 	if (leftTableIdx == rightTableIdx)
 		return TYPECHECK_COOL;
 
@@ -1792,12 +1795,14 @@ TypeCheckExpressionResult TryTypeCheckExpression(Context *context, ASTExpression
 					procedure = BucketArrayAdd(&context->procedures);
 				}
 				procDecl->procedureIdx = newStaticDef->procedureIdx;
-				*procedure = {};
-				procedure->returnValueIdx = U32_MAX;
-				procedure->name = procDecl->name;
-				procedure->isInline = procDecl->isInline;
-				procedure->astBody = procDecl->astBody;
-				DynamicArrayInit(&procedure->parameterValues, 8);
+				Procedure p = {};
+				p.typeTableIdx = TYPETABLEIDX_UNSET;
+				p.returnValueIdx = U32_MAX;
+				p.name = procDecl->name;
+				p.isInline = procDecl->isInline;
+				p.astBody = procDecl->astBody;
+				DynamicArrayInit(&p.parameterValues, 8);
+				*procedure = p;
 
 				PushTCScope(context);
 			}
@@ -1962,22 +1967,28 @@ TypeCheckExpressionResult TryTypeCheckExpression(Context *context, ASTExpression
 	} break;
 	case ASTNODETYPE_RETURN:
 	{
+		ASTExpression *returnExp = expression->returnNode.expression;
 		TypeCheckErrorCode errorCode;
-		if (expression->returnNode.expression != nullptr)
+		if (returnExp != nullptr)
 		{
-			TypeCheckExpressionResult result = TryTypeCheckExpression(context, expression->returnNode.expression);
+			TypeCheckExpressionResult result = TryTypeCheckExpression(context, returnExp);
 			if (!result.success)
 				return { false, result.yieldInfo };
 			TypeCheckResult typeCheckResult = CheckTypesMatchAndSpecialize(context,
-					context->tcCurrentReturnType, expression->returnNode.expression);
-			expression->returnNode.expression->typeTableIdx = typeCheckResult.rightTableIdx;
+					context->tcCurrentReturnType, returnExp);
+			returnExp->typeTableIdx = typeCheckResult.rightTableIdx;
 			errorCode = typeCheckResult.errorCode;
 		}
 		else
 			errorCode = CheckTypesMatch(context, context->tcCurrentReturnType, TYPETABLEIDX_VOID);
 
 		if (errorCode != TYPECHECK_COOL)
-			LogError(context, expression->any.loc, "Incorrect return type"_s);
+		{
+			Print("Incorrect return type");
+			ReportTypeCheckError(context, errorCode, expression->any.loc,
+					returnExp ? returnExp->typeTableIdx : TYPETABLEIDX_VOID,
+					context->tcCurrentReturnType);
+		}
 	} break;
 	case ASTNODETYPE_DEFER:
 	{
@@ -2118,6 +2129,16 @@ TypeCheckExpressionResult TryTypeCheckExpression(Context *context, ASTExpression
 			}
 			else
 				LogError(context, expression->any.loc, "Calling a non-procedure"_s);
+
+			// @Todo: don't look up procedure again after this yields
+			if (procedureTypeIdx == TYPETABLEIDX_UNSET)
+			{
+				TCYieldInfo yieldInfo = {};
+				yieldInfo.cause = TCYIELDCAUSE_NEED_TYPE_CHECKING;
+				yieldInfo.name = procName;
+				yieldInfo.loc = expression->any.loc;
+				return { false, yieldInfo };
+			}
 
 			s64 givenArguments = expression->procedureCall.arguments.size;
 			u32 *argIdx = &expression->procedureCall.parameterTypeCheckingIdx;
@@ -2408,13 +2429,13 @@ TypeCheckExpressionResult TryTypeCheckExpression(Context *context, ASTExpression
 			ASSERT(expression->typeTableIdx > 0);
 			break;
 		case LITERALTYPE_STRUCT:
-			expression->typeTableIdx = TYPETABLEIDX_STRUCT_LITERAL;
 			for (int memberIdx = 0; memberIdx < expression->literal.members.size; ++memberIdx)
 			{
 				TypeCheckExpressionResult result = TryTypeCheckExpression(context, expression->literal.members[memberIdx]);
 				if (!result.success)
 					return { false, result.yieldInfo };
 			}
+			expression->typeTableIdx = TYPETABLEIDX_STRUCT_LITERAL;
 			break;
 		default:
 			ASSERT(!"Unexpected literal type");
@@ -2422,9 +2443,13 @@ TypeCheckExpressionResult TryTypeCheckExpression(Context *context, ASTExpression
 	} break;
 	case ASTNODETYPE_IF:
 	{
-		TypeCheckExpressionResult result = TryTypeCheckExpression(context, expression->ifNode.condition);
-		if (!result.success)
-			return { false, result.yieldInfo };
+		if (expression->ifNode.condition->typeTableIdx == TYPETABLEIDX_UNSET)
+		{
+			TypeCheckExpressionResult result =
+				TryTypeCheckExpression(context, expression->ifNode.condition);
+			if (!result.success)
+				return { false, result.yieldInfo };
+		}
 
 		s64 conditionType = expression->ifNode.condition->typeTableIdx;
 		TypeCheckErrorCode typeCheckResult = CheckTypesMatch(context, TYPETABLEIDX_BOOL,
@@ -2432,22 +2457,31 @@ TypeCheckExpressionResult TryTypeCheckExpression(Context *context, ASTExpression
 		if (typeCheckResult != TYPECHECK_COOL)
 			LogError(context, expression->any.loc, "If condition doesn't evaluate to a boolean"_s);
 
-		result = TryTypeCheckExpression(context, expression->ifNode.body);
-		if (!result.success)
-			return { false, result.yieldInfo };
-
-		if (expression->ifNode.elseBody)
+		if (expression->ifNode.body->typeTableIdx == TYPETABLEIDX_UNSET)
 		{
-			result = TryTypeCheckExpression(context, expression->ifNode.elseBody);
+			TypeCheckExpressionResult result =
+				TryTypeCheckExpression(context, expression->ifNode.body);
+			if (!result.success)
+				return { false, result.yieldInfo };
+		}
+
+		if (expression->ifNode.elseBody &&
+			expression->ifNode.elseBody->typeTableIdx == TYPETABLEIDX_UNSET)
+		{
+			TypeCheckExpressionResult result =
+				TryTypeCheckExpression(context, expression->ifNode.elseBody);
 			if (!result.success)
 				return { false, result.yieldInfo };
 		}
 	} break;
 	case ASTNODETYPE_WHILE:
 	{
-		TypeCheckExpressionResult result = TryTypeCheckExpression(context, expression->whileNode.condition);
-		if (!result.success)
-			return { false, result.yieldInfo };
+		if (expression->whileNode.condition->typeTableIdx == TYPETABLEIDX_UNSET)
+		{
+			TypeCheckExpressionResult result = TryTypeCheckExpression(context, expression->whileNode.condition);
+			if (!result.success)
+				return { false, result.yieldInfo };
+		}
 
 		s64 conditionType = expression->whileNode.condition->typeTableIdx;
 		TypeCheckErrorCode typeCheckResult = CheckTypesMatch(context, TYPETABLEIDX_BOOL,
@@ -2455,15 +2489,18 @@ TypeCheckExpressionResult TryTypeCheckExpression(Context *context, ASTExpression
 		if (typeCheckResult != TYPECHECK_COOL)
 			LogError(context, expression->any.loc, "While condition doesn't evaluate to a boolean"_s);
 
-		result = TryTypeCheckExpression(context, expression->whileNode.body);
+		TypeCheckExpressionResult result = TryTypeCheckExpression(context, expression->whileNode.body);
 		if (!result.success)
 			return { false, result.yieldInfo };
 	} break;
 	case ASTNODETYPE_FOR:
 	{
-		TypeCheckExpressionResult result = TryTypeCheckExpression(context, expression->forNode.range);
-		if (!result.success)
-			return { false, result.yieldInfo };
+		if (expression->forNode.range->typeTableIdx == TYPETABLEIDX_UNSET)
+		{
+			TypeCheckExpressionResult result = TryTypeCheckExpression(context, expression->forNode.range);
+			if (!result.success)
+				return { false, result.yieldInfo };
+		}
 
 		if (!expression->forNode.scopePushed)
 		{
@@ -2515,7 +2552,7 @@ TypeCheckExpressionResult TryTypeCheckExpression(Context *context, ASTExpression
 			expression->forNode.scopePushed = true;
 		}
 
-		result = TryTypeCheckExpression(context, expression->forNode.body);
+		TypeCheckExpressionResult result = TryTypeCheckExpression(context, expression->forNode.body);
 		if (!result.success)
 			return { false, result.yieldInfo };
 
@@ -2773,8 +2810,6 @@ void TypeCheckMain(Context *context)
 
 	while (true)
 	{
-		// @Todo: remove done jobs
-		bool finished = true;
 		bool anyJobMadeAdvancements = false;
 		for (int jobIdx = 0; jobIdx < context->tcJobs.size; ++jobIdx)
 		{
@@ -2791,17 +2826,12 @@ void TypeCheckMain(Context *context)
 				// Check if name now exists
 				TCScopeName *scopeName = FindScopeName(context, job->yieldInfo.name);
 				if (scopeName == nullptr)
-				{
-					finished = false;
 					continue;
-				}
 				else
 				{
 					TypeCheckExpressionResult result =
 						TryTypeCheckExpression(context, job->expression);
 					newYieldInfo = result.yieldInfo;
-					if (!result.success)
-						finished = false;
 				}
 			} break;
 			case TCYIELDCAUSE_NONE:
@@ -2810,8 +2840,6 @@ void TypeCheckMain(Context *context)
 				context->currentTCJob = jobIdx;
 				TypeCheckExpressionResult result = TryTypeCheckExpression(context, job->expression);
 				newYieldInfo = result.yieldInfo;
-				if (!result.success)
-					finished = false;
 			}
 			}
 			// !!! Update if TCYieldInfo is changed!
@@ -2822,7 +2850,16 @@ void TypeCheckMain(Context *context)
 			job->yieldInfo = newYieldInfo;
 		}
 
-		if (finished) break;
+		for (int jobIdx = 0; jobIdx < context->tcJobs.size;)
+		{
+			TCJob *job = &context->tcJobs[jobIdx];
+			if (job->yieldInfo.cause == TCYIELDCAUSE_DONE)
+				*job = context->tcJobs[--context->tcJobs.size];
+			else
+				++jobIdx;
+		}
+
+		if (context->tcJobs.size == 0) break;
 
 		if (!anyJobMadeAdvancements)
 		{

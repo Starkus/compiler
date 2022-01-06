@@ -756,13 +756,21 @@ void X64MovNoTmp(Context *context, X64Procedure *x64Proc, IRValue dst, IRValue s
 
 void X64Mov(Context *context, X64Procedure *x64Proc, IRValue dst, IRValue src)
 {
-	// ALWAYS! >:) Almost
 	if (CanValueBeMemory(context, dst) && CanValueBeMemory(context, src))
-	//if (IsValueInMemory(context, dst) && IsValueInMemory(context, src))
 	{
 		u32 srcUsedFlag = context->values[src.valueIdx].flags & VALUEFLAGS_IS_USED;
 		IRValue tmp = IRValueNewValue(context, "_movtmp"_s, dst.typeTableIdx,
 				VALUEFLAGS_FORCE_REGISTER | srcUsedFlag);
+		X64MovNoTmp(context, x64Proc, tmp, src);
+		src = tmp;
+	}
+	// Can't directly mov a 64 bit immediate to a memory location
+	else if (CanValueBeMemory(context, dst) &&
+		src.valueType == IRVALUETYPE_IMMEDIATE_INTEGER &&
+		src.immediate & 0xFFFFFFFF00000000)
+	{
+		IRValue tmp = IRValueNewValue(context, "_movimmtmp"_s, dst.typeTableIdx,
+				VALUEFLAGS_FORCE_REGISTER);
 		X64MovNoTmp(context, x64Proc, tmp, src);
 		src = tmp;
 	}
@@ -1321,6 +1329,14 @@ doRM:
 	{
 		IRValue operand = inst.unaryOperation.out;
 
+		if (operand.valueType == IRVALUETYPE_IMMEDIATE_INTEGER &&
+			(operand.immediate & 0xFFFFFFFF00000000))
+		{
+			IRValue tmp = IRValueNewValue(context, operand.typeTableIdx, 0);
+			X64Mov(context, x64Proc, tmp, operand);
+			operand = tmp;
+		}
+
 		X64Mov(context, x64Proc, operand, inst.unaryOperation.in);
 
 		result.dst = operand;
@@ -1333,6 +1349,14 @@ doRM_RMI:
 		IRValue left  = inst.binaryOperation.left;
 		IRValue right = inst.binaryOperation.right;
 		IRValue out   = inst.binaryOperation.out;
+
+		if (right.valueType == IRVALUETYPE_IMMEDIATE_INTEGER &&
+			(right.immediate & 0xFFFFFFFF00000000))
+		{
+			IRValue tmp = IRValueNewValue(context, right.typeTableIdx, 0);
+			X64Mov(context, x64Proc, tmp, right);
+			right = tmp;
+		}
 
 		IRValue tmp = IRValueNewValue(context, left.typeTableIdx, 0);
 
@@ -1439,7 +1463,8 @@ doConditionalJump2:
 		IRValue right = inst.conditionalJump2.right;
 		accepted = x64InstructionInfos[cmpInst.type].acceptedOperandsRight;
 		if (!FitsInOperand(context, accepted, right) ||
-			(IsValueInMemory(context, left) && IsValueInMemory(context, right)))
+			(IsValueInMemory(context, left) && IsValueInMemory(context, right)) ||
+			(right.valueType == IRVALUETYPE_IMMEDIATE_INTEGER && (right.immediate & 0xFFFFFFFF00000000)))
 		{
 			ASSERT(accepted & ACCEPTEDOPERANDS_REGISTER);
 			IRValue newValue = IRValueNewValue(context, "_jump_hlp"_s, right.typeTableIdx,
@@ -1476,6 +1501,15 @@ doConditionalSet:
 
 		cmpInst.dst = inst.binaryOperation.left;
 		cmpInst.src = inst.binaryOperation.right;
+
+		if (cmpInst.src.valueType == IRVALUETYPE_IMMEDIATE_INTEGER &&
+			(cmpInst.src.immediate & 0xFFFFFFFF00000000))
+		{
+			IRValue tmp = IRValueNewValue(context, cmpInst.src.typeTableIdx, 0);
+			X64Mov(context, x64Proc, tmp, cmpInst.src);
+			cmpInst.src = tmp;
+		}
+
 		u8 accepted = x64InstructionInfos[cmpInst.type].acceptedOperandsLeft;
 		if (!FitsInOperand(context, accepted, cmpInst.dst) ||
 			(IsValueInMemory(context, cmpInst.dst) && IsValueInMemory(context, cmpInst.src)))
@@ -2561,17 +2595,17 @@ unalignedMovups:;
 			}
 			else if (*in == '\'')
 			{
+				// MASM uses ' as string delimiters
 				if (!first) PrintOut(context, ", ");
 				PrintOut(context, "27H");
 				++in;
-				++i;
 				first = false;
 			}
 			else
 			{
 				*out++ = *in++;
 
-				if (i == str.size - 1 || *in == '\\')
+				if (i == str.size - 1 || *in == '\\' || *in == '\'')
 				{
 					*out++ = 0;
 					g_memory->framePtr = out;
@@ -2781,7 +2815,7 @@ nextTuple:
 			"%S " // libsToLinkStr
 			"/nologo "
 			"/debug:full "
-			"/entry:Main "
+			"/entry:__WindowsMain "
 			"/opt:ref "
 			"/incremental:no "
 			"/dynamicbase:no "

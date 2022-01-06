@@ -1,0 +1,11 @@
+#include "core/math.emi"
+
+Main :: () -> s64
+{
+	for 0..32
+	{
+		n : f64 = cast(f64)i / 5.0;
+		PrintF("Sin(%) = %, Cos(%) = %\n", n, Sin(n), n, Cos(n));
+	}
+	return 0;
+}

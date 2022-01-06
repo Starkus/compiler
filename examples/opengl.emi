@@ -81,6 +81,5 @@ Main :: () -> s64
 	DestroyWindow(windowHandle);
 
 	Print("Test ok\n");
-	ExitProcess(0);
 	return 0;
 }

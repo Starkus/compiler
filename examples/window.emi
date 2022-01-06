@@ -54,6 +54,5 @@ Main :: () -> s64
 		}
 	}
 
-	Print("Test ok\n");
 	return 0;
 }
