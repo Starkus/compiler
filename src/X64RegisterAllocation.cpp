@@ -16,18 +16,18 @@ struct BasicBlock
 	s64 beginIdx;
 	s64 endIdx;
 	bool livenessAnalizedOnce;
-	DynamicArray<BasicBlock *, FrameAlloc, FrameRealloc> inputs;
-	DynamicArray<BasicBlock *, FrameAlloc, FrameRealloc> outputs;
+	DynamicArray<BasicBlock *, PhaseAllocator> inputs;
+	DynamicArray<BasicBlock *, PhaseAllocator> outputs;
 
 	// @Todo: bitmaps
-	DynamicArray<u32, FrameAlloc, FrameRealloc> liveValuesAtInput;
-	DynamicArray<u32, FrameAlloc, FrameRealloc> liveValuesAtOutput;
+	DynamicArray<u32, PhaseAllocator> liveValuesAtInput;
+	DynamicArray<u32, PhaseAllocator> liveValuesAtOutput;
 };
 
 struct InterferenceGraphNode
 {
 	u32 valueIdx;
-	DynamicArray<u32, FrameAlloc, FrameRealloc> edges; // @Improve: eugh
+	DynamicArray<u32, PhaseAllocator> edges; // @Improve: eugh
 	bool removed;
 };
 
@@ -45,7 +45,7 @@ void X64Patch(Context *context, X64Instruction *original, X64Instruction newInst
 }
 
 BasicBlock *PushBasicBlock(BasicBlock *currentBasicBlock,
-		BucketArray<BasicBlock, 512, malloc, realloc> *basicBlocks)
+		BucketArray<BasicBlock, PhaseAllocator, 512> *basicBlocks)
 {
 
 	X64Procedure *procedure = nullptr;
@@ -89,7 +89,7 @@ bool CanBeRegister(Context *context, u32 valueIdx)
 }
 
 inline bool AddValue(Context *context, u32 valueIdx, X64Procedure *proc,
-		DynamicArray<u32, FrameAlloc, FrameRealloc> *array)
+		DynamicArray<u32, PhaseAllocator> *array)
 {
 	context->values[valueIdx].flags |= VALUEFLAGS_IS_USED;
 
@@ -107,7 +107,7 @@ inline bool AddValue(Context *context, u32 valueIdx, X64Procedure *proc,
 
 // @Speed: delete? this will most likely get inlined anyways
 inline bool AddIfValue(Context *context, IRValue value, X64Procedure *proc,
-		DynamicArray<u32, FrameAlloc, FrameRealloc> *array)
+		DynamicArray<u32, PhaseAllocator> *array)
 {
 	if (value.valueType != IRVALUETYPE_VALUE && value.valueType != IRVALUETYPE_MEMORY)
 		return false;
@@ -116,7 +116,7 @@ inline bool AddIfValue(Context *context, IRValue value, X64Procedure *proc,
 }
 
 inline void RemoveIfValue(Context *context, IRValue value, X64Procedure *proc,
-		DynamicArray<u32, FrameAlloc, FrameRealloc> *array)
+		DynamicArray<u32, PhaseAllocator> *array)
 {
 	if (value.valueType == IRVALUETYPE_VALUE)
 	{
@@ -137,7 +137,7 @@ inline void RemoveIfValue(Context *context, IRValue value, X64Procedure *proc,
 }
 
 void DoLivenessAnalisisOnInstruction(Context *context, BasicBlock *basicBlock, X64Instruction *inst,
-		DynamicArray<u32, FrameAlloc, FrameRealloc> *liveValues)
+		DynamicArray<u32, PhaseAllocator> *liveValues)
 {
 	if (context->config.logAllocationInfo)
 	{
@@ -247,7 +247,7 @@ void DoLivenessAnalisisOnInstruction(Context *context, BasicBlock *basicBlock, X
 	// nothing
 	case X64_CALL:
 	{
-		ArrayInit(&inst->liveValues, liveValues->size, FrameAlloc);
+		ArrayInit(&inst->liveValues, liveValues->size);
 		inst->liveValues.size = liveValues->size;
 		for (int i = 0; i < liveValues->size; ++i)
 			inst->liveValues[i] = (*liveValues)[i];
@@ -286,7 +286,7 @@ void DoLivenessAnalisisOnInstruction(Context *context, BasicBlock *basicBlock, X
 	} break;
 	case X64_CALL_Indirect:
 	{
-		ArrayInit(&inst->liveValues, liveValues->size, FrameAlloc);
+		ArrayInit(&inst->liveValues, liveValues->size);
 		inst->liveValues.size = liveValues->size;
 		for (int i = 0; i < liveValues->size; ++i)
 			inst->liveValues[i] = (*liveValues)[i];
@@ -425,7 +425,7 @@ nodeFound:
 }
 
 void DoLivenessAnalisis(Context *context, BasicBlock *basicBlock,
-		DynamicArray<u32, FrameAlloc, FrameRealloc> *liveValues)
+		DynamicArray<u32, PhaseAllocator> *liveValues)
 {
 	if (context->config.logAllocationInfo)
 		Print("Doing liveness analisis on block %S %d-%d\n", basicBlock->procedure->name,
@@ -465,7 +465,7 @@ void DoLivenessAnalisis(Context *context, BasicBlock *basicBlock,
 	{
 		BasicBlock *inputBlock = basicBlock->inputs[i];
 		// Copy live registers array
-		DynamicArray<u32, FrameAlloc, FrameRealloc> liveValuesCopy;
+		DynamicArray<u32, PhaseAllocator> liveValuesCopy;
 		DynamicArrayInit(&liveValuesCopy, liveValues->capacity);
 		DynamicArrayCopy(&liveValuesCopy, liveValues);
 
@@ -473,7 +473,7 @@ void DoLivenessAnalisis(Context *context, BasicBlock *basicBlock,
 	}
 }
 
-void GenerateBasicBlocks(Context *context, Array<X64Procedure> x64Procedures)
+void GenerateBasicBlocks(Context *context, Array<X64Procedure, PhaseAllocator> x64Procedures)
 {
 	for (int procedureIdx = 1; procedureIdx < x64Procedures.size; ++procedureIdx)
 	{
@@ -576,9 +576,9 @@ foundBlock:
 	}
 }
 
-void ResolveStackOffsets(Context *context, Array<X64Procedure> x64Procedures)
+void ResolveStackOffsets(Context *context, Array<X64Procedure, PhaseAllocator> x64Procedures)
 {
-	DynamicArray<s64, FrameAlloc, FrameRealloc> stack;
+	DynamicArray<s64, PhaseAllocator> stack;
 	DynamicArrayInit(&stack, 16);
 
 	for (int procedureIdx = 1; procedureIdx < x64Procedures.size; ++procedureIdx)
@@ -751,7 +751,7 @@ inline u64 RegisterSavingInstruction(Context *context, X64Instruction *inst, u64
 		u64 usedCalleeSaveRegisters = calleeSaveRegisters & liveRegisterBits;
 		s64 calleeSaveRegCount = CountOnes(usedCalleeSaveRegisters);
 		X64Instruction patchInst = { X64_Patch_Many };
-		ArrayInit(&patchInst.patchInstructions, 1 + 3 * calleeSaveRegCount, FrameAlloc);
+		ArrayInit(&patchInst.patchInstructions, 1 + 3 * calleeSaveRegCount);
 		patchInst.patchInstructions.size = 1 + 3 * calleeSaveRegCount;
 		int count = 0;
 		for (int i = 0; i < 64; ++i)
@@ -785,7 +785,7 @@ inline u64 RegisterSavingInstruction(Context *context, X64Instruction *inst, u64
 	return usedRegisters;
 }
 
-void X64AllocateRegisters(Context *context, Array<X64Procedure> x64Procedures)
+void X64AllocateRegisters(Context *context, Array<X64Procedure, PhaseAllocator> x64Procedures)
 {
 	BucketArrayInit(&context->beBasicBlocks);
 	DynamicArrayInit(&context->beLeafBasicBlocks, 128);
@@ -806,7 +806,7 @@ void X64AllocateRegisters(Context *context, Array<X64Procedure> x64Procedures)
 		context->beInterferenceGraph.size = 0;
 
 		// @Todo: iterative instead of recursive?
-		DynamicArray<u32, FrameAlloc, FrameRealloc> liveValues;
+		DynamicArray<u32, PhaseAllocator> liveValues;
 		DynamicArrayInit(&liveValues, 32);
 		DoLivenessAnalisis(context, currentLeafBlock, &liveValues);
 
@@ -822,8 +822,8 @@ void X64AllocateRegisters(Context *context, Array<X64Procedure> x64Procedures)
 			}
 		}
 
-		Array<InterferenceGraphNode *> nodeStack;
-		ArrayInit(&nodeStack, context->beInterferenceGraph.size, malloc);
+		Array<InterferenceGraphNode *, PhaseAllocator> nodeStack;
+		ArrayInit(&nodeStack, context->beInterferenceGraph.size);
 
 		// Allocate values to registers when possible
 		while (nodeStack.size < context->beInterferenceGraph.size)
@@ -970,8 +970,8 @@ void X64AllocateRegisters(Context *context, Array<X64Procedure> x64Procedures)
 		s64 callerSaveRegCount = CountOnes(usedCallerSaveRegisters);
 		X64Instruction patchTop =    { X64_Patch_Many };
 		X64Instruction patchBottom = { X64_Patch_Many };
-		ArrayInit(&patchTop.patchInstructions, 1 + callerSaveRegCount, malloc);
-		ArrayInit(&patchBottom.patchInstructions, 1 + callerSaveRegCount, malloc);
+		ArrayInit(&patchTop.patchInstructions, 1 + callerSaveRegCount);
+		ArrayInit(&patchBottom.patchInstructions, 1 + callerSaveRegCount);
 
 		u64 instructionCount = BucketArrayCount(&proc->instructions);
 		*ArrayAdd(&patchBottom.patchInstructions) = proc->instructions[instructionCount - 1];

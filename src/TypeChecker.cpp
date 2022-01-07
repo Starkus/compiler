@@ -40,7 +40,7 @@ struct Constant
 	{
 		s64 valueAsInt;
 		f64 valueAsFloat;
-		Array<Constant> valueAsGroup;
+		Array<Constant, FrameAllocator> valueAsGroup;
 	};
 	s64 typeTableIdx;
 };
@@ -74,14 +74,16 @@ struct StructMember
 };
 struct TypeInfoStruct
 {
-	DynamicArray<StructMember, malloc, realloc> members;
+	String name;
+	DynamicArray<StructMember, FrameAllocator> members;
 };
 
 struct TypeInfoEnum
 {
+	String name;
 	s64 typeTableIdx;
-	DynamicArray<String, malloc, realloc> names;
-	DynamicArray<s64, malloc, realloc> values;
+	DynamicArray<String, FrameAllocator> names;
+	DynamicArray<s64, FrameAllocator> values;
 };
 
 struct TypeInfoPointer
@@ -103,7 +105,7 @@ struct ProcedureParameter
 struct TypeInfoProcedure
 {
 	s64 returnTypeTableIdx;
-	DynamicArray<ProcedureParameter, malloc, realloc> parameters;
+	DynamicArray<ProcedureParameter, FrameAllocator> parameters;
 	bool isVarargs;
 };
 
@@ -161,29 +163,29 @@ struct TCScopeName
 		struct
 		{
 			TCValue tcValueBase;
-			Array<const StructMember *> offsets;
+			Array<const StructMember *, FrameAllocator> offsets;
 		} structMemberChain;
 		StaticDefinition *staticDefinition;
 	};
 };
 struct TCScope
 {
-	DynamicArray<TCScopeName, malloc, realloc> names;
-	DynamicArray<s64, malloc, realloc> typeIndices;
+	DynamicArray<TCScopeName, PhaseAllocator> names;
+	DynamicArray<s64, PhaseAllocator> typeIndices;
 };
 
 struct IRInstruction;
 struct Procedure
 {
 	String name;
-	DynamicArray<u32, malloc, realloc> parameterValues;
+	DynamicArray<u32, FrameAllocator> parameterValues;
 	ASTExpression *astBody; // @Todo: put this in jobs instead?
 	bool isInline;
 	u32 returnValueIdx;
 	s64 typeTableIdx; // Type of the procedure
 
 	// IRGen
-	BucketArray<IRInstruction, 256, malloc, realloc> instructions;
+	BucketArray<IRInstruction, FrameAllocator, 256> instructions;
 	s64 allocatedParameterCount;
 };
 
@@ -205,7 +207,7 @@ struct TCJob
 {
 	ASTExpression *expression;
 	TCYieldInfo yieldInfo;
-	DynamicArray<TCScope, malloc, realloc> scopeStack;
+	DynamicArray<TCScope, PhaseAllocator> scopeStack;
 };
 
 struct TypeCheckTypeResult
@@ -431,25 +433,10 @@ void PopTCScope(Context *context)
 	--context->tcJobs[context->currentTCJob].scopeStack.size;
 }
 
-// For internal use only
-s64 FindGlobalType(Context *context, String name)
-{
-	for (int i = 0; i < context->tcGlobalScope->names.size; ++i)
-	{
-		TCScopeName *currentName = &context->tcGlobalScope->names[i];
-		if (StringEquals(name, currentName->name))
-		{
-			ASSERT(currentName != nullptr);
-			return currentName->staticDefinition->typeTableIdx;
-		}
-	}
-	ASSERT(false);
-}
-
 TCScopeName *FindScopeName(Context *context, String name)
 {
 	// Current stack
-	DynamicArray<TCScope, malloc, realloc> scopeStack =
+	DynamicArray<TCScope, PhaseAllocator> scopeStack =
 		context->tcJobs[context->currentTCJob].scopeStack;
 	for (s64 stackIdx = scopeStack.size - 1; stackIdx >= 0; --stackIdx)
 	{
@@ -587,9 +574,7 @@ TypeCheckErrorCode CheckTypesMatch(Context *context, s64 leftTableIdx, s64 right
 		return TYPECHECK_COOL;
 
 	// Allow anything to cast to Any
-	s64 anyTableIdx = FindGlobalType(context, "Any"_s);
-	ASSERT(anyTableIdx > 0);
-	if (leftTableIdx == anyTableIdx || rightTableIdx == anyTableIdx)
+	if (leftTableIdx == TYPETABLEIDX_ANY_STRUCT || rightTableIdx == TYPETABLEIDX_ANY_STRUCT)
 		return TYPECHECK_COOL;
 
 	TypeInfo left  = context->typeTable[leftTableIdx];
@@ -737,7 +722,7 @@ TypeCheckResult CheckTypesMatchAndSpecialize(Context *context, s64 leftTableIdx,
 				s64 structTypeIdx;
 				int idx;
 			};
-			DynamicArray<StructStackFrame, FrameAlloc, FrameRealloc> structStack;
+			DynamicArray<StructStackFrame, PhaseAllocator> structStack;
 			DynamicArrayInit(&structStack, 8);
 			*DynamicArrayAdd(&structStack) = { structTypeIdx, 0 };
 
@@ -970,9 +955,9 @@ s64 GetTypeInfoArrayOf(Context *context, s64 inType, s64 count)
 	return FindOrAddTypeTableIdx(context, resultTypeInfo);
 }
 
-TypeCheckTypeResult TypeCheckType(Context *context, SourceLocation loc, ASTType *astType);
+TypeCheckTypeResult TypeCheckType(Context *context, String name, SourceLocation loc, ASTType *astType);
 
-TypeCheckStructResult TypeCheckStructDeclaration(Context *context, ASTStructDeclaration astStructDecl)
+TypeCheckStructResult TypeCheckStructDeclaration(Context *context, String name, ASTStructDeclaration astStructDecl)
 {
 	for (int memberIdx = 0; memberIdx < astStructDecl.members.size; ++memberIdx)
 	{
@@ -986,7 +971,7 @@ TypeCheckStructResult TypeCheckStructDeclaration(Context *context, ASTStructDecl
 			LogWarning(context, astMember->value->any.loc, TPrintF("Default value found on member "
 						"\"%S\". This is not yet supported", astMember->name));
 
-		TypeCheckTypeResult checkResult = TypeCheckType(context, astMember->loc, astMember->astType);
+		TypeCheckTypeResult checkResult = TypeCheckType(context, {}, astMember->loc, astMember->astType);
 		if (!checkResult.success)
 			return { false, checkResult.yieldInfo };
 		else
@@ -995,6 +980,7 @@ TypeCheckStructResult TypeCheckStructDeclaration(Context *context, ASTStructDecl
 
 	TypeInfo t = {};
 	t.typeCategory = astStructDecl.isUnion ? TYPECATEGORY_UNION : TYPECATEGORY_STRUCT;
+	t.structInfo.name = name;
 	DynamicArrayInit(&t.structInfo.members, 16);
 
 	int largestAlignment = 0;
@@ -1032,8 +1018,72 @@ TypeCheckStructResult TypeCheckStructDeclaration(Context *context, ASTStructDecl
 	if (t.size & (largestAlignment - 1))
 		t.size = (t.size & ~(largestAlignment - 1)) + largestAlignment;
 
-	s64 typeTableIdx = BucketArrayCount(&context->typeTable);
-	AddType(context, t);
+	s64 typeTableIdx;
+	if (StringEquals(name, "String"_s))
+	{
+		typeTableIdx = TYPETABLEIDX_STRING_STRUCT;
+		t.valueIdx = context->typeTable[TYPETABLEIDX_STRING_STRUCT].valueIdx;
+		(TypeInfo&)context->typeTable[TYPETABLEIDX_STRING_STRUCT] = t;
+	}
+	else if (StringEquals(name, "Array"_s))
+	{
+		typeTableIdx = TYPETABLEIDX_ARRAY_STRUCT;
+		t.valueIdx = context->typeTable[TYPETABLEIDX_ARRAY_STRUCT].valueIdx;
+		(TypeInfo&)context->typeTable[TYPETABLEIDX_ARRAY_STRUCT] = t;
+	}
+	else if (StringEquals(name, "Any"_s))
+	{
+		typeTableIdx = TYPETABLEIDX_ANY_STRUCT;
+		t.valueIdx = context->typeTable[TYPETABLEIDX_ANY_STRUCT].valueIdx;
+		(TypeInfo&)context->typeTable[TYPETABLEIDX_ANY_STRUCT] = t;
+	}
+	else if (StringEquals(name, "TypeInfo"_s))
+	{
+		typeTableIdx = TYPETABLEIDX_TYPE_INFO_STRUCT;
+		t.valueIdx = context->typeTable[TYPETABLEIDX_TYPE_INFO_STRUCT].valueIdx;
+		(TypeInfo&)context->typeTable[TYPETABLEIDX_TYPE_INFO_STRUCT] = t;
+	}
+	else if (StringEquals(name, "TypeInfoInteger"_s))
+	{
+		typeTableIdx = TYPETABLEIDX_TYPE_INFO_INTEGER_STRUCT;
+		t.valueIdx = context->typeTable[TYPETABLEIDX_TYPE_INFO_INTEGER_STRUCT].valueIdx;
+		(TypeInfo&)context->typeTable[TYPETABLEIDX_TYPE_INFO_INTEGER_STRUCT] = t;
+	}
+	else if (StringEquals(name, "TypeInfoStructMember"_s))
+	{
+		typeTableIdx = TYPETABLEIDX_TYPE_INFO_STRUCT_MEMBER_STRUCT;
+		t.valueIdx = context->typeTable[TYPETABLEIDX_TYPE_INFO_STRUCT_MEMBER_STRUCT].valueIdx;
+		(TypeInfo&)context->typeTable[TYPETABLEIDX_TYPE_INFO_STRUCT_MEMBER_STRUCT] = t;
+	}
+	else if (StringEquals(name, "TypeInfoStruct"_s))
+	{
+		typeTableIdx = TYPETABLEIDX_TYPE_INFO_STRUCT_STRUCT;
+		t.valueIdx = context->typeTable[TYPETABLEIDX_TYPE_INFO_STRUCT_STRUCT].valueIdx;
+		(TypeInfo&)context->typeTable[TYPETABLEIDX_TYPE_INFO_STRUCT_STRUCT] = t;
+	}
+	else if (StringEquals(name, "TypeInfoEnum"_s))
+	{
+		typeTableIdx = TYPETABLEIDX_TYPE_INFO_ENUM_STRUCT;
+		t.valueIdx = context->typeTable[TYPETABLEIDX_TYPE_INFO_ENUM_STRUCT].valueIdx;
+		(TypeInfo&)context->typeTable[TYPETABLEIDX_TYPE_INFO_ENUM_STRUCT] = t;
+	}
+	else if (StringEquals(name, "TypeInfoPointer"_s))
+	{
+		typeTableIdx = TYPETABLEIDX_TYPE_INFO_POINTER_STRUCT;
+		t.valueIdx = context->typeTable[TYPETABLEIDX_TYPE_INFO_POINTER_STRUCT].valueIdx;
+		(TypeInfo&)context->typeTable[TYPETABLEIDX_TYPE_INFO_POINTER_STRUCT] = t;
+	}
+	else if (StringEquals(name, "TypeInfoArray"_s))
+	{
+		typeTableIdx = TYPETABLEIDX_TYPE_INFO_ARRAY_STRUCT;
+		t.valueIdx = context->typeTable[TYPETABLEIDX_TYPE_INFO_ARRAY_STRUCT].valueIdx;
+		(TypeInfo&)context->typeTable[TYPETABLEIDX_TYPE_INFO_ARRAY_STRUCT] = t;
+	}
+	else
+	{
+		typeTableIdx = BucketArrayCount(&context->typeTable);
+		AddType(context, t);
+	}
 
 	TCScope *stackTop = GetTopMostScope(context);
 	*DynamicArrayAdd(&stackTop->typeIndices) = typeTableIdx;
@@ -1064,9 +1114,9 @@ Constant TryEvaluateConstant(Context *context, ASTExpression *expression)
 			break;
 		case LITERALTYPE_GROUP:
 		{
-			Array<Constant> constants;
+			Array<Constant, FrameAllocator> constants;
 			u64 membersCount = expression->literal.members.size;
-			ArrayInit(&constants, membersCount, malloc);
+			ArrayInit(&constants, membersCount);
 			constants.size = membersCount;
 			for (int i = 0; i < membersCount; ++i)
 			{
@@ -1252,7 +1302,7 @@ error:
 TypeCheckExpressionResult TryTypeCheckExpression(Context *context, ASTExpression *expression);
 TypeCheckProcedurePrototypeResult TypeCheckProcedurePrototype(Context *context, ASTProcedurePrototype *prototype);
 TypeInfo TypeInfoFromASTProcedurePrototype(Context *context, ASTProcedurePrototype prototype);
-TypeCheckTypeResult TypeCheckType(Context *context, SourceLocation loc, ASTType *astType)
+TypeCheckTypeResult TypeCheckType(Context *context, String name, SourceLocation loc, ASTType *astType)
 {
 	switch (astType->nodeType)
 	{
@@ -1266,7 +1316,7 @@ TypeCheckTypeResult TypeCheckType(Context *context, SourceLocation loc, ASTType 
 	} break;
 	case ASTTYPENODETYPE_ARRAY:
 	{
-		TypeCheckTypeResult result = TypeCheckType(context, loc, astType->arrayType);
+		TypeCheckTypeResult result = TypeCheckType(context, {}, loc, astType->arrayType);
 		if (!result.success)
 			return { false, result.yieldInfo };
 
@@ -1275,7 +1325,7 @@ TypeCheckTypeResult TypeCheckType(Context *context, SourceLocation loc, ASTType 
 	} break;
 	case ASTTYPENODETYPE_POINTER:
 	{
-		TypeCheckTypeResult result = TypeCheckType(context, loc, astType->pointedType);
+		TypeCheckTypeResult result = TypeCheckType(context, {}, loc, astType->pointedType);
 		if (!result.success)
 			return { false, result.yieldInfo };
 
@@ -1285,7 +1335,7 @@ TypeCheckTypeResult TypeCheckType(Context *context, SourceLocation loc, ASTType 
 	case ASTTYPENODETYPE_STRUCT_DECLARATION:
 	{
 		TypeCheckStructResult result =
-			TypeCheckStructDeclaration(context, astType->structDeclaration);
+			TypeCheckStructDeclaration(context, name, astType->structDeclaration);
 		if (!result.success)
 			return { false, result.yieldInfo };
 
@@ -1298,7 +1348,7 @@ TypeCheckTypeResult TypeCheckType(Context *context, SourceLocation loc, ASTType 
 		if (astType->enumDeclaration.astType)
 		{
 			SourceLocation astTypeLoc = astType->enumDeclaration.astType->loc;
-			TypeCheckTypeResult result = TypeCheckType(context, astTypeLoc, astType->enumDeclaration.astType);
+			TypeCheckTypeResult result = TypeCheckType(context, {}, astTypeLoc, astType->enumDeclaration.astType);
 			if (!result.success)
 				return { false, result.yieldInfo };
 
@@ -1323,6 +1373,7 @@ TypeCheckTypeResult TypeCheckType(Context *context, SourceLocation loc, ASTType 
 
 		TypeInfo t;
 		t.typeCategory = TYPECATEGORY_ENUM;
+		t.enumInfo.name = name;
 		t.enumInfo.typeTableIdx = innerTypeIdx;
 		t.size = context->typeTable[innerTypeIdx].size;
 		DynamicArrayInit(&t.enumInfo.names, 16);
@@ -1423,7 +1474,7 @@ u64 InferType(u64 fromType)
 }
 
 void AddStructMembersToScope(Context *context, SourceLocation loc, TCValue tcValueBase,
-		s64 typeTableIdx, DynamicArray<const StructMember *, malloc, realloc> *offsetStack)
+		s64 typeTableIdx, DynamicArray<const StructMember *, FrameAllocator> *offsetStack)
 {
 	TypeInfo typeInfo = context->typeTable[typeTableIdx];
 	ASSERT(typeInfo.typeCategory == TYPECATEGORY_STRUCT ||
@@ -1462,7 +1513,7 @@ void AddStructMembersToScope(Context *context, SourceLocation loc, TCValue tcVal
 			newScopeName.structMemberChain.tcValueBase = tcValueBase;
 			newScopeName.loc = loc;
 
-			ArrayInit(&newScopeName.structMemberChain.offsets, offsetStack->size, malloc);
+			ArrayInit(&newScopeName.structMemberChain.offsets, offsetStack->size);
 			for (int i = 0; i < offsetStack->size; ++i)
 				*ArrayAdd(&newScopeName.structMemberChain.offsets) = (*offsetStack)[i];
 
@@ -1496,7 +1547,7 @@ TypeCheckVariableResult TypeCheckVariableDeclaration(Context *context, ASTVariab
 
 	if (varDecl->astType)
 	{
-		TypeCheckTypeResult result = TypeCheckType(context, varDecl->loc, varDecl->astType);
+		TypeCheckTypeResult result = TypeCheckType(context, {}, varDecl->loc, varDecl->astType);
 		if (!result.success)
 			return { false, result.yieldInfo };
 		else
@@ -1635,7 +1686,7 @@ TypeCheckProcedurePrototypeResult TypeCheckProcedurePrototype(Context *context, 
 	prototype->returnTypeIdx = TYPETABLEIDX_VOID;
 	if (prototype->astReturnType)
 	{
-		TypeCheckTypeResult result = TypeCheckType(context, prototype->loc, prototype->astReturnType);
+		TypeCheckTypeResult result = TypeCheckType(context, {}, prototype->loc, prototype->astReturnType);
 		if (!result.success)
 			return { false, result.yieldInfo };
 		prototype->returnTypeIdx = result.typeTableIdx;
@@ -1759,7 +1810,7 @@ TypeCheckExpressionResult TryTypeCheckExpression(Context *context, ASTExpression
 					LogError(context, expression->any.loc, "Anonymous variable has to be a struct/union!"_s);
 			}
 
-			DynamicArray<const StructMember *, malloc, realloc> offsetStack;
+			DynamicArray<const StructMember *, FrameAllocator> offsetStack;
 			DynamicArrayInit(&offsetStack, 8);
 			AddStructMembersToScope(context, varDecl->loc, tcValue, varDecl->typeTableIdx,
 					&offsetStack);
@@ -1864,7 +1915,7 @@ TypeCheckExpressionResult TryTypeCheckExpression(Context *context, ASTExpression
 
 					if (astVarDecl.isUsing)
 					{
-						DynamicArray<const StructMember *, malloc, realloc> offsetStack;
+						DynamicArray<const StructMember *, FrameAllocator> offsetStack;
 						DynamicArrayInit(&offsetStack, 8);
 						AddStructMembersToScope(context, astVarDecl.loc, tcParamValue,
 								astVarDecl.typeTableIdx, &offsetStack);
@@ -1882,9 +1933,7 @@ TypeCheckExpressionResult TryTypeCheckExpression(Context *context, ASTExpression
 				// Varargs array
 				if (procDecl->prototype.isVarargs)
 				{
-					s64 anyTableIdx = FindGlobalType(context, "Any"_s);
-					ASSERT(anyTableIdx > 0);
-					s64 arrayTableIdx = GetTypeInfoArrayOf(context, anyTableIdx, 0);
+					static s64 arrayTableIdx = GetTypeInfoArrayOf(context, TYPETABLEIDX_ANY_STRUCT, 0);
 
 					u32 valueIdx = NewValue(context, procDecl->prototype.varargsName, arrayTableIdx, 0);
 					*DynamicArrayAdd(&procedure->parameterValues) = valueIdx;
@@ -1947,9 +1996,11 @@ TypeCheckExpressionResult TryTypeCheckExpression(Context *context, ASTExpression
 		}
 		else if (astStaticDef->expression->nodeType == ASTNODETYPE_TYPE)
 		{
-			TypeCheckExpressionResult result = TryTypeCheckExpression(context, astStaticDef->expression);
+			TypeCheckTypeResult result = TypeCheckType(context, astStaticDef->name, expression->any.loc,
+					&astStaticDef->expression->astType);
 			if (!result.success)
 				return { false, result.yieldInfo };
+			astStaticDef->expression->typeTableIdx = result.typeTableIdx;
 
 			staticDef->definitionType = STATICDEFINITIONTYPE_TYPE;
 			staticDef->typeTableIdx = astStaticDef->expression->typeTableIdx;
@@ -2102,7 +2153,7 @@ TypeCheckExpressionResult TryTypeCheckExpression(Context *context, ASTExpression
 
 			TCValue tcValue = expression->identifier.tcValue;
 
-			DynamicArray<const StructMember *, malloc, realloc> offsetStack;
+			DynamicArray<const StructMember *, FrameAllocator> offsetStack;
 			DynamicArrayInit(&offsetStack, 8);
 			AddStructMembersToScope(context, expression->any.loc, tcValue,
 					expression->typeTableIdx, &offsetStack);
@@ -2324,9 +2375,7 @@ TypeCheckExpressionResult TryTypeCheckExpression(Context *context, ASTExpression
 				if (structTypeInfo.arrayInfo.count != 0)
 					LogError(context, expression->any.loc, "Array left of '.' has to be of dynamic size! ([])"_s);
 
-				s64 arrayTypeTableIdx = FindGlobalType(context, "Array"_s);
-				ASSERT(arrayTypeTableIdx > 0);
-				structTypeInfo = context->typeTable[arrayTypeTableIdx];
+				structTypeInfo = context->typeTable[TYPETABLEIDX_ARRAY_STRUCT];
 			}
 			else if (structTypeInfo.typeCategory != TYPECATEGORY_STRUCT &&
 					 structTypeInfo.typeCategory != TYPECATEGORY_UNION)
@@ -2372,8 +2421,7 @@ TypeCheckExpressionResult TryTypeCheckExpression(Context *context, ASTExpression
 				arrayTypeInfo = context->typeTable[pointedTypeIdx];
 			}
 
-			s64 stringTypeIdx = FindGlobalType(context, "String"_s);
-			if (arrayType == stringTypeIdx)
+			if (arrayType == TYPETABLEIDX_STRING_STRUCT)
 			{
 				expression->typeTableIdx = TYPETABLEIDX_U8;
 			}
@@ -2444,7 +2492,7 @@ TypeCheckExpressionResult TryTypeCheckExpression(Context *context, ASTExpression
 			expression->typeTableIdx = TYPETABLEIDX_INTEGER;
 			break;
 		case LITERALTYPE_STRING:
-			expression->typeTableIdx = FindGlobalType(context, "String"_s);
+			expression->typeTableIdx = TYPETABLEIDX_STRING_STRUCT;
 			ASSERT(expression->typeTableIdx > 0);
 			break;
 		case LITERALTYPE_GROUP:
@@ -2545,9 +2593,7 @@ TypeCheckExpressionResult TryTypeCheckExpression(Context *context, ASTExpression
 			if (!isExplicitRange)
 			{
 				s64 elementTypeTableIdx = TYPETABLEIDX_U8;
-				s64 stringTypeIdx = FindGlobalType(context, "String"_s);
-				ASSERT(stringTypeIdx > 0);
-				if (rangeExp->typeTableIdx != stringTypeIdx)
+				if (rangeExp->typeTableIdx != TYPETABLEIDX_STRING_STRUCT)
 				{
 					TypeInfo rangeTypeInfo = context->typeTable[rangeExp->typeTableIdx];
 					if (rangeTypeInfo.typeCategory != TYPECATEGORY_ARRAY)
@@ -2585,7 +2631,7 @@ TypeCheckExpressionResult TryTypeCheckExpression(Context *context, ASTExpression
 	} break;
 	case ASTNODETYPE_TYPE:
 	{
-		TypeCheckTypeResult result = TypeCheckType(context, expression->any.loc, &expression->astType);
+		TypeCheckTypeResult result = TypeCheckType(context, {}, expression->any.loc, &expression->astType);
 		if (!result.success)
 			return { false, result.yieldInfo };
 		expression->typeTableIdx = result.typeTableIdx;
@@ -2596,9 +2642,8 @@ TypeCheckExpressionResult TryTypeCheckExpression(Context *context, ASTExpression
 		if (!result.success)
 			return { false, result.yieldInfo };
 
-		s64 programTypeInfoTableIdx = FindGlobalType(context, "TypeInfo"_s);
-		ASSERT(programTypeInfoTableIdx > 0);
-		expression->typeTableIdx = GetTypeInfoPointerOf(context, programTypeInfoTableIdx);
+		static s64 typeInfoPointerTypeIdx = GetTypeInfoPointerOf(context, TYPETABLEIDX_TYPE_INFO_STRUCT);
+		expression->typeTableIdx = typeInfoPointerTypeIdx;
 	} break;
 	case ASTNODETYPE_SIZEOF:
 	{
@@ -2614,7 +2659,7 @@ TypeCheckExpressionResult TryTypeCheckExpression(Context *context, ASTExpression
 		if (!result.success)
 			return { false, result.yieldInfo };
 
-		TypeCheckTypeResult typeCheckResult = TypeCheckType(context, expression->any.loc,
+		TypeCheckTypeResult typeCheckResult = TypeCheckType(context, {}, expression->any.loc,
 				&expression->castNode.astType);
 		if (!typeCheckResult.success)
 			return { false, typeCheckResult.yieldInfo };
@@ -2817,6 +2862,27 @@ void TypeCheckMain(Context *context)
 		t.typeCategory = TYPECATEGORY_INVALID;
 		t.valueIdx = NewValue(context, "_typeInfo_void"_s, -1, VALUEFLAGS_ON_STATIC_STORAGE);
 		typeTable[TYPETABLEIDX_VOID] = t;
+
+		t.valueIdx = NewValue(context, "_typeInfo_string_struct"_s, -1, VALUEFLAGS_ON_STATIC_STORAGE);
+		typeTable[TYPETABLEIDX_STRING_STRUCT] = t;
+		t.valueIdx = NewValue(context, "_typeInfo_array_struct"_s, -1, VALUEFLAGS_ON_STATIC_STORAGE);
+		typeTable[TYPETABLEIDX_ARRAY_STRUCT] = t;
+		t.valueIdx = NewValue(context, "_typeInfo_any_struct"_s, -1, VALUEFLAGS_ON_STATIC_STORAGE);
+		typeTable[TYPETABLEIDX_ANY_STRUCT] = t;
+		t.valueIdx = NewValue(context, "_typeInfo_type_info_struct"_s, -1, VALUEFLAGS_ON_STATIC_STORAGE);
+		typeTable[TYPETABLEIDX_TYPE_INFO_STRUCT] = t;
+		t.valueIdx = NewValue(context, "_typeInfo_type_info_integer_struct"_s, -1, VALUEFLAGS_ON_STATIC_STORAGE);
+		typeTable[TYPETABLEIDX_TYPE_INFO_INTEGER_STRUCT] = t;
+		t.valueIdx = NewValue(context, "_typeInfo_type_info_struct_member_struct"_s, -1, VALUEFLAGS_ON_STATIC_STORAGE);
+		typeTable[TYPETABLEIDX_TYPE_INFO_STRUCT_MEMBER_STRUCT] = t;
+		t.valueIdx = NewValue(context, "_typeInfo_type_info_struct_struct"_s, -1, VALUEFLAGS_ON_STATIC_STORAGE);
+		typeTable[TYPETABLEIDX_TYPE_INFO_STRUCT_STRUCT] = t;
+		t.valueIdx = NewValue(context, "_typeInfo_type_info_enum_struct"_s, -1, VALUEFLAGS_ON_STATIC_STORAGE);
+		typeTable[TYPETABLEIDX_TYPE_INFO_ENUM_STRUCT] = t;
+		t.valueIdx = NewValue(context, "_typeInfo_type_info_pointer_struct"_s, -1, VALUEFLAGS_ON_STATIC_STORAGE);
+		typeTable[TYPETABLEIDX_TYPE_INFO_POINTER_STRUCT] = t;
+		t.valueIdx = NewValue(context, "_typeInfo_type_info_array_struct"_s, -1, VALUEFLAGS_ON_STATIC_STORAGE);
+		typeTable[TYPETABLEIDX_TYPE_INFO_ARRAY_STRUCT] = t;
 	}
 	for (int i = 0; i < TYPETABLEIDX_COUNT; ++i)
 		*DynamicArrayAdd(&context->tcGlobalScope->typeIndices) = i;

@@ -420,9 +420,9 @@ ASTStructDeclaration ParseStructOrUnion(Context *context)
 	return structDeclaration;
 }
 
-Array<ASTExpression *> ParseStructLiteral(Context *context)
+Array<ASTExpression *, FrameAllocator> ParseStructLiteral(Context *context)
 {
-	DynamicArray<ASTExpression *, FrameAlloc, FrameRealloc> members;
+	DynamicArray<ASTExpression *, FrameAllocator> members;
 	DynamicArrayInit(&members, 8);
 
 	while (true)
@@ -443,7 +443,7 @@ Array<ASTExpression *> ParseStructLiteral(Context *context)
 		LogError(context, context->token->loc, TPrintF("Parsing struct literal. Expected ',' or '}' but got %S", tokenStr));
 	}
 
-	Array<ASTExpression *> result;
+	Array<ASTExpression *, FrameAllocator> result;
 	result.data = members.data;
 	result.size = members.size;
 #if DEBUG_BUILD
@@ -1137,7 +1137,7 @@ ASTExpression ParseStaticStatement(Context *context)
 
 ASTRoot *GenerateSyntaxTree(Context *context)
 {
-	ASTRoot *root = ALLOC(FrameAlloc, ASTRoot);
+	ASTRoot *root = ALLOC(FrameAllocator::Alloc, ASTRoot);
 	context->astRoot = root;
 	DynamicArrayInit(&root->block.statements, 4096);
 	BucketArrayInit(&context->treeNodes);

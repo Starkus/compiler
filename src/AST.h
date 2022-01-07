@@ -22,7 +22,7 @@ struct ASTLiteral : ASTBase
 		f64 floating;
 		char character;
 		String string;
-		Array<ASTExpression *> members;
+		Array<ASTExpression *, FrameAllocator> members;
 	};
 };
 
@@ -83,7 +83,7 @@ struct ASTIdentifier : ASTBase
 		struct
 		{
 			TCValue tcValueBase;
-			Array<const StructMember *> offsets;
+			Array<const StructMember *, FrameAllocator> offsets;
 		} structMemberChain;
 		StaticDefinition *staticDefinition;
 	};
@@ -91,7 +91,7 @@ struct ASTIdentifier : ASTBase
 
 struct ASTBlock : ASTBase
 {
-	DynamicArray<ASTExpression, malloc, realloc> statements;
+	DynamicArray<ASTExpression, FrameAllocator> statements;
 
 	// Type check
 	bool scopePushed;
@@ -111,7 +111,7 @@ struct ASTStructMemberDeclaration : ASTBase
 struct ASTStructDeclaration : ASTBase
 {
 	bool isUnion;
-	DynamicArray<ASTStructMemberDeclaration, malloc, realloc> members;
+	DynamicArray<ASTStructMemberDeclaration, FrameAllocator> members;
 };
 
 struct ASTEnumMember
@@ -122,7 +122,7 @@ struct ASTEnumMember
 struct ASTEnumDeclaration : ASTBase
 {
 	ASTType *astType;
-	DynamicArray<ASTEnumMember, malloc, realloc> members;
+	DynamicArray<ASTEnumMember, FrameAllocator> members;
 };
 
 struct ASTType;
@@ -132,7 +132,7 @@ struct ASTProcedurePrototype : ASTBase
 	bool isVarargs;
 	String varargsName;
 	ASTType *astReturnType;
-	DynamicArray<ASTVariableDeclaration, malloc, realloc> astParameters;
+	DynamicArray<ASTVariableDeclaration, FrameAllocator> astParameters;
 
 	// Type check
 	s64 returnTypeIdx;
@@ -207,7 +207,7 @@ struct ASTStaticDefinition : ASTBase
 struct ASTProcedureCall : ASTBase
 {
 	String name;
-	DynamicArray<ASTExpression, malloc, realloc> arguments;
+	DynamicArray<ASTExpression, FrameAllocator> arguments;
 
 	// Type check
 	s64 procedureTypeIdx;
@@ -230,7 +230,7 @@ enum IntrinsicType
 struct ASTIntrinsic : ASTBase
 {
 	String name;
-	DynamicArray<ASTExpression, malloc, realloc> arguments;
+	DynamicArray<ASTExpression, FrameAllocator> arguments;
 
 	// Type check
 	IntrinsicType type;
@@ -379,6 +379,17 @@ enum TypeTableIndices
 	TYPETABLEIDX_VOID,
 
 	TYPETABLEIDX_128,
+
+	TYPETABLEIDX_STRING_STRUCT,
+	TYPETABLEIDX_ARRAY_STRUCT,
+	TYPETABLEIDX_ANY_STRUCT,
+	TYPETABLEIDX_TYPE_INFO_STRUCT,
+	TYPETABLEIDX_TYPE_INFO_INTEGER_STRUCT,
+	TYPETABLEIDX_TYPE_INFO_STRUCT_MEMBER_STRUCT,
+	TYPETABLEIDX_TYPE_INFO_STRUCT_STRUCT,
+	TYPETABLEIDX_TYPE_INFO_ENUM_STRUCT,
+	TYPETABLEIDX_TYPE_INFO_POINTER_STRUCT,
+	TYPETABLEIDX_TYPE_INFO_ARRAY_STRUCT,
 
 	TYPETABLEIDX_COUNT
 };

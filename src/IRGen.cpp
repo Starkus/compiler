@@ -24,7 +24,7 @@ struct IRValue
 		s64 immediate;
 		f64 immediateFloat;
 		u32 immediateStringIdx;
-		Array<IRValue> immediateStructMembers;
+		Array<IRValue, FrameAllocator> immediateStructMembers;
 		s32 procedureIdx;
 		struct
 		{
@@ -70,7 +70,7 @@ struct IRProcedureCall
 		s32 procedureIdx;
 		u32 procPointerValueIdx;
 	};
-	Array<IRValue> parameters;
+	Array<IRValue, FrameAllocator> parameters;
 	IRValue out;
 
 	// Filled during register allocation
@@ -80,7 +80,7 @@ struct IRProcedureCall
 struct IRIntrinsic
 {
 	IntrinsicType type;
-	Array<IRValue> parameters;
+	Array<IRValue, FrameAllocator> parameters;
 };
 
 struct IRPushValue
@@ -249,8 +249,7 @@ struct IRInstruction
 struct IRScope
 {
 	IRLabel *closeLabel;
-	DynamicArray<u32, malloc, realloc> stackValues;
-	DynamicArray<ASTExpression *, malloc, realloc> deferredStatements;
+	DynamicArray<ASTExpression *, PhaseAllocator> deferredStatements;
 };
 
 struct IRProcedureScope
@@ -289,7 +288,6 @@ void PushIRScope(Context *context)
 {
 	IRScope newScope = {};
 	DynamicArrayInit(&newScope.deferredStatements, 4);
-	DynamicArrayInit(&newScope.stackValues, 16);
 	*DynamicArrayAdd(&context->irStack) = newScope;
 }
 
@@ -485,10 +483,10 @@ IRValue IRValueNewValue(Context *context, String name, s64 typeTableIdx, u32 fla
 
 IRValue IRValueTypeOf(Context *context, s64 typeTableIdx)
 {
-	static s64 typeInfoTypeIdx = GetTypeInfoPointerOf(context,
-			FindGlobalType(context, "TypeInfo"_s));
+	static s64 typeInfoPointerTypeIdx = GetTypeInfoPointerOf(context,
+			TYPETABLEIDX_TYPE_INFO_STRUCT);
 	u32 typeValueIdx = context->typeTable[typeTableIdx].valueIdx;
-	return IRValueMemory(typeValueIdx, 0, typeInfoTypeIdx);
+	return IRValueMemory(typeValueIdx, 0, typeInfoPointerTypeIdx);
 }
 
 IRValue IRGenFromExpression(Context *context, ASTExpression *expression);
@@ -560,15 +558,13 @@ IRValue IRDoArrayAccess(Context *context, IRValue arrayValue, IRValue indexValue
 	TypeInfo arrayTypeInfo = context->typeTable[arrayValue.typeTableIdx];
 	s64 pointerToElementTypeIdx = GetTypeInfoPointerOf(context, elementTypeIdx);
 	// Dynamic arrays
-	s64 stringTableIdx = FindGlobalType(context, "String"_s);
-	if (arrayValue.typeTableIdx == stringTableIdx ||
+	if (arrayValue.typeTableIdx == TYPETABLEIDX_STRING_STRUCT ||
 			arrayTypeInfo.arrayInfo.count == 0)
 	{
 		// Access the 'data' pointer
 		IRAddComment(context, "Addressing dynamic array"_s);
 
-		s64 arrayTypeTableIdx = FindGlobalType(context, "Array"_s);
-		TypeInfo arrayStructTypeInfo = context->typeTable[arrayTypeTableIdx];
+		TypeInfo arrayStructTypeInfo = context->typeTable[TYPETABLEIDX_ARRAY_STRUCT];
 		StructMember dataMember = arrayStructTypeInfo.structInfo.members[1];
 
 		arrayValue = IRDoMemberAccess(context, arrayValue, dataMember);
@@ -616,11 +612,11 @@ u32 IRAddTempValue(Context *context, String name, s64 typeTableIdx, u8 flags)
 void IRDoAssignment(Context *context, IRValue dstValue, IRValue srcValue)
 {
 	// Cast to Any
-	s64 anyTableIdx = FindGlobalType(context, "Any"_s);
-	if (dstValue.typeTableIdx == anyTableIdx && srcValue.typeTableIdx != anyTableIdx)
+	if (dstValue.typeTableIdx == TYPETABLEIDX_ANY_STRUCT &&
+		srcValue.typeTableIdx != TYPETABLEIDX_ANY_STRUCT)
 	{
 		IRAddComment(context, "Wrapping in Any"_s);
-		TypeInfo anyTypeInfo = context->typeTable[anyTableIdx];
+		TypeInfo anyTypeInfo = context->typeTable[TYPETABLEIDX_ANY_STRUCT];
 
 		// Access typeInfo member
 		IRValue typeInfoMember = IRDoMemberAccess(context, dstValue,
@@ -679,8 +675,7 @@ void IRDoAssignment(Context *context, IRValue dstValue, IRValue srcValue)
 		dstTypeInfo.arrayInfo.count  == 0 &&
 		srcTypeInfo.arrayInfo.count != 0)
 	{
-		s64 dynamicArrayTableIdx = FindGlobalType(context, "Array"_s);
-		TypeInfo dynamicArrayTypeInfo = context->typeTable[dynamicArrayTableIdx];
+		TypeInfo dynamicArrayTypeInfo = context->typeTable[TYPETABLEIDX_ARRAY_STRUCT];
 
 		// Size
 		StructMember sizeStructMember = dynamicArrayTypeInfo.structInfo.members[0];
@@ -1166,8 +1161,8 @@ IRValue IRDoInlineProcedureCall(Context *context, ASTProcedureCall astProcCall)
 		IRValue varargsParam = IRValueValue(context, procedure->parameterValues[procParamCount - 1]);
 		*DynamicArrayAdd(&tempProc->parameterValues) = varargsParam.valueIdx;
 
-		s64 anyTableIdx = FindGlobalType(context, "Any"_s);
-		s64 arrayOfAnyTableIdx = GetTypeInfoArrayOf(context, anyTableIdx, 0);
+		static s64 anyPointerTypeIdx = GetTypeInfoPointerOf(context, TYPETABLEIDX_ANY_STRUCT);
+		static s64 arrayOfAnyTableIdx = GetTypeInfoArrayOf(context, TYPETABLEIDX_ANY_STRUCT, 0);
 
 		if (varargsCount == 1)
 		{
@@ -1187,7 +1182,7 @@ IRValue IRDoInlineProcedureCall(Context *context, ASTProcedureCall astProcCall)
 		{
 			// Allocate stack space for buffer
 			u32 bufferValueIdx = IRAddTempValue(context, "_varargsBuffer"_s,
-					GetTypeInfoArrayOf(context, anyTableIdx, varargsCount), VALUEFLAGS_FORCE_MEMORY);
+					GetTypeInfoArrayOf(context, TYPETABLEIDX_ANY_STRUCT, varargsCount), VALUEFLAGS_FORCE_MEMORY);
 			IRValue bufferIRValue = IRValueValue(context, bufferValueIdx);
 
 			// Fill the buffer
@@ -1198,7 +1193,7 @@ IRValue IRDoInlineProcedureCall(Context *context, ASTProcedureCall astProcCall)
 
 				IRValue bufferIndexValue = IRValueImmediate(argIdx);
 				IRValue bufferSlotValue = IRDoArrayAccess(context, bufferIRValue, bufferIndexValue,
-						anyTableIdx);
+						TYPETABLEIDX_ANY_STRUCT);
 
 				IRValue rightValue = IRGenFromExpression(context, arg);
 				IRDoAssignment(context, bufferSlotValue, rightValue);
@@ -1207,18 +1202,17 @@ IRValue IRDoInlineProcedureCall(Context *context, ASTProcedureCall astProcCall)
 			pointerToBuffer = IRPointerToValue(context, bufferIRValue);
 		}
 		else
-			pointerToBuffer = IRValueImmediate(0, GetTypeInfoPointerOf(context, anyTableIdx));
+			pointerToBuffer = IRValueImmediate(0, GetTypeInfoPointerOf(context, anyPointerTypeIdx));
 
 		// By now we should have the buffer with all the varargs as Any structs.
 		// Now we put it into a dynamic array struct.
-		s64 dynamicArrayTableIdx = FindGlobalType(context, "Array"_s);
 
 		// Allocate stack space for array
 		u32 arrayValueIdx = IRAddTempValue(context, "_varargsArray"_s, arrayOfAnyTableIdx,
 				VALUEFLAGS_FORCE_MEMORY);
 		IRValue arrayIRValue = IRValueValue(context, arrayValueIdx);
 
-		TypeInfo dynamicArrayTypeInfo = context->typeTable[dynamicArrayTableIdx];
+		TypeInfo dynamicArrayTypeInfo = context->typeTable[TYPETABLEIDX_ARRAY_STRUCT];
 		// Size
 		{
 			StructMember sizeStructMember = dynamicArrayTypeInfo.structInfo.members[0];
@@ -1279,7 +1273,7 @@ IRValue IRValueFromConstant(Context *context, Constant constant)
 	{
 		result.valueType = IRVALUETYPE_IMMEDIATE_GROUP;
 		u64 membersCount = constant.valueAsGroup.size;
-		ArrayInit(&result.immediateStructMembers, membersCount, FrameAlloc);
+		ArrayInit(&result.immediateStructMembers, membersCount);
 		result.immediateStructMembers.size = membersCount;
 		for (int i = 0; i < membersCount; ++i)
 			result.immediateStructMembers[i] =
@@ -1612,7 +1606,7 @@ IRValue IRGenFromExpression(Context *context, ASTExpression *expression)
 		s32 procParamCount = (s32)procTypeInfo.parameters.size;
 		s32 callParamCount = (s32)astProcCall->arguments.size;
 		s32 paramCount = Max(procParamCount, callParamCount) + isReturnByCopy + isVarargs;
-		ArrayInit(&procCallInst.procedureCall.parameters, paramCount, malloc);
+		ArrayInit(&procCallInst.procedureCall.parameters, paramCount);
 
 		// Remember parameter count because we need space for them in the stack
 		IRProcedureScope stackTop = context->irProcedureStack[context->irProcedureStack.size - 1];
@@ -1709,13 +1703,13 @@ IRValue IRGenFromExpression(Context *context, ASTExpression *expression)
 		{
 			s64 varargsCount = astProcCall->arguments.size - procParamCount;
 
-			s64 anyTableIdx = FindGlobalType(context, "Any"_s);
-			s64 arrayOfAnyTableIdx = GetTypeInfoArrayOf(context, anyTableIdx, 0);
+			static s64 anyPointerTypeIdx = GetTypeInfoPointerOf(context, TYPETABLEIDX_ANY_STRUCT);
+			static s64 arrayOfAnyTypeIdx = GetTypeInfoArrayOf(context, TYPETABLEIDX_ANY_STRUCT, 0);
 
 			if (varargsCount == 1)
 			{
 				ASTExpression *varargsArrayExp = &astProcCall->arguments[procParamCount];
-				if (varargsArrayExp->typeTableIdx == arrayOfAnyTableIdx)
+				if (varargsArrayExp->typeTableIdx == arrayOfAnyTypeIdx)
 				{
 					IRValue varargsArray = IRGenFromExpression(context, varargsArrayExp);
 					*ArrayAdd(&procCallInst.procedureCall.parameters) =
@@ -1732,7 +1726,7 @@ IRValue IRGenFromExpression(Context *context, ASTExpression *expression)
 				// Allocate stack space for buffer
 				String tempVarName = TPrintF("_varargsBuffer%llu", varargsUniqueID);
 				u32 bufferValueIdx = IRAddTempValue(context, tempVarName,
-						GetTypeInfoArrayOf(context, anyTableIdx, varargsCount), VALUEFLAGS_FORCE_MEMORY);
+						GetTypeInfoArrayOf(context, TYPETABLEIDX_ANY_STRUCT, varargsCount), VALUEFLAGS_FORCE_MEMORY);
 				IRValue bufferIRValue = IRValueValue(context, bufferValueIdx);
 
 				// Fill the buffer
@@ -1743,7 +1737,7 @@ IRValue IRGenFromExpression(Context *context, ASTExpression *expression)
 
 					IRValue bufferIndexValue = IRValueImmediate(argIdx);
 					IRValue bufferSlotValue = IRDoArrayAccess(context, bufferIRValue, bufferIndexValue,
-							anyTableIdx);
+							TYPETABLEIDX_ANY_STRUCT);
 
 					IRValue rightValue = IRGenFromExpression(context, arg);
 					IRDoAssignment(context, bufferSlotValue, rightValue);
@@ -1752,19 +1746,18 @@ IRValue IRGenFromExpression(Context *context, ASTExpression *expression)
 				pointerToBuffer = IRPointerToValue(context, bufferIRValue);
 			}
 			else
-				pointerToBuffer = IRValueImmediate(0, GetTypeInfoPointerOf(context, anyTableIdx));
+				pointerToBuffer = IRValueImmediate(0, anyPointerTypeIdx);
 
 			// By now we should have the buffer with all the varargs as Any structs.
 			// Now we put it into a dynamic array struct.
-			s64 dynamicArrayTableIdx = FindGlobalType(context, "Array"_s);
 
 			// Allocate stack space for array
 			String tempVarName = TPrintF("_varargsArray%llu", varargsUniqueID++);
 			u32 arrayValueIdx = IRAddTempValue(context, tempVarName,
-					arrayOfAnyTableIdx, VALUEFLAGS_FORCE_MEMORY);
+					arrayOfAnyTypeIdx, VALUEFLAGS_FORCE_MEMORY);
 			IRValue arrayIRValue = IRValueValue(context, arrayValueIdx);
 
-			TypeInfo dynamicArrayTypeInfo = context->typeTable[dynamicArrayTableIdx];
+			TypeInfo dynamicArrayTypeInfo = context->typeTable[TYPETABLEIDX_ARRAY_STRUCT];
 			// Size
 			{
 				StructMember sizeStructMember = dynamicArrayTypeInfo.structInfo.members[0];
@@ -1794,7 +1787,7 @@ skipGeneratingVarargsArray:
 		ASTIntrinsic astIntrinsic = expression->intrinsic;
 		IRInstruction inst = { IRINSTRUCTIONTYPE_INTRINSIC };
 		inst.intrinsic.type = astIntrinsic.type;
-		ArrayInit(&inst.intrinsic.parameters, astIntrinsic.arguments.size, malloc);
+		ArrayInit(&inst.intrinsic.parameters, astIntrinsic.arguments.size);
 
 		// Set up parameters
 		for (int argIdx = 0; argIdx < astIntrinsic.arguments.size; ++argIdx)
@@ -1904,14 +1897,12 @@ skipGeneratingVarargsArray:
 		{
 			static u64 stringStaticVarUniqueID = 0;
 
-			s64 stringTableIdx = FindGlobalType(context, "String"_s);
-
 			IRStaticVariable newStaticVar = {};
 			newStaticVar.valueIdx = NewValue(context,
 					TPrintF("staticString%d", stringStaticVarUniqueID++),
-					stringTableIdx, VALUEFLAGS_ON_STATIC_STORAGE);
+					TYPETABLEIDX_STRING_STRUCT, VALUEFLAGS_ON_STATIC_STORAGE);
 			newStaticVar.initialValue = IRValueImmediateString(context, expression->literal.string);
-			newStaticVar.initialValue.typeTableIdx = stringTableIdx;
+			newStaticVar.initialValue.typeTableIdx = TYPETABLEIDX_STRING_STRUCT;
 			*DynamicArrayAdd(&context->irStaticVariables) = newStaticVar;
 
 			result = IRValueValue(context, newStaticVar.valueIdx);
@@ -1933,7 +1924,7 @@ skipGeneratingVarargsArray:
 					s64 structTypeIdx;
 					int idx;
 				};
-				DynamicArray<StructStackFrame, FrameAlloc, FrameRealloc> structStack;
+				DynamicArray<StructStackFrame, PhaseAllocator> structStack;
 				DynamicArrayInit(&structStack, 8);
 				*DynamicArrayAdd(&structStack) = { groupTypeIdx, 0 };
 
@@ -2058,7 +2049,6 @@ skipGeneratingVarargsArray:
 		IRPushValueIntoStack(context, indexValueIdx);
 		IRValue indexValue = IRValueValue(context, indexValueIdx);
 
-		s64 stringTypeIdx = FindGlobalType(context, "String"_s);
 		s64 rangeTypeIdx = expression->forNode.range->typeTableIdx;
 		TypeInfo rangeTypeInfo = context->typeTable[rangeTypeIdx];
 
@@ -2074,7 +2064,7 @@ skipGeneratingVarargsArray:
 			// Assign 'i'
 			IRDoAssignment(context, indexValue, from);
 		}
-		else if (rangeTypeIdx == stringTypeIdx || rangeTypeInfo.typeCategory == TYPECATEGORY_ARRAY)
+		else if (rangeTypeIdx == TYPETABLEIDX_STRING_STRUCT || rangeTypeInfo.typeCategory == TYPECATEGORY_ARRAY)
 		{
 			u32 elementValueIdx = expression->forNode.elementValueIdx;
 			// Allocate 'it' variable
@@ -2083,16 +2073,15 @@ skipGeneratingVarargsArray:
 			arrayValue = IRGenFromExpression(context, expression->forNode.range);
 
 			s64 elementTypeIdx = TYPETABLEIDX_U8;
-			if (rangeTypeIdx != stringTypeIdx)
+			if (rangeTypeIdx != TYPETABLEIDX_STRING_STRUCT)
 				elementTypeIdx = rangeTypeInfo.arrayInfo.elementTypeTableIdx;
 			s64 pointerToElementTypeTableIdx = GetTypeInfoPointerOf(context, elementTypeIdx);
 
 			from = IRValueImmediate(0);
-			if (rangeTypeInfo.arrayInfo.count == 0 || rangeTypeIdx == stringTypeIdx)
+			if (rangeTypeInfo.arrayInfo.count == 0 || rangeTypeIdx == TYPETABLEIDX_STRING_STRUCT)
 			{
 				// Compare with size member
-				s64 arrayTableIdx = FindGlobalType(context, "Array"_s);
-				TypeInfo dynamicArrayTypeInfo = context->typeTable[arrayTableIdx];
+				TypeInfo dynamicArrayTypeInfo = context->typeTable[TYPETABLEIDX_ARRAY_STRUCT];
 				to = IRDoMemberAccess(context, arrayValue, dynamicArrayTypeInfo.structInfo.members[0]);
 			}
 			else
@@ -2139,11 +2128,11 @@ skipGeneratingVarargsArray:
 		incrementInst.binaryOperation.out = indexValue;
 		*AddInstruction(context) = incrementInst;
 
-		if (rangeTypeIdx == stringTypeIdx || rangeTypeInfo.typeCategory == TYPECATEGORY_ARRAY)
+		if (rangeTypeIdx == TYPETABLEIDX_STRING_STRUCT || rangeTypeInfo.typeCategory == TYPECATEGORY_ARRAY)
 		{
 			// Update 'it'
 			s64 elementTypeIdx = TYPETABLEIDX_U8;
-			if (rangeTypeIdx != stringTypeIdx)
+			if (rangeTypeIdx != TYPETABLEIDX_STRING_STRUCT)
 				elementTypeIdx = rangeTypeInfo.arrayInfo.elementTypeTableIdx;
 
 			u32 elementValueIdx = expression->forNode.elementValueIdx;

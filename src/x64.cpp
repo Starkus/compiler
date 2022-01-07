@@ -117,7 +117,7 @@ struct BEInstruction
 		{
 			// Proc call info
 			s32 procedureIdx;
-			Array<u32> liveValues;
+			Array<u32, PhaseAllocator> liveValues;
 		};
 		u32 valueIdx;
 		struct
@@ -125,7 +125,7 @@ struct BEInstruction
 			BEInstruction *patch1;
 			BEInstruction *patch2;
 		};
-		Array<BEInstruction> patchInstructions;
+		Array<BEInstruction, PhaseAllocator> patchInstructions;
 		String comment;
 	};
 };
@@ -134,11 +134,11 @@ typedef BEInstruction X64Instruction;
 struct X64Procedure
 {
 	String name;
-	BucketArray<X64Instruction, 1024, malloc, realloc> instructions;
+	BucketArray<X64Instruction, PhaseAllocator, 1024> instructions;
 	u64 stackSize;
 	s64 allocatedParameterCount;
 	u32 returnValueIdx;
-	DynamicArray<u32, malloc, realloc> spilledValues;
+	DynamicArray<u32, PhaseAllocator> spilledValues;
 };
 
 enum X64FloatingType
@@ -1670,7 +1670,7 @@ inline s64 X64PrintInstruction(Context *context, X64Instruction inst)
 
 #include "X64RegisterAllocation.cpp"
 
-void X64PrintInstructions(Context *context, Array<X64Procedure> x64Procedures)
+void X64PrintInstructions(Context *context, Array<X64Procedure, PhaseAllocator> x64Procedures)
 {
 	for (int procedureIdx = 1; procedureIdx < x64Procedures.size; ++procedureIdx)
 	{
@@ -1765,7 +1765,7 @@ void X64PrintStaticData(Context *context, String name, IRValue value, s64 typeTa
 		int alignment = alignmentOverride < 0 ? 8 : alignmentOverride;
 		bytesSoFar = X64StaticDataAlignTo(context, bytesSoFar, alignment);
 
-		Array<IRValue> members = value.immediateStructMembers;
+		Array<IRValue, FrameAllocator> members = value.immediateStructMembers;
 		for (int memberIdx = 0; memberIdx < members.size; ++memberIdx)
 		{
 			String memberName = memberIdx ? "   "_s : name;
@@ -2086,9 +2086,9 @@ void BackendMain(Context *context)
 		x64ParameterValuesWrite[paramIdx] = newValueIdx;
 	}
 
-	Array<X64Procedure> x64Procedures;
+	Array<X64Procedure, PhaseAllocator> x64Procedures;
 	u64 procedureCount = BucketArrayCount(&context->procedures);
-	ArrayInit(&x64Procedures, procedureCount, malloc);
+	ArrayInit(&x64Procedures, procedureCount);
 	x64Procedures.size = procedureCount;
 
 	// Create X64Procedures
@@ -2299,13 +2299,13 @@ unalignedMovups:;
 	String outputPath;
 	String assemblyOutputFilename;
 	{
-		char *buffer = (char *)FrameAlloc(MAX_PATH);
+		char *buffer = (char *)PhaseAllocator::Alloc(MAX_PATH);
 		outputPath.size = GetFullPathNameA("output", MAX_PATH, buffer, nullptr);
 		outputPath.data = buffer;
 
 		CreateDirectoryA(outputPath.data, nullptr);
 
-		buffer = (char *)FrameAlloc(MAX_PATH);
+		buffer = (char *)PhaseAllocator::Alloc(MAX_PATH);
 		assemblyOutputFilename.size = GetFullPathNameA("output\\out.asm", MAX_PATH, buffer, nullptr);
 		assemblyOutputFilename.data = buffer;
 	}
@@ -2326,30 +2326,21 @@ unalignedMovups:;
 
 	// TypeInfo immediate structs
 	{
-		s64 structMemberInfoTypeTableIdx = FindGlobalType(context, "TypeInfoStructMember"_s);
-		s64 pointerToStructMemberInfoIdx = GetTypeInfoPointerOf(context, structMemberInfoTypeTableIdx);
-		s64 stringTypeIdx = FindGlobalType(context, "String"_s);
-		s64 pointerToStringIdx = GetTypeInfoPointerOf(context, stringTypeIdx);
-		s64 pointerToS64Idx = GetTypeInfoPointerOf(context, TYPETABLEIDX_S64);
-
-		s64 typeInfoIdx = FindGlobalType(context, "TypeInfo"_s);
-		s64 pointerToTypeInfoIdx = GetTypeInfoPointerOf(context, typeInfoIdx);
-#if 0
-		s64 typeInfoIntegerIdx = FindGlobalType(context, "TypeInfoInteger"_s);
-		s64 typeInfoStructIdx = FindGlobalType(context, "TypeInfoStruct"_s);
-		s64 typeInfoStructMemberIdx = FindGlobalType(context, "TypeInfoStructMember"_s);
-		s64 typeInfoEnumIdx = FindGlobalType(context, "TypeInfoEnum"_s);
-		s64 typeInfoPointerIdx = FindGlobalType(context, "TypeInfoPointer"_s);
-		s64 typeInfoArrayIdx = FindGlobalType(context, "TypeInfoArray"_s);
-		s64 typeInfoProcedurePointerIdx = FindGlobalType(context, "TypeInfoProcedurePointer"_s);
-#endif
+		static s64 pointerToStructMemberInfoIdx =
+			GetTypeInfoPointerOf(context, TYPETABLEIDX_TYPE_INFO_STRUCT_MEMBER_STRUCT);
+		static s64 pointerToStringIdx =
+			GetTypeInfoPointerOf(context, TYPETABLEIDX_STRING_STRUCT);
+		static s64 pointerToS64Idx =
+			GetTypeInfoPointerOf(context, TYPETABLEIDX_S64);
+		static s64 pointerToTypeInfoIdx =
+			GetTypeInfoPointerOf(context, TYPETABLEIDX_TYPE_INFO_STRUCT);
 
 		u64 tableSize = BucketArrayCount(&context->typeTable);
 		for (u64 typeTableIdx = 1; typeTableIdx < tableSize; ++typeTableIdx)
 		{
 			TypeInfo typeInfo = context->typeTable[typeTableIdx];
 
-			context->values[typeInfo.valueIdx].typeTableIdx = typeInfoIdx;
+			context->values[typeInfo.valueIdx].typeTableIdx = TYPETABLEIDX_TYPE_INFO_STRUCT;
 
 			IRStaticVariable newStaticVar = { typeInfo.valueIdx };
 			newStaticVar.initialValue.valueType = IRVALUETYPE_IMMEDIATE_GROUP;
@@ -2359,7 +2350,7 @@ unalignedMovups:;
 			{
 			case TYPECATEGORY_INTEGER:
 			{
-				ArrayInit(&newStaticVar.initialValue.immediateStructMembers, 3, FrameAlloc);
+				ArrayInit(&newStaticVar.initialValue.immediateStructMembers, 3);
 				*ArrayAdd(&newStaticVar.initialValue.immediateStructMembers) =
 					{ IRValueImmediate(0, TYPETABLEIDX_S8) };
 				*ArrayAdd(&newStaticVar.initialValue.immediateStructMembers) =
@@ -2369,8 +2360,8 @@ unalignedMovups:;
 			} break;
 			case TYPECATEGORY_FLOATING:
 			{
-				newStaticVar.initialValue.typeTableIdx = typeInfoIdx;
-				ArrayInit(&newStaticVar.initialValue.immediateStructMembers, 2, FrameAlloc);
+				newStaticVar.initialValue.typeTableIdx = TYPETABLEIDX_TYPE_INFO_STRUCT;
+				ArrayInit(&newStaticVar.initialValue.immediateStructMembers, 2);
 				*ArrayAdd(&newStaticVar.initialValue.immediateStructMembers) =
 					{ IRValueImmediate(1, TYPETABLEIDX_S8) };
 				*ArrayAdd(&newStaticVar.initialValue.immediateStructMembers) =
@@ -2386,11 +2377,11 @@ unalignedMovups:;
 					structName = staticDefStruct->name;
 
 				u32 membersValueIdx = NewValue(context, TPrintF("_members_%lld", typeTableIdx),
-						structMemberInfoTypeTableIdx, VALUEFLAGS_ON_STATIC_STORAGE);
+						TYPETABLEIDX_TYPE_INFO_STRUCT_MEMBER_STRUCT, VALUEFLAGS_ON_STATIC_STORAGE);
 				IRStaticVariable membersStaticVar = { membersValueIdx };
 				membersStaticVar.initialValue.valueType = IRVALUETYPE_IMMEDIATE_GROUP;
 				ArrayInit(&membersStaticVar.initialValue.immediateStructMembers,
-						typeInfo.structInfo.members.size, FrameAlloc);
+						typeInfo.structInfo.members.size);
 				for (s64 memberIdx = 0; memberIdx < (s64)typeInfo.structInfo.members.size; ++memberIdx)
 				{
 					StructMember member = typeInfo.structInfo.members[memberIdx];
@@ -2398,7 +2389,7 @@ unalignedMovups:;
 
 					IRValue memberImm;
 					memberImm.valueType = IRVALUETYPE_IMMEDIATE_GROUP;
-					ArrayInit(&memberImm.immediateStructMembers, 4, FrameAlloc);
+					ArrayInit(&memberImm.immediateStructMembers, 4);
 					*ArrayAdd(&memberImm.immediateStructMembers) =
 						{ IRValueImmediateString(context, member.name) };
 					*ArrayAdd(&memberImm.immediateStructMembers) =
@@ -2410,7 +2401,7 @@ unalignedMovups:;
 				}
 				*DynamicArrayAdd(&context->irStaticVariables) = membersStaticVar;
 
-				ArrayInit(&newStaticVar.initialValue.immediateStructMembers, 6, FrameAlloc);
+				ArrayInit(&newStaticVar.initialValue.immediateStructMembers, 6);
 				*ArrayAdd(&newStaticVar.initialValue.immediateStructMembers) =
 					{ IRValueImmediate(2, TYPETABLEIDX_S8) };
 				*ArrayAdd(&newStaticVar.initialValue.immediateStructMembers) =
@@ -2435,11 +2426,11 @@ unalignedMovups:;
 				TypeInfo enumType = context->typeTable[typeInfo.enumInfo.typeTableIdx];
 
 				u32 namesValueIdx = NewValue(context, TPrintF("_names_%lld", typeTableIdx),
-						stringTypeIdx, VALUEFLAGS_ON_STATIC_STORAGE);
+						TYPETABLEIDX_STRING_STRUCT, VALUEFLAGS_ON_STATIC_STORAGE);
 				IRStaticVariable namesStaticVar = { namesValueIdx };
 				namesStaticVar.initialValue.valueType = IRVALUETYPE_IMMEDIATE_GROUP;
 				ArrayInit(&namesStaticVar.initialValue.immediateStructMembers,
-						typeInfo.enumInfo.names.size, FrameAlloc);
+						typeInfo.enumInfo.names.size);
 				for (s64 nameIdx = 0; nameIdx < (s64)typeInfo.enumInfo.names.size; ++nameIdx)
 				{
 					IRValue nameImm = IRValueImmediateString(context,
@@ -2453,7 +2444,7 @@ unalignedMovups:;
 				IRStaticVariable valuesStaticVar = { valuesValueIdx };
 				valuesStaticVar.initialValue.valueType = IRVALUETYPE_IMMEDIATE_GROUP;
 				ArrayInit(&valuesStaticVar.initialValue.immediateStructMembers,
-						typeInfo.enumInfo.values.size, FrameAlloc);
+						typeInfo.enumInfo.values.size);
 				for (s64 valueIdx = 0; valueIdx < (s64)typeInfo.enumInfo.values.size; ++valueIdx)
 				{
 					IRValue valueImm = IRValueImmediate(typeInfo.enumInfo.values[valueIdx],
@@ -2462,7 +2453,7 @@ unalignedMovups:;
 				}
 				*DynamicArrayAdd(&context->irStaticVariables) = valuesStaticVar;
 
-				ArrayInit(&newStaticVar.initialValue.immediateStructMembers, 8, FrameAlloc);
+				ArrayInit(&newStaticVar.initialValue.immediateStructMembers, 8);
 				*ArrayAdd(&newStaticVar.initialValue.immediateStructMembers) =
 				{ IRValueImmediate(3, TYPETABLEIDX_S8) };
 				*ArrayAdd(&newStaticVar.initialValue.immediateStructMembers) =
@@ -2484,7 +2475,7 @@ unalignedMovups:;
 			{
 				TypeInfo pointedType = context->typeTable[typeInfo.pointerInfo.pointedTypeTableIdx];
 
-				ArrayInit(&newStaticVar.initialValue.immediateStructMembers, 3, FrameAlloc);
+				ArrayInit(&newStaticVar.initialValue.immediateStructMembers, 3);
 				*ArrayAdd(&newStaticVar.initialValue.immediateStructMembers) =
 				{ IRValueImmediate(4, TYPETABLEIDX_S8) };
 				*ArrayAdd(&newStaticVar.initialValue.immediateStructMembers) =
@@ -2496,7 +2487,7 @@ unalignedMovups:;
 			{
 				TypeInfo elementType = context->typeTable[typeInfo.arrayInfo.elementTypeTableIdx];
 
-				ArrayInit(&newStaticVar.initialValue.immediateStructMembers, 4, FrameAlloc);
+				ArrayInit(&newStaticVar.initialValue.immediateStructMembers, 4);
 				*ArrayAdd(&newStaticVar.initialValue.immediateStructMembers) =
 				{ IRValueImmediate(5, TYPETABLEIDX_S8) };
 				*ArrayAdd(&newStaticVar.initialValue.immediateStructMembers) =
@@ -2516,7 +2507,7 @@ unalignedMovups:;
 					IRStaticVariable paramsStaticVar = { parametersValueIdx };
 					paramsStaticVar.initialValue.valueType = IRVALUETYPE_IMMEDIATE_GROUP;
 					ArrayInit(&paramsStaticVar.initialValue.immediateStructMembers,
-							typeInfo.procedureInfo.parameters.size, FrameAlloc);
+							typeInfo.procedureInfo.parameters.size);
 					for (s64 paramIdx = 0; paramIdx < (s64)typeInfo.procedureInfo.parameters.size;
 							++paramIdx)
 					{
@@ -2528,7 +2519,7 @@ unalignedMovups:;
 					*DynamicArrayAdd(&context->irStaticVariables) = paramsStaticVar;
 				}
 
-				ArrayInit(&newStaticVar.initialValue.immediateStructMembers, 5, FrameAlloc);
+				ArrayInit(&newStaticVar.initialValue.immediateStructMembers, 5);
 				*ArrayAdd(&newStaticVar.initialValue.immediateStructMembers) =
 				{ IRValueImmediate(6, TYPETABLEIDX_S8) };
 				*ArrayAdd(&newStaticVar.initialValue.immediateStructMembers) =
@@ -2546,7 +2537,7 @@ unalignedMovups:;
 			} break;
 			case TYPECATEGORY_INVALID:
 			{
-				ArrayInit(&newStaticVar.initialValue.immediateStructMembers, 1, FrameAlloc);
+				ArrayInit(&newStaticVar.initialValue.immediateStructMembers, 1);
 				*ArrayAdd(&newStaticVar.initialValue.immediateStructMembers) =
 				{ IRValueImmediate(7, TYPETABLEIDX_S8) };
 			} break;
@@ -2681,14 +2672,14 @@ unalignedMovups:;
 	// Run MASM
 	PWSTR programFilesPathWstr;
 	SHGetKnownFolderPath(FOLDERID_ProgramFilesX86, 0, NULL, &programFilesPathWstr);
-	String programFilesPath = StupidStrToString(programFilesPathWstr, FrameAlloc);
+	String programFilesPath = StupidStrToString(programFilesPathWstr, PhaseAllocator::Alloc);
 
 	String visualStudioPath = TPrintF("%S\\Microsoft Visual Studio", programFilesPath);
 	{
 		// Get anything starting with 20...
 		String wildcard = TPrintF("%S\\20*", visualStudioPath);
 		WIN32_FIND_DATAA foundData = {};
-		HANDLE findHandle = FindFirstFileA(StringToCStr(wildcard, FrameAlloc), &foundData);
+		HANDLE findHandle = FindFirstFileA(StringToCStr(wildcard, PhaseAllocator::Alloc), &foundData);
 		const char *newestVersionStr = nullptr;
 		int newestVersion = 0;
 		if (findHandle != INVALID_HANDLE_VALUE) while (true)
@@ -2710,19 +2701,19 @@ unalignedMovups:;
 		String enterprisePath = TPrintF("%S\\Enterprise", visualStudioPath);
 		String professionalPath = TPrintF("%S\\Professional", visualStudioPath);
 		String communityPath = TPrintF("%S\\Community", visualStudioPath);
-		if (GetFileAttributes(StringToCStr(buildToolsPath, FrameAlloc)) != INVALID_FILE_ATTRIBUTES)
+		if (GetFileAttributes(StringToCStr(buildToolsPath, PhaseAllocator::Alloc)) != INVALID_FILE_ATTRIBUTES)
 			msvcPath = buildToolsPath;
-		else if (GetFileAttributes(StringToCStr(enterprisePath, FrameAlloc)) != INVALID_FILE_ATTRIBUTES)
+		else if (GetFileAttributes(StringToCStr(enterprisePath, PhaseAllocator::Alloc)) != INVALID_FILE_ATTRIBUTES)
 			msvcPath = enterprisePath;
-		else if (GetFileAttributes(StringToCStr(professionalPath, FrameAlloc)) != INVALID_FILE_ATTRIBUTES)
+		else if (GetFileAttributes(StringToCStr(professionalPath, PhaseAllocator::Alloc)) != INVALID_FILE_ATTRIBUTES)
 			msvcPath = professionalPath;
-		else if (GetFileAttributes(StringToCStr(communityPath, FrameAlloc)) != INVALID_FILE_ATTRIBUTES)
+		else if (GetFileAttributes(StringToCStr(communityPath, PhaseAllocator::Alloc)) != INVALID_FILE_ATTRIBUTES)
 			msvcPath = communityPath;
 		msvcPath = TPrintF("%S\\VC\\Tools\\MSVC", msvcPath);
 
 		String wildcard = StringConcat(msvcPath, "\\*"_s);
 		WIN32_FIND_DATAA foundData = {};
-		HANDLE findHandle = FindFirstFileA(StringToCStr(wildcard, FrameAlloc), &foundData);
+		HANDLE findHandle = FindFirstFileA(StringToCStr(wildcard, PhaseAllocator::Alloc), &foundData);
 		if (findHandle != INVALID_HANDLE_VALUE)
 		{
 			while (foundData.cFileName[0] == '.')
@@ -2736,7 +2727,7 @@ unalignedMovups:;
 	{
 		String wildcard = TPrintF("%S\\include\\10.*", windowsSDKPath);
 		WIN32_FIND_DATAA foundData = {};
-		HANDLE findHandle = FindFirstFileA(StringToCStr(wildcard, FrameAlloc), &foundData);
+		HANDLE findHandle = FindFirstFileA(StringToCStr(wildcard, PhaseAllocator::Alloc), &foundData);
 		s64 highestTuple[4] = {};
 		const char *latestVersionName = nullptr;
 		if (findHandle != INVALID_HANDLE_VALUE) while (true)

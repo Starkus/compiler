@@ -1,7 +1,6 @@
 * Reduce moving things from one register to another unnecessarily
 * Set members by name in struct literals
 * Verify small structs are passed properly through parameters
-* Some allocator that gets reset after each stage.
 * Operator overloading?
 * Group literals leave non specified members uninitialized.
 * Add TEST instructions

@@ -6,7 +6,7 @@ inline String operator""_s(const char *str, u64 size)
 inline String StringConcat(String a, String b)
 {
 	s64 size = a.size + b.size;
-	char *buffer = (char *)FrameAlloc(size);
+	char *buffer = (char *)FrameAllocator::Alloc(size);
 	String result = { size, buffer };
 	memcpy(buffer, a.data, a.size);
 	memcpy(buffer + a.size, b.data, b.size);

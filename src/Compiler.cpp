@@ -21,7 +21,7 @@ HANDLE g_hStderr;
 
 s64 Print(const char *format, ...)
 {
-	char *buffer = (char *)g_memory->framePtr;
+	char *buffer = (char *)g_memory->phasePtr;
 
 	va_list args;
 	va_start(args, format);
@@ -46,7 +46,7 @@ s64 Print(const char *format, ...)
 	WriteFile(logFileHandle, buffer, (DWORD)strlen(buffer), &bytesWritten, nullptr);
 
 #if DEBUG_BUILD
-	memset(g_memory->framePtr, 0xCD, size + 1);
+	memset(g_memory->phasePtr, 0x55, size + 1);
 #endif
 
 	va_end(args);
@@ -96,45 +96,45 @@ struct Context
 {
 	Config config;
 
-	DynamicArray<SourceFile, malloc, realloc> sourceFiles;
-	DynamicArray<String, malloc, realloc> libsToLink;
+	DynamicArray<SourceFile, HeapAllocator> sourceFiles;
+	DynamicArray<String, HeapAllocator> libsToLink;
 
 	// Parsing
-	BucketArray<Token, 1024, malloc, realloc> tokens;
+	BucketArray<Token, HeapAllocator, 1024> tokens;
 	u64 currentTokenIdx;
 	Token *token;
 	ASTRoot *astRoot;
-	BucketArray<ASTExpression, 1024, malloc, realloc> treeNodes;
-	BucketArray<ASTType, 1024, malloc, realloc> astTypeNodes;
-	BucketArray<String, 1024, malloc, realloc> stringLiterals;
+	BucketArray<ASTExpression, HeapAllocator, 1024> treeNodes;
+	BucketArray<ASTType, HeapAllocator, 1024> astTypeNodes;
+	BucketArray<String, HeapAllocator, 1024> stringLiterals;
 
 	// Type check
-	DynamicArray<TCJob, malloc, realloc> tcJobs;
+	DynamicArray<TCJob, PhaseAllocator> tcJobs;
 	s32 currentTCJob;
-	BucketArray<Value, 2048, malloc, realloc> values;
-	BucketArray<Procedure, 512, malloc, realloc> procedures;
-	BucketArray<Procedure, 128, malloc, realloc> externalProcedures;
-	BucketArray<StaticDefinition, 512, malloc, realloc> staticDefinitions;
-	BucketArray<const TypeInfo, 1024, malloc, realloc> typeTable;
+	BucketArray<Value, HeapAllocator, 2048> values;
+	BucketArray<Procedure, HeapAllocator, 512> procedures;
+	BucketArray<Procedure, HeapAllocator, 128> externalProcedures;
+	BucketArray<StaticDefinition, HeapAllocator, 512> staticDefinitions;
+	BucketArray<const TypeInfo, HeapAllocator, 1024> typeTable;
 	TCScope *tcGlobalScope;
 	s64 tcCurrentReturnType;
 
 	// IR
-	DynamicArray<IRStaticVariable, malloc, realloc> irStaticVariables;
-	DynamicArray<u32, malloc, realloc> irExternalVariables;
-	DynamicArray<IRScope, malloc, realloc> irStack;
-	DynamicArray<IRProcedureScope, malloc, realloc> irProcedureStack;
-	BucketArray<IRLabel, 1024, malloc, realloc> irLabels;
+	DynamicArray<IRStaticVariable, HeapAllocator> irStaticVariables;
+	DynamicArray<u32, HeapAllocator> irExternalVariables;
+	DynamicArray<IRScope, PhaseAllocator> irStack;
+	DynamicArray<IRProcedureScope, PhaseAllocator> irProcedureStack;
+	BucketArray<IRLabel, HeapAllocator, 1024> irLabels;
 	IRLabel *currentBreakLabel;
 	IRLabel *currentContinueLabel;
 
 	// Backend
 	HANDLE outputFile;
 
-	BucketArray<BasicBlock, 512, malloc, realloc> beBasicBlocks;
-	DynamicArray<BasicBlock *, malloc, realloc> beLeafBasicBlocks;
-	DynamicArray<InterferenceGraphNode, malloc, realloc> beInterferenceGraph;
-	BucketArray<BEInstruction, 128, malloc, realloc> bePatchedInstructions;
+	BucketArray<BasicBlock, PhaseAllocator, 512> beBasicBlocks;
+	DynamicArray<BasicBlock *, PhaseAllocator> beLeafBasicBlocks;
+	DynamicArray<InterferenceGraphNode, PhaseAllocator> beInterferenceGraph;
+	BucketArray<BEInstruction, PhaseAllocator, 128> bePatchedInstructions;
 };
 
 inline bool Win32FileExists(const char *filename)
@@ -303,7 +303,7 @@ const String TokenTypeToString(s32 type)
 	if (type >= TOKEN_OP_Begin && type <= TOKEN_OP_End)
 		return "<Operator>"_s;
 
-	char *str = (char *)FrameAlloc(5);
+	char *str = (char *)FrameAllocator::Alloc(5);
 	strncpy(str, "<'~'>", 5);
 	str[2] = (char)type;
 	return { 5, str };
@@ -398,6 +398,7 @@ int main(int argc, char **argv)
 	Memory memory;
 	g_memory = &memory;
 	memory.frameMem = VirtualAlloc(0, Memory::frameSize, MEM_COMMIT, PAGE_READWRITE);
+	memory.phaseMem = VirtualAlloc(0, Memory::phaseSize, MEM_COMMIT, PAGE_READWRITE);
 	MemoryInit(&memory);
 
 	Context context = {};
@@ -405,7 +406,7 @@ int main(int argc, char **argv)
 	DynamicArrayInit(&context.libsToLink, 8);
 	BucketArrayInit(&context.tokens);
 
-	DynamicArray<String, FrameAlloc, FrameRealloc> inputFiles;
+	DynamicArray<String, FrameAllocator> inputFiles;
 	DynamicArrayInit(&inputFiles, 8);
 	*DynamicArrayAdd(&inputFiles) = "core/basic.emi"_s;
 	*DynamicArrayAdd(&inputFiles) = "core/print.emi"_s;
@@ -432,13 +433,13 @@ int main(int argc, char **argv)
 
 	for (int i = 0; i < inputFiles.size; ++i)
 	{
-		const char *filenameCstr = StringToCStr(inputFiles[i], FrameAlloc);
+		const char *filenameCstr = StringToCStr(inputFiles[i], FrameAllocator::Alloc);
 		if (!Win32FileExists(filenameCstr))
 			LogError(&context, {}, TPrintF("Input source file \"%S\" doesn't exist!", inputFiles[i]));
 
 		SourceFile newSourceFile = { inputFiles[i] };
 		Win32ReadEntireFile(filenameCstr, &newSourceFile.buffer,
-				&newSourceFile.size, FrameAlloc);
+				&newSourceFile.size, FrameAllocator::Alloc);
 		*DynamicArrayAdd(&context.sourceFiles) = newSourceFile;
 	}
 
@@ -448,13 +449,16 @@ int main(int argc, char **argv)
 	Token eofToken = { TOKEN_END_OF_FILE };
 	*BucketArrayAdd(&context.tokens) = eofToken;
 
+	PhaseAllocator::Wipe();
 	GenerateSyntaxTree(&context);
 
 	if (context.config.logAST)
 		PrintAST(&context);
 
+	PhaseAllocator::Wipe();
 	TypeCheckMain(&context);
 
+	PhaseAllocator::Wipe();
 	IRGenMain(&context);
 
 	if (context.config.logIR)
@@ -462,6 +466,7 @@ int main(int argc, char **argv)
 		PrintIRInstructions(&context);
 	}
 
+	PhaseAllocator::Wipe();
 	BackendMain(&context);
 
 	Print("Compilation success\n");

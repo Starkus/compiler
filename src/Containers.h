@@ -1,4 +1,4 @@
-template <typename T>
+template <typename T, typename A>
 struct Array
 {
 	T *data;
@@ -20,18 +20,18 @@ struct Array
 	}
 };
 
-template <typename T>
-void ArrayInit(Array<T> *array, u64 capacity, void *(*allocFunc)(u64))
+template <typename T, typename A>
+void ArrayInit(Array<T, A> *array, u64 capacity)
 {
-	array->data = (T*)allocFunc(sizeof(T) * capacity);
+	array->data = (T*)A::Alloc(sizeof(T) * capacity);
 	array->size = 0;
 #if DEBUG_BUILD
 	array->_capacity = capacity;
 #endif
 }
 
-template <typename T>
-T *ArrayAdd(Array<T> *array)
+template <typename T, typename A>
+T *ArrayAdd(Array<T, A> *array)
 {
 	T *result = &array->data[array->size++];
 #if DEBUG_BUILD
@@ -40,8 +40,8 @@ T *ArrayAdd(Array<T> *array)
 	return result;
 }
 
-template <typename T>
-inline T *ArrayBack(Array<T> *array)
+template <typename T, typename A>
+inline T *ArrayBack(Array<T, A> *array)
 {
 	ASSERT(array->size > 0);
 	return &array->data[array->size - 1];
@@ -81,7 +81,7 @@ inline T *FixedArrayBack(FixedArray<T, capacity> *array)
 	return &array->data[array->size - 1];
 }
 
-template <typename T, void *(*allocFunc)(u64), void *(*reallocFunc)(void *, u64)>
+template <typename T, typename A>
 struct DynamicArray
 {
 	T *data;
@@ -101,29 +101,29 @@ struct DynamicArray
 	}
 };
 
-template <typename T, void *(*allocFunc)(u64), void *(*reallocFunc)(void *, u64)>
-void DynamicArrayInit(DynamicArray<T, allocFunc, reallocFunc> *array, u64 initialCapacity)
+template <typename T, typename A>
+void DynamicArrayInit(DynamicArray<T, A> *array, u64 initialCapacity)
 {
 	ASSERT(initialCapacity);
-	array->data = (T*)allocFunc(sizeof(T) * initialCapacity);
+	array->data = (T*)A::Alloc(sizeof(T) * initialCapacity);
 	array->size = 0;
 	array->capacity = initialCapacity;
 }
 
-template <typename T, void *(*allocFunc)(u64), void *(*reallocFunc)(void *, u64)>
-T *DynamicArrayAdd(DynamicArray<T, allocFunc, reallocFunc> *array)
+template <typename T, typename A>
+T *DynamicArrayAdd(DynamicArray<T, A> *array)
 {
 	ASSERT(array->capacity != 0);
 	if (array->size >= array->capacity)
 	{
 		array->capacity *= 2;
-		array->data = (T*)reallocFunc(array->data, array->capacity * sizeof(T));
+		array->data = (T*)A::Realloc(array->data, array->capacity * sizeof(T));
 	}
 	return &array->data[array->size++];
 }
 
-template <typename T, void *(*allocFunc)(u64), void *(*reallocFunc)(void *, u64)>
-T *DynamicArrayAddMany(DynamicArray<T, allocFunc, reallocFunc> *array, s64 count)
+template <typename T, typename A>
+T *DynamicArrayAddMany(DynamicArray<T, A> *array, s64 count)
 {
 	bool reallocate = false;
 	u64 newSize = array->size + count;
@@ -132,15 +132,15 @@ T *DynamicArrayAddMany(DynamicArray<T, allocFunc, reallocFunc> *array, s64 count
 		array->capacity *= 2;
 	}
 	if (reallocate)
-		array->data = (T*)reallocFunc(array->data, array->capacity * sizeof(T));
+		array->data = (T*)A::Realloc(array->data, array->capacity * sizeof(T));
 
 	T *first = &array->data[array->size];
 	array->size = newSize;
 	return first;
 }
 
-template <typename T, void *(*allocFunc)(u64), void *(*reallocFunc)(void *, u64)>
-bool DynamicArrayAddUnique(DynamicArray<T, allocFunc, reallocFunc> *array, T value)
+template <typename T, typename A>
+bool DynamicArrayAddUnique(DynamicArray<T, A> *array, T value)
 {
 	for (int i = 0; i < array->size; ++i)
 	{
@@ -150,32 +150,32 @@ bool DynamicArrayAddUnique(DynamicArray<T, allocFunc, reallocFunc> *array, T val
 	if (array->size >= array->capacity)
 	{
 		array->capacity *= 2;
-		array->data = (T*)reallocFunc(array->data, array->capacity * sizeof(T));
+		array->data = (T*)A::Realloc(array->data, array->capacity * sizeof(T));
 	}
 	array->data[array->size++] = value;
 	return true;
 }
 
-template <typename T, void *(*allocFunc)(u64), void *(*reallocFunc)(void *, u64)>
-T *DynamicArrayBack(DynamicArray<T, allocFunc, reallocFunc> *array)
+template <typename T, typename A>
+T *DynamicArrayBack(DynamicArray<T, A> *array)
 {
 	ASSERT(array->size > 0);
 	return &array->data[array->size - 1];
 }
 
-template <typename T, void *(*allocFunc)(u64), void *(*reallocFunc)(void *, u64)>
-void DynamicArrayCopy(DynamicArray<T, allocFunc, reallocFunc> *dst,
-		DynamicArray<T, allocFunc, reallocFunc> *src)
+template <typename T, typename A>
+void DynamicArrayCopy(DynamicArray<T, A> *dst,
+		DynamicArray<T, A> *src)
 {
 	ASSERT(dst->capacity >= src->size);
 	dst->size = src->size;
 	memcpy(dst->data, src->data, src->size * sizeof(T));
 }
 
-template <typename T, u64 bucketSize, void *(*allocFunc)(u64), void *(*reallocFunc)(void *, u64)>
+template <typename T, typename A, u64 bucketSize>
 struct BucketArray
 {
-	DynamicArray<Array<T>, allocFunc, reallocFunc> buckets;
+	DynamicArray<Array<T, A>, A> buckets;
 
 	T &operator[](s64 idx)
 	{
@@ -186,41 +186,41 @@ struct BucketArray
 	}
 };
 
-template <typename T, u64 bucketSize, void *(*allocFunc)(u64), void *(*reallocFunc)(void *, u64)>
-void BucketArrayInit(BucketArray<T, bucketSize, allocFunc, reallocFunc> *bucketArray)
+template <typename T, typename A, u64 bucketSize>
+void BucketArrayInit(BucketArray<T, A, bucketSize> *bucketArray)
 {
 	DynamicArrayInit(&bucketArray->buckets, 4);
 
 	// Start with one bucket
-	Array<T> *firstBucket = DynamicArrayAdd(&bucketArray->buckets);
-	ArrayInit(firstBucket, bucketSize, allocFunc);
+	Array<T, A> *firstBucket = DynamicArrayAdd(&bucketArray->buckets);
+	ArrayInit(firstBucket, bucketSize);
 }
 
-template <typename T, u64 bucketSize, void *(*allocFunc)(u64), void *(*reallocFunc)(void *, u64)>
-T *BucketArrayAdd(BucketArray<T, bucketSize, allocFunc, reallocFunc> *bucketArray)
+template <typename T, typename A, u64 bucketSize>
+T *BucketArrayAdd(BucketArray<T, A, bucketSize> *bucketArray)
 {
 	ASSERT(bucketArray->buckets.size > 0);
-	Array<T> *lastBucket = &bucketArray->buckets[bucketArray->buckets.size - 1];
+	Array<T, A> *lastBucket = &bucketArray->buckets[bucketArray->buckets.size - 1];
 
 	if (lastBucket->size >= bucketSize)
 	{
-		Array<T> *newBucket = DynamicArrayAdd(&bucketArray->buckets);
-		ArrayInit(newBucket, bucketSize, allocFunc);
+		Array<T, A> *newBucket = DynamicArrayAdd(&bucketArray->buckets);
+		ArrayInit(newBucket, bucketSize);
 		lastBucket = newBucket;
 	}
 
 	return ArrayAdd(lastBucket);
 }
 
-template <typename T, u64 bucketSize, void *(*allocFunc)(u64), void *(*reallocFunc)(void *, u64)>
-T *BucketArrayBack(BucketArray<T, bucketSize, allocFunc, reallocFunc> *bucketArray)
+template <typename T, typename A, u64 bucketSize>
+T *BucketArrayBack(BucketArray<T, A, bucketSize> *bucketArray)
 {
 	ASSERT(bucketArray->buckets.size > 0);
 	return DynamicArrayBack(&bucketArray->buckets[bucketArray->buckets.size - 1]);
 }
 
-template <typename T, u64 bucketSize, void *(*allocFunc)(u64), void *(*reallocFunc)(void *, u64)>
-u64 BucketArrayCount(BucketArray<T, bucketSize, allocFunc, reallocFunc> *bucketArray)
+template <typename T, typename A, u64 bucketSize>
+u64 BucketArrayCount(BucketArray<T, A, bucketSize> *bucketArray)
 {
 	if (bucketArray->buckets.size == 0)
 		return 0;
