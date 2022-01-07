@@ -44,7 +44,7 @@ typedef double f64;
 #if DEBUG_BUILD
 #define ASSERT(expr) do { if (!(expr)) { Print("!!!ASSERT FAILED!!!\n>   Expression: { %s }\n>   %s:%d\n", #expr, __FILE__, __LINE__); __debugbreak(); } __assume(expr); } while (false)
 #else
-#define ASSERT(expr)
+#define ASSERT(expr) do { __assume(expr); } while (false)
 #endif
 
 #define NOMANGLE extern "C"

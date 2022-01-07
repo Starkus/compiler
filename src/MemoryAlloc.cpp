@@ -14,8 +14,9 @@ class FrameAllocator
 	public:
 	static void *Alloc(u64 size)
 	{
-		if (*((u64 *)g_memory->framePtr) != 0xCDCDCDCDCDCDCDCD) // Watch for memory corruption
-			CRASH;
+#if DEBUG_BUILD
+		if (*((u64 *)g_memory->framePtr) != 0xCDCDCDCDCDCDCDCD) CRASH; // Watch for memory corruption
+#endif
 		ASSERT((u8 *)g_memory->framePtr + size < (u8 *)g_memory->frameMem + Memory::frameSize); // Out of memory!
 		void *result;
 
@@ -34,7 +35,7 @@ class FrameAllocator
 	{
 		//Print("WARNING: FRAME REALLOC\n");
 
-		void *newBlock = FrameAllocator::Alloc(newSize);
+		void *newBlock = Alloc(newSize);
 		memcpy(newBlock, ptr, newSize);
 		return newBlock;
 	}
@@ -57,7 +58,9 @@ class PhaseAllocator
 	public:
 	static void *Alloc(u64 size)
 	{
+#if DEBUG_BUILD
 		if (*((u64 *)g_memory->phasePtr) != 0x5555555555555555) CRASH; // Watch for memory corruption
+#endif
 		ASSERT((u8 *)g_memory->phasePtr + size < (u8 *)g_memory->phaseMem + Memory::phaseSize); // Out of memory!
 		void *result;
 
@@ -76,7 +79,7 @@ class PhaseAllocator
 	{
 		//Print("WARNING: FRAME REALLOC\n");
 
-		void *newBlock = FrameAllocator::Alloc(newSize);
+		void *newBlock = Alloc(newSize);
 		memcpy(newBlock, ptr, newSize);
 		return newBlock;
 	}

@@ -370,15 +370,40 @@ s64 PrintOut(Context *context, const char *format, ...)
 
 	s64 size = stbsp_vsprintf(buffer, format, args);
 
-	DWORD bytesWritten;
 #if PRINT_ASM_OUTPUT
 	if (!context->config.silent)
 	{
 		OutputDebugStringA(buffer);
+		DWORD bytesWritten;
 		WriteFile(g_hStdout, buffer, (DWORD)size, &bytesWritten, nullptr); // Stdout
 	}
 #endif
-	WriteFile(context->outputFile, buffer, (DWORD)size, &bytesWritten, nullptr);
+
+	s64 bytesToWrite = size;
+	const char *in = buffer;
+	while (bytesToWrite > 0)
+	{
+		auto *lastBucket = DynamicArrayBack(&context->outputBuffer.buckets);
+		s64 bytesLeftInBucket = OUTPUT_BUFFER_BUCKET_SIZE - lastBucket->size;
+		u8 *bufferCursor = lastBucket->data + lastBucket->size;
+		if (bytesToWrite > bytesLeftInBucket)
+		{
+			memcpy(bufferCursor, in, bytesLeftInBucket);
+			in += bytesLeftInBucket;
+			lastBucket->size += bytesLeftInBucket;
+			bytesToWrite -= bytesLeftInBucket;
+
+			lastBucket = DynamicArrayAdd(&context->outputBuffer.buckets);
+			ArrayInit(lastBucket, OUTPUT_BUFFER_BUCKET_SIZE);
+		}
+		else
+		{
+			memcpy(bufferCursor, in, size);
+			in += bytesLeftInBucket;
+			lastBucket->size += bytesToWrite;
+			bytesToWrite -= bytesToWrite;
+		}
+	}
 
 #if DEBUG_BUILD
 	memset(g_memory->framePtr, 0xCD, size + 1);
@@ -1822,6 +1847,29 @@ void X64PrintStaticData(Context *context, String name, IRValue value, s64 typeTa
 	}
 }
 
+void WriteOutOutputBuffer(Context *context, String filename)
+{
+	HANDLE outputFile = CreateFileA(
+			StringToCStr(filename, PhaseAllocator::Alloc),
+			GENERIC_WRITE,
+			0,
+			nullptr,
+			CREATE_ALWAYS,
+			FILE_ATTRIBUTE_NORMAL,
+			nullptr
+			);
+	for (int i = 0; i < context->outputBuffer.buckets.size; ++i)
+	{
+		DWORD bytesWritten;
+		WriteFile(outputFile,
+				context->outputBuffer.buckets[i].data,
+				(DWORD)context->outputBuffer.buckets[i].size,
+				&bytesWritten,
+				nullptr);
+	}
+	CloseHandle(outputFile);
+}
+
 void BackendMain(Context *context)
 {
 	BucketArrayInit(&context->bePatchedInstructions);
@@ -2179,17 +2227,11 @@ void BackendMain(Context *context)
 		}
 	}
 
-	context->outputFile = CreateFileA(
-			"output/x64_before_allocation.txt",
-			GENERIC_WRITE,
-			0,
-			nullptr,
-			CREATE_ALWAYS,
-			FILE_ATTRIBUTE_NORMAL,
-			nullptr
-			);
+	BucketArrayInit(&context->outputBuffer);
 	X64PrintInstructions(context, x64Procedures);
-	CloseHandle(context->outputFile);
+	WriteOutOutputBuffer(context, "output/x64_before_allocation.txt"_s);
+
+	TimerSplit("X64 generation"_s);
 
 	X64AllocateRegisters(context, x64Procedures);
 
@@ -2295,34 +2337,6 @@ unalignedMovups:;
 			inst = X64InstructionStreamAdvance(&stream);
 		}
 	}
-
-	String outputPath;
-	String assemblyOutputFilename;
-	{
-		char *buffer = (char *)PhaseAllocator::Alloc(MAX_PATH);
-		outputPath.size = GetFullPathNameA("output", MAX_PATH, buffer, nullptr);
-		outputPath.data = buffer;
-
-		CreateDirectoryA(outputPath.data, nullptr);
-
-		buffer = (char *)PhaseAllocator::Alloc(MAX_PATH);
-		assemblyOutputFilename.size = GetFullPathNameA("output\\out.asm", MAX_PATH, buffer, nullptr);
-		assemblyOutputFilename.data = buffer;
-	}
-
-	context->outputFile = CreateFileA(
-			assemblyOutputFilename.data,
-			GENERIC_WRITE,
-			0,
-			nullptr,
-			CREATE_ALWAYS,
-			FILE_ATTRIBUTE_NORMAL,
-			nullptr
-			);
-
-	PrintOut(context, "include ..\\core\\memory.asm\n\n");
-
-	PrintOut(context, "_DATA SEGMENT\n");
 
 	// TypeInfo immediate structs
 	{
@@ -2548,6 +2562,14 @@ unalignedMovups:;
 		}
 	}
 
+	TimerSplit("X64 register/stack allocation"_s);
+
+	BucketArrayInit(&context->outputBuffer);
+
+	PrintOut(context, "include ..\\core\\memory.asm\n\n");
+
+	PrintOut(context, "_DATA SEGMENT\n");
+
 	// String literals
 	s64 strCount = (s64)BucketArrayCount(&context->stringLiterals);
 	s64 bytesWritten = 0;
@@ -2667,7 +2689,23 @@ unalignedMovups:;
 	PrintOut(context, "_TEXT ENDS\n");
 	PrintOut(context, "END\n");
 
-	CloseHandle(context->outputFile);
+	String outputPath;
+	String assemblyOutputFilename;
+	{
+		char *buffer = (char *)PhaseAllocator::Alloc(MAX_PATH);
+		outputPath.size = GetFullPathNameA("output", MAX_PATH, buffer, nullptr);
+		outputPath.data = buffer;
+
+		CreateDirectoryA(outputPath.data, nullptr);
+
+		buffer = (char *)PhaseAllocator::Alloc(MAX_PATH);
+		assemblyOutputFilename.size = GetFullPathNameA("output\\out.asm", MAX_PATH, buffer, nullptr);
+		assemblyOutputFilename.data = buffer;
+	}
+
+	WriteOutOutputBuffer(context, assemblyOutputFilename);
+
+	TimerSplit("X64 output file write"_s);
 
 	// Run MASM
 	PWSTR programFilesPathWstr;
@@ -2849,6 +2887,9 @@ nextTuple:
 		CRASH;
 	}
 	WaitForSingleObject(processInformation.hProcess, INFINITE);
+
+	TimerSplit("Calling ML64"_s);
+
 	CloseHandle(processInformation.hProcess);
 	CloseHandle(processInformation.hThread);
 }

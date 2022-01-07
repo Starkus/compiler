@@ -67,6 +67,29 @@ const String TPrintF(const char *format, ...)
 	return { size, buffer };
 }
 
+u64 g_firstPerfCounter;
+u64 g_lastPerfCounter;
+u64 g_perfFrequency;
+void SetUpTimers()
+{
+	LARGE_INTEGER largeInteger;
+	QueryPerformanceCounter(&largeInteger);
+	g_firstPerfCounter = largeInteger.LowPart;
+	g_lastPerfCounter  = largeInteger.LowPart;
+	QueryPerformanceFrequency(&largeInteger);
+	g_perfFrequency = largeInteger.LowPart;
+}
+void TimerSplit(String message)
+{
+	LARGE_INTEGER largeInteger;
+	QueryPerformanceCounter(&largeInteger);
+	u64 newPerfCounter = largeInteger.LowPart;
+	f64 time = (f64)(newPerfCounter - g_firstPerfCounter) / (f64)g_perfFrequency;
+	f64 deltaTime = (f64)(newPerfCounter - g_lastPerfCounter) / (f64)g_perfFrequency;
+	g_lastPerfCounter = newPerfCounter;
+	Print("%f - %f - %S\n", time, deltaTime, message);
+}
+
 #include "MemoryAlloc.cpp"
 #include "Strings.cpp"
 #include "Parser.h"
@@ -79,6 +102,7 @@ struct Config
 	bool logAllocationInfo;
 };
 
+#define OUTPUT_BUFFER_BUCKET_SIZE 8192
 struct TCJob;
 struct Procedure;
 struct TypeInfo;
@@ -129,8 +153,7 @@ struct Context
 	IRLabel *currentContinueLabel;
 
 	// Backend
-	HANDLE outputFile;
-
+	BucketArray<u8, PhaseAllocator, OUTPUT_BUFFER_BUCKET_SIZE> outputBuffer;
 	BucketArray<BasicBlock, PhaseAllocator, 512> beBasicBlocks;
 	DynamicArray<BasicBlock *, PhaseAllocator> beLeafBasicBlocks;
 	DynamicArray<InterferenceGraphNode, PhaseAllocator> beInterferenceGraph;
@@ -388,6 +411,8 @@ void UnexpectedTokenError(Context *context, Token *token)
 
 int main(int argc, char **argv)
 {
+	SetUpTimers();
+
 	g_hStdout = GetStdHandle(STD_OUTPUT_HANDLE);
 	g_hStderr = GetStdHandle(STD_ERROR_HANDLE);
 
@@ -402,12 +427,12 @@ int main(int argc, char **argv)
 	MemoryInit(&memory);
 
 	Context context = {};
-	DynamicArrayInit(&context.sourceFiles, 8);
+	DynamicArrayInit(&context.sourceFiles, 16);
 	DynamicArrayInit(&context.libsToLink, 8);
 	BucketArrayInit(&context.tokens);
 
 	DynamicArray<String, FrameAllocator> inputFiles;
-	DynamicArrayInit(&inputFiles, 8);
+	DynamicArrayInit(&inputFiles, 16);
 	*DynamicArrayAdd(&inputFiles) = "core/basic.emi"_s;
 	*DynamicArrayAdd(&inputFiles) = "core/print.emi"_s;
 	for (int argIdx = 1; argIdx < argc; ++argIdx)
@@ -429,7 +454,9 @@ int main(int argc, char **argv)
 			*DynamicArrayAdd(&inputFiles) = CStrToString(arg);
 		}
 	}
-	ASSERT(inputFiles.size > 1);
+	ASSERT(inputFiles.size > 2);
+
+	TimerSplit("Initialization"_s);
 
 	for (int i = 0; i < inputFiles.size; ++i)
 	{
@@ -449,16 +476,22 @@ int main(int argc, char **argv)
 	Token eofToken = { TOKEN_END_OF_FILE };
 	*BucketArrayAdd(&context.tokens) = eofToken;
 
+	TimerSplit("Tokenizer"_s);
 	PhaseAllocator::Wipe();
+
 	GenerateSyntaxTree(&context);
 
 	if (context.config.logAST)
 		PrintAST(&context);
 
+	TimerSplit("Generating AST"_s);
 	PhaseAllocator::Wipe();
+
 	TypeCheckMain(&context);
 
+	TimerSplit("Type checking"_s);
 	PhaseAllocator::Wipe();
+
 	IRGenMain(&context);
 
 	if (context.config.logIR)
@@ -466,7 +499,9 @@ int main(int argc, char **argv)
 		PrintIRInstructions(&context);
 	}
 
+	TimerSplit("IR generation"_s);
 	PhaseAllocator::Wipe();
+
 	BackendMain(&context);
 
 	Print("Compilation success\n");

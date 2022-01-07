@@ -362,14 +362,9 @@ void DoLivenessAnalisisOnInstruction(Context *context, BasicBlock *basicBlock, X
 		context->values[inst->valueIdx].flags |= VALUEFLAGS_HAS_PUSH_INSTRUCTION;
 	} break;
 	case X64_Patch:
-	{
-		DoLivenessAnalisisOnInstruction(context, basicBlock, inst->patch2, liveValues);
-		DoLivenessAnalisisOnInstruction(context, basicBlock, inst->patch1, liveValues);
-	} break;
 	case X64_Patch_Many:
 	{
-		for (int i = (int)inst->patchInstructions.size - 1; i >= 0 ; --i)
-			DoLivenessAnalisisOnInstruction(context, basicBlock, &inst->patchInstructions[i], liveValues);
+		ASSERT(!"Patches not supported here");
 	} break;
 	default:
 	{
@@ -412,14 +407,14 @@ nodeFound:
 			// Add only other values that compete for the same pool of registers.
 			// Floating point values use a different set of registers (xmmX).
 			if (isXMM == edgeIsXMM)
-				DynamicArrayAddUnique(&node->edges, edgeValueIdx);
+				*DynamicArrayAdd(&node->edges) = edgeValueIdx;
 		}
 
 		// No live values that cross a procedure call can be stored in RAX/XMM0.
 		if (inst->type == X64_CALL || inst->type == X64_CALL_Indirect)
 		{
-			DynamicArrayAddUnique(&node->edges, RAX.valueIdx);
-			DynamicArrayAddUnique(&node->edges, XMM0.valueIdx);
+			*DynamicArrayAdd(&node->edges) = RAX.valueIdx;
+			*DynamicArrayAdd(&node->edges) = XMM0.valueIdx;
 		}
 	}
 }
@@ -810,11 +805,23 @@ void X64AllocateRegisters(Context *context, Array<X64Procedure, PhaseAllocator> 
 		DynamicArrayInit(&liveValues, 32);
 		DoLivenessAnalisis(context, currentLeafBlock, &liveValues);
 
-		if (context->config.logAllocationInfo)
+		for (int nodeIdx = 0; nodeIdx < context->beInterferenceGraph.size; ++nodeIdx)
 		{
-			for (int nodeIdx = 0; nodeIdx < context->beInterferenceGraph.size; ++nodeIdx)
+			InterferenceGraphNode *currentNode = &context->beInterferenceGraph[nodeIdx];
+			// Remove duplicates
+			for (int edgeIdx = 0; edgeIdx < currentNode->edges.size; ++edgeIdx)
 			{
-				InterferenceGraphNode *currentNode = &context->beInterferenceGraph[nodeIdx];
+				for (int anotherEdgeIdx = edgeIdx + 1; anotherEdgeIdx < currentNode->edges.size; )
+				{
+					if (currentNode->edges[edgeIdx] == currentNode->edges[anotherEdgeIdx])
+						currentNode->edges[anotherEdgeIdx] = currentNode->edges[--currentNode->edges.size];
+					else
+						++anotherEdgeIdx;
+				}
+			}
+
+			if (context->config.logAllocationInfo)
+			{
 				Print("Value %S coexists with: ", X64IRValueToStr(context, IRValueValue(context, currentNode->valueIdx)));
 				for (int i = 0; i < currentNode->edges.size; ++i)
 					Print("%S, ", X64IRValueToStr(context, IRValueValue(context, currentNode->edges[i])));
@@ -896,6 +903,7 @@ void X64AllocateRegisters(Context *context, Array<X64Procedure, PhaseAllocator> 
 					{
 						// Remove from node edges
 						currentNode->edges[i] = currentNode->edges[--currentNode->edges.size];
+						break;
 					}
 				}
 			}

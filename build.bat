@@ -3,16 +3,22 @@
 cls
 
 set SourceFiles=..\src\Compiler.cpp
-set CommonCompilerFlags=-MTd -nologo -Gm- -GR- -Od -Oi -EHa- -W4 -wd4201 -wd4100 -wd4996 -wd4063 -FC -Z7 -I ..\external\
-set CommonLinkerFlags=-opt:ref -incremental:no
+set CompilerFlags=-MTd -nologo -Gm- -GR- -Oi -EHa- -W4 -wd4201 -wd4100 -wd4996 -wd4063 -FC -Z7 -I ..\external\
+set LinkerFlags=-opt:ref -incremental:no -debug:full
 set Libraries=user32.lib winmm.lib shell32.lib
+
+IF "%1"=="-r" (
+	set CompilerFlags=%CompilerFlags% -O2
+) ELSE (
+	set CompilerFlags=%CompilerFlags% -Od -DDEBUG_BUILD=1
+)
 
 IF NOT EXIST .\bin mkdir .\bin
 
 pushd .\bin
 
 set start=%time%
-cl %CommonCompilerFlags% -DDEBUG_BUILD=1 %SourceFiles% %Libraries% -link %CommonLinkerFlags%
+cl %CompilerFlags% %SourceFiles% %Libraries% -link %LinkerFlags%
 set end=%time%
 IF %ERRORLEVEL% NEQ 0 echo [31mFailed![0m
 IF %ERRORLEVEL% EQU 0 echo [32mSuccess[0m
