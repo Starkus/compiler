@@ -1471,6 +1471,10 @@ u64 InferType(u64 fromType)
 
 void AddStructMembersToScope(Context *context, SourceLocation loc, ASTExpression *valueExpression)
 {
+	// This procedure spills all members of a struct expression into the current stack.
+	// The way we do this is, we add a TCScopeName which has a member access AST node, left hand of
+	// which is an arbitrary AST tree branch that evaluates to a struct; and of which right hand is
+	// a simple struct member node.
 	TypeInfo typeInfo = context->typeTable[valueExpression->typeTableIdx];
 	ASSERT(typeInfo.typeCategory == TYPECATEGORY_STRUCT ||
 		   typeInfo.typeCategory == TYPECATEGORY_UNION);
@@ -1505,10 +1509,8 @@ void AddStructMembersToScope(Context *context, SourceLocation loc, ASTExpression
 			{
 				TCScopeName currentName = stackTop->names[i];
 				if (StringEquals(member->name, currentName.name))
-				{
 					LogError(context, loc, TPrintF("Failed to pull \"%S\" into scope because "
 								"the name is already used", member->name));
-				}
 			}
 
 			TCScopeName newScopeName;
@@ -1520,6 +1522,7 @@ void AddStructMembersToScope(Context *context, SourceLocation loc, ASTExpression
 		}
 		else
 		{
+			// For using/anonymous members we recurse, spilling it's members too.
 			AddStructMembersToScope(context, loc, memberAccessExp);
 		}
 	}

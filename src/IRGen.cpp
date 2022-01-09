@@ -1285,6 +1285,109 @@ IRValue IRValueFromConstant(Context *context, Constant constant)
 	return result;
 }
 
+void IRFillValueWithGroupLiteral(Context *context, IRValue value, ASTLiteral astLiteral)
+{
+	s64 groupTypeIdx = value.typeTableIdx;
+	ASSERT(groupTypeIdx > 0);
+	TypeInfo groupTypeInfo = context->typeTable[groupTypeIdx];
+
+	if (groupTypeInfo.typeCategory == TYPECATEGORY_STRUCT ||
+		groupTypeInfo.typeCategory == TYPECATEGORY_UNION)
+	{
+		struct StructStackFrame
+		{
+			IRValue irValue;
+			s64 structTypeIdx;
+			int idx;
+		};
+		DynamicArray<StructStackFrame, PhaseAllocator> structStack;
+		DynamicArrayInit(&structStack, 8);
+		*DynamicArrayAdd(&structStack) = { value, groupTypeIdx, 0 };
+
+		for (int memberIdx = 0; structStack.size > 0; )
+		{
+			StructStackFrame currentFrame = structStack[structStack.size - 1];
+			TypeInfo currentStructTypeInfo = context->typeTable[currentFrame.structTypeIdx];
+
+			if (currentFrame.idx >= currentStructTypeInfo.structInfo.members.size)
+			{
+				// Pop struct frame
+				--structStack.size;
+				continue;
+			}
+
+			StructMember currentMember = currentStructTypeInfo.structInfo.members[currentFrame.idx];
+			TypeCategory memberTypeCat = context->typeTable[currentMember.typeTableIdx].typeCategory;
+
+			if (memberTypeCat == TYPECATEGORY_STRUCT || memberTypeCat == TYPECATEGORY_UNION)
+			{
+				// Push struct frame
+				++structStack[structStack.size - 1].idx;
+				IRValue innerStructValue = IRDoMemberAccess(context, currentFrame.irValue, currentMember);
+				structStack[structStack.size++] = { innerStructValue, currentMember.typeTableIdx, 0 };
+				continue;
+			}
+
+			IRValue memberValue = IRDoMemberAccess(context, currentFrame.irValue, currentMember);
+			IRValue src;
+			if (memberIdx < astLiteral.members.size)
+			{
+				ASTExpression *literalMemberExp = astLiteral.members[memberIdx];
+				src = IRGenFromExpression(context, literalMemberExp);
+			}
+			else
+				src = IRValueImmediate(0, currentMember.typeTableIdx); // @Check: floats
+			IRDoAssignment(context, memberValue, src);
+
+			++structStack[structStack.size - 1].idx;
+			++memberIdx;
+		}
+	}
+	else if (groupTypeInfo.typeCategory == TYPECATEGORY_ARRAY)
+	{
+		s64 elementTypeIdx = groupTypeInfo.arrayInfo.elementTypeTableIdx;
+		for (int memberIdx = 0; memberIdx < astLiteral.members.size; ++memberIdx)
+		{
+			ASTExpression *literalMemberExp = astLiteral.members[memberIdx];
+
+			IRValue indexIRValue = IRValueImmediate(memberIdx);
+			IRValue elementValue = IRDoArrayAccess(context, value, indexIRValue,
+					elementTypeIdx);
+			IRValue src = IRGenFromExpression(context, literalMemberExp);
+			IRDoAssignment(context, elementValue, src);
+		}
+	}
+	else
+		ASSERT(!"Invalid type to the left of group literal. Type checking should catch this");
+}
+
+void IRAssignmentFromExpression(Context *context, IRValue dstValue, ASTExpression *srcExpression)
+{
+	// We do some things here to try to avoid intermediate values
+	// First, if right hand is a binary op, we assign the result directly to the left hand
+	// side instead of to an intermediate value.
+#if 1
+	if (srcExpression->nodeType == ASTNODETYPE_BINARY_OPERATION &&
+		srcExpression->binaryOperation.op != TOKEN_OP_MEMBER_ACCESS &&
+		srcExpression->binaryOperation.op != TOKEN_OP_ARRAY_ACCESS &&
+		srcExpression->binaryOperation.op != TOKEN_OP_ASSIGNMENT)
+	{
+		IRInstructionFromBinaryOperation(context, srcExpression, dstValue);
+	}
+	// Second, if right hand is a group literal, fill left hand directly with it's values.
+	else if (srcExpression->nodeType == ASTNODETYPE_LITERAL &&
+			 srcExpression->literal.type == LITERALTYPE_GROUP)
+	{
+		IRFillValueWithGroupLiteral(context, dstValue, srcExpression->literal);
+	}
+	else
+#endif
+	{
+		IRValue srcValue = IRGenFromExpression(context, srcExpression);
+		IRDoAssignment(context, dstValue, srcValue);
+	}
+}
+
 IRValue IRGenFromExpression(Context *context, ASTExpression *expression)
 {
 	IRValue result = {};
@@ -1484,8 +1587,7 @@ IRValue IRGenFromExpression(Context *context, ASTExpression *expression)
 				if (varDecl.astInitialValue->nodeType != ASTNODETYPE_GARBAGE)
 				{
 					IRValue dstValue = IRValueValue(context, varDecl.valueIdx);
-					IRValue srcValue = IRGenFromExpression(context, varDecl.astInitialValue);
-					IRDoAssignment(context, dstValue, srcValue);
+					IRAssignmentFromExpression(context, dstValue, varDecl.astInitialValue);
 				}
 			}
 			else
@@ -1550,6 +1652,8 @@ IRValue IRGenFromExpression(Context *context, ASTExpression *expression)
 		} break;
 		case NAMETYPE_ASTEXPRESSION:
 		{
+			// ASTExpression name types are used by 'using' to remember what the struct is during
+			// type checking.
 			result = IRGenFromExpression(context, expression->identifier.expression);
 		} break;
 		case NAMETYPE_VARIABLE:
@@ -1845,21 +1949,9 @@ skipGeneratingVarargsArray:
 
 		if (expression->binaryOperation.op == TOKEN_OP_ASSIGNMENT)
 		{
-			if (rightHand->nodeType == ASTNODETYPE_BINARY_OPERATION &&
-				rightHand->binaryOperation.op != TOKEN_OP_MEMBER_ACCESS &&
-				rightHand->binaryOperation.op != TOKEN_OP_ARRAY_ACCESS &&
-				rightHand->binaryOperation.op != TOKEN_OP_ASSIGNMENT)
-			{
-				IRValue leftValue = IRGenFromExpression(context, leftHand);
-				result = IRInstructionFromBinaryOperation(context, rightHand, leftValue);
-			}
-			else
-			{
-				IRValue leftValue = IRGenFromExpression(context, leftHand);
-				IRValue rightValue = IRGenFromExpression(context, rightHand);
-				IRDoAssignment(context, leftValue, rightValue);
-				result = leftValue;
-			}
+			IRValue dstValue = IRGenFromExpression(context, leftHand);
+			IRAssignmentFromExpression(context, dstValue, rightHand);
+			result = dstValue;
 		}
 		else
 		{
@@ -1903,80 +1995,11 @@ skipGeneratingVarargsArray:
 		} break;
 		case LITERALTYPE_GROUP:
 		{
-			s64 groupTypeIdx = expression->typeTableIdx;
-			ASSERT(groupTypeIdx > 0);
-			TypeInfo groupTypeInfo = context->typeTable[groupTypeIdx];
-
-			if (groupTypeInfo.typeCategory == TYPECATEGORY_STRUCT ||
-				groupTypeInfo.typeCategory == TYPECATEGORY_UNION)
-			{
-				IRValue structIRValue = IRValueNewValue(context, "_structLiteral"_s, groupTypeIdx, 0);
-				IRPushValueIntoStack(context, structIRValue.valueIdx);
-
-				struct StructStackFrame
-				{
-					s64 structTypeIdx;
-					int idx;
-				};
-				DynamicArray<StructStackFrame, PhaseAllocator> structStack;
-				DynamicArrayInit(&structStack, 8);
-				*DynamicArrayAdd(&structStack) = { groupTypeIdx, 0 };
-
-				for (int memberIdx = 0; memberIdx < expression->literal.members.size; )
-				{
-					ASTExpression *literalMemberExp = expression->literal.members[memberIdx];
-					StructStackFrame currentFrame = structStack[structStack.size - 1];
-					TypeInfo currentStructTypeInfo = context->typeTable[currentFrame.structTypeIdx];
-
-					if (currentFrame.idx >= currentStructTypeInfo.structInfo.members.size)
-					{
-						// Pop struct frame
-						--structStack.size;
-						ASSERT(structStack.size > 0);
-						continue;
-					}
-
-					StructMember currentMember = currentStructTypeInfo.structInfo.members[currentFrame.idx];
-					TypeCategory memberTypeCat = context->typeTable[currentMember.typeTableIdx].typeCategory;
-
-					if (memberTypeCat == TYPECATEGORY_STRUCT || memberTypeCat == TYPECATEGORY_UNION)
-					{
-						// Push struct frame
-						structStack[structStack.size++] = { currentMember.typeTableIdx, 0 };
-						continue;
-					}
-
-					IRValue memberValue = IRDoMemberAccess(context, structIRValue, currentMember);
-					IRValue src = IRGenFromExpression(context, literalMemberExp);
-					IRDoAssignment(context, memberValue, src);
-
-					++structStack[structStack.size - 1].idx;
-					++memberIdx;
-				}
-
-				result = structIRValue;
-			}
-			else if (groupTypeInfo.typeCategory == TYPECATEGORY_ARRAY)
-			{
-				IRValue arrayIRValue = IRValueNewValue(context, "_arrayLiteral"_s, groupTypeIdx, 0);
-				IRPushValueIntoStack(context, arrayIRValue.valueIdx);
-
-				s64 elementTypeIdx = groupTypeInfo.arrayInfo.elementTypeTableIdx;
-				for (int memberIdx = 0; memberIdx < expression->literal.members.size; ++memberIdx)
-				{
-					ASTExpression *literalMemberExp = expression->literal.members[memberIdx];
-
-					IRValue indexIRValue = IRValueImmediate(memberIdx);
-					IRValue elementValue = IRDoArrayAccess(context, arrayIRValue, indexIRValue,
-							elementTypeIdx);
-					IRValue src = IRGenFromExpression(context, literalMemberExp);
-					IRDoAssignment(context, elementValue, src);
-				}
-
-				result = arrayIRValue;
-			}
-			else
-				ASSERT(!"Invalid type to the left of group literal. Type checking should catch this");
+			IRValue groupIRValue = IRValueNewValue(context, "_groupLiteral"_s,
+					expression->typeTableIdx, 0);
+			IRPushValueIntoStack(context, groupIRValue.valueIdx);
+			IRFillValueWithGroupLiteral(context, groupIRValue, expression->literal);
+			result = groupIRValue;
 		} break;
 		default:
 			ASSERT(!"Unexpected literal type");

@@ -863,10 +863,10 @@ void X64ConvertInstruction(Context *context, IRInstruction inst, X64Procedure *x
 			typeInfo = context->typeTable[inst.binaryOperation.left.typeTableIdx];
 		else if (inst.type >= IRINSTRUCTIONTYPE_BINARY_BEGIN &&
 				 inst.type <  IRINSTRUCTIONTYPE_BINARY_END)
-			typeInfo = context->typeTable[inst.binaryOperation.out.typeTableIdx];
+			typeInfo = context->typeTable[inst.binaryOperation.left.typeTableIdx];
 		else if (inst.type >= IRINSTRUCTIONTYPE_UNARY_BEGIN &&
 				 inst.type <  IRINSTRUCTIONTYPE_UNARY_END)
-			typeInfo = context->typeTable[inst.unaryOperation.out.typeTableIdx];
+			typeInfo = context->typeTable[inst.unaryOperation.in.typeTableIdx];
 		else if (inst.type >= IRINSTRUCTIONTYPE_COMPARE_JUMP_BEGIN &&
 				 inst.type <  IRINSTRUCTIONTYPE_COMPARE_JUMP_END)
 			typeInfo = context->typeTable[inst.conditionalJump2.left.typeTableIdx];

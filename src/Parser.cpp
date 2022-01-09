@@ -420,7 +420,7 @@ ASTStructDeclaration ParseStructOrUnion(Context *context)
 	return structDeclaration;
 }
 
-Array<ASTExpression *, FrameAllocator> ParseStructLiteral(Context *context)
+Array<ASTExpression *, FrameAllocator> ParseGroupLiteral(Context *context)
 {
 	DynamicArray<ASTExpression *, FrameAllocator> members;
 	DynamicArrayInit(&members, 8);
@@ -614,7 +614,7 @@ ASTExpression ParseExpression(Context *context, s32 precedence)
 		result.nodeType = ASTNODETYPE_LITERAL;
 
 		result.literal.type = LITERALTYPE_GROUP;
-		result.literal.members = ParseStructLiteral(context);
+		result.literal.members = ParseGroupLiteral(context);
 
 		AssertToken(context, context->token, '}');
 		Advance(context);
@@ -1062,26 +1062,10 @@ ASTExpression ParseStatement(Context *context)
 	{
 		Advance(context);
 
-#if 1
 		result.any.loc = context->token->loc;
 		result.nodeType = ASTNODETYPE_USING;
 		result.usingNode.expression = NewTreeNode(context);
 		*result.usingNode.expression = ParseStatement(context);
-#else
-		result = ParseStatement(context);
-		switch (result.nodeType)
-		{
-		case ASTNODETYPE_VARIABLE_DECLARATION:
-			result.variableDeclaration.isUsing = true;
-			break;
-		case ASTNODETYPE_IDENTIFIER:
-			result.identifier.isUsing = true;
-			break;
-		default:
-			LogError(context, result.any.loc,
-					"Expression after 'using' should be a variable or variable declaration"_s);
-		}
-#endif
 	} break;
 	default:
 	{
