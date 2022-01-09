@@ -32,7 +32,14 @@ Main :: () -> s64
 	augmentedStruct : AugmentedStruct;
 	augmentedStruct.foo = 64;
 
-	//using augmentedStruct.s; //@Todo: this doesn't work!
+	{
+		// New scope because of conflicting names
+		using augmentedStruct.s;
+		foo = 65;
+		bar = 66;
+		unionA = 1;
+		unionB = 2;
+	}
 
 	Print("Test ok\n");
 	return 0;

@@ -62,13 +62,12 @@ enum NameType
 {
 	NAMETYPE_VARIABLE,
 	NAMETYPE_STRUCT_MEMBER,
-	NAMETYPE_STRUCT_MEMBER_CHAIN,
+	NAMETYPE_ASTEXPRESSION,
 	NAMETYPE_STATIC_DEFINITION
 };
 struct ASTIdentifier : ASTBase
 {
 	String string;
-	bool isUsing;
 
 	// Type check
 	NameType type;
@@ -80,11 +79,7 @@ struct ASTIdentifier : ASTBase
 			TCValue tcValueBase;
 			const StructMember *structMember;
 		} structMemberInfo;
-		struct
-		{
-			TCValue tcValueBase;
-			Array<const StructMember *, FrameAllocator> offsets;
-		} structMemberChain;
+		ASTExpression *expression;
 		StaticDefinition *staticDefinition;
 	};
 };
@@ -126,13 +121,13 @@ struct ASTEnumDeclaration : ASTBase
 };
 
 struct ASTType;
-struct ASTVariableDeclaration;
+struct ASTProcedureParameter;
 struct ASTProcedurePrototype : ASTBase
 {
 	bool isVarargs;
 	String varargsName;
 	ASTType *astReturnType;
-	DynamicArray<ASTVariableDeclaration, FrameAllocator> astParameters;
+	DynamicArray<ASTProcedureParameter, FrameAllocator> astParameters;
 
 	// Type check
 	s64 returnTypeIdx;
@@ -174,10 +169,21 @@ struct ASTVariableDeclaration : ASTBase
 	bool isInline;
 	bool isStatic;
 	bool isExternal;
-	bool isUsing;
 
 	// TypeCheck
 	bool addedScopeName;
+	u32 valueIdx;
+	s64 typeTableIdx;
+};
+
+struct ASTProcedureParameter : ASTBase
+{
+	String name;
+	ASTExpression *astInitialValue;
+	ASTType *astType;
+	bool isUsing;
+
+	// TypeCheck
 	u32 valueIdx;
 	s64 typeTableIdx;
 };
@@ -262,22 +268,7 @@ struct ASTFor : ASTBase
 	s64 elementTypeTableIdx;
 };
 
-struct ASTReturn : ASTBase
-{
-	ASTExpression *expression;
-};
-
-struct ASTDefer : ASTBase
-{
-	ASTExpression *expression;
-};
-
-struct ASTTypeOf : ASTBase
-{
-	ASTExpression *expression;
-};
-
-struct ASTSizeOf : ASTBase
+struct ASTSimple : ASTBase
 {
 	ASTExpression *expression;
 };
@@ -316,6 +307,7 @@ enum ASTNodeType
 	ASTNODETYPE_BREAK,
 	ASTNODETYPE_RETURN,
 	ASTNODETYPE_DEFER,
+	ASTNODETYPE_USING,
 	ASTNODETYPE_TYPEOF,
 	ASTNODETYPE_SIZEOF,
 	ASTNODETYPE_CAST,
@@ -343,10 +335,11 @@ struct ASTExpression
 		ASTIf ifNode;
 		ASTWhile whileNode;
 		ASTFor forNode;
-		ASTReturn returnNode;
-		ASTDefer deferNode;
-		ASTTypeOf typeOfNode;
-		ASTSizeOf sizeOfNode;
+		ASTSimple returnNode;
+		ASTSimple deferNode;
+		ASTSimple usingNode;
+		ASTSimple typeOfNode;
+		ASTSimple sizeOfNode;
 		ASTCast castNode;
 	};
 

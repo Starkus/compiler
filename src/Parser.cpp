@@ -457,8 +457,6 @@ ASTVariableDeclaration ParseVariableDeclaration(Context *context)
 	ASTVariableDeclaration varDecl = {};
 	varDecl.loc = context->token->loc;
 
-	u64 startTokenIdx = context->currentTokenIdx;
-
 	AssertToken(context, context->token, TOKEN_IDENTIFIER);
 	varDecl.name = context->token->string;
 	Advance(context);
@@ -471,13 +469,7 @@ ASTVariableDeclaration ParseVariableDeclaration(Context *context)
 		Advance(context);
 	}
 	else
-	{
-		//UnexpectedTokenError(context, context->token);
-		// Rewind
-		context->currentTokenIdx = startTokenIdx;
-		context->token = &context->tokens[startTokenIdx];
-		varDecl.name = {};
-	}
+		UnexpectedTokenError(context, context->token);
 
 	if (context->token->type == TOKEN_KEYWORD_EXTERNAL)
 	{
@@ -504,6 +496,49 @@ ASTVariableDeclaration ParseVariableDeclaration(Context *context)
 	return varDecl;
 }
 
+ASTProcedureParameter ParseProcedureParameter(Context *context)
+{
+	ASTProcedureParameter astParameter = {};
+	astParameter.loc = context->token->loc;
+
+	if (context->token->type == TOKEN_KEYWORD_USING)
+	{
+		astParameter.isUsing = true;
+		Advance(context);
+	}
+
+	u64 startTokenIdx = context->currentTokenIdx;
+
+	AssertToken(context, context->token, TOKEN_IDENTIFIER);
+	astParameter.name = context->token->string;
+	Advance(context);
+
+	if (context->token->type == TOKEN_OP_VARIABLE_DECLARATION)
+		Advance(context);
+	else
+	{
+		// Nameless parameter, rewind
+		context->currentTokenIdx = startTokenIdx;
+		context->token = &context->tokens[startTokenIdx];
+		astParameter.name = {};
+	}
+
+	if (context->token->type != TOKEN_OP_ASSIGNMENT)
+	{
+		astParameter.astType = NewASTType(context);
+		*astParameter.astType = ParseType(context);
+	}
+
+	if (context->token->type == TOKEN_OP_ASSIGNMENT)
+	{
+		Advance(context);
+		astParameter.astInitialValue = NewTreeNode(context);
+		*astParameter.astInitialValue = ParseExpression(context, -1);
+	}
+
+	return astParameter;
+}
+
 ASTProcedurePrototype ParseProcedurePrototype(Context *context)
 {
 	ASTProcedurePrototype prototype = {};
@@ -528,21 +563,10 @@ ASTProcedurePrototype ParseProcedurePrototype(Context *context)
 			break;
 		}
 
-		bool isUsing = false;
-		if (context->token->type == TOKEN_KEYWORD_USING)
-		{
-			isUsing = true;
-			Advance(context);
-		}
-		// @Improve: separate node type for procedure parameter?
-		ASTVariableDeclaration astVarDecl = ParseVariableDeclaration(context);
-		astVarDecl.isUsing = isUsing;
+		ASTProcedureParameter astParam = ParseProcedureParameter(context);
 		ASSERT(prototype.astParameters.size <= S8_MAX);
 
-		if (astVarDecl.isStatic)
-			LogError(context, context->token->loc, "Procedure parameters can't be static"_s);
-
-		*DynamicArrayAdd(&prototype.astParameters) = astVarDecl;
+		*DynamicArrayAdd(&prototype.astParameters) = astParam;
 
 		if (context->token->type != ')')
 		{
@@ -1038,6 +1062,12 @@ ASTExpression ParseStatement(Context *context)
 	{
 		Advance(context);
 
+#if 1
+		result.any.loc = context->token->loc;
+		result.nodeType = ASTNODETYPE_USING;
+		result.usingNode.expression = NewTreeNode(context);
+		*result.usingNode.expression = ParseStatement(context);
+#else
 		result = ParseStatement(context);
 		switch (result.nodeType)
 		{
@@ -1051,6 +1081,7 @@ ASTExpression ParseStatement(Context *context)
 			LogError(context, result.any.loc,
 					"Expression after 'using' should be a variable or variable declaration"_s);
 		}
+#endif
 	} break;
 	default:
 	{

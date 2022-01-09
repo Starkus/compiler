@@ -321,10 +321,20 @@ void PrintExpression(Context *context, ASTExpression *e)
 		Print("Parameters:\n");
 		for (int i = 0; i < e->procedureDeclaration.prototype.astParameters.size; ++i)
 		{
-			ASTExpression pexp = {};
-			pexp.nodeType = ASTNODETYPE_VARIABLE_DECLARATION;
-			pexp.variableDeclaration = e->procedureDeclaration.prototype.astParameters[i];
-			PrintExpression(context, &pexp);
+			ASTProcedureParameter astParam = e->procedureDeclaration.prototype.astParameters[i];
+			Print("Parameter #%d ", i);
+			String typeStr = ASTTypeToString(astParam.astType);
+			Print("\"%S\" of type \"%S\"", astParam.name, typeStr);
+
+			PrintSourceLocation(context, astParam.loc);
+			Print("\n");
+
+			if (astParam.astInitialValue)
+			{
+				++indentLevels;
+				PrintExpression(context, astParam.astInitialValue);
+				--indentLevels;
+			}
 		}
 
 		Procedure *procedure = GetProcedure(context, e->procedureDeclaration.procedureIdx);

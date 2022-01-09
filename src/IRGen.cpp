@@ -1548,15 +1548,9 @@ IRValue IRGenFromExpression(Context *context, ASTExpression *expression)
 			const StructMember *structMember = expression->identifier.structMemberInfo.structMember;
 			result = IRDoMemberAccess(context, left, *structMember);
 		} break;
-		case NAMETYPE_STRUCT_MEMBER_CHAIN:
+		case NAMETYPE_ASTEXPRESSION:
 		{
-			IRValue left = IRValueTCValue(context, expression->identifier.structMemberChain.tcValueBase);
-			for (int i = 0; i < expression->identifier.structMemberChain.offsets.size; ++i)
-			{
-				const StructMember *structMember = expression->identifier.structMemberChain.offsets[i];
-				left = IRDoMemberAccess(context, left, *structMember);
-			}
-			result = left;
+			result = IRGenFromExpression(context, expression->identifier.expression);
 		} break;
 		case NAMETYPE_VARIABLE:
 		{
@@ -2268,6 +2262,11 @@ skipGeneratingVarargsArray:
 
 		result = IRValueNewValue(context, "_cast"_s, expression->typeTableIdx, 0);
 		IRDoAssignment(context, result, src);
+	} break;
+	case ASTNODETYPE_USING:
+	{
+		// @Check: only for variable declarations?
+		IRGenFromExpression(context, expression->usingNode.expression);
 	} break;
 	case ASTNODETYPE_ENUM_DECLARATION:
 	{

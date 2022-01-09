@@ -160,11 +160,7 @@ struct TCScopeName
 			TCValue tcValueBase;
 			const StructMember *structMember;
 		} structMemberInfo;
-		struct
-		{
-			TCValue tcValueBase;
-			Array<const StructMember *, FrameAllocator> offsets;
-		} structMemberChain;
+		ASTExpression *expression;
 		StaticDefinition *staticDefinition;
 	};
 };
@@ -1473,10 +1469,9 @@ u64 InferType(u64 fromType)
 	return fromType;
 }
 
-void AddStructMembersToScope(Context *context, SourceLocation loc, TCValue tcValueBase,
-		s64 typeTableIdx, DynamicArray<const StructMember *, FrameAllocator> *offsetStack)
+void AddStructMembersToScope(Context *context, SourceLocation loc, ASTExpression *valueExpression)
 {
-	TypeInfo typeInfo = context->typeTable[typeTableIdx];
+	TypeInfo typeInfo = context->typeTable[valueExpression->typeTableIdx];
 	ASSERT(typeInfo.typeCategory == TYPECATEGORY_STRUCT ||
 		   typeInfo.typeCategory == TYPECATEGORY_UNION);
 
@@ -1484,7 +1479,24 @@ void AddStructMembersToScope(Context *context, SourceLocation loc, TCValue tcVal
 	for (int memberIdx = 0; memberIdx < typeInfo.structInfo.members.size; ++memberIdx)
 	{
 		const StructMember *member = &typeInfo.structInfo.members[memberIdx];
-		*DynamicArrayAdd(offsetStack) = member;
+
+		ASTExpression *memberAccessExp = NewTreeNode(context);
+		{
+			ASTExpression *rightHand = NewTreeNode(context);
+			ASTExpression r = {};
+			r.nodeType = ASTNODETYPE_IDENTIFIER;
+			r.identifier.type = NAMETYPE_STRUCT_MEMBER;
+			r.identifier.structMemberInfo.structMember = member;
+			*rightHand = r;
+
+			ASTExpression e = {};
+			e.typeTableIdx = member->typeTableIdx;
+			e.nodeType = ASTNODETYPE_BINARY_OPERATION;
+			e.binaryOperation.op = TOKEN_OP_MEMBER_ACCESS;
+			e.binaryOperation.leftHand = valueExpression;
+			e.binaryOperation.rightHand = rightHand;
+			*memberAccessExp = e;
+		}
 
 		if (member->name.size && !member->isUsing)
 		{
@@ -1494,36 +1506,22 @@ void AddStructMembersToScope(Context *context, SourceLocation loc, TCValue tcVal
 				TCScopeName currentName = stackTop->names[i];
 				if (StringEquals(member->name, currentName.name))
 				{
-					String fullMemberName;
-					if (tcValueBase.type == TCVALUETYPE_VALUE)
-						fullMemberName = context->values[tcValueBase.valueIdx].name;
-					else
-						fullMemberName = TPrintF("Parameter %d", tcValueBase.parameterIdx);
-					for (int j = 0; j < offsetStack->size; ++j)
-						fullMemberName = TPrintF("%S.%S", fullMemberName, (*offsetStack)[j]->name);
-
-					LogError(context, loc, TPrintF("Failed to pull name \"%S\" into scope because "
-								"name \"%S\" is already used", fullMemberName, member->name));
+					LogError(context, loc, TPrintF("Failed to pull \"%S\" into scope because "
+								"the name is already used", member->name));
 				}
 			}
 
 			TCScopeName newScopeName;
-			newScopeName.type = NAMETYPE_STRUCT_MEMBER_CHAIN;
+			newScopeName.type = NAMETYPE_ASTEXPRESSION;
 			newScopeName.name = member->name;
-			newScopeName.structMemberChain.tcValueBase = tcValueBase;
+			newScopeName.expression = memberAccessExp;
 			newScopeName.loc = loc;
-
-			ArrayInit(&newScopeName.structMemberChain.offsets, offsetStack->size);
-			for (int i = 0; i < offsetStack->size; ++i)
-				*ArrayAdd(&newScopeName.structMemberChain.offsets) = (*offsetStack)[i];
-
 			*DynamicArrayAdd(&stackTop->names) = newScopeName;
 		}
 		else
 		{
-			AddStructMembersToScope(context, loc, tcValueBase, member->typeTableIdx, offsetStack);
+			AddStructMembersToScope(context, loc, memberAccessExp);
 		}
-		--offsetStack->size;
 	}
 }
 
@@ -1584,6 +1582,69 @@ TypeCheckVariableResult TypeCheckVariableDeclaration(Context *context, ASTVariab
 				LogError(context, varDecl->loc, "Variable can't be of type void!"_s);
 
 			varDecl->typeTableIdx = InferType(varDecl->astInitialValue->typeTableIdx);
+		}
+	}
+
+	return { true, {} };
+}
+
+TypeCheckVariableResult TypeCheckProcedureParameter(Context *context, ASTProcedureParameter *astParam)
+{
+	if (astParam->name.size)
+	{
+		// Check if name already exists
+		TCScope *stackTop = GetTopMostScope(context);
+		for (int i = 0; i < stackTop->names.size; ++i)
+		{
+			TCScopeName *currentName = &stackTop->names[i];
+			if (StringEquals(astParam->name, currentName->name))
+			{
+				LogErrorNoCrash(context, astParam->loc, TPrintF("Duplicate name \"%S\" in scope", astParam->name));
+				LogNote(context, currentName->loc, "First defined here"_s);
+				CRASH;
+			}
+		}
+	}
+
+	if (astParam->astType)
+	{
+		TypeCheckTypeResult result = TypeCheckType(context, {}, astParam->loc, astParam->astType);
+		if (!result.success)
+			return { false, result.yieldInfo };
+		else
+		{
+			astParam->typeTableIdx = result.typeTableIdx;
+
+			if (astParam->typeTableIdx == TYPETABLEIDX_VOID)
+				LogError(context, astParam->loc, "Variable can't be of type void!"_s);
+		}
+	}
+
+	if (astParam->astInitialValue)
+	{
+		TypeCheckExpressionResult result = TryTypeCheckExpression(context, astParam->astInitialValue);
+		if (!result.success)
+			return { false, result.yieldInfo };
+
+		if (astParam->astType)
+		{
+			TypeCheckResult typeCheckResult = CheckTypesMatchAndSpecialize(context,
+					astParam->typeTableIdx, astParam->astInitialValue);
+			if (typeCheckResult.errorCode != TYPECHECK_COOL)
+			{
+				Print("Variable declaration type and initial type don't match\n");
+				ReportTypeCheckError(context, typeCheckResult.errorCode, astParam->loc,
+						astParam->typeTableIdx, astParam->astInitialValue->typeTableIdx);
+			}
+			astParam->typeTableIdx = typeCheckResult.leftTableIdx;
+			astParam->astInitialValue->typeTableIdx = typeCheckResult.rightTableIdx;
+		}
+		else
+		{
+			if (astParam->astInitialValue->typeTableIdx == TYPETABLEIDX_VOID)
+				LogError(context, astParam->loc, "Variable can't be of type void!"_s);
+
+			astParam->typeTableIdx = InferType(astParam->astInitialValue->typeTableIdx);
 		}
 	}
 
@@ -1669,15 +1730,15 @@ TypeCheckProcedurePrototypeResult TypeCheckProcedurePrototype(Context *context, 
 	bool beginOptionalParameters = false;
 	for (int i = 0; i < prototype->astParameters.size; ++i)
 	{
-		TypeCheckVariableResult result = TypeCheckVariableDeclaration(context, &prototype->astParameters[i]);
+		TypeCheckVariableResult result = TypeCheckProcedureParameter(context, &prototype->astParameters[i]);
 		if (!result.success)
 			return { false, result.yieldInfo };
 
-		ASTVariableDeclaration astVarDecl = prototype->astParameters[i];
-		if (!astVarDecl.astInitialValue)
+		ASTProcedureParameter astParameter = prototype->astParameters[i];
+		if (!astParameter.astInitialValue)
 		{
 			if (beginOptionalParameters)
-				LogError(context, astVarDecl.loc, "Non-optional parameter after optional parameter found!"_s);
+				LogError(context, astParameter.loc, "Non-optional parameter after optional parameter found!"_s);
 		}
 		else
 			beginOptionalParameters = true;
@@ -1711,18 +1772,18 @@ TypeInfo TypeInfoFromASTProcedurePrototype(Context *context, ASTProcedurePrototy
 		// Parameters
 		for (int i = 0; i < astParametersCount; ++i)
 		{
-			ASTVariableDeclaration astVarDecl = prototype.astParameters[i];
+			ASTProcedureParameter astParameter = prototype.astParameters[i];
 
 			ProcedureParameter *procParam = DynamicArrayAdd(&t.procedureInfo.parameters);
-			procParam->typeTableIdx = astVarDecl.typeTableIdx;
+			procParam->typeTableIdx = astParameter.typeTableIdx;
 
-			if (!astVarDecl.astInitialValue)
+			if (!astParameter.astInitialValue)
 				procParam->defaultValue = {};
 			else
 			{
-				procParam->defaultValue = TryEvaluateConstant(context, astVarDecl.astInitialValue);
+				procParam->defaultValue = TryEvaluateConstant(context, astParameter.astInitialValue);
 				if (procParam->defaultValue.type == CONSTANTTYPE_INVALID)
-					LogError(context, astVarDecl.astInitialValue->any.loc,
+					LogError(context, astParameter.astInitialValue->any.loc,
 							"Failed to evaluate constant in default parameter"_s);
 			}
 		}
@@ -1799,21 +1860,26 @@ TypeCheckExpressionResult TryTypeCheckExpression(Context *context, ASTExpression
 			varDecl->addedScopeName = true;
 		}
 
-		if (varDecl->isUsing || varDecl->name.size == 0)
+		if (varDecl->name.size == 0)
 		{
 			TypeCategory typeCat = context->typeTable[expression->typeTableIdx].typeCategory;
 			if (typeCat != TYPECATEGORY_STRUCT && typeCat != TYPECATEGORY_UNION)
-			{
-				if (varDecl->isUsing)
-					LogError(context, expression->any.loc, "Using keyword only accepts structs/unions!"_s);
-				else
-					LogError(context, expression->any.loc, "Anonymous variable has to be a struct/union!"_s);
-			}
+				LogError(context, expression->any.loc, "Anonymous variable has to be a struct/union!"_s);
 
 			DynamicArray<const StructMember *, FrameAllocator> offsetStack;
 			DynamicArrayInit(&offsetStack, 8);
-			AddStructMembersToScope(context, varDecl->loc, tcValue, varDecl->typeTableIdx,
-					&offsetStack);
+
+			ASTExpression *varExp = NewTreeNode(context);
+			{
+				ASTExpression e = {};
+				e.typeTableIdx = varDecl->typeTableIdx;
+				e.nodeType = ASTNODETYPE_IDENTIFIER;
+				e.identifier.string;
+				e.identifier.type = NAMETYPE_VARIABLE;
+				e.identifier.tcValue = tcValue;
+				*varExp = e;
+			}
+			AddStructMembersToScope(context, varDecl->loc, varExp);
 		}
 	} break;
 	case ASTNODETYPE_STATIC_DEFINITION:
@@ -1908,25 +1974,31 @@ TypeCheckExpressionResult TryTypeCheckExpression(Context *context, ASTExpression
 				// Parameters
 				for (int i = 0; i < procDecl->prototype.astParameters.size; ++i)
 				{
-					ASTVariableDeclaration astVarDecl = procDecl->prototype.astParameters[i];
+					ASTProcedureParameter astParameter = procDecl->prototype.astParameters[i];
 					TCValue tcParamValue = { TCVALUETYPE_PARAMETER, (u32)i };
-					u32 paramValueIdx = NewValue(context, astVarDecl.name, astVarDecl.typeTableIdx, 0);
+					u32 paramValueIdx = NewValue(context, astParameter.name, astParameter.typeTableIdx, 0);
 					*DynamicArrayAdd(&procedure->parameterValues) = paramValueIdx;
 
-					if (astVarDecl.isUsing)
+					if (astParameter.isUsing)
 					{
-						DynamicArray<const StructMember *, FrameAllocator> offsetStack;
-						DynamicArrayInit(&offsetStack, 8);
-						AddStructMembersToScope(context, astVarDecl.loc, tcParamValue,
-								astVarDecl.typeTableIdx, &offsetStack);
+						ASTExpression *varExp = NewTreeNode(context);
+						{
+							ASTExpression e = {};
+							e.typeTableIdx = astParameter.typeTableIdx;
+							e.nodeType = ASTNODETYPE_IDENTIFIER;
+							e.identifier.type = NAMETYPE_VARIABLE;
+							e.identifier.tcValue = tcParamValue;
+							*varExp = e;
+						}
+						AddStructMembersToScope(context, astParameter.loc, varExp);
 					}
 
 					TCScopeName newScopeName;
 					newScopeName.type = NAMETYPE_VARIABLE;
-					newScopeName.name = astVarDecl.name;
+					newScopeName.name = astParameter.name;
 					newScopeName.variableInfo.tcValue = tcParamValue;
-					newScopeName.variableInfo.typeTableIdx = astVarDecl.typeTableIdx;
-					newScopeName.loc = astVarDecl.loc;
+					newScopeName.variableInfo.typeTableIdx = astParameter.typeTableIdx;
+					newScopeName.loc = astParameter.loc;
 					*DynamicArrayAdd(&procScope->names) = newScopeName;
 				}
 
@@ -2112,14 +2184,10 @@ TypeCheckExpressionResult TryTypeCheckExpression(Context *context, ASTExpression
 				scopeName->structMemberInfo.structMember;
 			expression->typeTableIdx = scopeName->structMemberInfo.structMember->typeTableIdx;
 		} break;
-		case NAMETYPE_STRUCT_MEMBER_CHAIN:
+		case NAMETYPE_ASTEXPRESSION:
 		{
-			expression->identifier.structMemberChain.tcValueBase =
-				scopeName->structMemberChain.tcValueBase;
-			expression->identifier.structMemberChain.offsets =
-				scopeName->structMemberChain.offsets;
-			int lastIdx = (int)scopeName->structMemberChain.offsets.size - 1;
-			expression->typeTableIdx = scopeName->structMemberChain.offsets[lastIdx]->typeTableIdx;
+			expression->identifier.expression = scopeName->expression;
+			expression->typeTableIdx = scopeName->expression->typeTableIdx;
 		} break;
 		case NAMETYPE_STATIC_DEFINITION:
 		{
@@ -2139,25 +2207,33 @@ TypeCheckExpressionResult TryTypeCheckExpression(Context *context, ASTExpression
 			}
 			expression->typeTableIdx = staticDefTypeIdx;
 		} break;
+		default:
+			ASSERT(false);
 		}
+	} break;
+	case ASTNODETYPE_USING:
+	{
+		ASTExpression *usingExp = expression->usingNode.expression;
+		TypeCheckExpressionResult result = TryTypeCheckExpression(context, usingExp);
+		if (!result.success)
+			return { false, result.yieldInfo };
 
-		if (expression->identifier.isUsing)
+		if (usingExp->nodeType == ASTNODETYPE_VARIABLE_DECLARATION)
 		{
-			if (expression->identifier.type != NAMETYPE_VARIABLE)
-				LogError(context, expression->any.loc,
-						"Expression after 'using' does not evaluate to a variable"_s);
-
-			TypeCategory typeCat = context->typeTable[expression->typeTableIdx].typeCategory;
-			if (typeCat != TYPECATEGORY_STRUCT)
-				LogError(context, expression->any.loc, "Using keyword only accepts structs!"_s);
-
-			TCValue tcValue = expression->identifier.tcValue;
-
-			DynamicArray<const StructMember *, FrameAllocator> offsetStack;
-			DynamicArrayInit(&offsetStack, 8);
-			AddStructMembersToScope(context, expression->any.loc, tcValue,
-					expression->typeTableIdx, &offsetStack);
+			ASTExpression *varExp = NewTreeNode(context);
+			{
+				ASTExpression e = {};
+				e.typeTableIdx = usingExp->variableDeclaration.typeTableIdx;
+				e.nodeType = ASTNODETYPE_IDENTIFIER;
+				e.identifier.string;
+				e.identifier.type = NAMETYPE_VARIABLE;
+				e.identifier.tcValue = { TCVALUETYPE_VALUE, usingExp->variableDeclaration.valueIdx };
+				*varExp = e;
+			}
+			AddStructMembersToScope(context, usingExp->any.loc, varExp);
 		}
+		else
+			AddStructMembersToScope(context, usingExp->any.loc, usingExp);
 	} break;
 	case ASTNODETYPE_PROCEDURE_CALL:
 	{
