@@ -459,9 +459,9 @@ IRValue IRValueProcedure(Context *context, s32 procedureIdx)
 	return result;
 }
 
-IRValue IRValueNewValue(Context *context, s64 typeTableIdx, u32 flags)
+IRValue IRValueNewValue(Context *context, s64 typeTableIdx, u32 flags, u32 immitateValueIdx = 0)
 {
-	u32 newValue = NewValue(context, typeTableIdx, flags);
+	u32 newValue = NewValue(context, typeTableIdx, flags, immitateValueIdx);
 
 	IRValue result = {};
 	result.valueType = IRVALUETYPE_VALUE;
@@ -470,9 +470,10 @@ IRValue IRValueNewValue(Context *context, s64 typeTableIdx, u32 flags)
 	return result;
 }
 
-IRValue IRValueNewValue(Context *context, String name, s64 typeTableIdx, u32 flags)
+IRValue IRValueNewValue(Context *context, String name, s64 typeTableIdx, u32 flags,
+		u32 immitateValueIdx = 0)
 {
-	u32 newValue = NewValue(context, name, typeTableIdx, flags);
+	u32 newValue = NewValue(context, name, typeTableIdx, flags, immitateValueIdx);
 
 	IRValue result = {};
 	result.valueType = IRVALUETYPE_VALUE;
@@ -740,8 +741,8 @@ IRValue IRInstructionFromBinaryOperation(Context *context, ASTExpression *expres
 {
 	IRValue result = {};
 
-	ASTExpression *rightHand = expression->binaryOperation.rightHand;
 	ASTExpression *leftHand  = expression->binaryOperation.leftHand;
+	ASTExpression *rightHand = expression->binaryOperation.rightHand;
 
 	if (expression->binaryOperation.op == TOKEN_OP_MEMBER_ACCESS)
 	{
@@ -989,6 +990,15 @@ IRValue IRInstructionFromBinaryOperation(Context *context, ASTExpression *expres
 		{
 			LogError(context, expression->any.loc, "Binary operator unrecognized during IR generation"_s);
 		} break;
+		}
+
+		// Hint for register allocation to try and allocate left and out in the same register
+		if (outValue.valueType == IRVALUETYPE_VALUE &&
+			inst.binaryOperation.left.valueType == IRVALUETYPE_VALUE)
+		{
+			Value *v = &context->values[outValue.valueIdx];
+			v->flags |= VALUEFLAGS_TRY_IMMITATE;
+			v->tryImmitateValueIdx = inst.binaryOperation.left.valueIdx;
 		}
 
 		inst.binaryOperation.out = outValue;
@@ -1309,7 +1319,8 @@ void IRFillValueWithGroupLiteral(Context *context, IRValue value, ASTLiteral ast
 			StructStackFrame currentFrame = structStack[structStack.size - 1];
 			TypeInfo currentStructTypeInfo = context->typeTable[currentFrame.structTypeIdx];
 
-			if (currentFrame.idx >= currentStructTypeInfo.structInfo.members.size)
+			if ((currentFrame.idx >= currentStructTypeInfo.structInfo.members.size) ||
+				(currentStructTypeInfo.typeCategory == TYPECATEGORY_UNION && currentFrame.idx > 0)) // Only first member for unions
 			{
 				// Pop struct frame
 				--structStack.size;
@@ -1366,7 +1377,6 @@ void IRAssignmentFromExpression(Context *context, IRValue dstValue, ASTExpressio
 	// We do some things here to try to avoid intermediate values
 	// First, if right hand is a binary op, we assign the result directly to the left hand
 	// side instead of to an intermediate value.
-#if 1
 	if (srcExpression->nodeType == ASTNODETYPE_BINARY_OPERATION &&
 		srcExpression->binaryOperation.op != TOKEN_OP_MEMBER_ACCESS &&
 		srcExpression->binaryOperation.op != TOKEN_OP_ARRAY_ACCESS &&
@@ -1381,7 +1391,6 @@ void IRAssignmentFromExpression(Context *context, IRValue dstValue, ASTExpressio
 		IRFillValueWithGroupLiteral(context, dstValue, srcExpression->literal);
 	}
 	else
-#endif
 	{
 		IRValue srcValue = IRGenFromExpression(context, srcExpression);
 		IRDoAssignment(context, dstValue, srcValue);

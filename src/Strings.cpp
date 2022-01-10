@@ -285,14 +285,6 @@ f64 F64FromString(String string)
 			fraction -= div;
 		}
 		if (fraction <= 0) break;
-		if (mantissa & 0x0010000000000000)
-		{
-			// We ran out of precision bits on mantissa. Just round up and get out.
-			// Rounding
-			if ((fraction << 1) >= (div >> 1))
-				mantissa |= 1;
-			break;
-		}
 
 		// Prevent overflow
 		if (fraction & 0x8000000000000000)
@@ -304,8 +296,17 @@ f64 F64FromString(String string)
 		}
 		else
 			fraction <<= 1;
-		mantissa <<= 1;
 
+		if (mantissa & 0x0010000000000000)
+		{
+			// We ran out of precision bits on mantissa. Just round up and get out.
+			// Rounding
+			if (fraction >= div)
+				mantissa += 1;
+			break;
+		}
+
+		mantissa <<= 1;
 		if (mantissa == 0) --exponent;
 	}
 

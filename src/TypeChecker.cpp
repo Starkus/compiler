@@ -9,7 +9,8 @@ enum ValueFlags
 	VALUEFLAGS_ON_STATIC_STORAGE    = 64,
 	VALUEFLAGS_BASE_RELATIVE        = 128,
 	VALUEFLAGS_HAS_PUSH_INSTRUCTION = 256,
-	VALUEFLAGS_PARAMETER_BY_COPY    = 512 // These values are pointers behind the scenes
+	VALUEFLAGS_PARAMETER_BY_COPY    = 512, // These values are pointers behind the scenes
+	VALUEFLAGS_TRY_IMMITATE         = 1024
 };
 
 struct Value
@@ -24,6 +25,7 @@ struct Value
 		s32 allocatedRegister;
 		s32 stackOffset;
 	};
+	u32 tryImmitateValueIdx;
 };
 
 enum ConstantType
@@ -246,27 +248,31 @@ struct TypeCheckExpressionResult
 	s64 typeTableIdx;
 };
 
-u32 NewValue(Context *context, s64 typeTableIdx, u32 flags)
+u32 NewValue(Context *context, s64 typeTableIdx, u32 flags, u32 immitateValueIdx = U32_MAX)
 {
 	ASSERT(typeTableIdx != 0);
+	ASSERT(!(flags & VALUEFLAGS_TRY_IMMITATE) || immitateValueIdx != U32_MAX);
 	u64 idx = BucketArrayCount(&context->values);
 	Value *result = BucketArrayAdd(&context->values);
 	result->name = {};
 	result->typeTableIdx = typeTableIdx;
 	result->flags = flags;
+	result->tryImmitateValueIdx = immitateValueIdx;
 
 	ASSERT(idx < U32_MAX);
 	return (u32)idx;
 }
 
-u32 NewValue(Context *context, String name, s64 typeTableIdx, u32 flags)
+u32 NewValue(Context *context, String name, s64 typeTableIdx, u32 flags, u32 immitateValueIdx = U32_MAX)
 {
 	ASSERT(typeTableIdx != 0);
+	ASSERT(!(flags & VALUEFLAGS_TRY_IMMITATE) || immitateValueIdx != U32_MAX);
 	u64 idx = BucketArrayCount(&context->values);
 	Value *result = BucketArrayAdd(&context->values);
 	result->name = name;
 	result->typeTableIdx = typeTableIdx;
 	result->flags = flags;
+	result->tryImmitateValueIdx = immitateValueIdx;
 
 	ASSERT(idx < U32_MAX);
 	return (u32)idx;

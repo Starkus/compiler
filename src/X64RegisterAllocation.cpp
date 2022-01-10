@@ -411,6 +411,8 @@ nodeFound:
 		}
 
 		// No live values that cross a procedure call can be stored in RAX/XMM0.
+		// Note that this doesn't make RAX and XMM0 _live_ but just flag them as co-existing with
+		// all the currently live values.
 		if (inst->type == X64_CALL || inst->type == X64_CALL_Indirect)
 		{
 			*DynamicArrayAdd(&node->edges) = RAX.valueIdx;
@@ -837,16 +839,36 @@ void X64AllocateRegisters(Context *context, Array<X64Procedure, PhaseAllocator> 
 		{
 			InterferenceGraphNode *nodeToRemove = nullptr;
 			int nodeToRemoveIdx = -1;
+
+			// Leave values that want to immitate others at the bottom
 			for (int nodeIdx = 0; nodeIdx < context->beInterferenceGraph.size; ++nodeIdx)
 			{
 				InterferenceGraphNode *currentNode = &context->beInterferenceGraph[nodeIdx];
 				if (currentNode->removed)
 					continue;
-				if (currentNode->edges.size < availableRegisters)
+				Value v = context->values[currentNode->valueIdx];
+				if (v.flags & VALUEFLAGS_TRY_IMMITATE)
 				{
 					nodeToRemove = currentNode;
 					nodeToRemoveIdx = nodeIdx;
 					break;
+				}
+			}
+
+			if (!nodeToRemove)
+			{
+				for (int nodeIdx = 0; nodeIdx < context->beInterferenceGraph.size; ++nodeIdx)
+				{
+					InterferenceGraphNode *currentNode = &context->beInterferenceGraph[nodeIdx];
+					if (currentNode->removed)
+						continue;
+					Value v = context->values[currentNode->valueIdx];
+					if (currentNode->edges.size < availableRegisters)
+					{
+						nodeToRemove = currentNode;
+						nodeToRemoveIdx = nodeIdx;
+						break;
+					}
 				}
 			}
 
@@ -916,11 +938,60 @@ void X64AllocateRegisters(Context *context, Array<X64Procedure, PhaseAllocator> 
 			InterferenceGraphNode *currentNode = nodeStack[nodeIdx];
 			Value *v = &context->values[currentNode->valueIdx];
 
+			// We don't allocate static values, the assembler/linker does.
+			ASSERT(!(v->flags & VALUEFLAGS_ON_STATIC_STORAGE));
+			ASSERT(!(v->flags & VALUEFLAGS_IS_EXTERNAL));
+
 			if (v->flags & VALUEFLAGS_IS_ALLOCATED)
 				continue;
 
 			TypeInfo typeInfo = context->typeTable[v->typeTableIdx];
 			bool isXMM = typeInfo.size > 8 || typeInfo.typeCategory == TYPECATEGORY_FLOATING;
+
+			if (v->flags & VALUEFLAGS_TRY_IMMITATE)
+			{
+				u32 immitateValueIdx = v->tryImmitateValueIdx;
+				Value immitateValue = context->values[immitateValueIdx];
+				while (immitateValue.flags & VALUEFLAGS_TRY_IMMITATE)
+				{
+					immitateValueIdx = immitateValue.tryImmitateValueIdx;
+					immitateValue = context->values[immitateValueIdx];
+				}
+
+				if ((immitateValue.flags & VALUEFLAGS_IS_ALLOCATED) &&
+				  !(immitateValue.flags & VALUEFLAGS_IS_MEMORY))
+				{
+					TypeInfo otherTypeInfo = context->typeTable[immitateValue.typeTableIdx];
+					bool isOtherXMM = otherTypeInfo.size > 8 || otherTypeInfo.typeCategory == TYPECATEGORY_FLOATING;
+					if (isXMM != isOtherXMM)
+						goto skipImmitate;
+
+					// Check the candidate is not used on any edge, and that the value we're trying
+					// to copy doesn't coexist with this one.
+					s32 candidate = immitateValue.allocatedRegister;
+					for (int edgeIdx = 0; edgeIdx < currentNode->edges.size; ++edgeIdx)
+					{
+						u32 edgeValueIdx = currentNode->edges[edgeIdx];
+						if (edgeValueIdx == immitateValueIdx)
+							goto skipImmitate;
+						Value edgeValue = context->values[edgeValueIdx];
+						if (!(edgeValue.flags & VALUEFLAGS_IS_ALLOCATED) ||
+							  edgeValue.flags & VALUEFLAGS_IS_MEMORY)
+							continue;
+						if (edgeValue.allocatedRegister == candidate)
+							goto skipImmitate;
+					}
+
+					v->allocatedRegister = candidate;
+					v->flags &= ~VALUEFLAGS_IS_MEMORY;
+					v->flags |= VALUEFLAGS_IS_ALLOCATED;
+					continue;
+				}
+				else if (!(immitateValue.flags & VALUEFLAGS_IS_ALLOCATED) &&
+						 CanBeRegister(context, immitateValueIdx))
+					Print("Lost opportunity to immitate value because of allocation order!\n");
+			}
+skipImmitate:
 
 			int max = isXMM ? availableRegistersFP : availableRegisters;
 			for (int candidateIdx = 0; candidateIdx < max; ++candidateIdx)
@@ -938,10 +1009,6 @@ void X64AllocateRegisters(Context *context, Array<X64Procedure, PhaseAllocator> 
 				}
 				v->allocatedRegister = candidate;
 
-				// We don't allocate static values, the assembler/linker does.
-				ASSERT(!(v->flags & VALUEFLAGS_ON_STATIC_STORAGE));
-				ASSERT(!(v->flags & VALUEFLAGS_IS_EXTERNAL));
-
 				v->flags &= ~VALUEFLAGS_IS_MEMORY;
 				v->flags |= VALUEFLAGS_IS_ALLOCATED;
 				break;
@@ -950,7 +1017,7 @@ void X64AllocateRegisters(Context *context, Array<X64Procedure, PhaseAllocator> 
 			if (!(v->flags & VALUEFLAGS_IS_ALLOCATED))
 			{
 				if (v->flags & VALUEFLAGS_FORCE_REGISTER)
-					continue;
+					continue; // @Check: what?? we can't just not allocate this value?
 
 				// Spill!
 				*DynamicArrayAdd(&currentLeafBlock->procedure->spilledValues) =

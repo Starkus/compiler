@@ -24,6 +24,8 @@ enum X64InstructionType
 	X64_CQO,
 	X64_PUSH,
 	X64_POP,
+
+	X64_Jump_Begin,
 	X64_JMP,
 	X64_JE,
 	X64_JNE,
@@ -35,6 +37,8 @@ enum X64InstructionType
 	X64_JB,
 	X64_JAE,
 	X64_JBE,
+	X64_Jump_End,
+
 	X64_CALL,
 	X64_CALL_Indirect,
 	X64_LEAVE,
@@ -784,8 +788,10 @@ void X64Mov(Context *context, X64Procedure *x64Proc, IRValue dst, IRValue src)
 	if (CanValueBeMemory(context, dst) && CanValueBeMemory(context, src))
 	{
 		u32 srcUsedFlag = context->values[src.valueIdx].flags & VALUEFLAGS_IS_USED;
+		u32 immitateFlag = src.valueType == IRVALUETYPE_VALUE ? VALUEFLAGS_TRY_IMMITATE : 0;
 		IRValue tmp = IRValueNewValue(context, "_movtmp"_s, dst.typeTableIdx,
-				VALUEFLAGS_FORCE_REGISTER | srcUsedFlag);
+				VALUEFLAGS_FORCE_REGISTER | srcUsedFlag | immitateFlag, src.valueIdx);
+
 		X64MovNoTmp(context, x64Proc, tmp, src);
 		src = tmp;
 	}
@@ -1378,12 +1384,14 @@ doRM_RMI:
 		if (right.valueType == IRVALUETYPE_IMMEDIATE_INTEGER &&
 			(right.immediate & 0xFFFFFFFF00000000))
 		{
-			IRValue tmp = IRValueNewValue(context, right.typeTableIdx, 0);
+			IRValue tmp = IRValueNewValue(context, "_biglittmp"_s, right.typeTableIdx, 0);
 			X64Mov(context, x64Proc, tmp, right);
 			right = tmp;
 		}
 
-		IRValue tmp = IRValueNewValue(context, left.typeTableIdx, 0);
+		u32 immitateFlag = left.valueType == IRVALUETYPE_VALUE ? VALUEFLAGS_TRY_IMMITATE : 0;
+		IRValue tmp = IRValueNewValue(context, "_rmrmitmp"_s, left.typeTableIdx, immitateFlag,
+				left.valueIdx);
 
 		X64Mov(context, x64Proc, tmp, left);
 
@@ -1401,7 +1409,8 @@ doX_XM:
 		IRValue right = inst.binaryOperation.right;
 		IRValue out = inst.binaryOperation.out;
 
-		IRValue tmp = IRValueNewValue(context, left.typeTableIdx, 0);
+		u32 immitateFlag = out.valueType == IRVALUETYPE_VALUE ? VALUEFLAGS_TRY_IMMITATE : 0;
+		IRValue tmp = IRValueNewValue(context, left.typeTableIdx, immitateFlag, out.valueIdx);
 
 		X64Mov(context, x64Proc, tmp, left);
 
@@ -2240,8 +2249,23 @@ void BackendMain(Context *context)
 	{
 		X64InstructionStream stream = X64InstructionStreamBegin(&x64Procedures[procedureIdx]);
 		X64Instruction *inst = X64InstructionStreamAdvance(&stream);
+		X64Instruction *nextInst = X64InstructionStreamAdvance(&stream);
 		while (inst)
 		{
+			// Replace LEAs with a register as a source with a MOV.
+			if (inst->type == X64_LEA)
+			{
+				if (inst->src.valueType != IRVALUETYPE_MEMORY || inst->src.memory.offset == 0)
+				{
+					Value v = context->values[inst->src.valueIdx];
+					if ((v.flags & VALUEFLAGS_IS_ALLOCATED) && !(v.flags & VALUEFLAGS_IS_MEMORY))
+					{
+						inst->type = X64_MOV;
+						inst->src.valueType = IRVALUETYPE_VALUE;
+					}
+				}
+			}
+
 			switch (inst->type)
 			{
 			// dst write, src read
@@ -2334,7 +2358,19 @@ unalignedMovups:;
 				}
 			}
 
-			inst = X64InstructionStreamAdvance(&stream);
+			// Unnecessary jumps
+			if (nextInst && inst->type >= X64_Jump_Begin && inst->type <= X64_Jump_End &&
+				nextInst->type == X64_Label)
+			{
+				//__debugbreak();
+				if (inst->label == nextInst->label)
+					inst->type = X64_Ignore;
+			}
+
+			inst = nextInst;
+			nextInst = X64InstructionStreamAdvance(&stream);
+			while (nextInst && nextInst->type >= X64_Count)
+				nextInst = X64InstructionStreamAdvance(&stream);
 		}
 	}
 
@@ -2825,7 +2861,7 @@ nextTuple:
 	String commandLine = TPrintF(
 			"%S\\bin\\Hostx64\\x64\\ml64.exe " // msvcPath
 			"out.asm "
-			"/nologo "
+			"/nologo /c "
 			"/Zd "
 			"/Zi "
 			"/Fm "
@@ -2835,33 +2871,12 @@ nextTuple:
 			"/I \"%S\\include\\%S\\um\" " // windowsSDKPath, windowsSDKVersion
 			"/I \"%S\\include\\%S\\winrt\" " // windowsSDKPath, windowsSDKVersion
 			"/I \"%S\\include\\%S\\cppwinrt\" " // windowsSDKPath, windowsSDKVersion
-			"/link "
-			"%S " // subsystemArgument
-			"kernel32.lib "
-			"user32.lib "
-			"gdi32.lib "
-			"winmm.lib "
-			"%S " // libsToLinkStr
-			"/nologo "
-			"/debug:full "
-			"/entry:__WindowsMain "
-			"/opt:ref "
-			"/incremental:no "
-			"/dynamicbase:no "
-			"/libpath:\"%S\\lib\\x64\" " // msvcPath
-			"/libpath:\"%S\\lib\\%S\\ucrt\\x64\" " // windowsSDKPath, windowsSDKVersion
-			"/libpath:\"%S\\lib\\%S\\um\\x64\" " // windowsSDKPath, windowsSDKVersion
-			"/out:out.exe%c",
+			"%c",
 			msvcPath,
 			msvcPath,
 			windowsSDKPath, windowsSDKVersion,
 			windowsSDKPath, windowsSDKVersion,
 			windowsSDKPath, windowsSDKVersion,
-			windowsSDKPath, windowsSDKVersion,
-			windowsSDKPath, windowsSDKVersion,
-			subsystemArgument,
-			libsToLinkStr,
-			msvcPath,
 			windowsSDKPath, windowsSDKVersion,
 			windowsSDKPath, windowsSDKVersion,
 			0
@@ -2889,6 +2904,58 @@ nextTuple:
 	WaitForSingleObject(processInformation.hProcess, INFINITE);
 
 	TimerSplit("Calling ML64"_s);
+
+	commandLine = TPrintF(
+			"%S\\bin\\Hostx64\\x64\\link.exe " // msvcPath
+			"out.obj "
+			"/nologo "
+			"%S " // subsystemArgument
+			"kernel32.lib "
+			"user32.lib "
+			"gdi32.lib "
+			"winmm.lib "
+			"%S " // libsToLinkStr
+			"/nologo "
+			"/debug:full "
+			"/entry:__WindowsMain "
+			"/opt:ref "
+			"/incremental:no "
+			"/dynamicbase:no "
+			"/libpath:\"%S\\lib\\x64\" " // msvcPath
+			"/libpath:\"%S\\lib\\%S\\ucrt\\x64\" " // windowsSDKPath, windowsSDKVersion
+			"/libpath:\"%S\\lib\\%S\\um\\x64\" " // windowsSDKPath, windowsSDKVersion
+			"/out:out.exe%c",
+			msvcPath,
+			subsystemArgument,
+			libsToLinkStr,
+			msvcPath,
+			windowsSDKPath, windowsSDKVersion,
+			windowsSDKPath, windowsSDKVersion,
+			0
+			);
+
+	startupInfo = {};
+	processInformation = {};
+	startupInfo.cb = sizeof(STARTUPINFO);
+	if (!CreateProcessA(
+			NULL,
+			(LPSTR)commandLine.data,
+			NULL,
+			NULL,
+			false,
+			0,
+			NULL,
+			outputPath.data,
+			&startupInfo,
+			&processInformation
+			))
+	{
+		Print("Failed to call link.exe (%d)\n", GetLastError());
+		CRASH;
+	}
+	WaitForSingleObject(processInformation.hProcess, INFINITE);
+
+	TimerSplit("Calling LINK"_s);
 
 	CloseHandle(processInformation.hProcess);
 	CloseHandle(processInformation.hThread);
