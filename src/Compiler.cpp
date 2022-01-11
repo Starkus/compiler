@@ -162,16 +162,17 @@ struct Context
 
 inline bool Win32FileExists(const char *filename)
 {
-	DWORD attrib = GetFileAttributes(filename);
+	DWORD attrib = GetFileAttributesA(filename);
 	return attrib != INVALID_FILE_ATTRIBUTES && attrib != FILE_ATTRIBUTE_DIRECTORY;
 }
 
-bool Win32ReadEntireFile(const char *filename, u8 **fileBuffer, u64 *fileSize, void *(*allocFunc)(u64))
+HANDLE Win32OpenFileRead(String filename)
 {
 	char fullname[MAX_PATH];
 	DWORD written = GetCurrentDirectory(MAX_PATH, fullname);
 	fullname[written++] = '/';
-	strcpy(fullname + written, filename);
+	strncpy(fullname + written, filename.data, filename.size);
+	fullname[written + filename.size] = 0;
 
 	HANDLE file = CreateFileA(
 			fullname,
@@ -183,18 +184,22 @@ bool Win32ReadEntireFile(const char *filename, u8 **fileBuffer, u64 *fileSize, v
 			nullptr
 			);
 	DWORD error = GetLastError();
+	ASSERT(error == ERROR_SUCCESS);
 	ASSERT(file != INVALID_HANDLE_VALUE);
+	return file;
+}
 
+void Win32ReadEntireFile(HANDLE file, u8 **fileBuffer, u64 *fileSize, void *(*allocFunc)(u64))
+{
 	if (file == INVALID_HANDLE_VALUE)
-	{
 		*fileBuffer = nullptr;
-	}
 	else
 	{
 		DWORD fileSizeDword = GetFileSize(file, nullptr);
 		ASSERT(fileSizeDword);
 		*fileSize = (u64)fileSizeDword;
-		error = GetLastError();
+		DWORD error = GetLastError();
+		ASSERT(error == ERROR_SUCCESS);
 
 		*fileBuffer = (u8 *)allocFunc(*fileSize);
 		DWORD bytesRead;
@@ -207,11 +212,20 @@ bool Win32ReadEntireFile(const char *filename, u8 **fileBuffer, u64 *fileSize, v
 				);
 		ASSERT(success);
 		ASSERT(bytesRead == *fileSize);
-
-		CloseHandle(file);
 	}
+}
 
-	return error == ERROR_SUCCESS;
+bool Win32AreSameFile(HANDLE file1, HANDLE file2) {
+	BY_HANDLE_FILE_INFORMATION info1 = { 0 };
+	BY_HANDLE_FILE_INFORMATION info2 = { 0 };
+	if (GetFileInformationByHandle(file1, &info1) &&
+		GetFileInformationByHandle(file2, &info2))
+	{
+		return info1.nFileIndexHigh       == info2.nFileIndexHigh &&
+			   info1.nFileIndexLow        == info2.nFileIndexLow &&
+			   info1.dwVolumeSerialNumber == info2.dwVolumeSerialNumber;
+	}
+	return false;
 }
 
 String GetSourceLine(Context *context, s32 fileIdx, s32 line)
@@ -401,6 +415,34 @@ void UnexpectedTokenError(Context *context, Token *token)
 	LogError(context, token->loc, errorStr);
 }
 
+bool CompilerAddSourceFile(Context *context, String filename, SourceLocation loc)
+{
+	HANDLE file = Win32OpenFileRead(filename);
+	if (file == INVALID_HANDLE_VALUE)
+		LogError(context, loc,
+				TPrintF("Included source file \"%S\" doesn't exist!", filename));
+
+	for (int i = 0; i < context->sourceFiles.size; ++i)
+	{
+		String currentFilename = context->sourceFiles[i].name;
+		HANDLE currentFile = Win32OpenFileRead(currentFilename);
+
+		if (Win32AreSameFile(file, currentFile))
+		{
+			LogWarning(context, loc, TPrintF("File included twice: \"%S\"", filename));
+			LogNote(context, context->sourceFiles[i].includeLoc, "First included here"_s);
+			return false;
+		}
+	}
+
+	SourceFile newSourceFile = { filename, loc };
+	Win32ReadEntireFile(file, &newSourceFile.buffer, &newSourceFile.size, FrameAllocator::Alloc);
+
+	*DynamicArrayAdd(&context->sourceFiles) = newSourceFile;
+
+	return true;
+}
+
 #include "Tokenizer.cpp"
 #include "Parser.cpp"
 #include "TypeChecker.cpp"
@@ -459,16 +501,7 @@ int main(int argc, char **argv)
 	TimerSplit("Initialization"_s);
 
 	for (int i = 0; i < inputFiles.size; ++i)
-	{
-		const char *filenameCstr = StringToCStr(inputFiles[i], FrameAllocator::Alloc);
-		if (!Win32FileExists(filenameCstr))
-			LogError(&context, {}, TPrintF("Input source file \"%S\" doesn't exist!", inputFiles[i]));
-
-		SourceFile newSourceFile = { inputFiles[i] };
-		Win32ReadEntireFile(filenameCstr, &newSourceFile.buffer,
-				&newSourceFile.size, FrameAllocator::Alloc);
-		*DynamicArrayAdd(&context.sourceFiles) = newSourceFile;
-	}
+		CompilerAddSourceFile(&context, inputFiles[i], {});
 
 	for (int i = 0; i < context.sourceFiles.size; ++i)
 		TokenizeFile(&context, i);

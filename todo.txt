@@ -7,3 +7,4 @@
 * Avoid duplicate string literals
 * Avoid including same source file twice (ask Windows if two files are the same)
 * Bodies of inlined procedures still refer to same values as original procedures
+* Return statements are being evaluated before deferred statements!

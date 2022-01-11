@@ -92,19 +92,20 @@ enum TokenType
 	TOKEN_END_OF_FILE		= 255
 };
 
-struct SourceFile
-{
-	String name;
-	u8 *buffer;
-	u64 size;
-};
-
 struct SourceLocation
 {
 	s32 fileIdx;
 	s32 line;
 	s32 character;
 	s32 size;
+};
+
+struct SourceFile
+{
+	String name;
+	SourceLocation includeLoc;
+	u8 *buffer;
+	u64 size;
 };
 
 struct Token

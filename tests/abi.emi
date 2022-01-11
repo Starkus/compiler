@@ -1,6 +1,15 @@
-manyArgs :: (a : s64, b : s64, c : s64, d : s64, e : s64, f : s64, g : s64, h : s64)
+manyArgs :: (a : s64, b : s64, c : s64, d : s64, e : s64, f : s64, g : s64, h : s64) -> s64
 {
 	PrintF("manyArgs(%, %, %, %, %, %, %, %)\n", a, b, c, d, e, f, g, h);
+	errors := 8;
+	if a == 1 errors -= 1;
+	if b == 2 errors -= 1;
+	if c == 3 errors -= 1;
+	if d == 4 errors -= 1;
+	if e == 5 errors -= 1;
+	if f == 6 errors -= 1;
+	if g == 7 errors -= 1;
+	if h == 8 errors -= 1;
 	a = 1;
 	b = 2;
 	c = 3;
@@ -10,11 +19,13 @@ manyArgs :: (a : s64, b : s64, c : s64, d : s64, e : s64, f : s64, g : s64, h : 
 	g = 7;
 	h = 8;
 	//manyArgs(a, b, c, d, e, f, g, h);
+	return errors;
 }
 
 Main :: () -> s64
 {
-	manyArgs(1, 2, 3, 4, 5, 6, 7, 8);
-	Print("Test ok\n");
-	return 0;
+	errorCode := manyArgs(1, 2, 3, 4, 5, 6, 7, 8);
+	if errorCode == 0
+		Print("Test ok\n");
+	return errorCode;
 }

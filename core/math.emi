@@ -171,7 +171,7 @@ ReminderPiOver2 :: (x : f64, y : ^[2] f64) -> s32
 		else
 			return n;
 	}
-	if ix >= 0x7ff00000
+	if ix >= 0x7ff00000		/* Inf or NaN */
 	{
 		y[0] = x - x;
 		y[1] = x - x;

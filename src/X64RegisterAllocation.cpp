@@ -952,7 +952,8 @@ void X64AllocateRegisters(Context *context, Array<X64Procedure, PhaseAllocator> 
 			{
 				u32 immitateValueIdx = v->tryImmitateValueIdx;
 				Value immitateValue = context->values[immitateValueIdx];
-				while (immitateValue.flags & VALUEFLAGS_TRY_IMMITATE)
+				while (immitateValue.flags & VALUEFLAGS_TRY_IMMITATE &&
+					   immitateValueIdx != immitateValue.tryImmitateValueIdx)
 				{
 					immitateValueIdx = immitateValue.tryImmitateValueIdx;
 					immitateValue = context->values[immitateValueIdx];

@@ -1,8 +1,22 @@
+counter :s= 0;
+error   :s= 0;
+
+DoStep :: (index : s64, msg : String)
+{
+	if counter != index
+	{
+		Print("Error!\n");
+		error = 1;
+	}
+	Print(msg);
+	counter += 1;
+}
+
 Main :: () -> s64
 {
-	Print("Program start\n");
+	DoStep(0, "Program start\n");
 	foo : s64 = 4;
-	defer Print("I should be at the bottom\n");
+	defer DoStep(5, "I should be at the bottom\n");
 	defer foo = 8;
 
 	innerFunc :: () -> s64
@@ -21,15 +35,16 @@ Main :: () -> s64
 
 	bar : s64 = 256;
 	{
-		Print("Entering a scope\n");
+		DoStep(1, "Entering a scope\n");
 		defer bar = 0;
-		defer Print("Scope defer\n");
+		defer DoStep(3, "Scope defer\n");
 		foo = 7;
-		Print("Leaving scope\n");
+		DoStep(2, "Leaving scope\n");
 	}
 
-	Print("Program finishing\n");
+	DoStep(4, "Program finishing\n");
 
-	Print("Test ok\n");
-	return 0;
+	if (error == 0)
+		Print("Test ok\n");
+	return error;
 }

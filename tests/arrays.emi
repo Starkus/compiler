@@ -6,12 +6,8 @@ arrayAsArgument :: (array : [5] s16)
 returnArray :: (arg2 : s32) -> [4] s32
 {
 	array : [4] s32;
-	i : s32 = 0;
-	while i < 4
-	{
-		array[i] = i;
-		i += 1;
-	}
+	for array
+		array[i] = cast(s32)i * 2;
 	return array;
 }
 
@@ -23,8 +19,12 @@ Main :: () -> s64
 	for 0..5
 		arrayA[i] = cast(u8) i;
 	PrintF("arrayA: %\n", arrayA);
+	for arrayA
+		if @it != cast(u8) i return 1;
 
 	for (arrayB) @it = cast(s32)(1 << i);
+	for arrayB
+		if @it != cast(s32)(1 << i) return 1;
 
 	foo : u8 = arrayA[2];
 	bar := arrayB[16];
@@ -43,13 +43,19 @@ Main :: () -> s64
 	anotherCell := arrayOfArrays[5][5];
 
 	copyOfA := arrayA;
+	for copyOfA
+		if @it != arrayA[i] return 1;
 
 	returnedArray := returnArray(24);
 	PrintF("returnedArray: %\n", returnedArray);
+	for returnedArray
+		if @it != cast(s32)(i * 2) return 1;
 
 	dynamicArray : [] s32;
 	dynamicArray = arrayB;
 	PrintF("dynamicArray: %\n", dynamicArray);
+	for dynamicArray
+		if @it != arrayB[i] return 1;
 
 	Print("Test ok\n");
 	return 0;

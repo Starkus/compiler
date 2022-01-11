@@ -359,21 +359,11 @@ Token ReadTokenAndAdvance(Context *context, Tokenizer *tokenizer)
 			while (IsAlpha(*tokenizer->cursor));
 			if (StringEquals(result.string, "#include"_s))
 			{
-				// @Improve if we have out of order compilation some day.
 				Token sourceFileToken = ReadTokenAndAdvance(context, tokenizer);
 				if (sourceFileToken.type != TOKEN_LITERAL_STRING)
 					LogError(context, sourceFileToken.loc, "ERROR! #include must be followed by string literal"_s);
 
-				const char *filenameCstr = StringToCStr(sourceFileToken.string, PhaseAllocator::Alloc);
-				if (!Win32FileExists(filenameCstr))
-					LogError(context, sourceFileToken.loc,
-							TPrintF("Included source file \"%S\" doesn't exist!", sourceFileToken.string));
-
-				SourceFile newSourceFile = { sourceFileToken.string };
-				Win32ReadEntireFile(StringToCStr(sourceFileToken.string, PhaseAllocator::Alloc), &newSourceFile.buffer,
-					&newSourceFile.size, FrameAllocator::Alloc);
-
-				*DynamicArrayAdd(&context->sourceFiles) = newSourceFile;
+				CompilerAddSourceFile(context, sourceFileToken.string, sourceFileToken.loc);
 
 				return ReadTokenAndAdvance(context, tokenizer);
 			}
