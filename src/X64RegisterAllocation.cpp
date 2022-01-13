@@ -291,9 +291,9 @@ void DoLivenessAnalisisOnInstruction(Context *context, BasicBlock *basicBlock, X
 		for (int i = 0; i < liveValues->size; ++i)
 			inst->liveValues[i] = (*liveValues)[i];
 
-		AddValue(context, inst->valueIdx, basicBlock->procedure, liveValues);
+		AddIfValue(context, inst->dst, basicBlock->procedure, liveValues);
 
-		s64 procTypeIdx = context->values[inst->valueIdx].typeTableIdx;
+		s64 procTypeIdx = inst->dst.typeTableIdx;
 		ASSERT(context->typeTable[procTypeIdx].typeCategory == TYPECATEGORY_PROCEDURE);
 		TypeInfoProcedure procTypeInfo = context->typeTable[procTypeIdx].procedureInfo;
 

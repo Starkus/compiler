@@ -1,0 +1,24 @@
+Vector :: struct
+{
+	x : f32;
+	y : f32;
+	z : f32;
+	#operator(+, VectorAdd);
+};
+
+VectorAdd :: #inline (a : Vector, b : Vector) -> Vector
+{
+	result : Vector = { a.x + b.x, a.y + b.y, a.z + b.z };
+	return result;
+}
+
+Main :: () -> s64
+{
+	a : Vector = { 1, 0, 0 };
+	b : Vector = { 0, 0, 1 };
+	c := a + b;
+	PrintF("% + % = %\n", a, b, c);
+
+	Print("Test ok\n");
+	return 0;
+}

@@ -1,5 +1,7 @@
 AProc :: #inline ()
 {
+	localVar : s32;
+	localVar2 : s32;
 	Print("Hey there\n");
 }
 
@@ -21,6 +23,11 @@ Square :: struct
 StructParam :: #inline (square : Square)
 {
 	square.area = square.side * square.side;
+}
+
+InlinedPrintFWrapper :: #inline (format : String, ..args)
+{
+	PrintF(format, args);
 }
 
 /*
@@ -49,6 +56,8 @@ Main :: () -> s64
 	square : Square = { 5.0 };
 	StructParam(square);
 	PrintF("Square of side % has area %\n", square.side, square.area);
+
+	InlinedPrintFWrapper("Inlined PrintF wrapper! args are %, %, %\n", 42, inlineRet, square);
 
 	Print("Test ok\n");
 	return 0;

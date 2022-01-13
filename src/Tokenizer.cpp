@@ -385,6 +385,8 @@ Token ReadTokenAndAdvance(Context *context, Tokenizer *tokenizer)
 				result.type = TOKEN_KEYWORD_EXTERNAL;
 			else if (StringEquals(result.string, "#intrinsic"_s))
 				result.type = TOKEN_KEYWORD_INTRINSIC;
+			else if (StringEquals(result.string, "#operator"_s))
+				result.type = TOKEN_KEYWORD_OPERATOR;
 			else
 				LogError(context, result.loc, "Invalid parser directive"_s);
 			return result;

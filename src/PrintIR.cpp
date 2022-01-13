@@ -100,7 +100,6 @@ void PrintIRInstructionOperator(IRInstruction inst)
 		break;
 	default:
 		CRASH;
-		Print("<?>");
 	}
 }
 
@@ -180,7 +179,9 @@ void PrintIRInstruction(Context *context, IRInstruction inst)
 			PrintIRValue(context, inst.procedureCall.out);
 			Print(" := ");
 		}
-		Print("call %S(", PIRValueToStr(context, inst.procedureCall.procPointerValueIdx));
+		Print("call virtual ");
+		PrintIRValue(context, inst.procedureCall.procIRValue);
+		Print("(");
 
 		for (int i = 0; i < inst.procedureCall.parameters.size; ++i)
 		{

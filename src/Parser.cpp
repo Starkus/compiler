@@ -410,8 +410,37 @@ ASTStructDeclaration ParseStructOrUnion(Context *context)
 	Advance(context);
 	while (context->token->type != '}')
 	{
-		ASTStructMemberDeclaration member = ParseStructMemberDeclaration(context);
-		*DynamicArrayAdd(&structDeclaration.members) = member;
+		if (context->token->type == TOKEN_KEYWORD_OPERATOR)
+		{
+			Advance(context);
+			ASTOperatorOverload overload = {};
+
+			AssertToken(context, context->token, '(');
+			Advance(context);
+
+			overload.op = context->token->type;
+			ASSERT(overload.op >= TOKEN_OP_Begin && overload.op <= TOKEN_OP_End);
+			Advance(context);
+
+			AssertToken(context, context->token, ',');
+			Advance(context);
+
+			AssertToken(context, context->token, TOKEN_IDENTIFIER);
+			overload.name = context->token->string;
+			Advance(context);
+
+			AssertToken(context, context->token, ')');
+			Advance(context);
+
+			if (structDeclaration.overloads.size == 0)
+				DynamicArrayInit(&structDeclaration.overloads, 4);
+			*DynamicArrayAdd(&structDeclaration.overloads) = overload;
+		}
+		else
+		{
+			ASTStructMemberDeclaration member = ParseStructMemberDeclaration(context);
+			*DynamicArrayAdd(&structDeclaration.members) = member;
+		}
 		AssertToken(context, context->token, ';');
 		Advance(context);
 	}
@@ -554,6 +583,7 @@ ASTProcedurePrototype ParseProcedurePrototype(Context *context)
 		{
 			Advance(context);
 			prototype.isVarargs = true;
+			prototype.varargsLoc = context->token->loc;
 
 			if (context->token->type == TOKEN_IDENTIFIER)
 			{
@@ -1138,12 +1168,7 @@ ASTExpression ParseStaticStatement(Context *context)
 			Advance(context);
 		}
 		else
-		{
 			LogError(context, context->token->loc, "Invalid expression in static context"_s);
-			result = ParseExpression(context, -1);
-			AssertToken(context, context->token, ';');
-			Advance(context);
-		}
 	} break;
 	}
 

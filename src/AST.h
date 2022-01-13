@@ -103,10 +103,19 @@ struct ASTStructMemberDeclaration : ASTBase
 
 	s64 typeTableIdx;
 };
+struct ASTOperatorOverload : ASTBase
+{
+	enum TokenType op;
+	String name;
+
+	// Type check
+	s32 procedureIdx;
+};
 struct ASTStructDeclaration : ASTBase
 {
 	bool isUnion;
 	DynamicArray<ASTStructMemberDeclaration, FrameAllocator> members;
+	DynamicArray<ASTOperatorOverload, FrameAllocator> overloads;
 };
 
 struct ASTEnumMember
@@ -124,10 +133,12 @@ struct ASTType;
 struct ASTProcedureParameter;
 struct ASTProcedurePrototype : ASTBase
 {
+	DynamicArray<ASTProcedureParameter, FrameAllocator> astParameters;
+	ASTType *astReturnType;
+
 	bool isVarargs;
 	String varargsName;
-	ASTType *astReturnType;
-	DynamicArray<ASTProcedureParameter, FrameAllocator> astParameters;
+	SourceLocation varargsLoc;
 
 	// Type check
 	s64 returnTypeIdx;
@@ -210,6 +221,12 @@ struct ASTStaticDefinition : ASTBase
 	StaticDefinition *staticDef;
 };
 
+enum ProcedureCallType
+{
+	CALLTYPE_STATIC,
+	CALLTYPE_VALUE,
+	CALLTYPE_ASTEXPRESSION
+};
 struct ASTProcedureCall : ASTBase
 {
 	String name;
@@ -217,14 +234,16 @@ struct ASTProcedureCall : ASTBase
 
 	// Type check
 	s64 procedureTypeIdx;
-	bool isIndirect;
+	ProcedureCallType callType;
 	bool procedureFound;
 	u32 parameterTypeCheckingIdx;
 	union
 	{
 		s32 procedureIdx;
 		TCValue tcValue;
+		ASTExpression *expression;
 	};
+	ASTExpression *astBodyInlineCopy;
 };
 
 enum IntrinsicType

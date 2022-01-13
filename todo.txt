@@ -1,10 +1,6 @@
 * Reduce moving things from one register to another unnecessarily
 * Set members by name in struct literals
 * Verify small structs are passed properly through parameters
-* Operator overloading?
-* Group literals leave non specified members uninitialized.
 * Add TEST instructions
 * Avoid duplicate string literals
-* Avoid including same source file twice (ask Windows if two files are the same)
-* Bodies of inlined procedures still refer to same values as original procedures
 * Return statements are being evaluated before deferred statements!

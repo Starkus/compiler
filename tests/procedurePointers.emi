@@ -18,6 +18,11 @@ Varargs :: (format : String, ..args)
 	PrintF(format, args);
 }
 
+ProcWrapper :: struct
+{
+	proc : ();
+};
+
 Main :: () -> s64
 {
 	pointerToProce : () = Proce;
@@ -31,7 +36,11 @@ Main :: () -> s64
 	pointerToParams(1, 2, 3);
 
 	pointerToVarargs : (String, ..) = Varargs;
-	pointerToVarargs("Print things: % % %", 1, 2.4, true);
+	pointerToVarargs("Print things: % % %\n", 1, 2.4, true);
+
+	using procWrapper : ProcWrapper;
+	procWrapper.proc = Proce;
+	proc();
 
 	return 0;
 }

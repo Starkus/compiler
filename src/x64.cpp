@@ -120,7 +120,11 @@ struct BEInstruction
 		struct
 		{
 			// Proc call info
-			s32 procedureIdx;
+			union
+			{
+				s32 procedureIdx;
+				IRValue procedureIRValue;
+			};
 			Array<u32, PhaseAllocator> liveValues;
 		};
 		u32 valueIdx;
@@ -976,8 +980,36 @@ void X64ConvertInstruction(Context *context, IRInstruction inst, X64Procedure *x
 		switch (floatingType)
 		{
 		case X64FLOATINGTYPE_NONE:
-			result.type = X64_IMUL;
-			goto doRM_RMI;
+		{
+			IRValue left  = inst.binaryOperation.left;
+			IRValue right = inst.binaryOperation.right;
+			IRValue out   = inst.binaryOperation.out;
+
+			if (left.valueType == IRVALUETYPE_IMMEDIATE_INTEGER && IsPowerOf2(left.immediate))
+			{
+				IRValue tmp = left;
+				left = right;
+				right = tmp;
+			}
+
+			if (right.valueType == IRVALUETYPE_IMMEDIATE_INTEGER && IsPowerOf2(right.immediate))
+			{
+				u32 immitateFlag = left.valueType == IRVALUETYPE_VALUE ? VALUEFLAGS_TRY_IMMITATE : 0;
+				IRValue tmp = IRValueNewValue(context, "_mulshfttmp"_s, left.typeTableIdx, immitateFlag,
+				left.valueIdx);
+
+				X64Mov(context, x64Proc, tmp, left);
+				*BucketArrayAdd(&x64Proc->instructions) = { X64_SAL, tmp,
+						IRValueImmediate(63 - Nlz64(right.immediate)) };
+				X64Mov(context, x64Proc, out, tmp);
+				return;
+			}
+			else
+			{
+				result.type = X64_IMUL;
+				goto doRM_RMI;
+			}
+		}
 		case X64FLOATINGTYPE_F32:
 			result.type = X64_MULSS;
 			goto doX_XM;
@@ -990,25 +1022,43 @@ void X64ConvertInstruction(Context *context, IRInstruction inst, X64Procedure *x
 		{
 		case X64FLOATINGTYPE_NONE:
 		{
-			X64Mov(context, x64Proc, RAX, inst.binaryOperation.left);
+			IRValue left  = inst.binaryOperation.left;
+			IRValue right = inst.binaryOperation.right;
+			IRValue out   = inst.binaryOperation.out;
 
-			*BucketArrayAdd(&x64Proc->instructions) = { X64_CQO };
-
-			IRValue divisor = inst.binaryOperation.right;
-			u8 accepted = x64InstructionInfos[X64_DIV].acceptedOperandsLeft;
-			if (!FitsInOperand(context, accepted, divisor))
+			if (right.valueType == IRVALUETYPE_IMMEDIATE_INTEGER && IsPowerOf2(right.immediate))
 			{
-				ASSERT(accepted & ACCEPTEDOPERANDS_REGISTER);
-				IRValue newValue = IRValueNewValue(context, divisor.typeTableIdx,
-						VALUEFLAGS_FORCE_REGISTER);
-				X64Mov(context, x64Proc, newValue, divisor);
-				divisor = newValue;
-			}
-			result.type = X64_IDIV;
-			result.dst = divisor;
-			*BucketArrayAdd(&x64Proc->instructions) = result;
+				u32 immitateFlag = left.valueType == IRVALUETYPE_VALUE ? VALUEFLAGS_TRY_IMMITATE : 0;
+				IRValue tmp = IRValueNewValue(context, "_mulshfttmp"_s, left.typeTableIdx, immitateFlag,
+				left.valueIdx);
 
-			X64Mov(context, x64Proc, inst.binaryOperation.out, RAX);
+				X64Mov(context, x64Proc, tmp, left);
+				*BucketArrayAdd(&x64Proc->instructions) = { X64_SAR, tmp,
+						IRValueImmediate(63 - Nlz64(right.immediate)) };
+				X64Mov(context, x64Proc, out, tmp);
+			}
+			else
+			{
+				X64Mov(context, x64Proc, RAX, left);
+
+				*BucketArrayAdd(&x64Proc->instructions) = { X64_CQO };
+
+				IRValue divisor = right;
+				u8 accepted = x64InstructionInfos[X64_DIV].acceptedOperandsLeft;
+				if (!FitsInOperand(context, accepted, divisor))
+				{
+					ASSERT(accepted & ACCEPTEDOPERANDS_REGISTER);
+					IRValue newValue = IRValueNewValue(context, divisor.typeTableIdx,
+							VALUEFLAGS_FORCE_REGISTER);
+					X64Mov(context, x64Proc, newValue, divisor);
+					divisor = newValue;
+				}
+				result.type = X64_IDIV;
+				result.dst = divisor;
+				*BucketArrayAdd(&x64Proc->instructions) = result;
+
+				X64Mov(context, x64Proc, out, RAX);
+			}
 			return;
 		}
 		case X64FLOATINGTYPE_F32:
@@ -1020,24 +1070,42 @@ void X64ConvertInstruction(Context *context, IRInstruction inst, X64Procedure *x
 		}
 	case IRINSTRUCTIONTYPE_MODULO:
 	{
-		X64Mov(context, x64Proc, RAX, inst.binaryOperation.left);
-		*BucketArrayAdd(&x64Proc->instructions) = { X64_CQO };
+		IRValue left  = inst.binaryOperation.left;
+		IRValue right = inst.binaryOperation.right;
+		IRValue out   = inst.binaryOperation.out;
 
-		IRValue divisor = inst.binaryOperation.right;
-		u8 accepted = x64InstructionInfos[X64_DIV].acceptedOperandsLeft;
-		if (!FitsInOperand(context, accepted, divisor))
+		if (right.valueType == IRVALUETYPE_IMMEDIATE_INTEGER && IsPowerOf2(right.immediate))
 		{
-			ASSERT(accepted & ACCEPTEDOPERANDS_REGISTER);
-			IRValue newValue = IRValueNewValue(context, divisor.typeTableIdx,
-					VALUEFLAGS_FORCE_REGISTER);
-			X64Mov(context, x64Proc, newValue, divisor);
-			divisor = newValue;
-		}
-		result.type = X64_IDIV;
-		result.dst = divisor;
+			u32 immitateFlag = left.valueType == IRVALUETYPE_VALUE ? VALUEFLAGS_TRY_IMMITATE : 0;
+			IRValue tmp = IRValueNewValue(context, "_mulshfttmp"_s, left.typeTableIdx, immitateFlag,
+					left.valueIdx);
 
-		*BucketArrayAdd(&x64Proc->instructions) = result;
-		X64Mov(context, x64Proc, inst.binaryOperation.out, RDX);
+			X64Mov(context, x64Proc, tmp, left);
+			*BucketArrayAdd(&x64Proc->instructions) = { X64_AND, tmp,
+					IRValueImmediate(right.immediate - 1) };
+			X64Mov(context, x64Proc, out, tmp);
+		}
+		else
+		{
+			X64Mov(context, x64Proc, RAX, left);
+			*BucketArrayAdd(&x64Proc->instructions) = { X64_CQO };
+
+			IRValue divisor = right;
+			u8 accepted = x64InstructionInfos[X64_DIV].acceptedOperandsLeft;
+			if (!FitsInOperand(context, accepted, divisor))
+			{
+				ASSERT(accepted & ACCEPTEDOPERANDS_REGISTER);
+				IRValue newValue = IRValueNewValue(context, divisor.typeTableIdx,
+						VALUEFLAGS_FORCE_REGISTER);
+				X64Mov(context, x64Proc, newValue, divisor);
+				divisor = newValue;
+			}
+			result.type = X64_IDIV;
+			result.dst = divisor;
+
+			*BucketArrayAdd(&x64Proc->instructions) = result;
+			X64Mov(context, x64Proc, out, RDX);
+		}
 		return;
 	}
 	case IRINSTRUCTIONTYPE_SHIFT_LEFT:
@@ -1150,9 +1218,8 @@ void X64ConvertInstruction(Context *context, IRInstruction inst, X64Procedure *x
 		}
 		else
 		{
-			u32 valueIdx = inst.procedureCall.procPointerValueIdx;
 			result.type = X64_CALL_Indirect;
-			result.valueIdx = valueIdx;
+			result.procedureIRValue = inst.procedureCall.procIRValue;
 		}
 
 		// @Incomplete: implement calling conventions other than MS ABI
@@ -1664,7 +1731,7 @@ String X64InstructionToStr(Context *context, X64Instruction inst)
 	case X64_CALL:
 		return TPrintF("call %S", GetProcedure(context, inst.procedureIdx)->name);
 	case X64_CALL_Indirect:
-		String proc = X64IRValueToStr(context, IRValueValue(context, inst.valueIdx));
+		String proc = X64IRValueToStr(context, inst.procedureIRValue);
 		return TPrintF("call %S", proc);
 	case X64_Label:
 		return TPrintF("%S:", inst.label->name);
