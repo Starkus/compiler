@@ -1,9 +1,3 @@
-enum IRSpecialRegisters : s64
-{
-	IRSPECIALREGISTER_BEGIN = S64_MAX - 2,
-	IRSPECIALREGISTER_STACK_BASE = IRSPECIALREGISTER_BEGIN,
-};
-
 enum IRValueType
 {
 	IRVALUETYPE_INVALID = -1,
@@ -31,7 +25,6 @@ struct IRValue
 			u32 baseValueIdx;
 			s64 offset;
 		} memory;
-		s64 typeOfTypeTableIdx;
 	};
 	s64 typeTableIdx;
 };
@@ -94,22 +87,6 @@ struct IRAssignment
 	IRValue dst;
 };
 
-struct IRMemberAccess
-{
-	IRValue in;
-	IRValue out;
-
-	StructMember *structMember;
-};
-
-struct IRArrayAccess
-{
-	IRValue array;
-	IRValue index;
-	IRValue out;
-	s64 elementTypeTableIdx;
-};
-
 struct IRUnaryOperation
 {
 	IRValue in;
@@ -121,23 +98,6 @@ struct IRBinaryOperation
 	IRValue left;
 	IRValue right;
 	IRValue out;
-};
-
-struct IRGetParameter
-{
-	IRValue dst;
-	s64 parameterIdx;
-};
-
-struct IRGetTypeInfo
-{
-	IRValue out;
-	s64 typeTableIdx;
-};
-
-struct IRVariableDeclaration
-{
-	u32 valueIdx;
 };
 
 struct IRCopyMemory
@@ -232,12 +192,7 @@ struct IRInstruction
 		IRProcedureCall procedureCall;
 		IRIntrinsic intrinsic;
 		IRPushValue pushValue;
-		IRGetParameter getParameter;
-		IRGetTypeInfo getTypeInfo;
-		IRVariableDeclaration variableDeclaration;
 		IRAssignment assignment;
-		IRMemberAccess memberAccess;
-		IRArrayAccess arrayAccess;
 		IRUnaryOperation unaryOperation;
 		IRBinaryOperation binaryOperation;
 
@@ -554,6 +509,7 @@ IRValue IRDoMemberAccess(Context *context, IRValue structValue, StructMember str
 	return result;
 }
 
+void IRDoAssignment(Context *context, IRValue dstValue, IRValue srcValue);
 IRValue IRDoArrayAccess(Context *context, IRValue arrayValue, IRValue indexValue, s64 elementTypeIdx)
 {
 	TypeInfo arrayTypeInfo = context->typeTable[arrayValue.typeTableIdx];
@@ -586,11 +542,17 @@ IRValue IRDoArrayAccess(Context *context, IRValue arrayValue, IRValue indexValue
 		else
 		{
 			offsetValue = IRValueNewValue(context, "_array_offset"_s, TYPETABLEIDX_S64, 0);
-			IRInstruction multiplyInst = { IRINSTRUCTIONTYPE_MULTIPLY };
-			multiplyInst.binaryOperation.left  = indexValue;
-			multiplyInst.binaryOperation.right = IRValueImmediate(elementSize);
-			multiplyInst.binaryOperation.out   = offsetValue;
-			*AddInstruction(context) = multiplyInst;
+			if (elementSize == 1)
+				IRDoAssignment(context, offsetValue, indexValue);
+			else
+			{
+				offsetValue = IRValueNewValue(context, "_array_offset"_s, TYPETABLEIDX_S64, 0);
+				IRInstruction multiplyInst = { IRINSTRUCTIONTYPE_MULTIPLY };
+				multiplyInst.binaryOperation.left  = indexValue;
+				multiplyInst.binaryOperation.right = IRValueImmediate(elementSize);
+				multiplyInst.binaryOperation.out   = offsetValue;
+				*AddInstruction(context) = multiplyInst;
+			}
 		}
 
 		pointerToElementValue = IRValueNewValue(context, "_array_element"_s,
@@ -1070,6 +1032,40 @@ void IRConditionalJumpFromExpression(Context *context, ASTExpression *conditionE
 				conditionExp->binaryOperation.leftHand);
 		IRValue rightResult = IRGenFromExpression(context,
 				conditionExp->binaryOperation.rightHand);
+
+		if (leftResult.valueType == IRVALUETYPE_IMMEDIATE_INTEGER &&
+			rightResult.valueType == IRVALUETYPE_IMMEDIATE_INTEGER)
+		{
+			switch (conditionExp->binaryOperation.op)
+			{
+			case TOKEN_OP_EQUALS:
+				if (leftResult.immediate != rightResult.immediate)
+					goto insertSimpleJump;
+				else return;
+			case TOKEN_OP_NOT_EQUALS:
+				if (leftResult.immediate == rightResult.immediate)
+					goto insertSimpleJump;
+				else return;
+			case TOKEN_OP_GREATER_THAN:
+				if (leftResult.immediate <= rightResult.immediate)
+					goto insertSimpleJump;
+				else return;
+			case TOKEN_OP_LESS_THAN:
+				if (leftResult.immediate >= rightResult.immediate)
+					goto insertSimpleJump;
+				else return;
+			case TOKEN_OP_GREATER_THAN_OR_EQUAL:
+				if (leftResult.immediate < rightResult.immediate)
+					goto insertSimpleJump;
+				else return;
+			case TOKEN_OP_LESS_THAN_OR_EQUAL:
+				if (leftResult.immediate > rightResult.immediate)
+					goto insertSimpleJump;
+				else return;
+			}
+			ASSERT(false);
+		}
+
 		jump.conditionalJump2.label = label;
 		jump.conditionalJump2.left  = leftResult;
 		jump.conditionalJump2.right = rightResult;
@@ -1097,13 +1093,30 @@ void IRConditionalJumpFromExpression(Context *context, ASTExpression *conditionE
 	}
 
 defaultConditionEvaluation:
-	// Fallback path. Just save the condition to a bool, then evaluate that bool.
-	IRValue conditionResult = IRGenFromExpression(context, conditionExp);
+	{
+		// Fallback path. Just save the condition to a bool, then evaluate that bool.
+		IRValue conditionResult = IRGenFromExpression(context, conditionExp);
 
-	IRInstruction *jump = AddInstruction(context);
-	jump->type = IRINSTRUCTIONTYPE_JUMP_IF_ZERO;
-	jump->conditionalJump.label = label;
-	jump->conditionalJump.condition = conditionResult;
+		if (conditionResult.valueType == IRVALUETYPE_IMMEDIATE_INTEGER)
+		{
+			if (conditionResult.immediate == 0)
+				goto insertSimpleJump;
+			else return;
+		}
+
+		IRInstruction *jump = AddInstruction(context);
+		jump->type = IRINSTRUCTIONTYPE_JUMP_IF_ZERO;
+		jump->conditionalJump.label = label;
+		jump->conditionalJump.condition = conditionResult;
+		return;
+	}
+insertSimpleJump:
+	{
+		IRInstruction *jump = AddInstruction(context);
+		jump->type = IRINSTRUCTIONTYPE_JUMP;
+		jump->jump.label = label;
+		return;
+	}
 }
 
 IRValue IRDoInlineProcedureCall(Context *context, ASTProcedureCall astProcCall)
@@ -1186,17 +1199,18 @@ IRValue IRDoInlineProcedureCall(Context *context, ASTProcedureCall astProcCall)
 	// Varargs
 	if (isVarargs)
 	{
-		s64 varargsCount = astProcCall.arguments.size - procParamCount;
-		IRValue varargsParam = IRValueValue(context, procedure->parameterValues[procParamCount - 1]);
-		*DynamicArrayAdd(&tempProc->parameterValues) = varargsParam.valueIdx;
-
 		static s64 anyPointerTypeIdx = GetTypeInfoPointerOf(context, TYPETABLEIDX_ANY_STRUCT);
-		static s64 arrayOfAnyTableIdx = GetTypeInfoArrayOf(context, TYPETABLEIDX_ANY_STRUCT, 0);
+		static s64 arrayOfAnyTypeIdx = GetTypeInfoArrayOf(context, TYPETABLEIDX_ANY_STRUCT, 0);
+		static s64 pointerToVarargsTypeIdx = GetTypeInfoPointerOf(context, arrayOfAnyTypeIdx);
+
+		s64 varargsCount = astProcCall.arguments.size - procParamCount;
+		IRValue varargsParam = IRValueNewValue(context, "_inline_varargsarr"_s, pointerToVarargsTypeIdx, 0);
+		*DynamicArrayAdd(&tempProc->parameterValues) = varargsParam.valueIdx;
 
 		if (varargsCount == 1)
 		{
 			ASTExpression *varargsArrayExp = &astProcCall.arguments[procParamCount];
-			if (varargsArrayExp->typeTableIdx == arrayOfAnyTableIdx)
+			if (varargsArrayExp->typeTableIdx == arrayOfAnyTypeIdx)
 			{
 				IRValue varargsArray = IRGenFromExpression(context, varargsArrayExp);
 				IRDoAssignment(context, varargsParam, varargsArray);
@@ -1237,7 +1251,7 @@ IRValue IRDoInlineProcedureCall(Context *context, ASTProcedureCall astProcCall)
 		// Now we put it into a dynamic array struct.
 
 		// Allocate stack space for array
-		u32 arrayValueIdx = IRAddTempValue(context, "_varargsArray"_s, arrayOfAnyTableIdx,
+		u32 arrayValueIdx = IRAddTempValue(context, "_varargsArray"_s, arrayOfAnyTypeIdx,
 				VALUEFLAGS_FORCE_MEMORY);
 		IRValue arrayIRValue = IRValueValue(context, arrayValueIdx);
 
@@ -1796,11 +1810,6 @@ IRValue IRGenFromExpression(Context *context, ASTExpression *expression)
 				IRValue tempVarIRValue = IRValueValue(context, tempValueIdx);
 
 				IRValue argValue = IRGenFromExpression(context, arg);
-				// If argValue comes from an argument too, it was passed by pointer and is actually
-				// a pointer, through the type system doesn't know!
-				// @Todo: VALUEFLAGS_PARAMETER_BY_COPY should be better here!
-				if (context->typeTable[argValue.typeTableIdx].typeCategory == TYPECATEGORY_POINTER)
-					argValue = IRDereferenceValue(context, argValue);
 
 				// Copy
 				IRDoAssignment(context, tempVarIRValue, argValue);

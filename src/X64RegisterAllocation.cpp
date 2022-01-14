@@ -1,5 +1,5 @@
-const u64 calleeSaveRegisters = 0b001111100000111100000110;
-const u64 callerSaveRegisters = 0b110000001111000011111000;
+const u64 calleeSaveRegisters = 0b00000000001111100000111100000110;
+const u64 callerSaveRegisters = 0b11111111110000001111000011111000;
 /* For reference
 IRValue x64Registers[X64REGISTER_Count] = {
 	RAX,	RCX,	RDX,	RBX,
@@ -8,7 +8,11 @@ IRValue x64Registers[X64REGISTER_Count] = {
 	R12,	R13,	R14,	R15,
 	XMM0,	XMM1,	XMM2,	XMM3,
 	XMM4,	XMM5,	XMM6,	XMM7
+	XMM8,	XMM9,	XMM10,	XMM11,
+	XMM12,	XMM13,	XMM14,	XMM15
 };*/
+
+Array<u64, PhaseAllocator> valueIsXmmBits;
 
 struct BasicBlock
 {
@@ -22,13 +26,6 @@ struct BasicBlock
 	// @Todo: bitmaps
 	DynamicArray<u32, PhaseAllocator> liveValuesAtInput;
 	DynamicArray<u32, PhaseAllocator> liveValuesAtOutput;
-};
-
-struct InterferenceGraphNode
-{
-	u32 valueIdx;
-	DynamicArray<u32, PhaseAllocator> edges; // @Improve: eugh
-	bool removed;
 };
 
 void X64Patch(Context *context, X64Instruction *original, X64Instruction newInst)
@@ -232,6 +229,7 @@ void DoLivenessAnalisisOnInstruction(Context *context, BasicBlock *basicBlock, X
 	case X64_DIVSD:
 	// dst read, src read
 	case X64_CMP:
+	case X64_TEST:
 	case X64_COMISS:
 	case X64_COMISD:
 	{
@@ -373,41 +371,91 @@ void DoLivenessAnalisisOnInstruction(Context *context, BasicBlock *basicBlock, X
 	}
 
 	// Add edges to graph
-	for (int i = 0; i < liveValues->size; ++i)
+	u64 liveValuesCount = liveValues->size;
+	for (int liveValueIdx = 0; liveValueIdx < liveValuesCount; ++liveValueIdx)
 	{
-		u32 valueIdx = (*liveValues)[i];
+		u32 valueIdx = (*liveValues)[liveValueIdx];
 
-		InterferenceGraphNode *node = nullptr;
-		for (int nodeIdx = 0; nodeIdx < context->beInterferenceGraph.size; ++nodeIdx)
+		u32 nodeIdx;
+
+		// Find a node in the graph with this value, or create it if there isn't one
 		{
-			InterferenceGraphNode *currentNode = &context->beInterferenceGraph[nodeIdx];
-			if (currentNode->valueIdx == valueIdx)
+			__m256i src = _mm256_set1_epi32(valueIdx);
+			u32 currentIdx = 0;
+			u32 count = context->beInterferenceGraph.count;
+			u32 *buffer = context->beInterferenceGraph.valueIndices;
+			while (currentIdx + 8 <= count)
 			{
-				node = currentNode;
-				goto nodeFound;
+				__m256i res = _mm256_cmpeq_epi32(src, *(__m256i *)&buffer[currentIdx]);
+				u32 mask = _mm256_movemask_ps(_mm256_castsi256_ps(res));
+				if (mask)
+				{
+					nodeIdx = 31 - Nlz(mask) + currentIdx;
+					goto nodeFound;
+				}
+				currentIdx += 8;
+			}
+			while (currentIdx < count)
+			{
+				if (buffer[currentIdx] == valueIdx)
+				{
+					nodeIdx = currentIdx;
+					goto nodeFound;
+				}
+				++currentIdx;
 			}
 		}
-		node = DynamicArrayAdd(&context->beInterferenceGraph);
-		*node = {};
-		node->valueIdx = valueIdx;
-		DynamicArrayInit(&node->edges, 8);
-nodeFound:
-		ASSERT(node);
-		Value value = context->values[valueIdx];
-		TypeInfo typeInfo = context->typeTable[value.typeTableIdx];
-		bool isXMM = typeInfo.size > 8 || typeInfo.typeCategory == TYPECATEGORY_FLOATING;
-		for (int j = 0; j < liveValues->size; ++j)
+
+		// No node found, create one
+		nodeIdx = context->beInterferenceGraph.count++;
+		if (nodeIdx >= context->beInterferenceGraph.capacity)
 		{
-			if (i == j) continue;
+			context->beInterferenceGraph.capacity *= 2;
+			context->beInterferenceGraph.valueIndices = (u32 *)
+					PhaseAllocator::Realloc(context->beInterferenceGraph.valueIndices,
+					sizeof(context->beInterferenceGraph.valueIndices[0]) *
+					context->beInterferenceGraph.capacity);
+			context->beInterferenceGraph.removed = (u8 *)
+					PhaseAllocator::Realloc(context->beInterferenceGraph.removed,
+					sizeof(context->beInterferenceGraph.removed[0]) *
+					context->beInterferenceGraph.capacity);
+			context->beInterferenceGraph.edges = (DynamicArray<u32, PhaseAllocator> *)
+					PhaseAllocator::Realloc(context->beInterferenceGraph.edges,
+					sizeof(context->beInterferenceGraph.edges[0]) *
+					context->beInterferenceGraph.capacity);
+		}
+		context->beInterferenceGraph.valueIndices[nodeIdx] = valueIdx;
+		context->beInterferenceGraph.removed[nodeIdx]      = false;
+		DynamicArrayInit(&context->beInterferenceGraph.edges[nodeIdx], 8);
+nodeFound:
+		DynamicArray<u32, PhaseAllocator> *edges = &context->beInterferenceGraph.edges[nodeIdx];
+		bool isXMM = valueIsXmmBits[valueIdx >> 6] & ((u64)1 << (valueIdx & 63));
+		for (int j = 0; j < liveValuesCount; ++j)
+		{
+			if (liveValueIdx == j) continue;
 			u32 edgeValueIdx = (*liveValues)[j];
-			Value edgeValue = context->values[edgeValueIdx];
-			TypeInfo edgeTypeInfo = context->typeTable[edgeValue.typeTableIdx];
-			bool edgeIsXMM = edgeTypeInfo.size > 8 ||
-				edgeTypeInfo.typeCategory == TYPECATEGORY_FLOATING;
+			bool edgeIsXMM = valueIsXmmBits[edgeValueIdx >> 6] & ((u64)1 << (edgeValueIdx & 63));
 			// Add only other values that compete for the same pool of registers.
 			// Floating point values use a different set of registers (xmmX).
 			if (isXMM == edgeIsXMM)
-				*DynamicArrayAdd(&node->edges) = edgeValueIdx;
+			{
+				__m256i src = _mm256_set1_epi32(edgeValueIdx);
+				u32 *scan = edges->data;
+				u32 *end  = scan + edges->size;
+				while (scan + 8 <= end)
+				{
+					__m256i res = _mm256_cmpeq_epi32(src, *(__m256i *)scan);
+					if (!_mm256_testz_si256(res, res))
+						goto alreadyExists;
+					scan += 8;
+				}
+				while (scan < end)
+					if (*scan++ == edgeValueIdx)
+						goto alreadyExists;
+				*DynamicArrayAdd(edges) = edgeValueIdx;
+alreadyExists:
+				continue;
+			}
 		}
 
 		// No live values that cross a procedure call can be stored in RAX/XMM0.
@@ -415,8 +463,8 @@ nodeFound:
 		// all the currently live values.
 		if (inst->type == X64_CALL || inst->type == X64_CALL_Indirect)
 		{
-			*DynamicArrayAdd(&node->edges) = RAX.valueIdx;
-			*DynamicArrayAdd(&node->edges) = XMM0.valueIdx;
+			DynamicArrayAddUnique(edges, RAX.valueIdx);
+			DynamicArrayAddUnique(edges, XMM0.valueIdx);
 		}
 	}
 }
@@ -718,6 +766,7 @@ inline u64 RegisterSavingInstruction(Context *context, X64Instruction *inst, u64
 	case X64_SQRTSS:
 	case X64_SQRTSD:
 	case X64_CMP:
+	case X64_TEST:
 	case X64_COMISS:
 	case X64_COMISD:
 	case X64_MOVUPS:
@@ -786,12 +835,44 @@ void X64AllocateRegisters(Context *context, Array<X64Procedure, PhaseAllocator> 
 {
 	BucketArrayInit(&context->beBasicBlocks);
 	DynamicArrayInit(&context->beLeafBasicBlocks, 128);
-	DynamicArrayInit(&context->beInterferenceGraph, 128);
+
+	context->beInterferenceGraph = {};
+	context->beInterferenceGraph.capacity = 128;
+	context->beInterferenceGraph.valueIndices = (u32 *)
+		PhaseAllocator::Alloc(sizeof(InterferenceGraph::valueIndices[0]) * 128);
+	context->beInterferenceGraph.removed = (u8 *)
+		PhaseAllocator::Alloc(sizeof(InterferenceGraph::removed[0]) * 128);
+	context->beInterferenceGraph.edges = (DynamicArray<u32, PhaseAllocator> *)
+		PhaseAllocator::Alloc(sizeof(InterferenceGraph::edges[0]) * 128);
+
+	// Cache what values are to be stored in XMM registers
+	// The main reasoning behind this is to avoid so many queries into cold type table data just to
+	// see if each value is an xmm register or not.
+	{
+		u64 valueCount = BucketArrayCount(&context->values);
+		u64 qwordCount = valueCount >> 6;
+		if (valueCount & 63) ++qwordCount;
+		ArrayInit(&valueIsXmmBits, qwordCount);
+		memset(valueIsXmmBits.data, 0, qwordCount * 8);
+		valueIsXmmBits.size = qwordCount;
+
+		for (int valueIdx = 0; valueIdx < valueCount; ++valueIdx)
+		{
+			s64 typeTableIdx = context->values[valueIdx].typeTableIdx;
+			if (typeTableIdx >= 0)
+			{
+				TypeInfo typeInfo = context->typeTable[typeTableIdx];
+				bool isXMM = typeInfo.size > 8 || typeInfo.typeCategory == TYPECATEGORY_FLOATING;
+				if (isXMM)
+					valueIsXmmBits[valueIdx >> 6] |= ((u64)1 << (valueIdx & 63));
+			}
+		}
+	}
 
 	GenerateBasicBlocks(context, x64Procedures);
 
 	int availableRegisters = sizeof(x64ScratchRegisters) / sizeof(x64ScratchRegisters[0]);
-	int availableRegistersFP = 8;
+	int availableRegistersFP = 16;
 
 	// Do liveness analisis, starting from all leaf blocks
 	for (int leafIdx = 0; leafIdx < context->beLeafBasicBlocks.size; ++leafIdx)
@@ -800,143 +881,126 @@ void X64AllocateRegisters(Context *context, Array<X64Procedure, PhaseAllocator> 
 
 		String procName = currentLeafBlock->procedure->name;
 
-		context->beInterferenceGraph.size = 0;
+		context->beInterferenceGraph.count = 0;
 
 		// @Todo: iterative instead of recursive?
 		DynamicArray<u32, PhaseAllocator> liveValues;
 		DynamicArrayInit(&liveValues, 32);
 		DoLivenessAnalisis(context, currentLeafBlock, &liveValues);
 
-		for (int nodeIdx = 0; nodeIdx < context->beInterferenceGraph.size; ++nodeIdx)
-		{
-			InterferenceGraphNode *currentNode = &context->beInterferenceGraph[nodeIdx];
-			// Remove duplicates
-			for (int edgeIdx = 0; edgeIdx < currentNode->edges.size; ++edgeIdx)
-			{
-				for (int anotherEdgeIdx = edgeIdx + 1; anotherEdgeIdx < currentNode->edges.size; )
-				{
-					if (currentNode->edges[edgeIdx] == currentNode->edges[anotherEdgeIdx])
-						currentNode->edges[anotherEdgeIdx] = currentNode->edges[--currentNode->edges.size];
-					else
-						++anotherEdgeIdx;
-				}
-			}
+		InterferenceGraph interferenceGraph = context->beInterferenceGraph;
 
-			if (context->config.logAllocationInfo)
+		if (context->config.logAllocationInfo)
+		{
+			for (u32 nodeIdx = 0; nodeIdx < interferenceGraph.count; ++nodeIdx)
 			{
-				Print("Value %S coexists with: ", X64IRValueToStr(context, IRValueValue(context, currentNode->valueIdx)));
-				for (int i = 0; i < currentNode->edges.size; ++i)
-					Print("%S, ", X64IRValueToStr(context, IRValueValue(context, currentNode->edges[i])));
+				u32 currentNodeValueIdx = interferenceGraph.valueIndices[nodeIdx];
+				DynamicArray<u32, PhaseAllocator> currentNodeEdges = interferenceGraph.edges[nodeIdx];
+				Print("Value %S coexists with: ", X64IRValueToStr(context,
+							IRValueValue(context, currentNodeValueIdx)));
+				for (int i = 0; i < currentNodeEdges.size; ++i)
+					Print("%S, ", X64IRValueToStr(context, IRValueValue(context, currentNodeEdges[i])));
 				Print("\n");
 			}
 		}
 
-		Array<InterferenceGraphNode *, PhaseAllocator> nodeStack;
-		ArrayInit(&nodeStack, context->beInterferenceGraph.size);
+		Array<u32, PhaseAllocator> nodeStack;
+		ArrayInit(&nodeStack, interferenceGraph.count);
 
 		// Allocate values to registers when possible
-		while (nodeStack.size < context->beInterferenceGraph.size)
+		while (nodeStack.size < interferenceGraph.count)
 		{
-			InterferenceGraphNode *nodeToRemove = nullptr;
-			int nodeToRemoveIdx = -1;
+			u32 nodeToRemoveIdx = U32_MAX;
 
-			// Leave values that want to immitate others at the bottom
-			for (int nodeIdx = 0; nodeIdx < context->beInterferenceGraph.size; ++nodeIdx)
+			for (u32 nodeIdx = 0; nodeIdx < interferenceGraph.count; ++nodeIdx)
 			{
-				InterferenceGraphNode *currentNode = &context->beInterferenceGraph[nodeIdx];
-				if (currentNode->removed)
+				if (interferenceGraph.removed[nodeIdx])
 					continue;
-				Value v = context->values[currentNode->valueIdx];
-				if (v.flags & VALUEFLAGS_TRY_IMMITATE)
+				// Leave values that want to immitate others at the bottom
+				u32 vFlags = context->values[interferenceGraph.valueIndices[nodeIdx]].flags;
+				if (vFlags & VALUEFLAGS_TRY_IMMITATE)
 				{
-					nodeToRemove = currentNode;
 					nodeToRemoveIdx = nodeIdx;
-					break;
+					goto gotNodeToRemove;
 				}
 			}
 
-			if (!nodeToRemove)
+			// Remove nodes that have a number of edges that fit in the available registers
+			for (u32 nodeIdx = 0; nodeIdx < interferenceGraph.count; ++nodeIdx)
 			{
-				for (int nodeIdx = 0; nodeIdx < context->beInterferenceGraph.size; ++nodeIdx)
-				{
-					InterferenceGraphNode *currentNode = &context->beInterferenceGraph[nodeIdx];
-					if (currentNode->removed)
-						continue;
-					Value v = context->values[currentNode->valueIdx];
-					if (currentNode->edges.size < availableRegisters)
-					{
-						nodeToRemove = currentNode;
-						nodeToRemoveIdx = nodeIdx;
-						break;
-					}
-				}
-			}
-
-			// Fallback node might be flagged as no-spill. When adding back nodes, we might get
-			// lucky and not spill it.
-			InterferenceGraphNode *fallbackNode = nullptr;
-			if (!nodeToRemove)
-			{
-				// Choose a register to spill onto the stack.
-				// This heuristic is very arbitrary and sub-optimal.
-				s64 mostEdges = -1;
-				for (int nodeIdx = 0; nodeIdx < context->beInterferenceGraph.size; ++nodeIdx)
-				{
-					InterferenceGraphNode *currentNode = &context->beInterferenceGraph[nodeIdx];
-
-					if (currentNode->removed)
-						continue;
-					fallbackNode = currentNode;
-
-					Value v = context->values[currentNode->valueIdx];
-					if (v.flags & VALUEFLAGS_FORCE_REGISTER)
-						continue;
-
-					if ((s64)currentNode->edges.size > mostEdges)
-					{
-						nodeToRemove = currentNode;
-						nodeToRemoveIdx = nodeIdx;
-						mostEdges = currentNode->edges.size;
-					}
-					else if ((s64)currentNode->edges.size == mostEdges)
-					{
-						if (currentNode->valueIdx < nodeToRemove->valueIdx)
-						{
-							nodeToRemove = currentNode;
-							nodeToRemoveIdx = nodeIdx;
-						}
-					}
-				}
-			}
-
-			if (!nodeToRemove) nodeToRemove = fallbackNode;
-			ASSERT(nodeToRemove);
-
-			for (int nodeIdx = 0; nodeIdx < context->beInterferenceGraph.size; ++nodeIdx)
-			{
-				InterferenceGraphNode *currentNode = &context->beInterferenceGraph[nodeIdx];
-				if (currentNode->removed)
+				if (interferenceGraph.removed[nodeIdx])
 					continue;
-				for (int i = 0; i < currentNode->edges.size; ++i)
+				if (interferenceGraph.edges[nodeIdx].size < availableRegisters)
 				{
-					Value v = context->values[nodeToRemove->valueIdx];
-					if (!(v.flags & VALUEFLAGS_IS_ALLOCATED) &&
-						currentNode->edges[i] == nodeToRemove->valueIdx)
+					nodeToRemoveIdx = nodeIdx;
+					goto gotNodeToRemove;
+				}
+			}
+
+			// Here we pick one that we're probably going to spill. Choose the one with most edges.
+			s64 mostEdges = -1;
+			for (u32 nodeIdx = 0; nodeIdx < interferenceGraph.count; ++nodeIdx)
+			{
+				if (interferenceGraph.removed[nodeIdx])
+					continue;
+
+				u32 valueIdx = interferenceGraph.valueIndices[nodeIdx];
+				u32 vFlags = context->values[valueIdx].flags;
+				if (vFlags & VALUEFLAGS_FORCE_REGISTER)
+					continue;
+
+				s64 edgeCount = interferenceGraph.edges[nodeIdx].size;
+				if (edgeCount > mostEdges)
+				{
+					nodeToRemoveIdx = nodeIdx;
+					mostEdges = edgeCount;
+				}
+			}
+			if (mostEdges >= 0)
+				goto gotNodeToRemove;
+
+			// Pick a fallback node that might be flagged as no-spill. When adding back nodes, we
+			// might get lucky and not spill it.
+			for (u32 nodeIdx = 0; nodeIdx < interferenceGraph.count; ++nodeIdx)
+			{
+				if (interferenceGraph.removed[nodeIdx])
+					continue;
+
+				nodeToRemoveIdx = nodeIdx;
+			}
+gotNodeToRemove:
+
+			u32 nodeCount = interferenceGraph.count;
+			for (u32 nodeIdx = 0; nodeIdx < nodeCount; ++nodeIdx)
+			{
+				if (interferenceGraph.removed[nodeIdx])
+					continue;
+
+				DynamicArray<u32, PhaseAllocator> edges = interferenceGraph.edges[nodeIdx];
+				for (int i = 0; i < edges.size; ++i)
+				{
+					u32 valueIdx = interferenceGraph.valueIndices[nodeToRemoveIdx];
+					if (valueIdx < RAX.valueIdx && edges[i] == valueIdx)
 					{
+						// The only allocated things thus far should be physical register values
+						ASSERT(!(context->values[valueIdx].flags & VALUEFLAGS_IS_ALLOCATED));
 						// Remove from node edges
-						currentNode->edges[i] = currentNode->edges[--currentNode->edges.size];
+						edges[i] = edges[--edges.size];
 						break;
 					}
 				}
+				interferenceGraph.edges[nodeIdx] = edges;
 			}
-			nodeToRemove->removed = true;
-			*ArrayAdd(&nodeStack) = nodeToRemove;
+			interferenceGraph.removed[nodeToRemoveIdx] = true;
+			*ArrayAdd(&nodeStack) = nodeToRemoveIdx;
 		}
 
 		for (int nodeIdx = (int)nodeStack.size - 1; nodeIdx >= 0; --nodeIdx)
 		{
-			InterferenceGraphNode *currentNode = nodeStack[nodeIdx];
-			Value *v = &context->values[currentNode->valueIdx];
+			u32 currentNodeIdx = nodeStack[nodeIdx];
+			u32 valueIdx = interferenceGraph.valueIndices[currentNodeIdx];
+			Value *v = &context->values[valueIdx];
+			DynamicArray<u32, PhaseAllocator> edges = interferenceGraph.edges[currentNodeIdx];
 
 			// We don't allocate static values, the assembler/linker does.
 			ASSERT(!(v->flags & VALUEFLAGS_ON_STATIC_STORAGE));
@@ -945,8 +1009,7 @@ void X64AllocateRegisters(Context *context, Array<X64Procedure, PhaseAllocator> 
 			if (v->flags & VALUEFLAGS_IS_ALLOCATED)
 				continue;
 
-			TypeInfo typeInfo = context->typeTable[v->typeTableIdx];
-			bool isXMM = typeInfo.size > 8 || typeInfo.typeCategory == TYPECATEGORY_FLOATING;
+			bool isXMM = valueIsXmmBits[valueIdx >> 6] & ((u64)1 << (valueIdx & 63));
 
 			if (v->flags & VALUEFLAGS_TRY_IMMITATE)
 			{
@@ -970,9 +1033,9 @@ void X64AllocateRegisters(Context *context, Array<X64Procedure, PhaseAllocator> 
 					// Check the candidate is not used on any edge, and that the value we're trying
 					// to copy doesn't coexist with this one.
 					s32 candidate = immitateValue.allocatedRegister;
-					for (int edgeIdx = 0; edgeIdx < currentNode->edges.size; ++edgeIdx)
+					for (int edgeIdx = 0; edgeIdx < edges.size; ++edgeIdx)
 					{
-						u32 edgeValueIdx = currentNode->edges[edgeIdx];
+						u32 edgeValueIdx = edges[edgeIdx];
 						if (edgeValueIdx == immitateValueIdx)
 							goto skipImmitate;
 						Value edgeValue = context->values[edgeValueIdx];
@@ -998,9 +1061,9 @@ skipImmitate:
 			for (int candidateIdx = 0; candidateIdx < max; ++candidateIdx)
 			{
 				s32 candidate = isXMM ? XMM0_idx + candidateIdx : x64ScratchRegisters[candidateIdx];
-				for (int edgeIdx = 0; edgeIdx < currentNode->edges.size; ++edgeIdx)
+				for (int edgeIdx = 0; edgeIdx < edges.size; ++edgeIdx)
 				{
-					u32 edgeValueIdx = currentNode->edges[edgeIdx];
+					u32 edgeValueIdx = edges[edgeIdx];
 					Value edgeValue = context->values[edgeValueIdx];
 					if (!(edgeValue.flags & VALUEFLAGS_IS_ALLOCATED) ||
 						  edgeValue.flags & VALUEFLAGS_IS_MEMORY)
@@ -1021,8 +1084,7 @@ skipImmitate:
 					continue; // @Check: what?? we can't just not allocate this value?
 
 				// Spill!
-				*DynamicArrayAdd(&currentLeafBlock->procedure->spilledValues) =
-					currentNode->valueIdx;
+				*DynamicArrayAdd(&currentLeafBlock->procedure->spilledValues) = valueIdx;
 			}
 		}
 	}

@@ -45,6 +45,7 @@ enum X64InstructionType
 	X64_RET,
 	X64_LEA,
 	X64_CMP,
+	X64_TEST,
 	X64_SETG,
 	X64_SETL,
 	X64_SETGE,
@@ -198,6 +199,14 @@ enum X64Register
 	XMM5_idx,
 	XMM6_idx,
 	XMM7_idx,
+	XMM8_idx,
+	XMM9_idx,
+	XMM10_idx,
+	XMM11_idx,
+	XMM12_idx,
+	XMM13_idx,
+	XMM14_idx,
+	XMM15_idx,
 	X64REGISTER_Count
 };
 
@@ -286,6 +295,14 @@ IRValue XMM4;
 IRValue XMM5;
 IRValue XMM6;
 IRValue XMM7;
+IRValue XMM8;
+IRValue XMM9;
+IRValue XMM10;
+IRValue XMM11;
+IRValue XMM12;
+IRValue XMM13;
+IRValue XMM14;
+IRValue XMM15;
 
 IRValue x64Registers[X64REGISTER_Count] = {
 	RAX,	RCX,	RDX,	RBX,
@@ -293,7 +310,9 @@ IRValue x64Registers[X64REGISTER_Count] = {
 	R8,		R9,		R10,	R11,
 	R12,	R13,	R14,	R15,
 	XMM0,	XMM1,	XMM2,	XMM3,
-	XMM4,	XMM5,	XMM6,	XMM7
+	XMM4,	XMM5,	XMM6,	XMM7,
+	XMM8,	XMM9,	XMM10,	XMM11,
+	XMM12,	XMM13,	XMM14,	XMM15
 };
 
 X64InstructionStream X64InstructionStreamBegin(X64Procedure *proc)
@@ -607,14 +626,22 @@ String X64IRValueToStr(Context *context, IRValue value)
 		}
 		else switch (v.allocatedRegister)
 		{
-		case XMM0_idx: result = "xmm0"_s; break;
-		case XMM1_idx: result = "xmm1"_s; break;
-		case XMM2_idx: result = "xmm2"_s; break;
-		case XMM3_idx: result = "xmm3"_s; break;
-		case XMM4_idx: result = "xmm4"_s; break;
-		case XMM5_idx: result = "xmm5"_s; break;
-		case XMM6_idx: result = "xmm6"_s; break;
-		case XMM7_idx: result = "xmm7"_s; break;
+		case XMM0_idx:  result = "xmm0"_s;  break;
+		case XMM1_idx:  result = "xmm1"_s;  break;
+		case XMM2_idx:  result = "xmm2"_s;  break;
+		case XMM3_idx:  result = "xmm3"_s;  break;
+		case XMM4_idx:  result = "xmm4"_s;  break;
+		case XMM5_idx:  result = "xmm5"_s;  break;
+		case XMM6_idx:  result = "xmm6"_s;  break;
+		case XMM7_idx:  result = "xmm7"_s;  break;
+		case XMM8_idx:  result = "xmm8"_s;  break;
+		case XMM9_idx:  result = "xmm9"_s;  break;
+		case XMM10_idx: result = "xmm10"_s; break;
+		case XMM11_idx: result = "xmm11"_s; break;
+		case XMM12_idx: result = "xmm12"_s; break;
+		case XMM13_idx: result = "xmm13"_s; break;
+		case XMM14_idx: result = "xmm14"_s; break;
+		case XMM15_idx: result = "xmm15"_s; break;
 		default:
 			ASSERT(!"Value assigned invalid register!");
 		}
@@ -1665,6 +1692,7 @@ String X64InstructionToStr(Context *context, X64Instruction inst)
 	case X64_SAL:
 	case X64_SAR:
 	case X64_CMP:
+	case X64_TEST:
 	case X64_IMUL:
 	case X64_AND:
 	case X64_OR:
@@ -2002,6 +2030,7 @@ void BackendMain(Context *context)
 	x64InstructionInfos[X64_RET] =       { "ret"_s,       ACCEPTEDOPERANDS_NONE,     ACCEPTEDOPERANDS_NONE };
 	x64InstructionInfos[X64_LEA] =       { "lea"_s,       ACCEPTEDOPERANDS_REGISTER, ACCEPTEDOPERANDS_MEMORY };
 	x64InstructionInfos[X64_CMP] =       { "cmp"_s,       ACCEPTEDOPERANDS_REGMEM,   ACCEPTEDOPERANDS_ALL };
+	x64InstructionInfos[X64_TEST] =      { "test"_s,      ACCEPTEDOPERANDS_REGMEM,   ACCEPTEDOPERANDS_ALL };
 	x64InstructionInfos[X64_SETG] =      { "setg"_s,      ACCEPTEDOPERANDS_REGMEM,   ACCEPTEDOPERANDS_NONE };
 	x64InstructionInfos[X64_SETL] =      { "setl"_s,      ACCEPTEDOPERANDS_REGMEM,   ACCEPTEDOPERANDS_NONE };
 	x64InstructionInfos[X64_SETGE] =     { "setge"_s,     ACCEPTEDOPERANDS_REGMEM,   ACCEPTEDOPERANDS_NONE };
@@ -2068,14 +2097,22 @@ void BackendMain(Context *context)
 	u32 R14_valueIdx = NewValue(context, "R14"_s, TYPETABLEIDX_S64, regValueFlags);
 	u32 R15_valueIdx = NewValue(context, "R15"_s, TYPETABLEIDX_S64, regValueFlags);
 
-	u32 XMM0_valueIdx = NewValue(context, "XMM0"_s, TYPETABLEIDX_F64, regValueFlags);
-	u32 XMM1_valueIdx = NewValue(context, "XMM1"_s, TYPETABLEIDX_F64, regValueFlags);
-	u32 XMM2_valueIdx = NewValue(context, "XMM2"_s, TYPETABLEIDX_F64, regValueFlags);
-	u32 XMM3_valueIdx = NewValue(context, "XMM3"_s, TYPETABLEIDX_F64, regValueFlags);
-	u32 XMM4_valueIdx = NewValue(context, "XMM4"_s, TYPETABLEIDX_F64, regValueFlags);
-	u32 XMM5_valueIdx = NewValue(context, "XMM5"_s, TYPETABLEIDX_F64, regValueFlags);
-	u32 XMM6_valueIdx = NewValue(context, "XMM6"_s, TYPETABLEIDX_F64, regValueFlags);
-	u32 XMM7_valueIdx = NewValue(context, "XMM7"_s, TYPETABLEIDX_F64, regValueFlags);
+	u32 XMM0_valueIdx =  NewValue(context, "XMM0"_s,  TYPETABLEIDX_F64, regValueFlags);
+	u32 XMM1_valueIdx =  NewValue(context, "XMM1"_s,  TYPETABLEIDX_F64, regValueFlags);
+	u32 XMM2_valueIdx =  NewValue(context, "XMM2"_s,  TYPETABLEIDX_F64, regValueFlags);
+	u32 XMM3_valueIdx =  NewValue(context, "XMM3"_s,  TYPETABLEIDX_F64, regValueFlags);
+	u32 XMM4_valueIdx =  NewValue(context, "XMM4"_s,  TYPETABLEIDX_F64, regValueFlags);
+	u32 XMM5_valueIdx =  NewValue(context, "XMM5"_s,  TYPETABLEIDX_F64, regValueFlags);
+	u32 XMM6_valueIdx =  NewValue(context, "XMM6"_s,  TYPETABLEIDX_F64, regValueFlags);
+	u32 XMM7_valueIdx =  NewValue(context, "XMM7"_s,  TYPETABLEIDX_F64, regValueFlags);
+	u32 XMM8_valueIdx =  NewValue(context, "XMM8"_s,  TYPETABLEIDX_F64, regValueFlags);
+	u32 XMM9_valueIdx =  NewValue(context, "XMM9"_s,  TYPETABLEIDX_F64, regValueFlags);
+	u32 XMM10_valueIdx = NewValue(context, "XMM10"_s, TYPETABLEIDX_F64, regValueFlags);
+	u32 XMM11_valueIdx = NewValue(context, "XMM11"_s, TYPETABLEIDX_F64, regValueFlags);
+	u32 XMM12_valueIdx = NewValue(context, "XMM12"_s, TYPETABLEIDX_F64, regValueFlags);
+	u32 XMM13_valueIdx = NewValue(context, "XMM13"_s, TYPETABLEIDX_F64, regValueFlags);
+	u32 XMM14_valueIdx = NewValue(context, "XMM14"_s, TYPETABLEIDX_F64, regValueFlags);
+	u32 XMM15_valueIdx = NewValue(context, "XMM15"_s, TYPETABLEIDX_F64, regValueFlags);
 
 	for (int i = 0; i < X64REGISTER_Count; ++i)
 		context->values[RAX_valueIdx + i].allocatedRegister = i;
@@ -2148,14 +2185,22 @@ void BackendMain(Context *context)
 	R14B = { IRVALUETYPE_VALUE, R14_valueIdx, TYPETABLEIDX_S8 };
 	R15B = { IRVALUETYPE_VALUE, R15_valueIdx, TYPETABLEIDX_S8 };
 
-	XMM0 = { IRVALUETYPE_VALUE, XMM0_valueIdx, TYPETABLEIDX_F64 };
-	XMM1 = { IRVALUETYPE_VALUE, XMM1_valueIdx, TYPETABLEIDX_F64 };
-	XMM2 = { IRVALUETYPE_VALUE, XMM2_valueIdx, TYPETABLEIDX_F64 };
-	XMM3 = { IRVALUETYPE_VALUE, XMM3_valueIdx, TYPETABLEIDX_F64 };
-	XMM4 = { IRVALUETYPE_VALUE, XMM4_valueIdx, TYPETABLEIDX_F64 };
-	XMM5 = { IRVALUETYPE_VALUE, XMM5_valueIdx, TYPETABLEIDX_F64 };
-	XMM6 = { IRVALUETYPE_VALUE, XMM6_valueIdx, TYPETABLEIDX_F64 };
-	XMM7 = { IRVALUETYPE_VALUE, XMM7_valueIdx, TYPETABLEIDX_F64 };
+	XMM0 =  { IRVALUETYPE_VALUE, XMM0_valueIdx,  TYPETABLEIDX_F64 };
+	XMM1 =  { IRVALUETYPE_VALUE, XMM1_valueIdx,  TYPETABLEIDX_F64 };
+	XMM2 =  { IRVALUETYPE_VALUE, XMM2_valueIdx,  TYPETABLEIDX_F64 };
+	XMM3 =  { IRVALUETYPE_VALUE, XMM3_valueIdx,  TYPETABLEIDX_F64 };
+	XMM4 =  { IRVALUETYPE_VALUE, XMM4_valueIdx,  TYPETABLEIDX_F64 };
+	XMM5 =  { IRVALUETYPE_VALUE, XMM5_valueIdx,  TYPETABLEIDX_F64 };
+	XMM6 =  { IRVALUETYPE_VALUE, XMM6_valueIdx,  TYPETABLEIDX_F64 };
+	XMM7 =  { IRVALUETYPE_VALUE, XMM7_valueIdx,  TYPETABLEIDX_F64 };
+	XMM8 =  { IRVALUETYPE_VALUE, XMM8_valueIdx,  TYPETABLEIDX_F64 };
+	XMM9 =  { IRVALUETYPE_VALUE, XMM9_valueIdx,  TYPETABLEIDX_F64 };
+	XMM10 = { IRVALUETYPE_VALUE, XMM10_valueIdx, TYPETABLEIDX_F64 };
+	XMM11 = { IRVALUETYPE_VALUE, XMM11_valueIdx, TYPETABLEIDX_F64 };
+	XMM12 = { IRVALUETYPE_VALUE, XMM12_valueIdx, TYPETABLEIDX_F64 };
+	XMM13 = { IRVALUETYPE_VALUE, XMM13_valueIdx, TYPETABLEIDX_F64 };
+	XMM14 = { IRVALUETYPE_VALUE, XMM14_valueIdx, TYPETABLEIDX_F64 };
+	XMM15 = { IRVALUETYPE_VALUE, XMM15_valueIdx, TYPETABLEIDX_F64 };
 
 	x64Registers[0]  = RAX;
 	x64Registers[1]  = RCX;
@@ -2181,6 +2226,14 @@ void BackendMain(Context *context)
 	x64Registers[21] = XMM5;
 	x64Registers[22] = XMM6;
 	x64Registers[23] = XMM7;
+	x64Registers[24] = XMM8;
+	x64Registers[25] = XMM9;
+	x64Registers[26] = XMM10;
+	x64Registers[27] = XMM11;
+	x64Registers[28] = XMM12;
+	x64Registers[29] = XMM13;
+	x64Registers[30] = XMM14;
+	x64Registers[31] = XMM15;
 
 	x64ParameterValuesRead[0] = RCX.valueIdx;
 	x64ParameterValuesRead[1] = RDX.valueIdx;
@@ -2243,8 +2296,8 @@ void BackendMain(Context *context)
 		for (int i = 0; i < paramCount; ++i, ++paramIdx)
 		{
 			u32 paramValueIdx = proc->parameterValues[i];
-			Value v = context->values[paramValueIdx];
-			s64 paramTypeIdx = v.typeTableIdx;
+			Value *v = &context->values[paramValueIdx];
+			s64 paramTypeIdx = v->typeTableIdx;
 			if (IRShouldPassByCopy(context, paramTypeIdx))
 				paramTypeIdx = GetTypeInfoPointerOf(context, paramTypeIdx);
 			bool floating = context->typeTable[paramTypeIdx].typeCategory == TYPECATEGORY_FLOATING;
@@ -2269,6 +2322,9 @@ void BackendMain(Context *context)
 			}
 			if (floating)
 				src.typeTableIdx = paramTypeIdx;
+
+			v->flags |= VALUEFLAGS_TRY_IMMITATE;
+			v->tryImmitateValueIdx = src.valueIdx;
 
 			X64Mov(context, x64Proc, IRValueValue(paramValueIdx, paramTypeIdx), src);
 		}
@@ -2432,6 +2488,23 @@ unalignedMovups:;
 				//__debugbreak();
 				if (inst->label == nextInst->label)
 					inst->type = X64_Ignore;
+			}
+
+			// Replace CMP 0 with TEST
+			if (inst->type == X64_CMP)
+			{
+				if (inst->src.valueType == IRVALUETYPE_IMMEDIATE_INTEGER &&
+					inst->src.immediate == 0 && !IsValueInMemory(context, inst->dst))
+				{
+					inst->type = X64_TEST;
+					inst->src = inst->dst;
+				}
+				else if (inst->dst.valueType == IRVALUETYPE_IMMEDIATE_INTEGER &&
+					inst->dst.immediate == 0 && !IsValueInMemory(context, inst->src))
+				{
+					inst->type = X64_TEST;
+					inst->dst = inst->src;
+				}
 			}
 
 			inst = nextInst;
@@ -2971,6 +3044,16 @@ nextTuple:
 	WaitForSingleObject(processInformation.hProcess, INFINITE);
 
 	TimerSplit("Calling ML64"_s);
+
+	DWORD exitCode;
+	GetExitCodeProcess(processInformation.hProcess, &exitCode);
+	if (exitCode != 0)
+	{
+		Print("ml64.exe returned an error (%d)\n", exitCode);
+		CRASH;
+	}
+	CloseHandle(processInformation.hProcess);
+	CloseHandle(processInformation.hThread);
 
 	commandLine = TPrintF(
 			"%S\\bin\\Hostx64\\x64\\link.exe " // msvcPath

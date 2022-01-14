@@ -2,9 +2,9 @@ inline String PIRValueToStr(Context *context, u32 valueIdx)
 {
 	Value v = context->values[valueIdx];
 	if (v.name)
-		return TPrintF("$\"%S\"", v.name);
+		return TPrintF("$v%u\"%S\"", valueIdx, v.name);
 	else
-		return TPrintF("$v%d", valueIdx);
+		return TPrintF("$v%u", valueIdx);
 }
 
 void PrintIRValue(Context *context, IRValue value)

@@ -25,6 +25,11 @@ StructParam :: #inline (square : Square)
 	square.area = square.side * square.side;
 }
 
+DefaultParam :: #inline (def : s32 = 99)
+{
+	PrintF("Default arg is %\n", def);
+}
+
 InlinedPrintFWrapper :: #inline (format : String, ..args)
 {
 	PrintF(format, args);
@@ -56,6 +61,8 @@ Main :: () -> s64
 	square : Square = { 5.0 };
 	StructParam(square);
 	PrintF("Square of side % has area %\n", square.side, square.area);
+
+	DefaultParam();
 
 	InlinedPrintFWrapper("Inlined PrintF wrapper! args are %, %, %\n", 42, inlineRet, square);
 

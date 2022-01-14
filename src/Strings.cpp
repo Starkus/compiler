@@ -50,7 +50,35 @@ inline void ChangeExtension(char *buffer, const char *newExtension)
 
 inline bool StringEquals(String a, String b)
 {
-	return a.size == b.size && strncmp(a.data, b.data, a.size) == 0;
+	bool result = a.size == b.size;
+	if (result)
+	{
+		const char *scanA = a.data;
+		const char *scanB = b.data;
+		u64 bytesToCheck = a.size;
+		while (bytesToCheck >= 8)
+		{
+			if (*(u64 *)scanA != *(u64 *)scanB)
+			{
+				result = false;
+				goto done;
+			}
+			bytesToCheck -= 8;
+			scanA += 8;
+			scanB += 8;
+		}
+		while (bytesToCheck > 0)
+		{
+			if (*scanA++ != *scanB++)
+			{
+				result = false;
+				goto done;
+			}
+			--bytesToCheck;
+		}
+	}
+done:
+	return result;
 }
 
 inline bool IsAlpha(char c)

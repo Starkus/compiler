@@ -1,6 +1,5 @@
 * Reduce moving things from one register to another unnecessarily
 * Set members by name in struct literals
 * Verify small structs are passed properly through parameters
-* Add TEST instructions
 * Avoid duplicate string literals
 * Return statements are being evaluated before deferred statements!

@@ -89,6 +89,15 @@ void TimerSplit(String message)
 	g_lastPerfCounter = newPerfCounter;
 	Print("%f - %f - %S\n", time, deltaTime, message);
 }
+u64 CycleCountBegin()
+{
+	return __rdtsc();
+}
+u64 CycleCountEnd(u64 begin)
+{
+	u64 newPerfCounter = __rdtsc();
+	return newPerfCounter - begin;
+}
 
 #include "MemoryAlloc.cpp"
 #include "Strings.cpp"
@@ -100,6 +109,15 @@ struct Config
 	bool logAST;
 	bool logIR;
 	bool logAllocationInfo;
+};
+
+struct InterferenceGraph
+{
+	u32 count;
+	u32 capacity;
+	u32 *valueIndices;
+	u8 *removed;
+	DynamicArray<u32, PhaseAllocator> *edges; // @Improve: eugh
 };
 
 #define OUTPUT_BUFFER_BUCKET_SIZE 8192
@@ -114,7 +132,6 @@ struct IRProcedureScope;
 struct IRLabel;
 struct IRInstruction;
 struct BasicBlock;
-struct InterferenceGraphNode;
 struct BEInstruction;
 struct Context
 {
@@ -128,7 +145,7 @@ struct Context
 	u64 currentTokenIdx;
 	Token *token;
 	ASTRoot *astRoot;
-	BucketArray<ASTExpression, HeapAllocator, 1024> treeNodes;
+	BucketArray<ASTExpression, FrameAllocator, 1024> treeNodes;
 	BucketArray<ASTType, HeapAllocator, 1024> astTypeNodes;
 	BucketArray<String, HeapAllocator, 1024> stringLiterals;
 
@@ -156,7 +173,7 @@ struct Context
 	BucketArray<u8, PhaseAllocator, OUTPUT_BUFFER_BUCKET_SIZE> outputBuffer;
 	BucketArray<BasicBlock, PhaseAllocator, 512> beBasicBlocks;
 	DynamicArray<BasicBlock *, PhaseAllocator> beLeafBasicBlocks;
-	DynamicArray<InterferenceGraphNode, PhaseAllocator> beInterferenceGraph;
+	InterferenceGraph beInterferenceGraph;
 	BucketArray<BEInstruction, PhaseAllocator, 128> bePatchedInstructions;
 };
 
