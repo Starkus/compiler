@@ -1,5 +1,5 @@
 * Reduce moving things from one register to another unnecessarily
-* Set members by name in struct literals
 * Verify small structs are passed properly through parameters
-* Avoid duplicate string literals
 * Return statements are being evaluated before deferred statements!
+* Replace big inline zeroing/initializing with static data
+* Maybe initialize string structs inline instead of having all of them as static data

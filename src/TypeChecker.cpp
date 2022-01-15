@@ -82,7 +82,7 @@ struct OperatorOverload
 struct TypeInfoStruct
 {
 	String name;
-	DynamicArray<StructMember, FrameAllocator> members;
+	Array<StructMember, FrameAllocator> members;
 	Array<OperatorOverload, FrameAllocator> overloads;
 };
 
@@ -90,8 +90,8 @@ struct TypeInfoEnum
 {
 	String name;
 	s64 typeTableIdx;
-	DynamicArray<String, FrameAllocator> names;
-	DynamicArray<s64, FrameAllocator> values;
+	Array<String, FrameAllocator> names;
+	Array<s64, FrameAllocator> values;
 };
 
 struct TypeInfoPointer
@@ -113,7 +113,7 @@ struct ProcedureParameter
 struct TypeInfoProcedure
 {
 	s64 returnTypeTableIdx;
-	DynamicArray<ProcedureParameter, FrameAllocator> parameters;
+	Array<ProcedureParameter, FrameAllocator> parameters;
 	bool isVarargs;
 };
 
@@ -121,7 +121,7 @@ struct TypeInfo
 {
 	TypeCategory typeCategory;
 	u32 valueIdx; // Value with runtime type information.
-	s64 size;
+	u64 size;
 	union
 	{
 		TypeInfoInteger integerInfo;
@@ -163,11 +163,7 @@ struct TCScopeName
 			TCValue tcValue;
 			s64 typeTableIdx;
 		} variableInfo;
-		struct
-		{
-			TCValue tcValueBase;
-			const StructMember *structMember;
-		} structMemberInfo;
+		const StructMember *structMember;
 		ASTExpression *expression;
 		StaticDefinition *staticDefinition;
 	};
@@ -710,6 +706,27 @@ TypeCheckErrorCode CheckTypesMatch(Context *context, s64 leftTableIdx, s64 right
 	return TYPECHECK_MISC_ERROR;
 }
 
+const StructMember *FindStructMemberByName(Context *context, TypeInfo structTypeInfo, String name)
+{
+	for (int i = 0; i < structTypeInfo.structInfo.members.size; ++i)
+	{
+		const StructMember *currentMember = &structTypeInfo.structInfo.members[i];
+		if (StringEquals(name, currentMember->name))
+			return currentMember;
+		if (currentMember->isUsing || currentMember->name.size == 0)
+		{
+			// Anonymous structs/unions and using
+			TypeInfo memberTypeInfo = context->typeTable[currentMember->typeTableIdx];
+			ASSERT(memberTypeInfo.typeCategory == TYPECATEGORY_STRUCT ||
+				   memberTypeInfo.typeCategory == TYPECATEGORY_UNION);
+			const StructMember *found = FindStructMemberByName(context, memberTypeInfo, name);
+			if (found)
+				return found;
+		}
+	}
+	return nullptr;
+}
+
 struct TypeCheckResult
 {
 	TypeCheckErrorCode errorCode;
@@ -744,9 +761,9 @@ TypeCheckResult CheckTypesMatchAndSpecialize(Context *context, s64 leftTableIdx,
 			DynamicArrayInit(&structStack, 8);
 			*DynamicArrayAdd(&structStack) = { structTypeIdx, 0 };
 
-			for (int memberIdx = 0; memberIdx < rightHand->literal.members.size; )
+			int memberIdx = 0;
+			while (memberIdx < rightHand->literal.members.size)
 			{
-				ASTExpression *literalMemberExp = rightHand->literal.members[memberIdx];
 				StructStackFrame currentFrame = structStack[structStack.size - 1];
 				TypeInfo currentStructTypeInfo = context->typeTable[currentFrame.structTypeIdx];
 
@@ -771,19 +788,59 @@ TypeCheckResult CheckTypesMatchAndSpecialize(Context *context, s64 leftTableIdx,
 					continue;
 				}
 
+				ASTExpression *literalMemberExp = rightHand->literal.members[memberIdx];
+				if (literalMemberExp->nodeType == ASTNODETYPE_BINARY_OPERATION &&
+					literalMemberExp->binaryOperation.op == TOKEN_OP_ASSIGNMENT)
+				{
+					// Named member assignments handled in next loop
+					break;
+				}
+				else
+				{
+					TypeCheckResult typeCheckResult = CheckTypesMatchAndSpecialize(context,
+							currentMemberTypeIdx, literalMemberExp);
+					literalMemberExp->typeTableIdx = typeCheckResult.rightTableIdx;
+					if (typeCheckResult.errorCode != TYPECHECK_COOL)
+					{
+						Print("Type of struct literal value in position %d and "
+								"type of struct member number %d don't match\n", memberIdx, memberIdx);
+						ReportTypeCheckError(context, typeCheckResult.errorCode, rightHand->any.loc,
+								currentMemberTypeIdx, literalMemberExp->typeTableIdx);
+					}
+					++structStack[structStack.size - 1].idx;
+				}
+				++memberIdx;
+			}
+
+			for (; memberIdx < rightHand->literal.members.size; ++memberIdx)
+			{
+				ASTExpression *literalMemberExp = rightHand->literal.members[memberIdx];
+				if (literalMemberExp->nodeType != ASTNODETYPE_BINARY_OPERATION ||
+					literalMemberExp->binaryOperation.op != TOKEN_OP_ASSIGNMENT)
+				{
+					LogError(context, literalMemberExp->any.loc, "Non-named member found after "
+							"named members in group literal"_s);
+				}
+
+				ASTExpression *leftExp  = literalMemberExp->binaryOperation.leftHand;
+				ASTExpression *rightExp = literalMemberExp->binaryOperation.rightHand;
+
+				ASSERT(leftExp->nodeType == ASTNODETYPE_IDENTIFIER); // We check this earlier.
+				String memberName = leftExp->identifier.string;
+
+				const StructMember *member = FindStructMemberByName(context, structTypeInfo, memberName);
+				leftExp->identifier.structMember = member;
+
 				TypeCheckResult typeCheckResult = CheckTypesMatchAndSpecialize(context,
-						currentMemberTypeIdx, literalMemberExp);
-				literalMemberExp->typeTableIdx = typeCheckResult.rightTableIdx;
+						member->typeTableIdx, rightExp);
+				rightExp->typeTableIdx = typeCheckResult.rightTableIdx;
 				if (typeCheckResult.errorCode != TYPECHECK_COOL)
 				{
-					Print("Type of struct literal value in position %d and "
-							"type of struct member number %d don't match\n", memberIdx, memberIdx);
+					Print("Type of struct literal value \"%S\" and "
+							"type of struct member don't match\n", memberName);
 					ReportTypeCheckError(context, typeCheckResult.errorCode, rightHand->any.loc,
-							currentMemberTypeIdx,
-							rightHand->literal.members[memberIdx]->typeTableIdx);
+							member->typeTableIdx, rightExp->typeTableIdx);
 				}
-				++structStack[structStack.size - 1].idx;
-				++memberIdx;
 			}
 
 			result.rightTableIdx = structTypeIdx;
@@ -796,6 +853,11 @@ TypeCheckResult CheckTypesMatchAndSpecialize(Context *context, s64 leftTableIdx,
 			for (int memberIdx = 0; memberIdx < rightHand->literal.members.size; ++memberIdx)
 			{
 				ASTExpression *literalMemberExp = rightHand->literal.members[memberIdx];
+
+				if (literalMemberExp->nodeType == ASTNODETYPE_IDENTIFIER &&
+					literalMemberExp->binaryOperation.op == TOKEN_OP_ASSIGNMENT)
+					LogError(context, literalMemberExp->any.loc, "Named members not allowed in array literals"_s);
+
 				TypeCheckResult typeCheckResult = CheckTypesMatchAndSpecialize(context,
 						structTypeInfo.arrayInfo.elementTypeTableIdx,
 						literalMemberExp);
@@ -1019,19 +1081,21 @@ TypeCheckStructResult TypeCheckStructDeclaration(Context *context, String name, 
 	TypeInfo t = {};
 	t.typeCategory = astStructDecl.isUnion ? TYPECATEGORY_UNION : TYPECATEGORY_STRUCT;
 	t.structInfo.name = name;
-	DynamicArrayInit(&t.structInfo.members, 16);
+
+	DynamicArray<StructMember, FrameAllocator> structMembers;
+	DynamicArrayInit(&structMembers, 16);
 
 	int largestAlignment = 0;
 	for (int memberIdx = 0; memberIdx < astStructDecl.members.size; ++memberIdx)
 	{
 		ASTStructMemberDeclaration astMember = astStructDecl.members[memberIdx];
 
-		StructMember *member = DynamicArrayAdd(&t.structInfo.members);
-		member->name = astMember.name;
-		member->isUsing = astMember.isUsing;
-		member->typeTableIdx = astMember.typeTableIdx;
+		StructMember member = {};
+		member.name = astMember.name;
+		member.isUsing = astMember.isUsing;
+		member.typeTableIdx = astMember.typeTableIdx;
 
-		s64 memberSize = context->typeTable[member->typeTableIdx].size;
+		u64 memberSize = context->typeTable[member.typeTableIdx].size;
 		int alignment = 8;
 		if (memberSize < 8)
 			alignment = NextPowerOf2((int)memberSize);
@@ -1043,18 +1107,25 @@ TypeCheckStructResult TypeCheckStructDeclaration(Context *context, String name, 
 		{
 			if (t.size & (alignment - 1))
 				t.size = (t.size & ~(alignment - 1)) + alignment;
-			member->offset = t.size;
+			member.offset = t.size;
 			t.size += memberSize;
 		}
 		else
 		{
-			member->offset = 0;
+			member.offset = 0;
 			if (t.size < memberSize)
 				t.size = memberSize;
 		}
+		*DynamicArrayAdd(&structMembers) = member;
 	}
 	if (t.size & (largestAlignment - 1))
 		t.size = (t.size & ~(largestAlignment - 1)) + largestAlignment;
+
+	t.structInfo.members.data = structMembers.data;
+	t.structInfo.members.size = structMembers.size;
+#if DEBUG_BUILD
+	t.structInfo.members._capacity = structMembers.capacity;
+#endif
 
 	if (astStructDecl.overloads.size > 0)
 	{
@@ -1427,8 +1498,11 @@ TypeCheckTypeResult TypeCheckType(Context *context, String name, SourceLocation 
 		t.enumInfo.name = name;
 		t.enumInfo.typeTableIdx = innerTypeIdx;
 		t.size = context->typeTable[innerTypeIdx].size;
-		DynamicArrayInit(&t.enumInfo.names, 16);
-		DynamicArrayInit(&t.enumInfo.values, 16);
+
+		DynamicArray<String, FrameAllocator> enumNames;
+		DynamicArray<s64, FrameAllocator> enumValues;
+		DynamicArrayInit(&enumNames, 16);
+		DynamicArrayInit(&enumValues, 16);
 
 		s64 typeTableIdx = BucketArrayCount(&context->typeTable);
 
@@ -1467,10 +1541,19 @@ TypeCheckTypeResult TypeCheckType(Context *context, String name, SourceLocation 
 			newName.staticDefinition = newStaticDef;
 			*DynamicArrayAdd(&stackTop->names) = newName;
 
-			*DynamicArrayAdd(&t.enumInfo.names) = astMember.name;
-			*DynamicArrayAdd(&t.enumInfo.values) = currentValue;
+			*DynamicArrayAdd(&enumNames) = astMember.name;
+			*DynamicArrayAdd(&enumValues) = currentValue;
 			++currentValue;
 		}
+
+		t.enumInfo.names.data = enumNames.data;
+		t.enumInfo.names.size = enumNames.size;
+		t.enumInfo.values.data = enumValues.data;
+		t.enumInfo.values.size = enumValues.size;
+#if DEBUG_BUILD
+		t.enumInfo.names._capacity  = enumNames.capacity;
+		t.enumInfo.values._capacity = enumValues.capacity;
+#endif
 
 		AddType(context, t);
 		*DynamicArrayAdd(&stackTop->typeIndices) = typeTableIdx;
@@ -1545,7 +1628,7 @@ void AddStructMembersToScope(Context *context, SourceLocation loc, ASTExpression
 			ASTExpression r = {};
 			r.nodeType = ASTNODETYPE_IDENTIFIER;
 			r.identifier.type = NAMETYPE_STRUCT_MEMBER;
-			r.identifier.structMemberInfo.structMember = member;
+			r.identifier.structMember = member;
 			*rightHand = r;
 
 			ASTExpression e = {};
@@ -1759,27 +1842,6 @@ ReturnCheckResult CheckIfReturnsValue(Context *context, ASTExpression *expressio
 	return RETURNCHECKRESULT_NEVER;
 }
 
-const StructMember *FindStructMemberByName(Context *context, TypeInfo structTypeInfo, String name)
-{
-	for (int i = 0; i < structTypeInfo.structInfo.members.size; ++i)
-	{
-		const StructMember *currentMember = &structTypeInfo.structInfo.members[i];
-		if (StringEquals(name, currentMember->name))
-			return currentMember;
-		if (currentMember->isUsing || currentMember->name.size == 0)
-		{
-			// Anonymous structs/unions and using
-			TypeInfo memberTypeInfo = context->typeTable[currentMember->typeTableIdx];
-			ASSERT(memberTypeInfo.typeCategory == TYPECATEGORY_STRUCT ||
-				   memberTypeInfo.typeCategory == TYPECATEGORY_UNION);
-			const StructMember *found = FindStructMemberByName(context, memberTypeInfo, name);
-			if (found)
-				return found;
-		}
-	}
-	return nullptr;
-}
-
 TypeCheckProcedurePrototypeResult TypeCheckProcedurePrototype(Context *context, ASTProcedurePrototype *prototype)
 {
 	// Parameters
@@ -1823,26 +1885,31 @@ TypeInfo TypeInfoFromASTProcedurePrototype(Context *context, ASTProcedurePrototy
 	int astParametersCount = (int)prototype.astParameters.size;
 	if (astParametersCount)
 	{
-		DynamicArrayInit(&t.procedureInfo.parameters, astParametersCount);
+		DynamicArray<ProcedureParameter, FrameAllocator> parameters;
+		DynamicArrayInit(&parameters, astParametersCount);
 
 		// Parameters
 		for (int i = 0; i < astParametersCount; ++i)
 		{
 			ASTProcedureParameter astParameter = prototype.astParameters[i];
 
-			ProcedureParameter *procParam = DynamicArrayAdd(&t.procedureInfo.parameters);
-			procParam->typeTableIdx = astParameter.typeTableIdx;
-
-			if (!astParameter.astInitialValue)
-				procParam->defaultValue = {};
-			else
+			ProcedureParameter procParam = {};
+			procParam.typeTableIdx = astParameter.typeTableIdx;
+			if (astParameter.astInitialValue)
 			{
-				procParam->defaultValue = TryEvaluateConstant(context, astParameter.astInitialValue);
-				if (procParam->defaultValue.type == CONSTANTTYPE_INVALID)
+				procParam.defaultValue = TryEvaluateConstant(context, astParameter.astInitialValue);
+				if (procParam.defaultValue.type == CONSTANTTYPE_INVALID)
 					LogError(context, astParameter.astInitialValue->any.loc,
 							"Failed to evaluate constant in default parameter"_s);
 			}
+			*DynamicArrayAdd(&parameters) = procParam;
 		}
+
+		t.procedureInfo.parameters.data = parameters.data;
+		t.procedureInfo.parameters.size = parameters.size;
+#if DEBUG_BUILD
+		t.procedureInfo.parameters._capacity = parameters.capacity;
+#endif
 	}
 
 	return t;
@@ -1942,10 +2009,7 @@ ASTExpression InlineProcedureCopyTreeBranch(Context *context, const ASTExpressio
 		} break;
 		case NAMETYPE_STRUCT_MEMBER:
 		{
-			astIdentifier.structMemberInfo.tcValueBase =
-				scopeName->structMemberInfo.tcValueBase;
-			astIdentifier.structMemberInfo.structMember =
-				scopeName->structMemberInfo.structMember;
+			astIdentifier.structMember = scopeName->structMember;
 		} break;
 		case NAMETYPE_ASTEXPRESSION:
 		{
@@ -2612,11 +2676,8 @@ TypeCheckExpressionResult TryTypeCheckExpression(Context *context, ASTExpression
 		} break;
 		case NAMETYPE_STRUCT_MEMBER:
 		{
-			expression->identifier.structMemberInfo.tcValueBase =
-				scopeName->structMemberInfo.tcValueBase;
-			expression->identifier.structMemberInfo.structMember =
-				scopeName->structMemberInfo.structMember;
-			expression->typeTableIdx = scopeName->structMemberInfo.structMember->typeTableIdx;
+			expression->identifier.structMember = scopeName->structMember;
+			expression->typeTableIdx = scopeName->structMember->typeTableIdx;
 		} break;
 		case NAMETYPE_ASTEXPRESSION:
 		{
@@ -2932,9 +2993,7 @@ TypeCheckExpressionResult TryTypeCheckExpression(Context *context, ASTExpression
 			const StructMember *foundMember = FindStructMemberByName(context, structTypeInfo, memberName);
 			if (foundMember)
 			{
-				// We don't need the base in this case, just the top most offset.
-				rightHand->identifier.structMemberInfo.tcValueBase = {};
-				rightHand->identifier.structMemberInfo.structMember = foundMember;
+				rightHand->identifier.structMember = foundMember;
 				expression->typeTableIdx = foundMember->typeTableIdx;
 			}
 			else
@@ -3102,9 +3161,26 @@ skipOverload:
 		case LITERALTYPE_GROUP:
 			for (int memberIdx = 0; memberIdx < expression->literal.members.size; ++memberIdx)
 			{
-				TypeCheckExpressionResult result = TryTypeCheckExpression(context, expression->literal.members[memberIdx]);
-				if (!result.success)
-					return { false, result.yieldInfo };
+				ASTExpression *memberExp = expression->literal.members[memberIdx];
+				if (memberExp->nodeType == ASTNODETYPE_BINARY_OPERATION &&
+					memberExp->binaryOperation.op == TOKEN_OP_ASSIGNMENT)
+				{
+					ASTExpression *leftExp  = memberExp->binaryOperation.leftHand;
+					ASTExpression *rightExp = memberExp->binaryOperation.rightHand;
+
+					if (leftExp->nodeType != ASTNODETYPE_IDENTIFIER)
+						LogError(context, leftExp->any.loc, "Expected identifier before '='"_s);
+
+					TypeCheckExpressionResult result = TryTypeCheckExpression(context, rightExp);
+					if (!result.success)
+						return { false, result.yieldInfo };
+				}
+				else
+				{
+					TypeCheckExpressionResult result = TryTypeCheckExpression(context, memberExp);
+					if (!result.success)
+						return { false, result.yieldInfo };
+				}
 			}
 			expression->typeTableIdx = TYPETABLEIDX_STRUCT_LITERAL;
 			break;

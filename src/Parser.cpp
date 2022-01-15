@@ -708,7 +708,7 @@ ASTExpression ParseExpression(Context *context, s32 precedence)
 				isHex = true;
 		}
 
-		for (int i = 0; i < context->token->size; ++i)
+		for (u32 i = 0; i < context->token->size; ++i)
 		{
 			if (context->token->begin[i] == '.')
 			{

@@ -145,7 +145,7 @@ struct Context
 	u64 currentTokenIdx;
 	Token *token;
 	ASTRoot *astRoot;
-	BucketArray<ASTExpression, FrameAllocator, 1024> treeNodes;
+	BucketArray<ASTExpression, HeapAllocator, 1024> treeNodes;
 	BucketArray<ASTType, HeapAllocator, 1024> astTypeNodes;
 	BucketArray<String, HeapAllocator, 1024> stringLiterals;
 
@@ -381,7 +381,7 @@ void Log(Context *context, SourceLocation loc, String str)
 	Print("... %S\n... ", sourceLine);
 
 	int shift = 0;
-	for (int i = 0; i < loc.character; ++i)
+	for (u32 i = 0; i < loc.character; ++i)
 	{
 		if (sourceLine.data[i] == '\t')
 			shift += 4;
@@ -391,7 +391,7 @@ void Log(Context *context, SourceLocation loc, String str)
 
 	for (int i = 0; i < shift; ++i)
 		Print(" ");
-	for (int i = 0; i < loc.size; ++i)
+	for (u32 i = 0; i < loc.size; ++i)
 		Print("^");
 	Print("\n");
 }

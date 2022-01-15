@@ -1984,7 +1984,7 @@ void BackendMain(Context *context)
 
 		TypeInfo t = { TYPECATEGORY_PROCEDURE };
 		t.procedureInfo.returnTypeTableIdx = -1;
-		DynamicArrayInit(&t.procedureInfo.parameters, 3);
+		ArrayInit(&t.procedureInfo.parameters, 3);
 		t.procedureInfo.parameters.size = 3;
 		t.procedureInfo.parameters[0] = { voidPtrIdx, {} };
 		t.procedureInfo.parameters[1] = { voidPtrIdx, {} };

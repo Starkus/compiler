@@ -74,11 +74,7 @@ struct ASTIdentifier : ASTBase
 	union
 	{
 		TCValue tcValue;
-		struct
-		{
-			TCValue tcValueBase;
-			const StructMember *structMember;
-		} structMemberInfo;
+		const StructMember *structMember;
 		ASTExpression *expression;
 		StaticDefinition *staticDefinition;
 	};

@@ -95,10 +95,10 @@ enum TokenType
 
 struct SourceLocation
 {
-	s32 fileIdx;
-	s32 line;
-	s32 character;
-	s32 size;
+	u32 fileIdx;
+	u32 line;
+	u32 character;
+	u32 size;
 };
 
 struct SourceFile
@@ -117,7 +117,7 @@ struct Token
 		String string;
 		struct
 		{
-			s32 size;
+			u32 size;
 			const char *begin;
 		};
 	};

@@ -62,6 +62,11 @@ Main :: () -> s64
 	incompleteLiteral : Couple = { 40, 22 };
 	PrintF("Incomplete literal couple: %\n", incompleteLiteral);
 
+	literalWithNames : Person = { 30, height = 1.54 };
+	PrintF("Literal with names: %\n", literalWithNames);
+	if literalWithNames.height != 1.54
+		return 1;
+
 	Print("Test ok\n");
 	return 0;
 }

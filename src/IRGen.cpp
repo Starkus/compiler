@@ -364,11 +364,21 @@ IRValue IRValueImmediateString(Context *context, String string)
 		result.immediateStringIdx = 0;
 	else
 	{
-		s64 idx = BucketArrayCount(&context->stringLiterals);
-		ASSERT(idx < U32_MAX);
-		result.immediateStringIdx = (u32)idx;
+		s64 stringCount = BucketArrayCount(&context->stringLiterals);
+		ASSERT(stringCount < U32_MAX);
+		for (u32 stringIdx = 0; stringIdx < stringCount; ++stringIdx)
+		{
+			if (StringEquals(context->stringLiterals[stringIdx], string))
+			{
+				result.immediateStringIdx = stringIdx;
+				goto done;
+			}
+		}
+		u32 idx = (u32)stringCount;
+		result.immediateStringIdx = idx;
 		*BucketArrayAdd(&context->stringLiterals) = string;
 	}
+done:
 	return result;
 }
 
@@ -742,7 +752,7 @@ IRValue IRInstructionFromBinaryOperation(Context *context, ASTExpression *expres
 
 		ASSERT(rightHand->nodeType == ASTNODETYPE_IDENTIFIER);
 		ASSERT(rightHand->identifier.type == NAMETYPE_STRUCT_MEMBER);
-		StructMember structMember = *rightHand->identifier.structMemberInfo.structMember;
+		StructMember structMember = *rightHand->identifier.structMember;
 
 		result = IRDoMemberAccess(context, value, structMember);
 	}
@@ -1337,6 +1347,38 @@ void IRFillValueWithGroupLiteral(Context *context, IRValue value, ASTLiteral ast
 	if (groupTypeInfo.typeCategory == TYPECATEGORY_STRUCT ||
 		groupTypeInfo.typeCategory == TYPECATEGORY_UNION)
 	{
+		u64 nonNamedCount = astLiteral.members.size;
+		struct NamedMember
+		{
+			String name;
+			ASTExpression *expr;
+		};
+		DynamicArray<NamedMember, PhaseAllocator> namedMembers;
+		DynamicArrayInit(&namedMembers, 8);
+		{
+			// Save the number of non-named members, and build an array with named ones
+			int i = 0;
+			for (; i < astLiteral.members.size; ++i)
+			{
+				ASTExpression *literalMemberExp = astLiteral.members[i];
+				if (literalMemberExp->nodeType == ASTNODETYPE_BINARY_OPERATION &&
+					literalMemberExp->binaryOperation.op == TOKEN_OP_ASSIGNMENT)
+				{
+					nonNamedCount = i;
+					break;
+				}
+			}
+			for (; i < astLiteral.members.size; ++i)
+			{
+				ASTExpression *literalMemberExp = astLiteral.members[i];
+				ASSERT(literalMemberExp->nodeType == ASTNODETYPE_BINARY_OPERATION &&
+					   literalMemberExp->binaryOperation.op == TOKEN_OP_ASSIGNMENT);
+				String name = literalMemberExp->binaryOperation.leftHand->identifier.string;
+				ASTExpression *expr = literalMemberExp->binaryOperation.rightHand;
+				*DynamicArrayAdd(&namedMembers) = { name, expr };
+			}
+		}
+
 		struct StructStackFrame
 		{
 			IRValue irValue;
@@ -1347,7 +1389,8 @@ void IRFillValueWithGroupLiteral(Context *context, IRValue value, ASTLiteral ast
 		DynamicArrayInit(&structStack, 8);
 		*DynamicArrayAdd(&structStack) = { value, groupTypeIdx, 0 };
 
-		for (int memberIdx = 0; structStack.size > 0; )
+		int memberIdx = 0;
+		while (structStack.size > 0)
 		{
 			StructStackFrame currentFrame = structStack[structStack.size - 1];
 			TypeInfo currentStructTypeInfo = context->typeTable[currentFrame.structTypeIdx];
@@ -1368,19 +1411,25 @@ void IRFillValueWithGroupLiteral(Context *context, IRValue value, ASTLiteral ast
 				// Push struct frame
 				++structStack[structStack.size - 1].idx;
 				IRValue innerStructValue = IRDoMemberAccess(context, currentFrame.irValue, currentMember);
-				structStack[structStack.size++] = { innerStructValue, currentMember.typeTableIdx, 0 };
+				*DynamicArrayAdd(&structStack) = { innerStructValue, currentMember.typeTableIdx, 0 };
 				continue;
 			}
 
 			IRValue memberValue = IRDoMemberAccess(context, currentFrame.irValue, currentMember);
 			IRValue src;
-			if (memberIdx < astLiteral.members.size)
+			if (memberIdx < nonNamedCount)
 			{
 				ASTExpression *literalMemberExp = astLiteral.members[memberIdx];
 				src = IRGenFromExpression(context, literalMemberExp);
 			}
 			else
+			{
 				src = IRValueImmediate(0, currentMember.typeTableIdx); // @Check: floats
+
+				for (int i = 0; i < namedMembers.size; ++i)
+					if (StringEquals(namedMembers[i].name, currentMember.name))
+						src = IRGenFromExpression(context, namedMembers[i].expr);
+			}
 			IRDoAssignment(context, memberValue, src);
 
 			++structStack[structStack.size - 1].idx;
@@ -1685,12 +1734,6 @@ IRValue IRGenFromExpression(Context *context, ASTExpression *expression)
 			default:
 				ASSERT(!"Invalid static definition type found while generating IR");
 			}
-		} break;
-		case NAMETYPE_STRUCT_MEMBER:
-		{
-			IRValue left = IRValueTCValue(context, expression->identifier.structMemberInfo.tcValueBase);
-			const StructMember *structMember = expression->identifier.structMemberInfo.structMember;
-			result = IRDoMemberAccess(context, left, *structMember);
 		} break;
 		case NAMETYPE_ASTEXPRESSION:
 		{
