@@ -464,19 +464,23 @@ String X64IRValueToStr(Context *context, IRValue value)
 	size = typeInfo.size;
 	Value v = context->values[value.valueIdx];
 
-	if (v.flags & (VALUEFLAGS_ON_STATIC_STORAGE | VALUEFLAGS_IS_EXTERNAL))
-	{
-		result = v.name;
-		goto decoratePtr;
-	}
-
-	bool isXMM = typeInfo.size > 8 || typeInfo.typeCategory == TYPECATEGORY_FLOATING;
-
 	s64 offset = 0;
 	if (value.valueType == IRVALUETYPE_MEMORY)
 	{
 		offset = value.memory.offset;
 	}
+
+	if (v.flags & (VALUEFLAGS_ON_STATIC_STORAGE | VALUEFLAGS_IS_EXTERNAL))
+	{
+		result = v.name;
+		if (offset > 0)
+			result = TPrintF("%S+0%xh", result, offset);
+		else if (offset < 0)
+			result = TPrintF("%S-0%xh", result, -offset);
+		goto decoratePtr;
+	}
+
+	bool isXMM = typeInfo.size > 8 || typeInfo.typeCategory == TYPECATEGORY_FLOATING;
 
 	if (v.flags & VALUEFLAGS_IS_ALLOCATED)
 	{
@@ -1503,17 +1507,19 @@ doX_XM:
 		IRValue right = inst.binaryOperation.right;
 		IRValue out = inst.binaryOperation.out;
 
-		u32 immitateFlag = out.valueType == IRVALUETYPE_VALUE ? VALUEFLAGS_TRY_IMMITATE : 0;
-		IRValue tmp = IRValueNewValue(context, left.typeTableIdx, immitateFlag, out.valueIdx);
+		u32 immitateFlagLeft = out.valueType == IRVALUETYPE_VALUE ? VALUEFLAGS_TRY_IMMITATE : 0;
+		IRValue tmp = IRValueNewValue(context, left.typeTableIdx, immitateFlagLeft, out.valueIdx);
 
 		X64Mov(context, x64Proc, tmp, left);
 
 		u8 accepted = x64InstructionInfos[result.type].acceptedOperandsRight;
-		if (!FitsInOperand(context, accepted, right))
+		if (!FitsInOperand(context, accepted, right) ||
+			right.typeTableIdx != left.typeTableIdx)
 		{
 			ASSERT(accepted & ACCEPTEDOPERANDS_REGISTER);
+			u32 immitateFlagRight = right.valueType == IRVALUETYPE_VALUE ? VALUEFLAGS_TRY_IMMITATE : 0;
 			IRValue newValue = IRValueNewValue(context, out.typeTableIdx,
-					VALUEFLAGS_FORCE_REGISTER);
+					VALUEFLAGS_FORCE_REGISTER | immitateFlagRight, right.valueIdx);
 			X64Mov(context, x64Proc, newValue, right);
 			right = newValue;
 		}
@@ -1582,8 +1588,9 @@ doConditionalJump2:
 		if (!FitsInOperand(context, accepted, left))
 		{
 			ASSERT(accepted & ACCEPTEDOPERANDS_REGISTER);
+			u32 immitateFlagLeft = left.valueType == IRVALUETYPE_VALUE ? VALUEFLAGS_TRY_IMMITATE : 0;
 			IRValue newValue = IRValueNewValue(context, "_jump_hlp"_s, left.typeTableIdx,
-					VALUEFLAGS_FORCE_REGISTER);
+					VALUEFLAGS_FORCE_REGISTER | immitateFlagLeft, left.valueIdx);
 			X64Mov(context, x64Proc, newValue, left);
 			left = newValue;
 		}
@@ -1591,12 +1598,14 @@ doConditionalJump2:
 		IRValue right = inst.conditionalJump2.right;
 		accepted = x64InstructionInfos[cmpInst.type].acceptedOperandsRight;
 		if (!FitsInOperand(context, accepted, right) ||
+			right.typeTableIdx != left.typeTableIdx ||
 			(IsValueInMemory(context, left) && IsValueInMemory(context, right)) ||
 			(right.valueType == IRVALUETYPE_IMMEDIATE_INTEGER && (right.immediate & 0xFFFFFFFF00000000)))
 		{
 			ASSERT(accepted & ACCEPTEDOPERANDS_REGISTER);
-			IRValue newValue = IRValueNewValue(context, "_jump_hlp"_s, right.typeTableIdx,
-					VALUEFLAGS_FORCE_REGISTER);
+			u32 immitateFlagRight = right.valueType == IRVALUETYPE_VALUE ? VALUEFLAGS_TRY_IMMITATE : 0;
+			IRValue newValue = IRValueNewValue(context, "_jump_hlp"_s, left.typeTableIdx,
+					VALUEFLAGS_FORCE_REGISTER | immitateFlagRight, right.valueIdx);
 			X64Mov(context, x64Proc, newValue, right);
 			right = newValue;
 		}

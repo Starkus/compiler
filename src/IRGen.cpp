@@ -721,6 +721,14 @@ void IRInsertLabelInstruction(Context *context, IRLabel *label)
 	*AddInstruction(context) = result;
 }
 
+IRValue IRDoCast(Context *context, IRValue value, s64 typeTableIdx)
+{
+	u32 immitateFlag = value.valueType == IRVALUETYPE_VALUE ? VALUEFLAGS_TRY_IMMITATE : 0;
+	IRValue result = IRValueNewValue(context, "_cast"_s, typeTableIdx, immitateFlag, value.valueIdx);
+	IRDoAssignment(context, result, value);
+	return result;
+}
+
 IRValue IRInstructionFromBinaryOperation(Context *context, ASTExpression *expression, IRValue outValue)
 {
 	IRValue result = {};
@@ -892,9 +900,15 @@ IRValue IRInstructionFromBinaryOperation(Context *context, ASTExpression *expres
 			   leftTypeInfo.typeCategory != TYPECATEGORY_UNION);
 #endif
 
+		IRValue left  = IRGenFromExpression(context, leftHand);
+		IRValue right = IRGenFromExpression(context, rightHand);
+
+		if (left.typeTableIdx != right.typeTableIdx)
+			right = IRDoCast(context, right, left.typeTableIdx);
+
 		IRInstruction inst = {};
-		inst.binaryOperation.left  = IRGenFromExpression(context, leftHand);
-		inst.binaryOperation.right = IRGenFromExpression(context, rightHand);
+		inst.binaryOperation.left  = left;
+		inst.binaryOperation.right = right;
 
 		switch (expression->binaryOperation.op)
 		{
@@ -1865,6 +1879,8 @@ IRValue IRGenFromExpression(Context *context, ASTExpression *expression)
 			else
 			{
 				IRValue param = IRGenFromExpression(context, arg);
+				if (param.typeTableIdx != argTypeTableIdx)
+					param = IRDoCast(context, param, argTypeTableIdx);
 				*ArrayAdd(&procCallInst.procedureCall.parameters) = param;
 			}
 		}
@@ -2370,9 +2386,7 @@ skipGeneratingVarargsArray:
 	case ASTNODETYPE_CAST:
 	{
 		IRValue src = IRGenFromExpression(context, expression->castNode.expression);
-
-		result = IRValueNewValue(context, "_cast"_s, expression->typeTableIdx, 0);
-		IRDoAssignment(context, result, src);
+		result = IRDoCast(context, src, expression->typeTableIdx);
 	} break;
 	case ASTNODETYPE_USING:
 	{
