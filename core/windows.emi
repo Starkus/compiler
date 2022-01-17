@@ -45,16 +45,30 @@ FILE_ATTRIBUTE_TEMPORARY :: 0x100;
 FILE_ATTRIBUTE_OFFLINE   :: 0x1000;
 FILE_ATTRIBUTE_ENCRYPTED :: 0x4000;
 ATTACH_PARENT_PROCESS :: -1;
+WS_TILED            :: 0x00000000;
 WS_OVERLAPPED       :: 0x00000000;
-WS_CLIPCHILDREN     :: 0x02000000;
-WS_CLIPSIBLINGS     :: 0x04000000;
-WS_MAXIMIZEBOX      :: 0x00100000;
-WS_MINIMIZEBOX      :: 0x00200000;
-WS_THICKFRAME       :: 0x00400000;
-WS_CAPTION          :: 0x00C00000;
+WS_MAXIMIZEBOX      :: 0x00010000;
+WS_TABSTOP          :: 0x00010000;
+WS_GROUP            :: 0x00020000;
+WS_MINIMIZEBOX      :: 0x00020000;
+WS_THICKFRAME       :: 0x00040000;
 WS_SIZEBOX          :: 0x00040000;
 WS_SYSMENU          :: 0x00080000;
+WS_HSCROLL          :: 0x00100000;
+WS_VSCROLL          :: 0x00200000;
+WS_DLGFRAME         :: 0x00400000;
+WS_BORDER           :: 0x00800000;
+WS_CAPTION          :: 0x00C00000;
+WS_MAXIMIZE         :: 0x01000000;
+WS_CLIPCHILDREN     :: 0x02000000;
+WS_CLIPSIBLINGS     :: 0x04000000;
+WS_DISABLED         :: 0x08000000;
 WS_VISIBLE          :: 0x10000000;
+WS_ICONIC           :: 0x20000000;
+WS_MINIMIZE         :: 0x20000000;
+WS_CHILD            :: 0x40000000;
+WS_CHILDWINDOW      :: 0x40000000;
+WS_POPUP            :: 0x80000000;
 WS_OVERLAPPEDWINDOW :: WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU | WS_THICKFRAME | WS_MINIMIZEBOX | WS_MAXIMIZEBOX;
 CS_VREDRAW :: 0x0001;
 CS_HREDRAW :: 0x0002;
@@ -65,10 +79,57 @@ WM_DESTROY :: 0x0002;
 WM_SIZE    :: 0x0005;
 WM_CLOSE   :: 0x0010;
 WM_QUIT    :: 0x0012;
+WM_KEYDOWN :: 0x0100;
+WM_KEYUP   :: 0x0101;
 PFD_DOUBLEBUFFER   :: 0x00000001;
 PFD_DRAW_TO_WINDOW :: 0x00000004;
 PFD_SUPPORT_OPENGL :: 0x00000020;
 PFD_TYPE_RGBA :: 0;
+
+// Virtual Keys, Standard Set
+VK_LBUTTON :: 0x01;
+VK_RBUTTON :: 0x02;
+VK_CANCEL :: 0x03;
+VK_MBUTTON :: 0x04;    /* NOT contiguous with L & RBUTTON */
+VK_XBUTTON1 :: 0x05;    /* NOT contiguous with L & RBUTTON */
+VK_XBUTTON2 :: 0x06;    /* NOT contiguous with L & RBUTTON */
+VK_BACK :: 0x08;
+VK_TAB :: 0x09;
+VK_CLEAR :: 0x0C;
+VK_RETURN :: 0x0D;
+VK_SHIFT :: 0x10;
+VK_CONTROL :: 0x11;
+VK_MENU :: 0x12;
+VK_PAUSE :: 0x13;
+VK_CAPITAL :: 0x14;
+VK_KANA :: 0x15;
+VK_HANGEUL :: 0x15;  /* old name - should be here for compatibility */
+VK_HANGUL :: 0x15;
+VK_JUNJA :: 0x17;
+VK_FINAL :: 0x18;
+VK_HANJA :: 0x19;
+VK_KANJI :: 0x19;
+VK_ESCAPE :: 0x1B;
+VK_CONVERT :: 0x1C;
+VK_NONCONVERT :: 0x1D;
+VK_ACCEPT :: 0x1E;
+VK_MODECHANGE :: 0x1F;
+VK_SPACE :: 0x20;
+VK_PRIOR :: 0x21;
+VK_NEXT :: 0x22;
+VK_END :: 0x23;
+VK_HOME :: 0x24;
+VK_LEFT :: 0x25;
+VK_UP :: 0x26;
+VK_RIGHT :: 0x27;
+VK_DOWN :: 0x28;
+VK_SELECT :: 0x29;
+VK_PRINT :: 0x2A;
+VK_EXECUTE :: 0x2B;
+VK_SNAPSHOT :: 0x2C;
+VK_INSERT :: 0x2D;
+VK_DELETE :: 0x2E;
+VK_HELP :: 0x2F;
 
 WNDCLASSEXA :: struct
 {
@@ -129,6 +190,15 @@ PIXELFORMATDESCRIPTOR :: struct
 	dwVisibleMask : u32;
 	dwDamageMask : u32;
 };
+LARGE_INTEGER :: union
+{
+	struct
+	{
+		lowPart : u64;
+		highPart : u64;
+	};
+	quadPart : u64;
+};
 
 CreateFileA :: #external (
 		lpFileName : ^u8,
@@ -176,3 +246,5 @@ SetPixelFormat :: #external (hdc : ^void, format : s64, ppfd : ^PIXELFORMATDESCR
 PostQuitMessage :: #external (nExitCode : s64);
 DestroyWindow :: #external (hWnd : ^void) -> bool;
 TerminateProcess :: #external (uExitCode : u32);
+QueryPerformanceCounter :: #external (lpPerformanceCount : ^LARGE_INTEGER) -> bool;
+QueryPerformanceFrequency :: #external (lpFrequency : ^LARGE_INTEGER) -> bool;
