@@ -216,6 +216,8 @@ void DoLivenessAnalisisOnInstruction(Context *context, BasicBlock *basicBlock, X
 	case X64_IMUL:
 	case X64_SAR:
 	case X64_SAL:
+	case X64_SHR:
+	case X64_SHL:
 	case X64_AND:
 	case X64_OR:
 	case X64_XOR:
@@ -750,6 +752,8 @@ inline u64 RegisterSavingInstruction(Context *context, X64Instruction *inst, u64
 	case X64_IDIV:
 	case X64_SAR:
 	case X64_SAL:
+	case X64_SHR:
+	case X64_SHL:
 	case X64_AND:
 	case X64_OR:
 	case X64_XOR:

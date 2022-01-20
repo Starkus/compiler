@@ -64,6 +64,8 @@ enum X64InstructionType
 	X64_IDIV,
 	X64_SAR,
 	X64_SAL,
+	X64_SHR,
+	X64_SHL,
 	X64_AND,
 	X64_OR,
 	X64_XOR,
@@ -755,29 +757,33 @@ void X64MovNoTmp(Context *context, X64Procedure *x64Proc, IRValue dst, IRValue s
 	{
 		if (srcType.typeCategory != TYPECATEGORY_FLOATING)
 		{
+			result.type = X64_MOV;
+			bool isSigned = srcType.typeCategory == TYPECATEGORY_INTEGER &&
+				srcType.integerInfo.isSigned;
 			if (srcType.size == 4)
 			{
-				result.type = X64_MOV;
+				if (isSigned && dstType.size > 4)
+				{
+					// MOVSXD is R-RM
+					IRValue newValue = IRValueNewValue(context, "_movsxd_tmp"_s, dst.typeTableIdx,
+							VALUEFLAGS_FORCE_REGISTER);
+					*BucketArrayAdd(&x64Proc->instructions) = { X64_MOVSXD, newValue, src };
+					src = newValue;
+				}
 				ASSERT(dstType.size >= 4);
 				dst.typeTableIdx = src.typeTableIdx;
 			}
 			else if (srcType.size < dstType.size && src.valueType != IRVALUETYPE_IMMEDIATE_INTEGER)
 			{
-				result.type = X64_MOV;
-
-				// MOVZX is R-RM
+				X64InstructionType extendType = isSigned ? X64_MOVSX : X64_MOVZX;
+				// MOVSX and MOVZX are R-RM
 				IRValue newValue = IRValueNewValue(context, "_movzx_tmp"_s, dst.typeTableIdx,
 						VALUEFLAGS_FORCE_REGISTER);
-				*BucketArrayAdd(&x64Proc->instructions) = { X64_MOVZX, newValue, src };
+				*BucketArrayAdd(&x64Proc->instructions) = { extendType, newValue, src };
 				src = newValue;
 			}
 			else if (srcType.size > dstType.size)
-			{
-				result.type = X64_MOV;
 				src.typeTableIdx = dst.typeTableIdx;
-			}
-			else
-				result.type = X64_MOV;
 		}
 		else if (srcType.size == 4)
 			result.type = X64_CVTTSS2SI;
@@ -1016,14 +1022,16 @@ void X64ConvertInstruction(Context *context, IRInstruction inst, X64Procedure *x
 			IRValue right = inst.binaryOperation.right;
 			IRValue out   = inst.binaryOperation.out;
 
-			if (left.valueType == IRVALUETYPE_IMMEDIATE_INTEGER && IsPowerOf2(left.immediate))
+			if (left.valueType == IRVALUETYPE_IMMEDIATE_INTEGER && left.immediate > 0 &&
+					IsPowerOf2(left.immediate))
 			{
 				IRValue tmp = left;
 				left = right;
 				right = tmp;
 			}
 
-			if (right.valueType == IRVALUETYPE_IMMEDIATE_INTEGER && IsPowerOf2(right.immediate))
+			if (right.valueType == IRVALUETYPE_IMMEDIATE_INTEGER && right.immediate > 0 &&
+					IsPowerOf2(right.immediate))
 			{
 				u32 immitateFlag = left.valueType == IRVALUETYPE_VALUE ? VALUEFLAGS_TRY_IMMITATE : 0;
 				IRValue tmp = IRValueNewValue(context, "_mulshfttmp"_s, left.typeTableIdx, immitateFlag,
@@ -1037,8 +1045,33 @@ void X64ConvertInstruction(Context *context, IRInstruction inst, X64Procedure *x
 			}
 			else
 			{
-				result.type = X64_IMUL;
-				goto doRM_RMI;
+				if (isSigned)
+				{
+					result.type = X64_IMUL;
+					goto doRM_RMI;
+				}
+				else
+				{
+					X64Mov(context, x64Proc, RAX, left);
+
+					*BucketArrayAdd(&x64Proc->instructions) = { X64_XOR, RDX, RDX };
+
+					IRValue multiplier = right;
+					u8 accepted = x64InstructionInfos[X64_MUL].acceptedOperandsLeft;
+					if (!FitsInOperand(context, accepted, multiplier))
+					{
+						ASSERT(accepted & ACCEPTEDOPERANDS_REGISTER);
+						IRValue newValue = IRValueNewValue(context, multiplier.typeTableIdx,
+								VALUEFLAGS_FORCE_REGISTER);
+						X64Mov(context, x64Proc, newValue, multiplier);
+						multiplier = newValue;
+					}
+					result.type = X64_MUL;
+					result.dst = multiplier;
+					*BucketArrayAdd(&x64Proc->instructions) = result;
+
+					X64Mov(context, x64Proc, out, RAX);
+				}
 			}
 		}
 		case X64FLOATINGTYPE_F32:
@@ -1063,8 +1096,11 @@ void X64ConvertInstruction(Context *context, IRInstruction inst, X64Procedure *x
 				IRValue tmp = IRValueNewValue(context, "_mulshfttmp"_s, left.typeTableIdx, immitateFlag,
 				left.valueIdx);
 
+				TypeInfo leftType = context->typeTable[left.typeTableIdx];
+				X64InstructionType shiftType = isSigned ? X64_SAR : X64_SHR;
+
 				X64Mov(context, x64Proc, tmp, left);
-				*BucketArrayAdd(&x64Proc->instructions) = { X64_SAR, tmp,
+				*BucketArrayAdd(&x64Proc->instructions) = { shiftType, tmp,
 						IRValueImmediate(63 - Nlz64(right.immediate)) };
 				X64Mov(context, x64Proc, out, tmp);
 			}
@@ -1072,7 +1108,10 @@ void X64ConvertInstruction(Context *context, IRInstruction inst, X64Procedure *x
 			{
 				X64Mov(context, x64Proc, RAX, left);
 
-				*BucketArrayAdd(&x64Proc->instructions) = { X64_CQO };
+				if (isSigned)
+					*BucketArrayAdd(&x64Proc->instructions) = { X64_CQO };
+				else
+					*BucketArrayAdd(&x64Proc->instructions) = { X64_XOR, RDX, RDX };
 
 				IRValue divisor = right;
 				u8 accepted = x64InstructionInfos[X64_DIV].acceptedOperandsLeft;
@@ -1084,7 +1123,7 @@ void X64ConvertInstruction(Context *context, IRInstruction inst, X64Procedure *x
 					X64Mov(context, x64Proc, newValue, divisor);
 					divisor = newValue;
 				}
-				result.type = X64_IDIV;
+				result.type = isSigned ? X64_IDIV : X64_DIV;
 				result.dst = divisor;
 				*BucketArrayAdd(&x64Proc->instructions) = result;
 
@@ -1119,7 +1158,10 @@ void X64ConvertInstruction(Context *context, IRInstruction inst, X64Procedure *x
 		else
 		{
 			X64Mov(context, x64Proc, RAX, left);
-			*BucketArrayAdd(&x64Proc->instructions) = { X64_CQO };
+			if (isSigned)
+				*BucketArrayAdd(&x64Proc->instructions) = { X64_CQO };
+			else
+				*BucketArrayAdd(&x64Proc->instructions) = { X64_XOR, RDX, RDX };
 
 			IRValue divisor = right;
 			u8 accepted = x64InstructionInfos[X64_DIV].acceptedOperandsLeft;
@@ -1131,7 +1173,7 @@ void X64ConvertInstruction(Context *context, IRInstruction inst, X64Procedure *x
 				X64Mov(context, x64Proc, newValue, divisor);
 				divisor = newValue;
 			}
-			result.type = X64_IDIV;
+			result.type = isSigned ? X64_IDIV : X64_DIV;
 			result.dst = divisor;
 
 			*BucketArrayAdd(&x64Proc->instructions) = result;
@@ -1140,11 +1182,17 @@ void X64ConvertInstruction(Context *context, IRInstruction inst, X64Procedure *x
 		return;
 	}
 	case IRINSTRUCTIONTYPE_SHIFT_LEFT:
-		result.type = X64_SAL;
+	{
+		TypeInfo leftType = context->typeTable[inst.binaryOperation.left.typeTableIdx];
+		result.type = isSigned ? X64_SAL : X64_SHL;
 		goto doShift;
+	}
 	case IRINSTRUCTIONTYPE_SHIFT_RIGHT:
-		result.type = X64_SAR;
+	{
+		TypeInfo leftType = context->typeTable[inst.binaryOperation.left.typeTableIdx];
+		result.type = isSigned ? X64_SAR : X64_SHR;
 		goto doShift;
+	}
 	case IRINSTRUCTIONTYPE_LABEL:
 		result.type = X64_Label;
 		result.label = inst.label;
@@ -1278,8 +1326,7 @@ void X64ConvertInstruction(Context *context, IRInstruction inst, X64Procedure *x
 			default:
 				dst = IRValueMemory(x64ParameterValuesWrite[i], 0, TYPETABLEIDX_S64);
 			}
-			if (isXMM)
-				dst.typeTableIdx = paramType;
+			dst.typeTableIdx = paramType;
 			X64Mov(context, x64Proc, dst, param);
 		}
 
@@ -1695,11 +1742,14 @@ String X64InstructionToStr(Context *context, X64Instruction inst)
 	case X64_MOV:
 	case X64_MOVSX:
 	case X64_MOVZX:
+	case X64_MOVSXD:
 	case X64_LEA:
 	case X64_ADD:
 	case X64_SUB:
 	case X64_SAL:
 	case X64_SAR:
+	case X64_SHL:
+	case X64_SHR:
 	case X64_CMP:
 	case X64_TEST:
 	case X64_IMUL:
@@ -1736,6 +1786,7 @@ String X64InstructionToStr(Context *context, X64Instruction inst)
 	case X64_POP:
 	case X64_NEG:
 	case X64_NOT:
+	case X64_DIV:
 	case X64_IDIV:
 	case X64_SETG:
 	case X64_SETL:
@@ -2058,6 +2109,8 @@ void BackendMain(Context *context)
 	x64InstructionInfos[X64_IDIV] =      { "idiv"_s,      ACCEPTEDOPERANDS_REGMEM,   ACCEPTEDOPERANDS_NONE };
 	x64InstructionInfos[X64_SAR] =       { "sar"_s,       ACCEPTEDOPERANDS_REGMEM,   ACCEPTEDOPERANDS_ALL };
 	x64InstructionInfos[X64_SAL] =       { "sal"_s,       ACCEPTEDOPERANDS_REGMEM,   ACCEPTEDOPERANDS_ALL };
+	x64InstructionInfos[X64_SHR] =       { "shr"_s,       ACCEPTEDOPERANDS_REGMEM,   ACCEPTEDOPERANDS_ALL };
+	x64InstructionInfos[X64_SHL] =       { "shl"_s,       ACCEPTEDOPERANDS_REGMEM,   ACCEPTEDOPERANDS_ALL };
 	x64InstructionInfos[X64_AND] =       { "and"_s,       ACCEPTEDOPERANDS_REGMEM,   ACCEPTEDOPERANDS_ALL };
 	x64InstructionInfos[X64_OR] =        { "or"_s,        ACCEPTEDOPERANDS_REGMEM,   ACCEPTEDOPERANDS_ALL };
 	x64InstructionInfos[X64_XOR] =       { "xor"_s,       ACCEPTEDOPERANDS_REGMEM,   ACCEPTEDOPERANDS_ALL };

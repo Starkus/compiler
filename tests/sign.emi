@@ -1,0 +1,55 @@
+Main :: () -> s64
+{
+	// Sign extend
+	{
+		foo : s8 = -1;
+		bar : s64 = foo;
+		PrintF("-1 == %\n", bar);
+		if bar != -1 return 1;
+	}
+
+	// Arithmetic shift
+	{
+		foo : s64 = -45;
+		bar := foo >> 1;
+		PrintF("% >> 1 == %\n", foo, bar);
+		if bar != -23 return 1;
+	}
+
+	// Logical shift
+	{
+		foo : u32 = 4000000000;
+		bar := foo >> 1;
+		PrintF("% >> 1 == %\n", foo, bar);
+		if bar != 2000000000 return 1;
+	}
+
+	// Print big numbers
+	{
+		foo : s64 = -1;
+		bar : u64 = -1;
+		PrintF("-1 == %\n", foo);
+		PrintF("U64_MAX == %\n", bar);
+		if foo != -1 return 1;
+		if bar != 0xFFFFFFFFFFFFFFFF return 1;
+	}
+
+	// Signed multiply
+	{
+		foo : s32 = -5000;
+		bar := foo * 2;
+		PrintF("% * 2 == %\n", foo, bar);
+		if bar != -10000 return 1;
+	}
+
+	// Unsigned multiply
+	{
+		foo : u32 = 5000;
+		bar := foo * 2;
+		PrintF("% * 2 == %\n", foo, bar);
+		if bar != 10000 return 1;
+	}
+
+	Print("Test ok\n");
+	return 0;
+}

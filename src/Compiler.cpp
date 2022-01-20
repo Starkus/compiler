@@ -103,6 +103,7 @@ u64 CycleCountEnd(u64 begin)
 #include "Strings.cpp"
 #include "Parser.h"
 #include "AST.h"
+#include "IRGen.h"
 
 struct Config
 {
@@ -126,11 +127,6 @@ struct Procedure;
 struct TypeInfo;
 struct StaticDefinition;
 struct TCScope;
-struct IRStaticVariable;
-struct IRScope;
-struct IRProcedureScope;
-struct IRLabel;
-struct IRInstruction;
 struct BasicBlock;
 struct BEInstruction;
 struct Context
@@ -159,6 +155,7 @@ struct Context
 	BucketArray<const TypeInfo, HeapAllocator, 1024> typeTable;
 	TCScope *tcGlobalScope;
 	s64 tcCurrentReturnType;
+	s64 tcCurrentForLoopArrayType;
 
 	// IR
 	DynamicArray<IRStaticVariable, HeapAllocator> irStaticVariables;
@@ -168,6 +165,11 @@ struct Context
 	BucketArray<IRLabel, HeapAllocator, 1024> irLabels;
 	IRLabel *currentBreakLabel;
 	IRLabel *currentContinueLabel;
+	IRLabel *currentContinueSkipIncrementLabel;
+	struct {
+		IRValue arrayValue;
+		IRValue indexValue;
+	} irCurrentForLoopInfo;
 
 	// Backend
 	BucketArray<u8, PhaseAllocator, OUTPUT_BUFFER_BUCKET_SIZE> outputBuffer;

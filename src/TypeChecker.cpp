@@ -2203,6 +2203,9 @@ ASTExpression InlineProcedureCopyTreeBranch(Context *context, const ASTExpressio
 		*e = InlineProcedureCopyTreeBranch(context, expression->forNode.range);
 		astFor.range = e;
 
+		s64 oldForArray = context->tcCurrentForLoopArrayType;
+		context->tcCurrentForLoopArrayType = TYPETABLEIDX_UNSET;
+
 		PushTCScope(context);
 
 		String indexValueName = "i"_s;
@@ -2223,6 +2226,8 @@ ASTExpression InlineProcedureCopyTreeBranch(Context *context, const ASTExpressio
 			rangeExp->binaryOperation.op == TOKEN_OP_RANGE;
 		if (!isExplicitRange)
 		{
+			context->tcCurrentForLoopArrayType = rangeExp->typeTableIdx;
+
 			s64 origValueTypeIdx = context->values[expression->forNode.elementValueIdx].typeTableIdx;
 			String elementValueName = "it"_s;
 			u32 elementValueIdx = NewValue(context, elementValueName, origValueTypeIdx, 0);
@@ -2240,6 +2245,8 @@ ASTExpression InlineProcedureCopyTreeBranch(Context *context, const ASTExpressio
 		astFor.body = e;
 
 		PopTCScope(context);
+
+		context->tcCurrentForLoopArrayType = oldForArray;
 
 		result.forNode = astFor;
 		return result;
@@ -3253,14 +3260,14 @@ skipOverload:
 		{
 			PushTCScope(context);
 
-			String indexValueName = "i"_s;
-			u32 indexValueIdx = NewValue(context, indexValueName, TYPETABLEIDX_S64, 0);
+			u32 indexValueIdx = NewValue(context, expression->forNode.indexVariableName,
+					TYPETABLEIDX_S64, 0);
 			expression->forNode.indexValueIdx = indexValueIdx;
 
 			TCScope *stackTop = GetTopMostScope(context);
 			TCScopeName newScopeName;
 			newScopeName.type = NAMETYPE_VARIABLE;
-			newScopeName.name = indexValueName;
+			newScopeName.name = expression->forNode.indexVariableName;
 			newScopeName.variableInfo.tcValue = { TCVALUETYPE_VALUE, indexValueIdx };
 			newScopeName.variableInfo.typeTableIdx = TYPETABLEIDX_S64;
 			newScopeName.loc = expression->any.loc;
@@ -3276,18 +3283,22 @@ skipOverload:
 				if (rangeExp->typeTableIdx != TYPETABLEIDX_STRING_STRUCT)
 				{
 					TypeInfo rangeTypeInfo = context->typeTable[rangeExp->typeTableIdx];
+					if (rangeTypeInfo.typeCategory == TYPECATEGORY_POINTER)
+						rangeTypeInfo = context->typeTable[rangeTypeInfo.pointerInfo.pointedTypeTableIdx];
+
 					if (rangeTypeInfo.typeCategory != TYPECATEGORY_ARRAY)
-						LogError(context, expression->forNode.range->any.loc, "'for' range expression "
-								"does not evaluate to an array nor is it a number range (..)"_s);
+						LogError(context, expression->forNode.range->any.loc, "'for' range "
+								"expression does not evaluate to an array nor is it a number range "
+								"(..)"_s);
 					elementTypeTableIdx = rangeTypeInfo.arrayInfo.elementTypeTableIdx;
 				}
 
 				s64 pointerToElementTypeTableIdx = GetTypeInfoPointerOf(context, elementTypeTableIdx);
-				String elementValueName = "it"_s;
-				u32 elementValueIdx = NewValue(context, elementValueName, pointerToElementTypeTableIdx, 0);
+				u32 elementValueIdx = NewValue(context, expression->forNode.itemVariableName,
+						pointerToElementTypeTableIdx, 0);
 				expression->forNode.elementValueIdx = elementValueIdx;
 
-				newScopeName.name = elementValueName;
+				newScopeName.name = expression->forNode.itemVariableName;
 				newScopeName.variableInfo.tcValue = { TCVALUETYPE_VALUE, elementValueIdx };
 				newScopeName.variableInfo.typeTableIdx = pointerToElementTypeTableIdx;
 				newScopeName.loc = expression->any.loc;
@@ -3297,17 +3308,29 @@ skipOverload:
 			expression->forNode.scopePushed = true;
 		}
 
+		s64 oldForArray = context->tcCurrentForLoopArrayType;
+		context->tcCurrentForLoopArrayType = expression->forNode.range->typeTableIdx;
+
 		TypeCheckExpressionResult result = TryTypeCheckExpression(context, expression->forNode.body);
+
+		// Important to restore whether we yield or not!
+		context->tcCurrentForLoopArrayType = oldForArray;
+
 		if (!result.success)
 			return { false, result.yieldInfo };
 
 		PopTCScope(context);
 	} break;
 	case ASTNODETYPE_BREAK:
-	{
-	} break;
 	case ASTNODETYPE_CONTINUE:
 	{
+	} break;
+	case ASTNODETYPE_REMOVE:
+	{
+		TypeInfo forArrayType = context->typeTable[context->tcCurrentForLoopArrayType];
+		if (forArrayType.typeCategory != TYPECATEGORY_ARRAY || forArrayType.arrayInfo.count != 0)
+			LogError(context, expression->any.loc, "'remove' found but there wasn't a for loop "
+					"with a dynamic sized array as range"_s);
 	} break;
 	case ASTNODETYPE_TYPE:
 	{

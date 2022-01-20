@@ -306,7 +306,6 @@ Main :: () -> s64
 		scan += 6;
 		bitsPerPixel := @cast(^u16)scan;
 		imageData := fileBuffer + imageDataOffset;
-		PrintF("Texture size: %x% - Bits per pixel: %\n", textureWidth, textureHeight, bitsPerPixel);
 
 		glGenTextures(1, ^textureId);
 		glBindTexture(GL_TEXTURE_2D, textureId);

@@ -12,21 +12,37 @@ PrintF :: (format : String, ..args)
 		else if arg.typeInfo.typeKind == TypeKind_Integer
 		{
 			intInfo := cast(^TypeInfoInteger) arg.typeInfo;
-			num : s64;
-			if intInfo.size == 1
-				num = @ cast(^s8) arg.data;
-			else if intInfo.size == 2
-				num = @ cast(^s16) arg.data;
-			else if intInfo.size == 4
-				num = @ cast(^s32) arg.data;
-			else if intInfo.size == 8
-				num = @ cast(^s64) arg.data;
-
+			num : u64;
 			isNegative : bool = false;
-			if num < 0
+
+			if intInfo.isSigned
 			{
-				isNegative = true;
-				num = -num;
+				signedNum : s64;
+				if intInfo.size == 1
+					signedNum = @ cast(^s8) arg.data;
+				else if intInfo.size == 2
+					signedNum = @ cast(^s16) arg.data;
+				else if intInfo.size == 4
+					signedNum = @ cast(^s32) arg.data;
+				else if intInfo.size == 8
+					signedNum = @ cast(^s64) arg.data;
+				if signedNum < 0
+				{
+					signedNum = -signedNum;
+					isNegative = true;
+				}
+				num = cast(u64)signedNum;
+			}
+			else
+			{
+				if intInfo.size == 1
+					num = @ cast(^u8) arg.data;
+				else if intInfo.size == 2
+					num = @ cast(^u16) arg.data;
+				else if intInfo.size == 4
+					num = @ cast(^u32) arg.data;
+				else if intInfo.size == 8
+					num = @ cast(^u64) arg.data;
 			}
 
 			buffer : [20] u8;

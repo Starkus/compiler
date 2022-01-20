@@ -273,6 +273,8 @@ struct ASTWhile : ASTBase
 
 struct ASTFor : ASTBase
 {
+	String indexVariableName;
+	String itemVariableName;
 	ASTExpression *range;
 	ASTExpression *body;
 
@@ -319,6 +321,7 @@ enum ASTNodeType
 	ASTNODETYPE_WHILE,
 	ASTNODETYPE_FOR,
 	ASTNODETYPE_CONTINUE,
+	ASTNODETYPE_REMOVE,
 	ASTNODETYPE_BREAK,
 	ASTNODETYPE_RETURN,
 	ASTNODETYPE_DEFER,

@@ -280,19 +280,69 @@ ASTFor ParseFor(Context *context)
 
 	ASTFor forNode = {};
 	forNode.loc = context->token->loc;
+	forNode.indexVariableName = "i"_s;
+	forNode.itemVariableName = "it"_s;
 	Advance(context);
 
+	bool closeParenthesis = false;
 	forNode.range = NewTreeNode(context);
 	if (context->token->type == '(')
 	{
 		// If there are parenthesis, grab _only_ the expression inside.
 		Advance(context);
-		*forNode.range = ParseExpression(context, -1);
+		closeParenthesis = true;
+	}
+
+	Token *oldToken = context->token;
+	u64 oldTokenIdx = context->currentTokenIdx;
+
+	Token *first = context->token;
+	Advance(context);
+
+	if (context->token->type == TOKEN_OP_VARIABLE_DECLARATION)
+	{
+		Advance(context);
+		if (first->type != TOKEN_IDENTIFIER)
+			LogError(context, first->loc, "Expected name of index variable before ':' inside "
+					"for loop range"_s);
+		Advance(context);
+
+		forNode.indexVariableName = first->string;
+	}
+	else if (context->token->type == ',')
+	{
+		Advance(context);
+		Token *second = context->token;
+		Advance(context);
+		if (context->token->type == ',')
+			LogError(context, context->token->loc, "Too many names in for loop condition, only up "
+					"to 2 allowed (indexVar, itemVar : expr)"_s);
+		AssertToken(context, context->token, TOKEN_OP_VARIABLE_DECLARATION);
+		Advance(context);
+
+		if (first->type != TOKEN_IDENTIFIER)
+			LogError(context, first->loc, "Expected name of index variable before ',' inside "
+					"for loop range"_s);
+		if (second->type != TOKEN_IDENTIFIER)
+			LogError(context, first->loc, "Expected name of item variable before ':' inside "
+					"for loop range"_s);
+
+		forNode.indexVariableName = first->string;
+		forNode.itemVariableName  = second->string;
+	}
+	else
+	{
+		context->token = oldToken;
+		context->currentTokenIdx = oldTokenIdx;
+	}
+
+	*forNode.range = ParseExpression(context, -1);
+
+	if (closeParenthesis)
+	{
 		AssertToken(context, context->token, ')');
 		Advance(context);
 	}
-	else
-		*forNode.range = ParseExpression(context, -1);
 
 	forNode.body = NewTreeNode(context);
 	*forNode.body = ParseStatement(context);
@@ -1018,6 +1068,14 @@ ASTExpression ParseStatement(Context *context)
 	case TOKEN_KEYWORD_CONTINUE:
 	{
 		result.nodeType = ASTNODETYPE_CONTINUE;
+		Advance(context);
+
+		AssertToken(context, context->token, ';');
+		Advance(context);
+	} break;
+	case TOKEN_KEYWORD_REMOVE:
+	{
+		result.nodeType = ASTNODETYPE_REMOVE;
 		Advance(context);
 
 		AssertToken(context, context->token, ';');

@@ -60,6 +60,13 @@ Main :: () -> s64
 	bar := 4.5;
 	*/
 
+	// Remove used when not possible
+	/*
+	array : [4] s32;
+	for array if i % 2 remove;
+	for 0..4 if i % 2 remove;
+	*/
+
 	Print("Test ok\n");
 	return 0;
 }

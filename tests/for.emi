@@ -1,14 +1,16 @@
 Main :: () -> s64
 {
 	// Range
+	Print("Range: ");
 	for 0..4
 	{
 		foo := i;
 		PrintF("i = %;  ", i);
 	}
-	Print("\n");
+	Print("\n\n");
 
 	// Array
+	Print("Array: ");
 	array : [4] s32;
 	for array
 	{
@@ -18,9 +20,10 @@ Main :: () -> s64
 
 		PrintF("i = %, it = %;  ", i, @it);
 	}
-	Print("\n");
+	PrintF("\nResult: %\n\n", array);
 
 	// Dynamic array
+	Print("Dynamic array: ");
 	dynamicArray : [] s32;
 	dynamicArray.size = 4;
 	dynamicArray.data = ^array;
@@ -32,24 +35,43 @@ Main :: () -> s64
 
 		PrintF("i = %, it = %;  ", i, @it);
 	}
-	Print("\n");
+	PrintF("\nResult: %\n\n", dynamicArray);
 
 	// Complex expression that evaluates to an array
+	Print("Array holder: ");
 	arrayHolder : struct { ptrToArray : ^[] s32; };
 	arrayHolder.ptrToArray = ^dynamicArray;
-	for (@arrayHolder.ptrToArray)
+	for arrayHolder.ptrToArray
 	{
 		PrintF("i = %, it = %;  ", i, @it);
 	}
-	Print("\n");
+	PrintF("\nResult: %\n\n", arrayHolder);
 
 	// Continue test
+	Print("Continue if odd: ");
 	for 0..16
 	{
 		if i % 2 continue;
 		PrintF("i = %, ", i);
 	}
-	Print("\n");
+	Print("\n\n");
+
+	// Named variables
+	Print("Named i and it: ");
+	for idx, item : array
+	{
+		PrintF("i = %, it = %;  ", idx, @item);
+	}
+	Print("\n\n");
+
+	// Remove
+	PrintF("Dynamic array without 2 or 6 in it: ");
+	for dynamicArray
+	{
+		PrintF("i = %, it = %;  ", i, @it);
+		if @it == 2 || @it == 6 remove;
+	}
+	PrintF("\nResult: %\n\n", dynamicArray);
 
 	Print("Test ok\n");
 	return 0;

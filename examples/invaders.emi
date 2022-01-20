@@ -22,7 +22,6 @@ Win32WindowCallback :: (hWnd : ^void, message : u32, wParam : u64, lParam : u64)
 		screenWidth = cast(s32)(lParam & 0xFFFF);
 		screenHeight = cast(s32)((lParam >> 16) & 0xFFFF);
 		glViewport(0, 0, screenWidth, screenHeight);
-		PrintF("Resized to % %\n", screenWidth, screenHeight);
 	}
 	else
 		return DefWindowProcA(hWnd, message, wParam, lParam);
@@ -326,7 +325,6 @@ Main :: () -> s64
 		scan += 6;
 		bitsPerPixel := @cast(^u16)scan;
 		imageData := fileBuffer + imageDataOffset;
-		PrintF("Texture size: %x% - Bits per pixel: %\n", textureWidth, textureHeight, bitsPerPixel);
 
 		glGenTextures(1, ^textureId);
 		glBindTexture(GL_TEXTURE_2D, textureId);
@@ -389,12 +387,7 @@ Main :: () -> s64
 		{
 			it.y += 1000.0 * deltaTime;
 			if it.y > screenHeight
-			{
-				// Remove
-				bullets.size -= 1;
-				@it = bullets[bullets.size];
-				i -= 1;
-			}
+				remove;
 		}
 
 		// Player bullet collisions
@@ -402,14 +395,10 @@ Main :: () -> s64
 		halfBulletHeight := BULLET_HEIGHT * 0.5;
 		halfEnemyWidth   := ENEMY_WIDTH   * 0.5;
 		halfEnemyHeight  := ENEMY_HEIGHT  * 0.5;
-		for bullets
+		for bulletIdx, bullet : bullets
 		{
-			// @Todo: give names to for variables?
-			bulletIdx := i;
-			bullet := it;
-			for enemies
+			for enemyIdx, enemy : enemies
 			{
-				enemy := it;
 				if (bullet.x - halfBulletWidth  < enemy.pos.x + halfEnemyWidth &&
 					bullet.x + halfBulletWidth  > enemy.pos.x - halfEnemyWidth &&
 					bullet.y - halfBulletHeight < enemy.pos.y + halfEnemyHeight &&
@@ -428,11 +417,10 @@ Main :: () -> s64
 						// Destroy enemy
 						enemies.size -= 1;
 						@enemy = enemies[enemies.size];
-						i -= 1;
+						enemyIdx -= 1;
 					}
 				}
 			}
-			i = bulletIdx;
 		}
 
 		for enemies

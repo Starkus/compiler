@@ -322,6 +322,8 @@ Token ReadTokenAndAdvance(Context *context, Tokenizer *tokenizer)
 			result.type = TOKEN_KEYWORD_BREAK;
 		else if (TokenIsStr(&result, "continue"))
 			result.type = TOKEN_KEYWORD_CONTINUE;
+		else if (TokenIsStr(&result, "remove"))
+			result.type = TOKEN_KEYWORD_REMOVE;
 		else if (TokenIsStr(&result, "struct"))
 			result.type = TOKEN_KEYWORD_STRUCT;
 		else if (TokenIsStr(&result, "union"))

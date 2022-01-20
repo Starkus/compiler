@@ -1,228 +1,3 @@
-enum IRValueType
-{
-	IRVALUETYPE_INVALID = -1,
-	IRVALUETYPE_VALUE,
-	IRVALUETYPE_MEMORY,
-	IRVALUETYPE_PROCEDURE,
-	IRVALUETYPE_IMMEDIATE_INTEGER,
-	IRVALUETYPE_IMMEDIATE_FLOAT,
-	IRVALUETYPE_IMMEDIATE_STRING,
-	IRVALUETYPE_IMMEDIATE_GROUP
-};
-struct IRValue
-{
-	IRValueType valueType;
-	union
-	{
-		u32 valueIdx;
-		s64 immediate;
-		f64 immediateFloat;
-		u32 immediateStringIdx;
-		Array<IRValue, FrameAllocator> immediateStructMembers;
-		s32 procedureIdx;
-		struct
-		{
-			u32 baseValueIdx;
-			s64 offset;
-		} memory;
-	};
-	s64 typeTableIdx;
-};
-static_assert(offsetof(IRValue, valueIdx) == offsetof(IRValue, memory.baseValueIdx),
-	"IRValue::valueIdx and IRValue::memory.baseValueIdx should have the same offset");
-
-struct IRLabel
-{
-	String name;
-	s32 procedureIdx;
-	s64 instructionIdx;
-};
-
-struct IRJump
-{
-	IRLabel *label;
-};
-
-struct IRConditionalJump
-{
-	IRLabel *label;
-	IRValue condition;
-};
-
-struct IRConditionalJump2
-{
-	IRLabel *label;
-	IRValue left;
-	IRValue right;
-};
-
-struct IRProcedureCall
-{
-	union
-	{
-		s32 procedureIdx;
-		IRValue procIRValue;
-	};
-	Array<IRValue, FrameAllocator> parameters;
-	IRValue out;
-
-	// Filled during register allocation
-	u64 liveRegisters;
-};
-
-struct IRIntrinsic
-{
-	IntrinsicType type;
-	Array<IRValue, FrameAllocator> parameters;
-};
-
-struct IRPushValue
-{
-	u32 valueIdx;
-};
-
-struct IRAssignment
-{
-	IRValue src;
-	IRValue dst;
-};
-
-struct IRUnaryOperation
-{
-	IRValue in;
-	IRValue out;
-};
-
-struct IRBinaryOperation
-{
-	IRValue left;
-	IRValue right;
-	IRValue out;
-};
-
-struct IRCopyMemory
-{
-	IRValue src;
-	IRValue dst;
-	IRValue size;
-};
-
-struct IRZeroMemory
-{
-	IRValue dst;
-	IRValue size;
-};
-
-enum IRInstructionType
-{
-	IRINSTRUCTIONTYPE_INVALID = -1,
-
-	IRINSTRUCTIONTYPE_NOP,
-
-	IRINSTRUCTIONTYPE_COMMENT,
-
-	IRINSTRUCTIONTYPE_LABEL,
-	IRINSTRUCTIONTYPE_JUMP,
-	IRINSTRUCTIONTYPE_JUMP_IF_ZERO,
-	IRINSTRUCTIONTYPE_JUMP_IF_NOT_ZERO,
-
-	IRINSTRUCTIONTYPE_COMPARE_JUMP_BEGIN,
-	IRINSTRUCTIONTYPE_JUMP_IF_EQUALS = IRINSTRUCTIONTYPE_COMPARE_JUMP_BEGIN,
-	IRINSTRUCTIONTYPE_JUMP_IF_NOT_EQUALS,
-	IRINSTRUCTIONTYPE_JUMP_IF_GREATER_THAN,
-	IRINSTRUCTIONTYPE_JUMP_IF_GREATER_THAN_OR_EQUALS,
-	IRINSTRUCTIONTYPE_JUMP_IF_LESS_THAN,
-	IRINSTRUCTIONTYPE_JUMP_IF_LESS_THAN_OR_EQUALS,
-	IRINSTRUCTIONTYPE_COMPARE_JUMP_END,
-
-	IRINSTRUCTIONTYPE_RETURN,
-	IRINSTRUCTIONTYPE_PROCEDURE_CALL,
-	IRINSTRUCTIONTYPE_PROCEDURE_CALL_INDIRECT,
-	IRINSTRUCTIONTYPE_INTRINSIC,
-	IRINSTRUCTIONTYPE_PUSH_VALUE,
-	IRINSTRUCTIONTYPE_PUSH_SCOPE,
-	IRINSTRUCTIONTYPE_POP_SCOPE,
-
-	IRINSTRUCTIONTYPE_ASSIGNMENT,
-
-	IRINSTRUCTIONTYPE_UNARY_BEGIN,
-	IRINSTRUCTIONTYPE_NOT = IRINSTRUCTIONTYPE_UNARY_BEGIN,
-	IRINSTRUCTIONTYPE_BITWISE_NOT,
-	IRINSTRUCTIONTYPE_SUBTRACT_UNARY,
-	IRINSTRUCTIONTYPE_LOAD_EFFECTIVE_ADDRESS,
-	IRINSTRUCTIONTYPE_UNARY_END,
-
-	IRINSTRUCTIONTYPE_BINARY_BEGIN,
-	IRINSTRUCTIONTYPE_ADD = IRINSTRUCTIONTYPE_BINARY_BEGIN,
-	IRINSTRUCTIONTYPE_SUBTRACT,
-	IRINSTRUCTIONTYPE_MULTIPLY,
-	IRINSTRUCTIONTYPE_DIVIDE,
-	IRINSTRUCTIONTYPE_MODULO,
-	IRINSTRUCTIONTYPE_SHIFT_LEFT,
-	IRINSTRUCTIONTYPE_SHIFT_RIGHT,
-	IRINSTRUCTIONTYPE_OR,
-	IRINSTRUCTIONTYPE_AND,
-	IRINSTRUCTIONTYPE_BITWISE_OR,
-	IRINSTRUCTIONTYPE_BITWISE_XOR,
-	IRINSTRUCTIONTYPE_BITWISE_AND,
-
-	IRINSTRUCTIONTYPE_COMPARE_BEGIN,
-	IRINSTRUCTIONTYPE_EQUALS = IRINSTRUCTIONTYPE_COMPARE_BEGIN,
-	IRINSTRUCTIONTYPE_NOT_EQUALS,
-	IRINSTRUCTIONTYPE_GREATER_THAN,
-	IRINSTRUCTIONTYPE_GREATER_THAN_OR_EQUALS,
-	IRINSTRUCTIONTYPE_LESS_THAN,
-	IRINSTRUCTIONTYPE_LESS_THAN_OR_EQUALS,
-	IRINSTRUCTIONTYPE_COMPARE_END,
-	IRINSTRUCTIONTYPE_BINARY_END,
-
-	IRINSTRUCTIONTYPE_COPY_MEMORY,
-	IRINSTRUCTIONTYPE_ZERO_MEMORY,
-};
-struct IRInstruction
-{
-	IRInstructionType type;
-	union
-	{
-		String comment;
-		IRLabel *label;
-		IRJump jump;
-		IRConditionalJump conditionalJump;
-		IRConditionalJump2 conditionalJump2;
-		IRProcedureCall procedureCall;
-		IRIntrinsic intrinsic;
-		IRPushValue pushValue;
-		IRAssignment assignment;
-		IRUnaryOperation unaryOperation;
-		IRBinaryOperation binaryOperation;
-
-		IRCopyMemory copyMemory;
-		IRZeroMemory zeroMemory;
-	};
-};
-
-struct IRScope
-{
-	IRLabel *closeLabel;
-	DynamicArray<ASTExpression *, PhaseAllocator> deferredStatements;
-};
-
-struct IRProcedureScope
-{
-	s32 procedureIdx;
-	s64 irStackBase;
-	IRLabel *returnLabel;
-	u32 shouldReturnValueIdx;
-
-	SourceLocation definitionLoc;
-};
-
-struct IRStaticVariable
-{
-	u32 valueIdx;
-	IRValue initialValue;
-};
-
 IRLabel *NewLabel(Context *context, String prefix)
 {
 	static u64 currentLabelId = 0;
@@ -2170,8 +1945,8 @@ skipGeneratingVarargsArray:
 		IRPushValueIntoStack(context, indexValueIdx);
 		IRValue indexValue = IRValueValue(context, indexValueIdx);
 
-		s64 rangeTypeIdx = expression->forNode.range->typeTableIdx;
-		TypeInfo rangeTypeInfo = context->typeTable[rangeTypeIdx];
+		bool isThereItVariable = false;
+		s64 elementTypeIdx = -1;
 
 		IRValue from = {}, to = {}, arrayValue = {};
 		if (expression->forNode.range->nodeType == ASTNODETYPE_BINARY_OPERATION &&
@@ -2185,21 +1960,32 @@ skipGeneratingVarargsArray:
 			// Assign 'i'
 			IRDoAssignment(context, indexValue, from);
 		}
-		else if (rangeTypeIdx == TYPETABLEIDX_STRING_STRUCT || rangeTypeInfo.typeCategory == TYPECATEGORY_ARRAY)
+		else
 		{
+			arrayValue = IRGenFromExpression(context, expression->forNode.range);
+
+			TypeInfo rangeTypeInfo = context->typeTable[arrayValue.typeTableIdx];
+			if (rangeTypeInfo.typeCategory == TYPECATEGORY_POINTER)
+			{
+				arrayValue = IRDereferenceValue(context, arrayValue);
+				rangeTypeInfo = context->typeTable[arrayValue.typeTableIdx];
+			}
+
+			ASSERT(arrayValue.typeTableIdx == TYPETABLEIDX_STRING_STRUCT ||
+				   rangeTypeInfo.typeCategory == TYPECATEGORY_ARRAY);
+
+			isThereItVariable = true;
 			u32 elementValueIdx = expression->forNode.elementValueIdx;
 			// Allocate 'it' variable
 			IRPushValueIntoStack(context, elementValueIdx);
 
-			arrayValue = IRGenFromExpression(context, expression->forNode.range);
-
-			s64 elementTypeIdx = TYPETABLEIDX_U8;
-			if (rangeTypeIdx != TYPETABLEIDX_STRING_STRUCT)
+			elementTypeIdx = TYPETABLEIDX_U8;
+			if (arrayValue.typeTableIdx != TYPETABLEIDX_STRING_STRUCT)
 				elementTypeIdx = rangeTypeInfo.arrayInfo.elementTypeTableIdx;
 			s64 pointerToElementTypeTableIdx = GetTypeInfoPointerOf(context, elementTypeIdx);
 
 			from = IRValueImmediate(0);
-			if (rangeTypeInfo.arrayInfo.count == 0 || rangeTypeIdx == TYPETABLEIDX_STRING_STRUCT)
+			if (rangeTypeInfo.arrayInfo.count == 0 || arrayValue.typeTableIdx == TYPETABLEIDX_STRING_STRUCT)
 			{
 				// Compare with size member
 				TypeInfo dynamicArrayTypeInfo = context->typeTable[TYPETABLEIDX_ARRAY_STRUCT];
@@ -2217,12 +2003,11 @@ skipGeneratingVarargsArray:
 			elementValue = IRPointerToValue(context, elementValue);
 			IRDoAssignment(context, elementVarValue, elementValue);
 		}
-		else
-			CRASH;
 
 		IRLabel *loopLabel     = NewLabel(context, "loop"_s);
 		IRLabel *breakLabel    = NewLabel(context, "break"_s);
 		IRLabel *continueLabel = NewLabel(context, "continue"_s);
+		IRLabel *continueSkipIncrementLabel = NewLabel(context, "continueSkipIncrement"_s);
 
 		IRInsertLabelInstruction(context, loopLabel);
 
@@ -2230,12 +2015,18 @@ skipGeneratingVarargsArray:
 		IRLabel *oldContinueLabel = context->currentContinueLabel;
 		context->currentBreakLabel    = breakLabel;
 		context->currentContinueLabel = continueLabel;
+		context->currentContinueSkipIncrementLabel = continueSkipIncrementLabel;
 
 		IRInstruction *breakJump = AddInstruction(context);
 		breakJump->type = IRINSTRUCTIONTYPE_JUMP_IF_GREATER_THAN_OR_EQUALS;
 		breakJump->conditionalJump2.label = breakLabel;
 		breakJump->conditionalJump2.left  = indexValue;
 		breakJump->conditionalJump2.right = to;
+
+		IRValue oldArrayValue = context->irCurrentForLoopInfo.arrayValue;
+		IRValue oldIndexValue = context->irCurrentForLoopInfo.indexValue;
+		context->irCurrentForLoopInfo.arrayValue = arrayValue;
+		context->irCurrentForLoopInfo.indexValue = indexValue;
 
 		IRGenFromExpression(context, expression->forNode.body);
 
@@ -2249,19 +2040,17 @@ skipGeneratingVarargsArray:
 		incrementInst.binaryOperation.out = indexValue;
 		*AddInstruction(context) = incrementInst;
 
-		if (rangeTypeIdx == TYPETABLEIDX_STRING_STRUCT || rangeTypeInfo.typeCategory == TYPECATEGORY_ARRAY)
+		if (isThereItVariable)
 		{
 			// Update 'it'
-			s64 elementTypeIdx = TYPETABLEIDX_U8;
-			if (rangeTypeIdx != TYPETABLEIDX_STRING_STRUCT)
-				elementTypeIdx = rangeTypeInfo.arrayInfo.elementTypeTableIdx;
-
 			u32 elementValueIdx = expression->forNode.elementValueIdx;
 			IRValue elementVarValue = IRValueValue(context, elementValueIdx);
 			IRValue elementValue = IRDoArrayAccess(context, arrayValue, indexValue, elementTypeIdx);
 			elementValue = IRPointerToValue(context, elementValue);
 			IRDoAssignment(context, elementVarValue, elementValue);
 		}
+
+		IRInsertLabelInstruction(context, continueSkipIncrementLabel);
 
 		IRInstruction *loopJump = AddInstruction(context);
 		IRInsertLabelInstruction(context, breakLabel);
@@ -2272,6 +2061,9 @@ skipGeneratingVarargsArray:
 		loopJump->type = IRINSTRUCTIONTYPE_JUMP;
 		loopJump->jump.label = loopLabel;
 
+		context->irCurrentForLoopInfo.arrayValue = oldArrayValue;
+		context->irCurrentForLoopInfo.indexValue = oldIndexValue;
+
 		PopIRScope(context);
 	} break;
 	case ASTNODETYPE_CONTINUE:
@@ -2279,6 +2071,41 @@ skipGeneratingVarargsArray:
 		IRInstruction inst;
 		inst.type = IRINSTRUCTIONTYPE_JUMP;
 		inst.jump.label = context->currentContinueLabel;
+		*AddInstruction(context) = inst;
+	} break;
+	case ASTNODETYPE_REMOVE:
+	{
+		IRValue arrayValue = context->irCurrentForLoopInfo.arrayValue;
+		IRValue indexValue = context->irCurrentForLoopInfo.indexValue;
+		IRValue sizeValue;
+
+		TypeInfo arrayType = context->typeTable[arrayValue.typeTableIdx];
+		if (arrayType.typeCategory == TYPECATEGORY_POINTER)
+			arrayType = context->typeTable[arrayType.pointerInfo.pointedTypeTableIdx];
+
+		s64 elementTypeIdx = arrayType.arrayInfo.elementTypeTableIdx;
+
+		{
+			TypeInfo arrayStructTypeInfo = context->typeTable[TYPETABLEIDX_ARRAY_STRUCT];
+			StructMember sizeMember = arrayStructTypeInfo.structInfo.members[0];
+			StructMember dataMember = arrayStructTypeInfo.structInfo.members[1];
+
+			sizeValue = IRDoMemberAccess(context, arrayValue, sizeMember);
+		}
+
+		IRInstruction decrInst = { IRINSTRUCTIONTYPE_SUBTRACT };
+		decrInst.binaryOperation.left = sizeValue;
+		decrInst.binaryOperation.right = IRValueImmediate(1);
+		decrInst.binaryOperation.out = sizeValue;
+		*AddInstruction(context) = decrInst;
+
+		IRValue current = IRDoArrayAccess(context, arrayValue, indexValue, elementTypeIdx);
+		IRValue last    = IRDoArrayAccess(context, arrayValue, sizeValue,  elementTypeIdx);
+		IRDoAssignment(context, current, last);
+
+		IRInstruction inst;
+		inst.type = IRINSTRUCTIONTYPE_JUMP;
+		inst.jump.label = context->currentContinueSkipIncrementLabel;
 		*AddInstruction(context) = inst;
 	} break;
 	case ASTNODETYPE_BREAK:
