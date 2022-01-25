@@ -1,18 +1,28 @@
-enum AcceptedOperandFlags
+enum X64OperandType
 {
-	ACCEPTEDOPERANDS_NONE      = 0,
-	ACCEPTEDOPERANDS_REGISTER  = 1,
-	ACCEPTEDOPERANDS_MEMORY    = 2,
-	ACCEPTEDOPERANDS_REGMEM    = 3,
-	ACCEPTEDOPERANDS_IMMEDIATE = 4,
-	ACCEPTEDOPERANDS_ALL       = 7,
+	OPERANDTYPE_NONE      = 0,
+	OPERANDTYPE_REGISTER  = 1,
+	OPERANDTYPE_MEMORY    = 2,
+	OPERANDTYPE_REGMEM    = 3,
+	OPERANDTYPE_IMMEDIATE = 4,
+	OPERANDTYPE_ALL       = 7,
+};
+
+enum X64OperandAccess
+{
+	OPERANDACCESS_NONE      = 0,
+	OPERANDACCESS_READ      = 1,
+	OPERANDACCESS_WRITE     = 2,
+	OPERANDACCESS_READWRITE = 3,
 };
 
 struct X64InstructionInfo
 {
 	String mnemonic;
-	u8 acceptedOperandsLeft;
-	u8 acceptedOperandsRight;
+	u8 operandTypesLeft;
+	u8 operandAccessLeft;
+	u8 operandTypesRight;
+	u8 operandAccessRight;
 };
 
 enum X64InstructionType
@@ -103,7 +113,8 @@ enum X64InstructionType
 	X64_Pop_Scope,
 	X64_Push_Value,
 	X64_Patch,
-	X64_Patch_Many
+	X64_Patch_Many,
+	X64_FullCount
 };
 
 s32 copyMemoryProcIdx;
@@ -173,7 +184,7 @@ struct X64InstructionStream
 	FixedArray<Frame, 16> stack;
 };
 
-X64InstructionInfo x64InstructionInfos[X64_Count];
+X64InstructionInfo x64InstructionInfos[X64_FullCount];
 
 enum X64Register
 {
@@ -713,10 +724,10 @@ bool FitsInOperand(Context *context, u8 acceptableOperands, IRValue value)
 	bool isImmediate = value.valueType == IRVALUETYPE_IMMEDIATE_INTEGER ||
 					   value.valueType == IRVALUETYPE_IMMEDIATE_FLOAT;
 	if (isImmediate)
-		return acceptableOperands & ACCEPTEDOPERANDS_IMMEDIATE;
+		return acceptableOperands & OPERANDTYPE_IMMEDIATE;
 	if (!IsValueInMemory(context, value))
-		return acceptableOperands & ACCEPTEDOPERANDS_REGISTER;
-	return acceptableOperands & ACCEPTEDOPERANDS_MEMORY;
+		return acceptableOperands & OPERANDTYPE_REGISTER;
+	return acceptableOperands & OPERANDTYPE_MEMORY;
 }
 
 bool CanValueBeMemory(Context *context, IRValue value)
@@ -884,10 +895,10 @@ void X64Test(Context *context, X64Procedure *x64Proc, IRValue value)
 		ASSERT(false);
 	}
 
-	u8 accepted = x64InstructionInfos[cmpInst.type].acceptedOperandsLeft;
+	u8 accepted = x64InstructionInfos[cmpInst.type].operandTypesLeft;
 	if (!FitsInOperand(context, accepted, cmpInst.dst))
 	{
-		ASSERT(accepted & ACCEPTEDOPERANDS_REGISTER);
+		ASSERT(accepted & OPERANDTYPE_REGISTER);
 		IRValue newValue = IRValueNewValue(context, "_test_hlp"_s, cmpInst.dst.typeTableIdx,
 				VALUEFLAGS_FORCE_REGISTER);
 		X64Mov(context, x64Proc, newValue, cmpInst.dst);
@@ -1057,10 +1068,10 @@ void X64ConvertInstruction(Context *context, IRInstruction inst, X64Procedure *x
 					*BucketArrayAdd(&x64Proc->instructions) = { X64_XOR, RDX, RDX };
 
 					IRValue multiplier = right;
-					u8 accepted = x64InstructionInfos[X64_MUL].acceptedOperandsLeft;
+					u8 accepted = x64InstructionInfos[X64_MUL].operandTypesLeft;
 					if (!FitsInOperand(context, accepted, multiplier))
 					{
-						ASSERT(accepted & ACCEPTEDOPERANDS_REGISTER);
+						ASSERT(accepted & OPERANDTYPE_REGISTER);
 						IRValue newValue = IRValueNewValue(context, multiplier.typeTableIdx,
 								VALUEFLAGS_FORCE_REGISTER);
 						X64Mov(context, x64Proc, newValue, multiplier);
@@ -1114,10 +1125,10 @@ void X64ConvertInstruction(Context *context, IRInstruction inst, X64Procedure *x
 					*BucketArrayAdd(&x64Proc->instructions) = { X64_XOR, RDX, RDX };
 
 				IRValue divisor = right;
-				u8 accepted = x64InstructionInfos[X64_DIV].acceptedOperandsLeft;
+				u8 accepted = x64InstructionInfos[X64_DIV].operandTypesLeft;
 				if (!FitsInOperand(context, accepted, divisor))
 				{
-					ASSERT(accepted & ACCEPTEDOPERANDS_REGISTER);
+					ASSERT(accepted & OPERANDTYPE_REGISTER);
 					IRValue newValue = IRValueNewValue(context, divisor.typeTableIdx,
 							VALUEFLAGS_FORCE_REGISTER);
 					X64Mov(context, x64Proc, newValue, divisor);
@@ -1164,10 +1175,10 @@ void X64ConvertInstruction(Context *context, IRInstruction inst, X64Procedure *x
 				*BucketArrayAdd(&x64Proc->instructions) = { X64_XOR, RDX, RDX };
 
 			IRValue divisor = right;
-			u8 accepted = x64InstructionInfos[X64_DIV].acceptedOperandsLeft;
+			u8 accepted = x64InstructionInfos[X64_DIV].operandTypesLeft;
 			if (!FitsInOperand(context, accepted, divisor))
 			{
-				ASSERT(accepted & ACCEPTEDOPERANDS_REGISTER);
+				ASSERT(accepted & OPERANDTYPE_REGISTER);
 				IRValue newValue = IRValueNewValue(context, divisor.typeTableIdx,
 						VALUEFLAGS_FORCE_REGISTER);
 				X64Mov(context, x64Proc, newValue, divisor);
@@ -1559,11 +1570,11 @@ doX_XM:
 
 		X64Mov(context, x64Proc, tmp, left);
 
-		u8 accepted = x64InstructionInfos[result.type].acceptedOperandsRight;
+		u8 accepted = x64InstructionInfos[result.type].operandTypesRight;
 		if (!FitsInOperand(context, accepted, right) ||
 			right.typeTableIdx != left.typeTableIdx)
 		{
-			ASSERT(accepted & ACCEPTEDOPERANDS_REGISTER);
+			ASSERT(accepted & OPERANDTYPE_REGISTER);
 			u32 immitateFlagRight = right.valueType == IRVALUETYPE_VALUE ? VALUEFLAGS_TRY_IMMITATE : 0;
 			IRValue newValue = IRValueNewValue(context, out.typeTableIdx,
 					VALUEFLAGS_FORCE_REGISTER | immitateFlagRight, right.valueIdx);
@@ -1631,10 +1642,10 @@ doConditionalJump2:
 		}
 
 		IRValue left  = inst.conditionalJump2.left;
-		u8 accepted = x64InstructionInfos[cmpInst.type].acceptedOperandsLeft;
+		u8 accepted = x64InstructionInfos[cmpInst.type].operandTypesLeft;
 		if (!FitsInOperand(context, accepted, left))
 		{
-			ASSERT(accepted & ACCEPTEDOPERANDS_REGISTER);
+			ASSERT(accepted & OPERANDTYPE_REGISTER);
 			u32 immitateFlagLeft = left.valueType == IRVALUETYPE_VALUE ? VALUEFLAGS_TRY_IMMITATE : 0;
 			IRValue newValue = IRValueNewValue(context, "_jump_hlp"_s, left.typeTableIdx,
 					VALUEFLAGS_FORCE_REGISTER | immitateFlagLeft, left.valueIdx);
@@ -1643,13 +1654,13 @@ doConditionalJump2:
 		}
 
 		IRValue right = inst.conditionalJump2.right;
-		accepted = x64InstructionInfos[cmpInst.type].acceptedOperandsRight;
+		accepted = x64InstructionInfos[cmpInst.type].operandTypesRight;
 		if (!FitsInOperand(context, accepted, right) ||
 			right.typeTableIdx != left.typeTableIdx ||
 			(IsValueInMemory(context, left) && IsValueInMemory(context, right)) ||
 			(right.valueType == IRVALUETYPE_IMMEDIATE_INTEGER && (right.immediate & 0xFFFFFFFF00000000)))
 		{
-			ASSERT(accepted & ACCEPTEDOPERANDS_REGISTER);
+			ASSERT(accepted & OPERANDTYPE_REGISTER);
 			u32 immitateFlagRight = right.valueType == IRVALUETYPE_VALUE ? VALUEFLAGS_TRY_IMMITATE : 0;
 			IRValue newValue = IRValueNewValue(context, "_jump_hlp"_s, left.typeTableIdx,
 					VALUEFLAGS_FORCE_REGISTER | immitateFlagRight, right.valueIdx);
@@ -1694,16 +1705,18 @@ doConditionalSet:
 			cmpInst.src = tmp;
 		}
 
-		u8 accepted = x64InstructionInfos[cmpInst.type].acceptedOperandsLeft;
+		u8 accepted = x64InstructionInfos[cmpInst.type].operandTypesLeft;
 		if (!FitsInOperand(context, accepted, cmpInst.dst) ||
 			(IsValueInMemory(context, cmpInst.dst) && IsValueInMemory(context, cmpInst.src)))
 		{
-			ASSERT(accepted & ACCEPTEDOPERANDS_REGISTER);
+			ASSERT(accepted & OPERANDTYPE_REGISTER);
 			IRValue newValue = IRValueNewValue(context, "_setcc_hlp"_s, cmpInst.dst.typeTableIdx,
 					VALUEFLAGS_FORCE_REGISTER);
 			X64Mov(context, x64Proc, newValue, cmpInst.dst);
 			cmpInst.dst = newValue;
 		}
+
+		*BucketArrayAdd(&x64Proc->instructions) = cmpInst;
 
 		result.dst = inst.binaryOperation.out;
 		if (context->typeTable[result.dst.typeTableIdx].size != 1)
@@ -1711,8 +1724,6 @@ doConditionalSet:
 			X64Mov(context, x64Proc, result.dst, IRValueImmediate(0));
 			result.dst.typeTableIdx = TYPETABLEIDX_S8;
 		}
-
-		*BucketArrayAdd(&x64Proc->instructions) = cmpInst;
 		*BucketArrayAdd(&x64Proc->instructions) = result;
 		return;
 	}
@@ -1738,72 +1749,11 @@ String X64InstructionToStr(Context *context, X64Instruction inst)
 	String mnemonic = x64InstructionInfos[inst.type].mnemonic;
 	switch (inst.type)
 	{
-	// Two args
-	case X64_MOV:
-	case X64_MOVSX:
-	case X64_MOVZX:
-	case X64_MOVSXD:
-	case X64_LEA:
-	case X64_ADD:
-	case X64_SUB:
-	case X64_SAL:
-	case X64_SAR:
-	case X64_SHL:
-	case X64_SHR:
-	case X64_CMP:
-	case X64_TEST:
-	case X64_IMUL:
-	case X64_AND:
-	case X64_OR:
-	case X64_XOR:
-	case X64_COMISS:
-	case X64_COMISD:
-	case X64_MOVSS:
-	case X64_MOVSD:
-	case X64_ADDSS:
-	case X64_ADDSD:
-	case X64_SUBSS:
-	case X64_SUBSD:
-	case X64_MULSS:
-	case X64_MULSD:
-	case X64_DIVSS:
-	case X64_DIVSD:
-	case X64_XORPS:
-	case X64_XORPD:
-	case X64_SQRTSS:
-	case X64_SQRTSD:
-	case X64_CVTSI2SS:
-	case X64_CVTSI2SD:
-	case X64_CVTTSS2SI:
-	case X64_CVTTSD2SI:
-	case X64_CVTSS2SD:
-	case X64_CVTSD2SS:
-	case X64_MOVUPS:
-	case X64_MOVAPS:
-		goto printDstSrc;
-	// One arg
-	case X64_PUSH:
-	case X64_POP:
-	case X64_NEG:
-	case X64_NOT:
-	case X64_DIV:
-	case X64_IDIV:
-	case X64_SETG:
-	case X64_SETL:
-	case X64_SETGE:
-	case X64_SETLE:
-	case X64_SETA:
-	case X64_SETB:
-	case X64_SETAE:
-	case X64_SETBE:
-	case X64_SETE:
-	case X64_SETNE:
-		goto printDst;
-	// No args
-	case X64_CQO:
-	case X64_LEAVE:
-	case X64_RET:
-		return mnemonic;
+	case X64_CALL:
+		return TPrintF("call %S", GetProcedure(context, inst.procedureIdx)->name);
+	case X64_CALL_Indirect:
+		String proc = X64IRValueToStr(context, inst.procedureIRValue);
+		return TPrintF("call %S", proc);
 	case X64_JMP:
 	case X64_JE:
 	case X64_JNE:
@@ -1816,11 +1766,6 @@ String X64InstructionToStr(Context *context, X64Instruction inst)
 	case X64_JAE:
 	case X64_JBE:
 		goto printLabel;
-	case X64_CALL:
-		return TPrintF("call %S", GetProcedure(context, inst.procedureIdx)->name);
-	case X64_CALL_Indirect:
-		String proc = X64IRValueToStr(context, inst.procedureIRValue);
-		return TPrintF("call %S", proc);
 	case X64_Label:
 		return TPrintF("%S:", inst.label->name);
 	case X64_Comment:
@@ -1831,9 +1776,19 @@ String X64InstructionToStr(Context *context, X64Instruction inst)
 	case X64_Push_Value:
 		return {};
 	default:
-		ASSERT(!"Unrecognized x64 instruction type");
+	{
+		X64InstructionInfo instInfo = x64InstructionInfos[inst.type];
+		if (instInfo.operandTypesLeft != OPERANDTYPE_NONE)
+		{
+			if (instInfo.operandTypesRight != OPERANDTYPE_NONE)
+				goto printDstSrc;
+			else
+				goto printDst;
+		}
+		else
+			return mnemonic;
 	}
-	return "???INST"_s;
+	}
 
 printDst:
 	{
@@ -2066,80 +2021,80 @@ void BackendMain(Context *context)
 		zeroMemory->returnValueIdx = U32_MAX;
 	}
 
-	x64InstructionInfos[X64_MOV] =       { "mov"_s,       ACCEPTEDOPERANDS_REGMEM,   ACCEPTEDOPERANDS_ALL };
-	x64InstructionInfos[X64_MOVZX] =     { "movzx"_s,     ACCEPTEDOPERANDS_REGMEM,   ACCEPTEDOPERANDS_REGMEM };
-	x64InstructionInfos[X64_MOVSX] =     { "movsx"_s,     ACCEPTEDOPERANDS_REGMEM,   ACCEPTEDOPERANDS_REGMEM };
-	x64InstructionInfos[X64_MOVSXD] =    { "movsxd"_s,    ACCEPTEDOPERANDS_REGMEM,   ACCEPTEDOPERANDS_REGMEM };
-	x64InstructionInfos[X64_CQO] =       { "cqo"_s,       ACCEPTEDOPERANDS_NONE,     ACCEPTEDOPERANDS_NONE };
-	x64InstructionInfos[X64_PUSH] =      { "push"_s,      ACCEPTEDOPERANDS_ALL,      ACCEPTEDOPERANDS_NONE };
-	x64InstructionInfos[X64_POP] =       { "pop"_s,       ACCEPTEDOPERANDS_REGMEM,   ACCEPTEDOPERANDS_NONE };
-	x64InstructionInfos[X64_JMP] =       { "jmp"_s,       ACCEPTEDOPERANDS_ALL,      ACCEPTEDOPERANDS_NONE };
-	x64InstructionInfos[X64_JE] =        { "je"_s,        ACCEPTEDOPERANDS_ALL,      ACCEPTEDOPERANDS_NONE };
-	x64InstructionInfos[X64_JNE] =       { "jne"_s,       ACCEPTEDOPERANDS_ALL,      ACCEPTEDOPERANDS_NONE };
-	x64InstructionInfos[X64_JG] =        { "jg"_s,        ACCEPTEDOPERANDS_ALL,      ACCEPTEDOPERANDS_NONE };
-	x64InstructionInfos[X64_JL] =        { "jl"_s,        ACCEPTEDOPERANDS_ALL,      ACCEPTEDOPERANDS_NONE };
-	x64InstructionInfos[X64_JGE] =       { "jge"_s,       ACCEPTEDOPERANDS_ALL,      ACCEPTEDOPERANDS_NONE };
-	x64InstructionInfos[X64_JLE] =       { "jle"_s,       ACCEPTEDOPERANDS_ALL,      ACCEPTEDOPERANDS_NONE };
-	x64InstructionInfos[X64_JA] =        { "ja"_s,        ACCEPTEDOPERANDS_ALL,      ACCEPTEDOPERANDS_NONE };
-	x64InstructionInfos[X64_JB] =        { "jb"_s,        ACCEPTEDOPERANDS_ALL,      ACCEPTEDOPERANDS_NONE };
-	x64InstructionInfos[X64_JAE] =       { "jae"_s,       ACCEPTEDOPERANDS_ALL,      ACCEPTEDOPERANDS_NONE };
-	x64InstructionInfos[X64_JBE] =       { "jbe"_s,       ACCEPTEDOPERANDS_ALL,      ACCEPTEDOPERANDS_NONE };
-	x64InstructionInfos[X64_CALL] =      { "call"_s,      ACCEPTEDOPERANDS_ALL,      ACCEPTEDOPERANDS_NONE };
-	x64InstructionInfos[X64_CALL_Indirect] = { "call"_s,  ACCEPTEDOPERANDS_REGMEM,   ACCEPTEDOPERANDS_NONE };
-	x64InstructionInfos[X64_LEAVE] =     { "leave"_s,     ACCEPTEDOPERANDS_NONE,     ACCEPTEDOPERANDS_NONE };
-	x64InstructionInfos[X64_RET] =       { "ret"_s,       ACCEPTEDOPERANDS_NONE,     ACCEPTEDOPERANDS_NONE };
-	x64InstructionInfos[X64_LEA] =       { "lea"_s,       ACCEPTEDOPERANDS_REGISTER, ACCEPTEDOPERANDS_MEMORY };
-	x64InstructionInfos[X64_CMP] =       { "cmp"_s,       ACCEPTEDOPERANDS_REGMEM,   ACCEPTEDOPERANDS_ALL };
-	x64InstructionInfos[X64_TEST] =      { "test"_s,      ACCEPTEDOPERANDS_REGMEM,   ACCEPTEDOPERANDS_ALL };
-	x64InstructionInfos[X64_SETG] =      { "setg"_s,      ACCEPTEDOPERANDS_REGMEM,   ACCEPTEDOPERANDS_NONE };
-	x64InstructionInfos[X64_SETL] =      { "setl"_s,      ACCEPTEDOPERANDS_REGMEM,   ACCEPTEDOPERANDS_NONE };
-	x64InstructionInfos[X64_SETGE] =     { "setge"_s,     ACCEPTEDOPERANDS_REGMEM,   ACCEPTEDOPERANDS_NONE };
-	x64InstructionInfos[X64_SETLE] =     { "setle"_s,     ACCEPTEDOPERANDS_REGMEM,   ACCEPTEDOPERANDS_NONE };
-	x64InstructionInfos[X64_SETA] =      { "seta"_s,      ACCEPTEDOPERANDS_REGMEM,   ACCEPTEDOPERANDS_NONE };
-	x64InstructionInfos[X64_SETB] =      { "setb"_s,      ACCEPTEDOPERANDS_REGMEM,   ACCEPTEDOPERANDS_NONE };
-	x64InstructionInfos[X64_SETAE] =     { "setae"_s,     ACCEPTEDOPERANDS_REGMEM,   ACCEPTEDOPERANDS_NONE };
-	x64InstructionInfos[X64_SETBE] =     { "setbe"_s,     ACCEPTEDOPERANDS_REGMEM,   ACCEPTEDOPERANDS_NONE };
-	x64InstructionInfos[X64_SETE] =      { "sete"_s,      ACCEPTEDOPERANDS_REGMEM,   ACCEPTEDOPERANDS_NONE };
-	x64InstructionInfos[X64_SETNE] =     { "setne"_s,     ACCEPTEDOPERANDS_REGMEM,   ACCEPTEDOPERANDS_NONE };
-	x64InstructionInfos[X64_ADD] =       { "add"_s,       ACCEPTEDOPERANDS_REGMEM,   ACCEPTEDOPERANDS_ALL };
-	x64InstructionInfos[X64_SUB] =       { "sub"_s,       ACCEPTEDOPERANDS_REGMEM,   ACCEPTEDOPERANDS_ALL };
-	x64InstructionInfos[X64_MUL] =       { "mul"_s,       ACCEPTEDOPERANDS_REGMEM,   ACCEPTEDOPERANDS_NONE };
-	x64InstructionInfos[X64_IMUL] =      { "imul"_s,      ACCEPTEDOPERANDS_REGMEM,   ACCEPTEDOPERANDS_ALL };
-	x64InstructionInfos[X64_DIV] =       { "div"_s,       ACCEPTEDOPERANDS_REGMEM,   ACCEPTEDOPERANDS_NONE };
-	x64InstructionInfos[X64_IDIV] =      { "idiv"_s,      ACCEPTEDOPERANDS_REGMEM,   ACCEPTEDOPERANDS_NONE };
-	x64InstructionInfos[X64_SAR] =       { "sar"_s,       ACCEPTEDOPERANDS_REGMEM,   ACCEPTEDOPERANDS_ALL };
-	x64InstructionInfos[X64_SAL] =       { "sal"_s,       ACCEPTEDOPERANDS_REGMEM,   ACCEPTEDOPERANDS_ALL };
-	x64InstructionInfos[X64_SHR] =       { "shr"_s,       ACCEPTEDOPERANDS_REGMEM,   ACCEPTEDOPERANDS_ALL };
-	x64InstructionInfos[X64_SHL] =       { "shl"_s,       ACCEPTEDOPERANDS_REGMEM,   ACCEPTEDOPERANDS_ALL };
-	x64InstructionInfos[X64_AND] =       { "and"_s,       ACCEPTEDOPERANDS_REGMEM,   ACCEPTEDOPERANDS_ALL };
-	x64InstructionInfos[X64_OR] =        { "or"_s,        ACCEPTEDOPERANDS_REGMEM,   ACCEPTEDOPERANDS_ALL };
-	x64InstructionInfos[X64_XOR] =       { "xor"_s,       ACCEPTEDOPERANDS_REGMEM,   ACCEPTEDOPERANDS_ALL };
-	x64InstructionInfos[X64_NOT] =       { "not"_s,       ACCEPTEDOPERANDS_REGMEM,   ACCEPTEDOPERANDS_NONE };
-	x64InstructionInfos[X64_NEG] =       { "neg"_s,       ACCEPTEDOPERANDS_REGMEM,   ACCEPTEDOPERANDS_NONE };
-	x64InstructionInfos[X64_MOVSS] =     { "movss"_s,     ACCEPTEDOPERANDS_REGMEM,   ACCEPTEDOPERANDS_REGMEM };
-	x64InstructionInfos[X64_MOVSD] =     { "movsd"_s,     ACCEPTEDOPERANDS_REGMEM,   ACCEPTEDOPERANDS_REGMEM };
-	x64InstructionInfos[X64_ADDSS] =     { "addss"_s,     ACCEPTEDOPERANDS_REGMEM,   ACCEPTEDOPERANDS_REGMEM };
-	x64InstructionInfos[X64_ADDSD] =     { "addsd"_s,     ACCEPTEDOPERANDS_REGISTER, ACCEPTEDOPERANDS_REGMEM };
-	x64InstructionInfos[X64_SUBSS] =     { "subss"_s,     ACCEPTEDOPERANDS_REGMEM,   ACCEPTEDOPERANDS_REGMEM };
-	x64InstructionInfos[X64_SUBSD] =     { "subsd"_s,     ACCEPTEDOPERANDS_REGISTER, ACCEPTEDOPERANDS_REGMEM };
-	x64InstructionInfos[X64_MULSS] =     { "mulss"_s,     ACCEPTEDOPERANDS_REGMEM,   ACCEPTEDOPERANDS_REGMEM };
-	x64InstructionInfos[X64_MULSD] =     { "mulsd"_s,     ACCEPTEDOPERANDS_REGISTER, ACCEPTEDOPERANDS_REGMEM };
-	x64InstructionInfos[X64_DIVSS] =     { "divss"_s,     ACCEPTEDOPERANDS_REGISTER, ACCEPTEDOPERANDS_REGMEM };
-	x64InstructionInfos[X64_DIVSD] =     { "divsd"_s,     ACCEPTEDOPERANDS_REGISTER, ACCEPTEDOPERANDS_REGMEM };
-	x64InstructionInfos[X64_XORPS] =     { "xorps"_s,     ACCEPTEDOPERANDS_REGISTER, ACCEPTEDOPERANDS_REGMEM };
-	x64InstructionInfos[X64_XORPD] =     { "xorpd"_s,     ACCEPTEDOPERANDS_REGISTER, ACCEPTEDOPERANDS_REGMEM };
-	x64InstructionInfos[X64_SQRTSS] =    { "sqrtss"_s,    ACCEPTEDOPERANDS_REGISTER, ACCEPTEDOPERANDS_REGMEM };
-	x64InstructionInfos[X64_SQRTSD] =    { "sqrtsd"_s,    ACCEPTEDOPERANDS_REGISTER, ACCEPTEDOPERANDS_REGMEM };
-	x64InstructionInfos[X64_COMISS] =    { "comiss"_s,    ACCEPTEDOPERANDS_REGISTER, ACCEPTEDOPERANDS_REGMEM };
-	x64InstructionInfos[X64_COMISD] =    { "comisd"_s,    ACCEPTEDOPERANDS_REGISTER, ACCEPTEDOPERANDS_REGMEM };
-	x64InstructionInfos[X64_CVTSI2SS] =  { "cvtsi2ss"_s,  ACCEPTEDOPERANDS_REGISTER, ACCEPTEDOPERANDS_REGMEM };
-	x64InstructionInfos[X64_CVTSI2SD] =  { "cvtsi2sd"_s,  ACCEPTEDOPERANDS_REGISTER, ACCEPTEDOPERANDS_REGMEM };
-	x64InstructionInfos[X64_CVTTSS2SI] = { "cvttss2si"_s, ACCEPTEDOPERANDS_REGISTER, ACCEPTEDOPERANDS_REGMEM };
-	x64InstructionInfos[X64_CVTTSD2SI] = { "cvttsd2si"_s, ACCEPTEDOPERANDS_REGISTER, ACCEPTEDOPERANDS_REGMEM };
-	x64InstructionInfos[X64_CVTSS2SD] =  { "cvtss2sd"_s,  ACCEPTEDOPERANDS_REGISTER, ACCEPTEDOPERANDS_REGMEM };
-	x64InstructionInfos[X64_CVTSD2SS] =  { "cvtsd2ss"_s,  ACCEPTEDOPERANDS_REGISTER, ACCEPTEDOPERANDS_REGMEM };
-	x64InstructionInfos[X64_MOVUPS] =    { "movups"_s,    ACCEPTEDOPERANDS_REGMEM,   ACCEPTEDOPERANDS_REGMEM };
-	x64InstructionInfos[X64_MOVAPS] =    { "movaps"_s,    ACCEPTEDOPERANDS_REGMEM,   ACCEPTEDOPERANDS_REGMEM };
+	x64InstructionInfos[X64_MOV] =       { "mov"_s,       OPERANDTYPE_REGMEM,   OPERANDACCESS_WRITE, OPERANDTYPE_ALL,    OPERANDACCESS_READ };
+	x64InstructionInfos[X64_MOVZX] =     { "movzx"_s,     OPERANDTYPE_REGMEM,   OPERANDACCESS_WRITE, OPERANDTYPE_REGMEM, OPERANDACCESS_READ };
+	x64InstructionInfos[X64_MOVSX] =     { "movsx"_s,     OPERANDTYPE_REGMEM,   OPERANDACCESS_WRITE, OPERANDTYPE_REGMEM, OPERANDACCESS_READ };
+	x64InstructionInfos[X64_MOVSXD] =    { "movsxd"_s,    OPERANDTYPE_REGMEM,   OPERANDACCESS_WRITE, OPERANDTYPE_REGMEM, OPERANDACCESS_READ };
+	x64InstructionInfos[X64_CQO] =       { "cqo"_s };
+	x64InstructionInfos[X64_PUSH] =      { "push"_s,      OPERANDTYPE_ALL,      OPERANDACCESS_READ };
+	x64InstructionInfos[X64_POP] =       { "pop"_s,       OPERANDTYPE_REGMEM,   OPERANDACCESS_WRITE };
+	x64InstructionInfos[X64_JMP] =       { "jmp"_s };
+	x64InstructionInfos[X64_JE] =        { "je"_s };
+	x64InstructionInfos[X64_JNE] =       { "jne"_s };
+	x64InstructionInfos[X64_JG] =        { "jg"_s };
+	x64InstructionInfos[X64_JL] =        { "jl"_s };
+	x64InstructionInfos[X64_JGE] =       { "jge"_s };
+	x64InstructionInfos[X64_JLE] =       { "jle"_s };
+	x64InstructionInfos[X64_JA] =        { "ja"_s };
+	x64InstructionInfos[X64_JB] =        { "jb"_s };
+	x64InstructionInfos[X64_JAE] =       { "jae"_s };
+	x64InstructionInfos[X64_JBE] =       { "jbe"_s };
+	x64InstructionInfos[X64_CALL] =      { "call"_s };
+	x64InstructionInfos[X64_CALL_Indirect] = { "call"_s,  OPERANDTYPE_REGMEM,   OPERANDACCESS_READ };
+	x64InstructionInfos[X64_LEAVE] =     { "leave"_s };
+	x64InstructionInfos[X64_RET] =       { "ret"_s };
+	x64InstructionInfos[X64_LEA] =       { "lea"_s,       OPERANDTYPE_REGISTER, OPERANDACCESS_WRITE,     OPERANDTYPE_MEMORY, OPERANDACCESS_READ };
+	x64InstructionInfos[X64_CMP] =       { "cmp"_s,       OPERANDTYPE_REGMEM,   OPERANDACCESS_READ,      OPERANDTYPE_ALL,    OPERANDACCESS_READ };
+	x64InstructionInfos[X64_TEST] =      { "test"_s,      OPERANDTYPE_REGMEM,   OPERANDACCESS_READ,      OPERANDTYPE_ALL,    OPERANDACCESS_READ };
+	x64InstructionInfos[X64_SETG] =      { "setg"_s,      OPERANDTYPE_REGMEM,   OPERANDACCESS_WRITE };
+	x64InstructionInfos[X64_SETL] =      { "setl"_s,      OPERANDTYPE_REGMEM,   OPERANDACCESS_WRITE };
+	x64InstructionInfos[X64_SETGE] =     { "setge"_s,     OPERANDTYPE_REGMEM,   OPERANDACCESS_WRITE };
+	x64InstructionInfos[X64_SETLE] =     { "setle"_s,     OPERANDTYPE_REGMEM,   OPERANDACCESS_WRITE };
+	x64InstructionInfos[X64_SETA] =      { "seta"_s,      OPERANDTYPE_REGMEM,   OPERANDACCESS_WRITE };
+	x64InstructionInfos[X64_SETB] =      { "setb"_s,      OPERANDTYPE_REGMEM,   OPERANDACCESS_WRITE };
+	x64InstructionInfos[X64_SETAE] =     { "setae"_s,     OPERANDTYPE_REGMEM,   OPERANDACCESS_WRITE };
+	x64InstructionInfos[X64_SETBE] =     { "setbe"_s,     OPERANDTYPE_REGMEM,   OPERANDACCESS_WRITE };
+	x64InstructionInfos[X64_SETE] =      { "sete"_s,      OPERANDTYPE_REGMEM,   OPERANDACCESS_WRITE };
+	x64InstructionInfos[X64_SETNE] =     { "setne"_s,     OPERANDTYPE_REGMEM,   OPERANDACCESS_WRITE };
+	x64InstructionInfos[X64_ADD] =       { "add"_s,       OPERANDTYPE_REGMEM,   OPERANDACCESS_READWRITE, OPERANDTYPE_ALL, OPERANDACCESS_READ };
+	x64InstructionInfos[X64_SUB] =       { "sub"_s,       OPERANDTYPE_REGMEM,   OPERANDACCESS_READWRITE, OPERANDTYPE_ALL, OPERANDACCESS_READ };
+	x64InstructionInfos[X64_MUL] =       { "mul"_s,       OPERANDTYPE_REGMEM,   OPERANDACCESS_READ };
+	x64InstructionInfos[X64_IMUL] =      { "imul"_s,      OPERANDTYPE_REGMEM,   OPERANDACCESS_READWRITE, OPERANDTYPE_ALL, OPERANDACCESS_READ };
+	x64InstructionInfos[X64_DIV] =       { "div"_s,       OPERANDTYPE_REGMEM,   OPERANDACCESS_READ };
+	x64InstructionInfos[X64_IDIV] =      { "idiv"_s,      OPERANDTYPE_REGMEM,   OPERANDACCESS_READ };
+	x64InstructionInfos[X64_SAR] =       { "sar"_s,       OPERANDTYPE_REGMEM,   OPERANDACCESS_READWRITE, OPERANDTYPE_ALL, OPERANDACCESS_READ };
+	x64InstructionInfos[X64_SAL] =       { "sal"_s,       OPERANDTYPE_REGMEM,   OPERANDACCESS_READWRITE, OPERANDTYPE_ALL, OPERANDACCESS_READ };
+	x64InstructionInfos[X64_SHR] =       { "shr"_s,       OPERANDTYPE_REGMEM,   OPERANDACCESS_READWRITE, OPERANDTYPE_ALL, OPERANDACCESS_READ };
+	x64InstructionInfos[X64_SHL] =       { "shl"_s,       OPERANDTYPE_REGMEM,   OPERANDACCESS_READWRITE, OPERANDTYPE_ALL, OPERANDACCESS_READ };
+	x64InstructionInfos[X64_AND] =       { "and"_s,       OPERANDTYPE_REGMEM,   OPERANDACCESS_READWRITE, OPERANDTYPE_ALL, OPERANDACCESS_READ };
+	x64InstructionInfos[X64_OR] =        { "or"_s,        OPERANDTYPE_REGMEM,   OPERANDACCESS_READWRITE, OPERANDTYPE_ALL, OPERANDACCESS_READ };
+	x64InstructionInfos[X64_XOR] =       { "xor"_s,       OPERANDTYPE_REGMEM,   OPERANDACCESS_READWRITE, OPERANDTYPE_ALL, OPERANDACCESS_READ };
+	x64InstructionInfos[X64_NOT] =       { "not"_s,       OPERANDTYPE_REGMEM,   OPERANDACCESS_READWRITE };
+	x64InstructionInfos[X64_NEG] =       { "neg"_s,       OPERANDTYPE_REGMEM,   OPERANDACCESS_READWRITE };
+	x64InstructionInfos[X64_MOVSS] =     { "movss"_s,     OPERANDTYPE_REGMEM,   OPERANDACCESS_WRITE,     OPERANDTYPE_REGMEM, OPERANDACCESS_READ };
+	x64InstructionInfos[X64_MOVSD] =     { "movsd"_s,     OPERANDTYPE_REGMEM,   OPERANDACCESS_WRITE,     OPERANDTYPE_REGMEM, OPERANDACCESS_READ };
+	x64InstructionInfos[X64_ADDSS] =     { "addss"_s,     OPERANDTYPE_REGMEM,   OPERANDACCESS_READWRITE, OPERANDTYPE_REGMEM, OPERANDACCESS_READ };
+	x64InstructionInfos[X64_ADDSD] =     { "addsd"_s,     OPERANDTYPE_REGMEM,   OPERANDACCESS_READWRITE, OPERANDTYPE_REGMEM, OPERANDACCESS_READ };
+	x64InstructionInfos[X64_SUBSS] =     { "subss"_s,     OPERANDTYPE_REGMEM,   OPERANDACCESS_READWRITE, OPERANDTYPE_REGMEM, OPERANDACCESS_READ };
+	x64InstructionInfos[X64_SUBSD] =     { "subsd"_s,     OPERANDTYPE_REGMEM,   OPERANDACCESS_READWRITE, OPERANDTYPE_REGMEM, OPERANDACCESS_READ };
+	x64InstructionInfos[X64_MULSS] =     { "mulss"_s,     OPERANDTYPE_REGISTER, OPERANDACCESS_READWRITE, OPERANDTYPE_REGMEM, OPERANDACCESS_READ };
+	x64InstructionInfos[X64_MULSD] =     { "mulsd"_s,     OPERANDTYPE_REGISTER, OPERANDACCESS_READWRITE, OPERANDTYPE_REGMEM, OPERANDACCESS_READ };
+	x64InstructionInfos[X64_DIVSS] =     { "divss"_s,     OPERANDTYPE_REGISTER, OPERANDACCESS_READWRITE, OPERANDTYPE_REGMEM, OPERANDACCESS_READ };
+	x64InstructionInfos[X64_DIVSD] =     { "divsd"_s,     OPERANDTYPE_REGISTER, OPERANDACCESS_READWRITE, OPERANDTYPE_REGMEM, OPERANDACCESS_READ };
+	x64InstructionInfos[X64_XORPS] =     { "xorps"_s,     OPERANDTYPE_REGISTER, OPERANDACCESS_READWRITE, OPERANDTYPE_REGMEM, OPERANDACCESS_READ };
+	x64InstructionInfos[X64_XORPD] =     { "xorpd"_s,     OPERANDTYPE_REGISTER, OPERANDACCESS_READWRITE, OPERANDTYPE_REGMEM, OPERANDACCESS_READ };
+	x64InstructionInfos[X64_SQRTSS] =    { "sqrtss"_s,    OPERANDTYPE_REGISTER, OPERANDACCESS_WRITE,     OPERANDTYPE_REGMEM, OPERANDACCESS_READ };
+	x64InstructionInfos[X64_SQRTSD] =    { "sqrtsd"_s,    OPERANDTYPE_REGISTER, OPERANDACCESS_WRITE,     OPERANDTYPE_REGMEM, OPERANDACCESS_READ };
+	x64InstructionInfos[X64_COMISS] =    { "comiss"_s,    OPERANDTYPE_REGISTER, OPERANDACCESS_READ,      OPERANDTYPE_REGMEM, OPERANDACCESS_READ };
+	x64InstructionInfos[X64_COMISD] =    { "comisd"_s,    OPERANDTYPE_REGISTER, OPERANDACCESS_READ,      OPERANDTYPE_REGMEM, OPERANDACCESS_READ };
+	x64InstructionInfos[X64_CVTSI2SS] =  { "cvtsi2ss"_s,  OPERANDTYPE_REGISTER, OPERANDACCESS_WRITE,     OPERANDTYPE_REGMEM, OPERANDACCESS_READ };
+	x64InstructionInfos[X64_CVTSI2SD] =  { "cvtsi2sd"_s,  OPERANDTYPE_REGISTER, OPERANDACCESS_WRITE,     OPERANDTYPE_REGMEM, OPERANDACCESS_READ };
+	x64InstructionInfos[X64_CVTTSS2SI] = { "cvttss2si"_s, OPERANDTYPE_REGISTER, OPERANDACCESS_WRITE,     OPERANDTYPE_REGMEM, OPERANDACCESS_READ };
+	x64InstructionInfos[X64_CVTTSD2SI] = { "cvttsd2si"_s, OPERANDTYPE_REGISTER, OPERANDACCESS_WRITE,     OPERANDTYPE_REGMEM, OPERANDACCESS_READ };
+	x64InstructionInfos[X64_CVTSS2SD] =  { "cvtss2sd"_s,  OPERANDTYPE_REGISTER, OPERANDACCESS_WRITE,     OPERANDTYPE_REGMEM, OPERANDACCESS_READ };
+	x64InstructionInfos[X64_CVTSD2SS] =  { "cvtsd2ss"_s,  OPERANDTYPE_REGISTER, OPERANDACCESS_WRITE,     OPERANDTYPE_REGMEM, OPERANDACCESS_READ };
+	x64InstructionInfos[X64_MOVUPS] =    { "movups"_s,    OPERANDTYPE_REGMEM,   OPERANDACCESS_WRITE,     OPERANDTYPE_REGMEM, OPERANDACCESS_READ };
+	x64InstructionInfos[X64_MOVAPS] =    { "movaps"_s,    OPERANDTYPE_REGMEM,   OPERANDACCESS_WRITE,     OPERANDTYPE_REGMEM, OPERANDACCESS_READ };
 
 	const u8 regValueFlags = VALUEFLAGS_IS_USED | VALUEFLAGS_IS_ALLOCATED;
 	u32 RAX_valueIdx = NewValue(context, "RAX"_s, TYPETABLEIDX_S64, regValueFlags);
@@ -2434,7 +2389,8 @@ void BackendMain(Context *context)
 	{
 		X64InstructionStream stream = X64InstructionStreamBegin(&x64Procedures[procedureIdx]);
 		X64Instruction *inst = X64InstructionStreamAdvance(&stream);
-		X64Instruction *nextInst = X64InstructionStreamAdvance(&stream);
+		X64Instruction *nextInst  = X64InstructionStreamAdvance(&stream);
+		X64Instruction *nextInst2 = X64InstructionStreamAdvance(&stream);
 		while (inst)
 		{
 			// Replace LEAs with a register as a source with a MOV.
@@ -2547,32 +2503,46 @@ unalignedMovups:;
 			if (nextInst && inst->type >= X64_Jump_Begin && inst->type <= X64_Jump_End &&
 				nextInst->type == X64_Label)
 			{
-				//__debugbreak();
 				if (inst->label == nextInst->label)
 					inst->type = X64_Ignore;
 			}
 
 			// Replace CMP 0 with TEST
-			if (inst->type == X64_CMP)
+			if (nextInst2 && nextInst2->type == X64_CMP)
 			{
-				if (inst->src.valueType == IRVALUETYPE_IMMEDIATE_INTEGER &&
-					inst->src.immediate == 0 && !IsValueInMemory(context, inst->dst))
+				if (nextInst2->src.valueType == IRVALUETYPE_IMMEDIATE_INTEGER &&
+					nextInst2->src.immediate == 0 && !IsValueInMemory(context, nextInst2->dst))
 				{
-					inst->type = X64_TEST;
-					inst->src = inst->dst;
+					nextInst2->type = X64_TEST;
+					nextInst2->src = nextInst2->dst;
 				}
-				else if (inst->dst.valueType == IRVALUETYPE_IMMEDIATE_INTEGER &&
-					inst->dst.immediate == 0 && !IsValueInMemory(context, inst->src))
+				else if (nextInst2->dst.valueType == IRVALUETYPE_IMMEDIATE_INTEGER &&
+					nextInst2->dst.immediate == 0 && !IsValueInMemory(context, nextInst2->src))
 				{
-					inst->type = X64_TEST;
-					inst->dst = inst->src;
+					nextInst2->type = X64_TEST;
+					nextInst2->dst = nextInst2->src;
+				}
+			}
+
+			// Avoid saving to bool then testing
+			// @Todo: do this sort of thing with IR, should catch a lot more cases.
+			if (nextInst2 && inst->type == X64_SETE && nextInst->type == X64_TEST &&
+					nextInst2->type == X64_JE)
+			{
+				if (inst->dst.valueIdx == nextInst->dst.valueIdx &&
+					inst->dst.valueIdx == nextInst->src.valueIdx)
+				{
+					inst->type = X64_Ignore;
+					nextInst->type = X64_Ignore;
+					nextInst2->type = X64_JE;
 				}
 			}
 
 			inst = nextInst;
-			nextInst = X64InstructionStreamAdvance(&stream);
-			while (nextInst && nextInst->type >= X64_Count)
-				nextInst = X64InstructionStreamAdvance(&stream);
+			nextInst = nextInst2;
+			nextInst2 = X64InstructionStreamAdvance(&stream);
+			while (nextInst2 && nextInst2->type >= X64_Count)
+				nextInst2 = X64InstructionStreamAdvance(&stream);
 		}
 	}
 

@@ -158,93 +158,6 @@ void DoLivenessAnalisisOnInstruction(Context *context, BasicBlock *basicBlock, X
 	switch (inst->type)
 	{
 	// weird ones
-	case X64_DIV:
-	case X64_IDIV:
-	case X64_MUL:
-	{
-		AddValue(context, RAX.valueIdx, basicBlock->procedure, liveValues);
-		AddValue(context, RDX.valueIdx, basicBlock->procedure, liveValues);
-		AddIfValue(context, inst->dst, basicBlock->procedure, liveValues);
-	} break;
-	case X64_CQO:
-	{
-		// CQO writes to both RAX and RDX
-		for (int i = 0; i < liveValues->size; ++i)
-		{
-			if ((*liveValues)[i] == RAX.valueIdx || (*liveValues)[i] == RDX.valueIdx)
-				(*liveValues)[i--] = (*liveValues)[--liveValues->size];
-		}
-	} break;
-	case X64_XORPS:
-	case X64_XORPD:
-	{
-		// Detect xors of same thing (zero-ing)
-		if (inst->src.valueType != IRVALUETYPE_IMMEDIATE_INTEGER &&
-			inst->dst.valueIdx == inst->src.valueIdx)
-			RemoveIfValue(context, inst->dst, basicBlock->procedure, liveValues);
-		else
-		{
-			AddIfValue(context, inst->dst, basicBlock->procedure, liveValues);
-			AddIfValue(context, inst->src, basicBlock->procedure, liveValues);
-		}
-	} break;
-	// dst write, src read
-	case X64_MOV:
-	case X64_MOVZX:
-	case X64_MOVSX:
-	case X64_MOVSXD:
-	case X64_MOVSS:
-	case X64_MOVSD:
-	case X64_LEA:
-	case X64_SQRTSS:
-	case X64_SQRTSD:
-	case X64_CVTSI2SS:
-	case X64_CVTSI2SD:
-	case X64_CVTTSS2SI:
-	case X64_CVTTSD2SI:
-	case X64_CVTSS2SD:
-	case X64_CVTSD2SS:
-	case X64_MOVUPS:
-	case X64_MOVAPS:
-	{
-		RemoveIfValue(context, inst->dst, basicBlock->procedure, liveValues);
-		AddIfValue   (context, inst->src, basicBlock->procedure, liveValues);
-	} break;
-	// dst read/write, src read
-	case X64_ADD:
-	case X64_SUB:
-	case X64_IMUL:
-	case X64_SAR:
-	case X64_SAL:
-	case X64_SHR:
-	case X64_SHL:
-	case X64_AND:
-	case X64_OR:
-	case X64_XOR:
-	case X64_ADDSS:
-	case X64_ADDSD:
-	case X64_SUBSS:
-	case X64_SUBSD:
-	case X64_MULSS:
-	case X64_MULSD:
-	case X64_DIVSS:
-	case X64_DIVSD:
-	// dst read, src read
-	case X64_CMP:
-	case X64_TEST:
-	case X64_COMISS:
-	case X64_COMISD:
-	{
-		AddIfValue(context, inst->dst, basicBlock->procedure, liveValues);
-		AddIfValue(context, inst->src, basicBlock->procedure, liveValues);
-	} break;
-	// dst read/write
-	case X64_NOT:
-	case X64_NEG:
-	{
-		AddIfValue(context, inst->dst, basicBlock->procedure, liveValues);
-	} break;
-	// nothing
 	case X64_CALL:
 	{
 		ArrayInit(&inst->liveValues, liveValues->size);
@@ -326,39 +239,40 @@ void DoLivenessAnalisisOnInstruction(Context *context, BasicBlock *basicBlock, X
 		if (procTypeInfo.isVarargs)
 			AddValue(context, x64ParameterValuesWrite[paramIdx], basicBlock->procedure, liveValues);
 	} break;
-	case X64_PUSH:
-	case X64_POP:
-	case X64_JMP:
-	case X64_JE:
-	case X64_JNE:
-	case X64_JG:
-	case X64_JL:
-	case X64_JGE:
-	case X64_JLE:
-	case X64_JA:
-	case X64_JB:
-	case X64_JAE:
-	case X64_JBE:
-	case X64_LEAVE:
-	case X64_RET:
-	case X64_SETG:
-	case X64_SETL:
-	case X64_SETGE:
-	case X64_SETLE:
-	case X64_SETA:
-	case X64_SETB:
-	case X64_SETAE:
-	case X64_SETBE:
-	case X64_SETE:
-	case X64_SETNE:
-	case X64_Label:
-	case X64_Comment:
-	case X64_Push_Scope:
-	case X64_Pop_Scope:
+	case X64_DIV:
+	case X64_IDIV:
+	case X64_MUL:
 	{
+		AddValue(context, RAX.valueIdx, basicBlock->procedure, liveValues);
+		AddValue(context, RDX.valueIdx, basicBlock->procedure, liveValues);
+		AddIfValue(context, inst->dst, basicBlock->procedure, liveValues);
+	} break;
+	case X64_CQO:
+	{
+		// CQO writes to both RAX and RDX
+		for (int i = 0; i < liveValues->size; ++i)
+		{
+			if ((*liveValues)[i] == RAX.valueIdx || (*liveValues)[i] == RDX.valueIdx)
+				(*liveValues)[i--] = (*liveValues)[--liveValues->size];
+		}
+	} break;
+	case X64_XOR:
+	case X64_XORPS:
+	case X64_XORPD:
+	{
+		// Detect xors of same thing (zero-ing)
+		if (inst->src.valueType != IRVALUETYPE_IMMEDIATE_INTEGER &&
+			inst->dst.valueIdx == inst->src.valueIdx)
+			RemoveIfValue(context, inst->dst, basicBlock->procedure, liveValues);
+		else
+		{
+			AddIfValue(context, inst->dst, basicBlock->procedure, liveValues);
+			AddIfValue(context, inst->src, basicBlock->procedure, liveValues);
+		}
 	} break;
 	case X64_Push_Value:
 	{
+		// @Improve: This sucks a little bit.
 		context->values[inst->valueIdx].flags |= VALUEFLAGS_HAS_PUSH_INSTRUCTION;
 	} break;
 	case X64_Patch:
@@ -368,7 +282,16 @@ void DoLivenessAnalisisOnInstruction(Context *context, BasicBlock *basicBlock, X
 	} break;
 	default:
 	{
-		ASSERT(!"Unknown x64 instruction while register allocating.");
+		X64InstructionInfo instInfo = x64InstructionInfos[inst->type];
+		if (instInfo.operandAccessLeft & OPERANDACCESS_READ)
+			AddIfValue   (context, inst->dst, basicBlock->procedure, liveValues);
+		else if (instInfo.operandAccessLeft & OPERANDACCESS_WRITE)
+			RemoveIfValue(context, inst->dst, basicBlock->procedure, liveValues);
+
+		if (instInfo.operandAccessRight & OPERANDACCESS_READ)
+			AddIfValue   (context, inst->src, basicBlock->procedure, liveValues);
+		else if (instInfo.operandAccessRight & OPERANDACCESS_WRITE)
+			RemoveIfValue(context, inst->src, basicBlock->procedure, liveValues);
 	}
 	}
 
@@ -733,58 +656,6 @@ inline u64 RegisterSavingInstruction(Context *context, X64Instruction *inst, u64
 {
 	switch(inst->type)
 	{
-	// two operands
-	case X64_MOV:
-	case X64_MOVZX:
-	case X64_MOVSX:
-	case X64_MOVSXD:
-	case X64_MOVSS:
-	case X64_MOVSD:
-	case X64_LEA:
-	case X64_CVTSI2SS:
-	case X64_CVTSI2SD:
-	case X64_CVTTSS2SI:
-	case X64_CVTTSD2SI:
-	case X64_CVTSS2SD:
-	case X64_ADD:
-	case X64_SUB:
-	case X64_IMUL:
-	case X64_IDIV:
-	case X64_SAR:
-	case X64_SAL:
-	case X64_SHR:
-	case X64_SHL:
-	case X64_AND:
-	case X64_OR:
-	case X64_XOR:
-	case X64_ADDSS:
-	case X64_ADDSD:
-	case X64_SUBSS:
-	case X64_SUBSD:
-	case X64_MULSS:
-	case X64_MULSD:
-	case X64_DIVSS:
-	case X64_DIVSD:
-	case X64_XORPS:
-	case X64_XORPD:
-	case X64_SQRTSS:
-	case X64_SQRTSD:
-	case X64_CMP:
-	case X64_TEST:
-	case X64_COMISS:
-	case X64_COMISD:
-	case X64_MOVUPS:
-	case X64_MOVAPS:
-	{
-		usedRegisters |= BitIfRegister(context, inst->dst);
-		usedRegisters |= BitIfRegister(context, inst->src);
-	} break;
-	// one operand
-	case X64_NOT:
-	case X64_NEG:
-	{
-		usedRegisters |= BitIfRegister(context, inst->dst);
-	} break;
 	case X64_CALL:
 	case X64_CALL_Indirect:
 	{
@@ -831,6 +702,14 @@ inline u64 RegisterSavingInstruction(Context *context, X64Instruction *inst, u64
 		patchInst.patchInstructions[calleeSaveRegCount * 2] = *inst;
 		*inst = patchInst;
 	} break;
+	default:
+	{
+		X64InstructionInfo instInfo = x64InstructionInfos[inst->type];
+		if (instInfo.operandAccessLeft  != OPERANDACCESS_NONE)
+			usedRegisters |= BitIfRegister(context, inst->dst);
+		if (instInfo.operandAccessRight != OPERANDACCESS_NONE)
+			usedRegisters |= BitIfRegister(context, inst->src);
+	}
 	}
 	return usedRegisters;
 }
