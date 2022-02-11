@@ -23,6 +23,8 @@ struct IRValue
 		struct
 		{
 			u32 baseValueIdx;
+			u32 indexValueIdx;
+			u64 elementSize;
 			s64 offset;
 		} memory;
 	};

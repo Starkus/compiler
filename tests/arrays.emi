@@ -25,6 +25,7 @@ Main :: () -> s64
 	for (arrayB) @it = cast(s32)(1 << i);
 	for arrayB
 		if @it != cast(s32)(1 << i) return 1;
+	PrintF("arrayB: %\n", arrayB);
 
 	foo : u8 = arrayA[2];
 	bar := arrayB[16];
@@ -51,11 +52,17 @@ Main :: () -> s64
 	for returnedArray
 		if @it != cast(s32)(i * 2) return 1;
 
-	dynamicArray : [] s32;
+	dynamicArray : [] s32 = ?;
 	dynamicArray = arrayB;
 	PrintF("dynamicArray: %\n", dynamicArray);
 	for dynamicArray
+	{
+		PrintF("%: % == %\n", i, dynamicArray[i], arrayB[i]);
 		if @it != arrayB[i] return 1;
+	}
+
+	anIndex := 4;
+	arrayA[anIndex] = 5;
 
 	Print("Test ok\n");
 	return 0;

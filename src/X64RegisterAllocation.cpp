@@ -109,7 +109,13 @@ inline bool AddIfValue(Context *context, IRValue value, X64Procedure *proc,
 	if (value.valueType != IRVALUETYPE_VALUE && value.valueType != IRVALUETYPE_MEMORY)
 		return false;
 
-	return AddValue(context, value.valueIdx, proc, array);
+	bool mainValueAdded = AddValue(context, value.valueIdx, proc, array);
+	bool indexValueAdded = false;
+
+	if (value.memory.elementSize > 0)
+		indexValueAdded = AddValue(context, value.memory.indexValueIdx, proc, array);
+
+	return mainValueAdded || indexValueAdded;
 }
 
 inline void RemoveIfValue(Context *context, IRValue value, X64Procedure *proc,
@@ -130,6 +136,8 @@ inline void RemoveIfValue(Context *context, IRValue value, X64Procedure *proc,
 	{
 		// The value is actually _used_ here, and not written to. Add instead.
 		AddValue(context, value.valueIdx, proc, array);
+		if (value.memory.elementSize > 0)
+			AddValue(context, value.memory.indexValueIdx, proc, array);
 	}
 }
 

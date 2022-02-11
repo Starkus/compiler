@@ -107,6 +107,7 @@ u64 CycleCountEnd(u64 begin)
 
 struct Config
 {
+	bool dontPromoteMemoryToRegisters;
 	bool logAST;
 	bool logIR;
 	bool logAllocationInfo;
@@ -488,6 +489,7 @@ int main(int argc, char **argv)
 	MemoryInit(&memory);
 
 	Context context = {};
+
 	DynamicArrayInit(&context.sourceFiles, 16);
 	DynamicArrayInit(&context.libsToLink, 8);
 	BucketArrayInit(&context.tokens);
@@ -501,7 +503,9 @@ int main(int argc, char **argv)
 		char *arg = argv[argIdx];
 		if (arg[0] == '-')
 		{
-			if (strcmp("-logAST", arg) == 0)
+			if (strcmp("-noPromote", arg) == 0)
+				context.config.dontPromoteMemoryToRegisters = true;
+			else if (strcmp("-logAST", arg) == 0)
 				context.config.logAST = true;
 			else if (strcmp("-logIR", arg) == 0)
 				context.config.logIR = true;

@@ -65,7 +65,7 @@ inline u64 LastPowerOf264(u64 n)
 
 inline bool IsPowerOf2(s64 n)
 {
-	return ((n & (~(n - 1))) == n);
+	return CountOnes(n) == 1;
 }
 
 inline s64 AlignTo(s64 n, s64 alignment)

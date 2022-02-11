@@ -80,6 +80,7 @@ IRValue IRValueValue(u32 valueIdx, s64 typeTableIdx)
 	IRValue result;
 	result.valueType = IRVALUETYPE_VALUE;
 	result.valueIdx = valueIdx;
+	result.memory.elementSize = 0;
 	result.typeTableIdx = typeTableIdx;
 	return result;
 }
@@ -89,6 +90,7 @@ IRValue IRValueValue(Context *context, u32 valueIdx)
 	IRValue result;
 	result.valueType = IRVALUETYPE_VALUE;
 	result.valueIdx = valueIdx;
+	result.memory.elementSize = 0;
 	result.typeTableIdx = context->values[valueIdx].typeTableIdx;
 	return result;
 }
@@ -107,6 +109,7 @@ IRValue IRValueTCValue(Context *context, TCValue tcValue)
 		u32 procIdx = context->irProcedureStack[context->irProcedureStack.size - 1].procedureIdx;
 		u32 paramValueIdx = GetProcedure(context, procIdx)->parameterValues[tcValue.parameterIdx];
 		result.valueIdx = paramValueIdx;
+		result.memory.elementSize = 0;
 		result.typeTableIdx = context->values[paramValueIdx].typeTableIdx;
 	}
 	return result;
@@ -118,6 +121,7 @@ IRValue IRValueMemory(u32 baseValueIdx, s64 offset, s64 typeTableIdx)
 	result.valueType = IRVALUETYPE_MEMORY;
 	result.memory.baseValueIdx = baseValueIdx;
 	result.memory.offset = offset;
+	result.memory.elementSize = 0;
 	result.typeTableIdx = typeTableIdx;
 	return result;
 }
@@ -243,6 +247,7 @@ IRValue IRDereferenceValue(Context *context, IRValue in)
 	//ASSERT(pointedTypeIdx != TYPETABLEIDX_VOID);
 
 	// We don't know which will be memory and which registers. Do the assignment for everybody.
+#if 0
 	if (in.valueType == IRVALUETYPE_VALUE)
 	{
 		IRValue result = IRValueMemory(in.valueIdx, 0, pointedTypeIdx);
@@ -263,6 +268,23 @@ IRValue IRDereferenceValue(Context *context, IRValue in)
 		IRValue result = IRValueMemory(newValueIdx, 0, pointedTypeIdx);
 		return result;
 	}
+#else
+	if (in.valueType == IRVALUETYPE_VALUE || in.valueType == IRVALUETYPE_MEMORY)
+	{
+		String name = TPrintF("_deref_%S", context->values[in.valueIdx].name);
+		u32 newValueIdx = NewValue(context, name, in.typeTableIdx, VALUEFLAGS_TRY_IMMITATE, in.valueIdx);
+		IRValue value = IRValueValue(newValueIdx, in.typeTableIdx);
+
+		IRInstruction inst = {};
+		inst.type = IRINSTRUCTIONTYPE_ASSIGNMENT;
+		inst.assignment.dst = value;
+		inst.assignment.src = in;
+		*AddInstruction(context) = inst;
+
+		IRValue result = IRValueMemory(newValueIdx, 0, pointedTypeIdx);
+		return result;
+	}
+#endif
 	ASSERT(!"Dereferenced value must be either REGISTER or MEMORY");
 	return {};
 }
@@ -316,42 +338,60 @@ IRValue IRDoArrayAccess(Context *context, IRValue arrayValue, IRValue indexValue
 
 	s64 elementSize = context->typeTable[elementTypeIdx].size;
 
-	IRValue pointerToElementValue;
-	if (indexValue.valueType == IRVALUETYPE_IMMEDIATE_INTEGER && indexValue.immediate == 0)
-		pointerToElementValue = IRPointerToValue(context, arrayValue);
+	if (indexValue.valueType == IRVALUETYPE_IMMEDIATE_INTEGER)
+	{
+		if (indexValue.immediate == 0)
+			return IRValueMemory(arrayValue.valueIdx, 0, elementTypeIdx);
+		else
+			return IRValueMemory(arrayValue.valueIdx, indexValue.immediate * elementSize,
+					elementTypeIdx);
+	}
+	else if ((indexValue.valueType == IRVALUETYPE_VALUE ||
+			indexValue.valueType == IRVALUETYPE_MEMORY) &&
+			CountOnes(elementSize) == 1 && elementSize <= 8)
+	{
+		// @Todo: move x64 specifics like element size limitations and force to register to x64
+		// backend.
+		IRValue indexForceReg = IRValueNewValue(context, "_idx"_s, TYPETABLEIDX_S64,
+				VALUEFLAGS_TRY_IMMITATE, indexValue.valueIdx);
+		IRDoAssignment(context, indexForceReg, indexValue);
+
+		IRValue result = IRValueMemory(arrayValue.valueIdx, 0, elementTypeIdx);
+		result.memory.indexValueIdx = indexForceReg.valueIdx;
+		result.memory.elementSize = elementSize;
+		return result;
+	}
+
+	// Fall back to simple add instruction
+	IRValue offsetValue;
+	if (indexValue.valueType == IRVALUETYPE_IMMEDIATE_INTEGER)
+		offsetValue = IRValueImmediate(indexValue.immediate * elementSize, TYPETABLEIDX_S64);
 	else
 	{
-		IRValue offsetValue;
-		if (indexValue.valueType == IRVALUETYPE_IMMEDIATE_INTEGER)
-			offsetValue = IRValueImmediate(indexValue.immediate * elementSize, TYPETABLEIDX_S64);
+		offsetValue = IRValueNewValue(context, "_array_offset"_s, TYPETABLEIDX_S64, 0);
+		if (elementSize == 1)
+			IRDoAssignment(context, offsetValue, indexValue);
 		else
 		{
 			offsetValue = IRValueNewValue(context, "_array_offset"_s, TYPETABLEIDX_S64, 0);
-			if (elementSize == 1)
-				IRDoAssignment(context, offsetValue, indexValue);
-			else
-			{
-				offsetValue = IRValueNewValue(context, "_array_offset"_s, TYPETABLEIDX_S64, 0);
-				IRInstruction multiplyInst = { IRINSTRUCTIONTYPE_MULTIPLY };
-				multiplyInst.binaryOperation.left  = indexValue;
-				multiplyInst.binaryOperation.right = IRValueImmediate(elementSize);
-				multiplyInst.binaryOperation.out   = offsetValue;
-				*AddInstruction(context) = multiplyInst;
-			}
+			IRInstruction multiplyInst = { IRINSTRUCTIONTYPE_MULTIPLY };
+			multiplyInst.binaryOperation.left  = indexValue;
+			multiplyInst.binaryOperation.right = IRValueImmediate(elementSize);
+			multiplyInst.binaryOperation.out   = offsetValue;
+			*AddInstruction(context) = multiplyInst;
 		}
-
-		pointerToElementValue = IRValueNewValue(context, "_array_element"_s,
-				pointerToElementTypeIdx, 0);
-		IRInstruction addOffsetInst = {};
-		addOffsetInst.type = IRINSTRUCTIONTYPE_ADD;
-		addOffsetInst.binaryOperation.left = IRPointerToValue(context, arrayValue);
-		addOffsetInst.binaryOperation.right = offsetValue;
-		addOffsetInst.binaryOperation.out = pointerToElementValue;
-		*AddInstruction(context) = addOffsetInst;
 	}
 
-	IRValue result = IRValueMemory(pointerToElementValue.valueIdx, 0, elementTypeIdx);
-	return result;
+	IRValue pointerToElementValue = IRValueNewValue(context, "_array_element"_s,
+			pointerToElementTypeIdx, 0);
+	IRInstruction addOffsetInst = {};
+	addOffsetInst.type = IRINSTRUCTIONTYPE_ADD;
+	addOffsetInst.binaryOperation.left = IRPointerToValue(context, arrayValue);
+	addOffsetInst.binaryOperation.right = offsetValue;
+	addOffsetInst.binaryOperation.out = pointerToElementValue;
+	*AddInstruction(context) = addOffsetInst;
+
+	return IRValueMemory(pointerToElementValue.valueIdx, 0, elementTypeIdx);
 }
 
 inline void IRPushValueIntoStack(Context *context, u32 valueIdx)
@@ -796,32 +836,58 @@ IRValue IRInstructionFromBinaryOperation(Context *context, ASTExpression *expres
 	return result;
 }
 
-void IRConditionalJumpFromExpression(Context *context, ASTExpression *conditionExp, IRLabel *label)
+void IRConditionalJumpFromExpression(Context *context, ASTExpression *conditionExp, IRLabel *label, bool jumpIfTrue)
 {
 	// The following tries to avoid saving condition to a bool, then comparing the bool with
 	// 0 in the conditional jump.
+	if (conditionExp->nodeType == ASTNODETYPE_UNARY_OPERATION &&
+		conditionExp->binaryOperation.op == TOKEN_OP_NOT)
+	{
+		IRConditionalJumpFromExpression(context, conditionExp->unaryOperation.expression, label, !jumpIfTrue);
+		return;
+	}
+
+	if (conditionExp->nodeType == ASTNODETYPE_BINARY_OPERATION &&
+		conditionExp->binaryOperation.op == (jumpIfTrue ? TOKEN_OP_OR : TOKEN_OP_AND))
+	{
+		IRConditionalJumpFromExpression(context, conditionExp->binaryOperation.leftHand, label, jumpIfTrue);
+		IRConditionalJumpFromExpression(context, conditionExp->binaryOperation.rightHand, label, jumpIfTrue);
+		return;
+	}
+	else if (conditionExp->nodeType == ASTNODETYPE_BINARY_OPERATION &&
+			 conditionExp->binaryOperation.op == (jumpIfTrue ? TOKEN_OP_AND : TOKEN_OP_OR))
+	{
+		IRLabel *skipRightHandLabel = NewLabel(context, "skipRightHand"_s);
+
+		IRConditionalJumpFromExpression(context, conditionExp->binaryOperation.leftHand, skipRightHandLabel, !jumpIfTrue);
+		IRConditionalJumpFromExpression(context, conditionExp->binaryOperation.rightHand, label, jumpIfTrue);
+
+		IRInsertLabelInstruction(context, skipRightHandLabel);
+		return;
+	}
+
 	if (conditionExp->nodeType == ASTNODETYPE_BINARY_OPERATION)
 	{
 		IRInstruction jump = {};
 		switch (conditionExp->binaryOperation.op)
 		{
 		case TOKEN_OP_EQUALS:
-			jump.type = IRINSTRUCTIONTYPE_JUMP_IF_NOT_EQUALS;
+			jump.type = jumpIfTrue ? IRINSTRUCTIONTYPE_JUMP_IF_EQUALS : IRINSTRUCTIONTYPE_JUMP_IF_NOT_EQUALS;
 			break;
 		case TOKEN_OP_NOT_EQUALS:
-			jump.type = IRINSTRUCTIONTYPE_JUMP_IF_EQUALS;
+			jump.type = jumpIfTrue ? IRINSTRUCTIONTYPE_JUMP_IF_NOT_EQUALS : IRINSTRUCTIONTYPE_JUMP_IF_EQUALS;
 			break;
 		case TOKEN_OP_GREATER_THAN:
-			jump.type = IRINSTRUCTIONTYPE_JUMP_IF_LESS_THAN_OR_EQUALS;
+			jump.type = jumpIfTrue ? IRINSTRUCTIONTYPE_JUMP_IF_GREATER_THAN : IRINSTRUCTIONTYPE_JUMP_IF_LESS_THAN_OR_EQUALS;
 			break;
 		case TOKEN_OP_LESS_THAN:
-			jump.type = IRINSTRUCTIONTYPE_JUMP_IF_GREATER_THAN_OR_EQUALS;
+			jump.type = jumpIfTrue ? IRINSTRUCTIONTYPE_JUMP_IF_LESS_THAN : IRINSTRUCTIONTYPE_JUMP_IF_GREATER_THAN_OR_EQUALS;
 			break;
 		case TOKEN_OP_GREATER_THAN_OR_EQUAL:
-			jump.type = IRINSTRUCTIONTYPE_JUMP_IF_LESS_THAN;
+			jump.type = jumpIfTrue ? IRINSTRUCTIONTYPE_JUMP_IF_GREATER_THAN_OR_EQUALS : IRINSTRUCTIONTYPE_JUMP_IF_LESS_THAN;
 			break;
 		case TOKEN_OP_LESS_THAN_OR_EQUAL:
-			jump.type = IRINSTRUCTIONTYPE_JUMP_IF_GREATER_THAN;
+			jump.type = jumpIfTrue ? IRINSTRUCTIONTYPE_JUMP_IF_LESS_THAN_OR_EQUALS : IRINSTRUCTIONTYPE_JUMP_IF_GREATER_THAN;
 			break;
 		default:
 			goto defaultConditionEvaluation;
@@ -838,27 +904,27 @@ void IRConditionalJumpFromExpression(Context *context, ASTExpression *conditionE
 			switch (conditionExp->binaryOperation.op)
 			{
 			case TOKEN_OP_EQUALS:
-				if (leftResult.immediate != rightResult.immediate)
+				if ((leftResult.immediate != rightResult.immediate) != jumpIfTrue)
 					goto insertSimpleJump;
 				else return;
 			case TOKEN_OP_NOT_EQUALS:
-				if (leftResult.immediate == rightResult.immediate)
+				if ((leftResult.immediate == rightResult.immediate) != jumpIfTrue)
 					goto insertSimpleJump;
 				else return;
 			case TOKEN_OP_GREATER_THAN:
-				if (leftResult.immediate <= rightResult.immediate)
+				if ((leftResult.immediate <= rightResult.immediate) != jumpIfTrue)
 					goto insertSimpleJump;
 				else return;
 			case TOKEN_OP_LESS_THAN:
-				if (leftResult.immediate >= rightResult.immediate)
+				if ((leftResult.immediate >= rightResult.immediate) != jumpIfTrue)
 					goto insertSimpleJump;
 				else return;
 			case TOKEN_OP_GREATER_THAN_OR_EQUAL:
-				if (leftResult.immediate < rightResult.immediate)
+				if ((leftResult.immediate < rightResult.immediate) != jumpIfTrue)
 					goto insertSimpleJump;
 				else return;
 			case TOKEN_OP_LESS_THAN_OR_EQUAL:
-				if (leftResult.immediate > rightResult.immediate)
+				if ((leftResult.immediate > rightResult.immediate) != jumpIfTrue)
 					goto insertSimpleJump;
 				else return;
 			}
@@ -871,6 +937,7 @@ void IRConditionalJumpFromExpression(Context *context, ASTExpression *conditionE
 		*AddInstruction(context) = jump;
 		return;
 	}
+#if 0
 	else if (conditionExp->nodeType == ASTNODETYPE_UNARY_OPERATION)
 	{
 		IRInstruction jump = {};
@@ -890,6 +957,7 @@ void IRConditionalJumpFromExpression(Context *context, ASTExpression *conditionE
 		*AddInstruction(context) = jump;
 		return;
 	}
+#endif
 
 defaultConditionEvaluation:
 	{
@@ -904,7 +972,7 @@ defaultConditionEvaluation:
 		}
 
 		IRInstruction *jump = AddInstruction(context);
-		jump->type = IRINSTRUCTIONTYPE_JUMP_IF_ZERO;
+		jump->type = jumpIfTrue ? IRINSTRUCTIONTYPE_JUMP_IF_NOT_ZERO : IRINSTRUCTIONTYPE_JUMP_IF_ZERO;
 		jump->conditionalJump.label = label;
 		jump->conditionalJump.condition = conditionResult;
 		return;
@@ -1888,7 +1956,7 @@ skipGeneratingVarargsArray:
 	case ASTNODETYPE_IF:
 	{
 		IRLabel *skipLabel = NewLabel(context, "skipIf"_s);
-		IRConditionalJumpFromExpression(context, expression->ifNode.condition, skipLabel);
+		IRConditionalJumpFromExpression(context, expression->ifNode.condition, skipLabel, false);
 
 		// Body!
 		IRGenFromExpression(context, expression->ifNode.body);
@@ -1924,7 +1992,7 @@ skipGeneratingVarargsArray:
 		context->currentBreakLabel    = breakLabel;
 		context->currentContinueLabel = loopLabel;
 
-		IRConditionalJumpFromExpression(context, expression->whileNode.condition, breakLabel);
+		IRConditionalJumpFromExpression(context, expression->whileNode.condition, breakLabel, false);
 
 		IRGenFromExpression(context, expression->whileNode.body);
 

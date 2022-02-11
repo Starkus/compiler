@@ -510,6 +510,13 @@ String X64IRValueToStr(Context *context, IRValue value)
 				result = TPrintF("%S+0%xh", result, offset);
 			else if (offset < 0)
 				result = TPrintF("%S-0%xh", result, -offset);
+
+			// Array indexing
+			if (value.memory.elementSize > 0)
+			{
+				String indexRegisterStr = X64IRValueToStr(context, IRValueValue(context, value.memory.indexValueIdx));
+				result = TPrintF("%S+%S*%llu", result, indexRegisterStr, value.memory.elementSize);
+			}
 		}
 		else if (value.valueType == IRVALUETYPE_MEMORY)
 		{
@@ -539,6 +546,13 @@ String X64IRValueToStr(Context *context, IRValue value)
 				result = TPrintF("%S+0%xh", result, offset);
 			else if (offset < 0)
 				result = TPrintF("%S-0%xh", result, -offset);
+
+			// Array indexing
+			if (value.memory.elementSize > 0)
+			{
+				String indexRegisterStr = X64IRValueToStr(context, IRValueValue(context, value.memory.indexValueIdx));
+				result = TPrintF("%S+%S*%llu", result, indexRegisterStr, value.memory.elementSize);
+			}
 		}
 		else if (!isXMM)
 		{
@@ -675,6 +689,13 @@ String X64IRValueToStr(Context *context, IRValue value)
 			result = TPrintF("%S+0%xh", result, offset);
 		else if (offset < 0)
 			result = TPrintF("%S-0%xh", result, -offset);
+
+		// Array indexing
+		if (value.memory.elementSize > 0)
+		{
+			String indexRegisterStr = X64IRValueToStr(context, IRValueValue(context, value.memory.indexValueIdx));
+			result = TPrintF("%S+%S*%llu", result, indexRegisterStr, value.memory.elementSize);
+		}
 	}
 
 	if (value.valueType != IRVALUETYPE_MEMORY && !(v.flags & VALUEFLAGS_IS_MEMORY))
@@ -744,6 +765,7 @@ bool CanValueBeMemory(Context *context, IRValue value)
 	return true;
 }
 
+void X64Mov(Context *context, X64Procedure *x64Proc, IRValue dst, IRValue src);
 void X64MovNoTmp(Context *context, X64Procedure *x64Proc, IRValue dst, IRValue src)
 {
 	X64Instruction result;
@@ -2396,7 +2418,7 @@ void BackendMain(Context *context)
 			// Replace LEAs with a register as a source with a MOV.
 			if (inst->type == X64_LEA)
 			{
-				if (inst->src.valueType != IRVALUETYPE_MEMORY || inst->src.memory.offset == 0)
+				if (inst->src.valueType != IRVALUETYPE_MEMORY || (inst->src.memory.offset == 0 && inst->src.memory.elementSize == 0))
 				{
 					Value v = context->values[inst->src.valueIdx];
 					if ((v.flags & VALUEFLAGS_IS_ALLOCATED) && !(v.flags & VALUEFLAGS_IS_MEMORY))

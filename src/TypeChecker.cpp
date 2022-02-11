@@ -1,3 +1,4 @@
+const u32 VALUE_INVALID_IDX = U32_MAX;
 enum ValueFlags
 {
 	VALUEFLAGS_IS_USED              = 1,
@@ -2379,11 +2380,12 @@ TypeCheckExpressionResult TryTypeCheckExpression(Context *context, ASTExpression
 			return { false, result.yieldInfo };
 		expression->typeTableIdx = varDecl->typeTableIdx;
 
-		u32 staticFlag   = varDecl->isStatic   ? VALUEFLAGS_ON_STATIC_STORAGE : 0;
-		u32 externalFlag = varDecl->isExternal ? VALUEFLAGS_IS_EXTERNAL       : 0;
+		u32 forceMemoryFlag = context->config.dontPromoteMemoryToRegisters ? VALUEFLAGS_FORCE_MEMORY : 0;
+		u32 staticFlag      = varDecl->isStatic   ? VALUEFLAGS_ON_STATIC_STORAGE : 0;
+		u32 externalFlag    = varDecl->isExternal ? VALUEFLAGS_IS_EXTERNAL       : 0;
 		TCValue tcValue = { TCVALUETYPE_VALUE };
 		tcValue.valueIdx = NewValue(context, varDecl->name, varDecl->typeTableIdx,
-				staticFlag | externalFlag);
+				forceMemoryFlag | staticFlag | externalFlag);
 
 		varDecl->valueIdx = tcValue.valueIdx;
 
