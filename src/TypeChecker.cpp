@@ -3066,10 +3066,18 @@ TypeCheckExpressionResult TryTypeCheckExpression(Context *context, ASTExpression
 					leftHand->typeTableIdx, rightHand);
 			if (typeCheckResult.errorCode != TYPECHECK_COOL)
 			{
-				String leftStr =  TypeInfoToString(context, leftHand->typeTableIdx);
-				String rightStr = TypeInfoToString(context, rightHand->typeTableIdx);
-				LogError(context, expression->any.loc, TPrintF("Type mismatch! (%S and %S)",
-							leftStr, rightStr));
+				// Ignore sign missmatches for shift operations.
+				if (typeCheckResult.errorCode != TYPECHECK_SIZE_MISMATCH ||
+					(expression->binaryOperation.op == TOKEN_OP_SHIFT_LEFT &&
+					 expression->binaryOperation.op == TOKEN_OP_SHIFT_RIGHT &&
+					 expression->binaryOperation.op == TOKEN_OP_ASSIGNMENT_SHIFT_LEFT &&
+					 expression->binaryOperation.op == TOKEN_OP_ASSIGNMENT_SHIFT_RIGHT))
+				{
+					String leftStr =  TypeInfoToString(context, leftHand->typeTableIdx);
+					String rightStr = TypeInfoToString(context, rightHand->typeTableIdx);
+					LogError(context, expression->any.loc, TPrintF("Type mismatch! (%S and %S)",
+								leftStr, rightStr));
+				}
 			}
 			leftHand->typeTableIdx  = typeCheckResult.leftTableIdx;
 			rightHand->typeTableIdx = typeCheckResult.rightTableIdx;
@@ -3368,6 +3376,10 @@ skipOverload:
 				&expression->castNode.astType);
 		if (!typeCheckResult.success)
 			return { false, typeCheckResult.yieldInfo };
+
+		TypeCheckResult typeSpecializeResult = CheckTypesMatchAndSpecialize(context, typeCheckResult.typeTableIdx,
+				expression->castNode.expression);
+		expression->castNode.expression->typeTableIdx = typeSpecializeResult.rightTableIdx;
 
 		expression->typeTableIdx = typeCheckResult.typeTableIdx;
 	} break;

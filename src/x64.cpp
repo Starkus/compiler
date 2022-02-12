@@ -829,7 +829,21 @@ void X64MovNoTmp(Context *context, X64Procedure *x64Proc, IRValue dst, IRValue s
 	else if (dstType.size == 4)
 	{
 		if (srcType.typeCategory != TYPECATEGORY_FLOATING)
+		{
+			// Immediates should be converted to float in previous stages.
+			ASSERT(src.valueType != IRVALUETYPE_IMMEDIATE_INTEGER);
+			if (srcType.size < 4)
+			{
+				bool isSigned = srcType.typeCategory == TYPECATEGORY_INTEGER &&
+					srcType.integerInfo.isSigned;
+				IRValue newValue = IRValueNewValue(context, "_cvt_tmp"_s, TYPETABLEIDX_U32,
+						VALUEFLAGS_FORCE_REGISTER);
+				X64InstructionType extendType = isSigned ? X64_MOVSX : X64_MOVZX;
+				*BucketArrayAdd(&x64Proc->instructions) = { extendType, newValue, src };
+				src = newValue;
+			}
 			result.type = X64_CVTSI2SS;
+		}
 		else if (srcType.size == 4)
 			result.type = X64_MOVSS;
 		else
@@ -842,7 +856,21 @@ void X64MovNoTmp(Context *context, X64Procedure *x64Proc, IRValue dst, IRValue s
 	{
 		ASSERT(dstType.size == 8);
 		if (srcType.typeCategory != TYPECATEGORY_FLOATING)
+		{
+			// Immediates should be converted to float in previous stages.
+			ASSERT(src.valueType != IRVALUETYPE_IMMEDIATE_INTEGER);
+			if (srcType.size < 4)
+			{
+				bool isSigned = srcType.typeCategory == TYPECATEGORY_INTEGER &&
+					srcType.integerInfo.isSigned;
+				IRValue newValue = IRValueNewValue(context, "_cvt_tmp"_s, TYPETABLEIDX_U32,
+						VALUEFLAGS_FORCE_REGISTER);
+				X64InstructionType extendType = isSigned ? X64_MOVSX : X64_MOVZX;
+				*BucketArrayAdd(&x64Proc->instructions) = { extendType, newValue, src };
+				src = newValue;
+			}
 			result.type = X64_CVTSI2SD;
+		}
 		else if (srcType.size == 4)
 			result.type = X64_CVTSS2SD;
 		else
@@ -1104,6 +1132,7 @@ void X64ConvertInstruction(Context *context, IRInstruction inst, X64Procedure *x
 					*BucketArrayAdd(&x64Proc->instructions) = result;
 
 					X64Mov(context, x64Proc, out, RAX);
+					return;
 				}
 			}
 		}

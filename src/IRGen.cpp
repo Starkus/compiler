@@ -247,28 +247,6 @@ IRValue IRDereferenceValue(Context *context, IRValue in)
 	//ASSERT(pointedTypeIdx != TYPETABLEIDX_VOID);
 
 	// We don't know which will be memory and which registers. Do the assignment for everybody.
-#if 0
-	if (in.valueType == IRVALUETYPE_VALUE)
-	{
-		IRValue result = IRValueMemory(in.valueIdx, 0, pointedTypeIdx);
-		return result;
-	}
-	else if (in.valueType == IRVALUETYPE_MEMORY)
-	{
-		String name = TPrintF("_deref_%S", context->values[in.valueIdx].name);
-		u32 newValueIdx = NewValue(context, name, in.typeTableIdx, 0);
-		IRValue value = IRValueValue(newValueIdx, in.typeTableIdx);
-
-		IRInstruction inst = {};
-		inst.type = IRINSTRUCTIONTYPE_ASSIGNMENT;
-		inst.assignment.dst = value;
-		inst.assignment.src = in;
-		*AddInstruction(context) = inst;
-
-		IRValue result = IRValueMemory(newValueIdx, 0, pointedTypeIdx);
-		return result;
-	}
-#else
 	if (in.valueType == IRVALUETYPE_VALUE || in.valueType == IRVALUETYPE_MEMORY)
 	{
 		String name = TPrintF("_deref_%S", context->values[in.valueIdx].name);
@@ -284,7 +262,6 @@ IRValue IRDereferenceValue(Context *context, IRValue in)
 		IRValue result = IRValueMemory(newValueIdx, 0, pointedTypeIdx);
 		return result;
 	}
-#endif
 	ASSERT(!"Dereferenced value must be either REGISTER or MEMORY");
 	return {};
 }

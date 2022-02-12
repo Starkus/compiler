@@ -3,3 +3,5 @@
 * Return statements are being evaluated before deferred statements!
 * Replace big inline zeroing/initializing with static data
 * Maybe initialize string structs inline instead of having all of them as static data
+* For known procedures, check what registers it uses and only save those upon calling it
+* CodeGen: Flip operands when possible to avoid movs (e.g. immediate in cmp left hand)
