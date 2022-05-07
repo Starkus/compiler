@@ -203,9 +203,14 @@ HANDLE Win32OpenFileRead(String filename)
 			FILE_ATTRIBUTE_NORMAL,
 			nullptr
 			);
+
 	DWORD error = GetLastError();
-	ASSERT(error == ERROR_SUCCESS);
-	ASSERT(file != INVALID_HANDLE_VALUE);
+	if (error != ERROR_SUCCESS || file == INVALID_HANDLE_VALUE)
+	{
+		Print("Failed to read file \"%S\"", filename);
+		CRASH;
+	}
+
 	return file;
 }
 
@@ -537,23 +542,20 @@ int main(int argc, char **argv)
 
 	GenerateSyntaxTree(&context);
 
-	if (context.config.logAST)
-		PrintAST(&context);
-
 	TimerSplit("Generating AST"_s);
 	PhaseAllocator::Wipe();
 
 	TypeCheckMain(&context);
+
+	if (context.config.logAST)
+		PrintAST(&context);
 
 	TimerSplit("Type checking"_s);
 	PhaseAllocator::Wipe();
 
 	IRGenMain(&context);
 
-	if (context.config.logIR)
-	{
-		PrintIRInstructions(&context);
-	}
+	PrintIRInstructions(&context);
 
 	TimerSplit("IR generation"_s);
 	PhaseAllocator::Wipe();
