@@ -340,13 +340,9 @@ void PrintExpression(Context *context, ASTExpression *e)
 		}
 		--indentLevels;
 
-		s32 procedureIdx = e->procedureDeclaration.procedureIdx;
-		//if (procedureIdx != 0)
-		{
-			Procedure *procedure = GetProcedure(context, procedureIdx);
-			if (procedure->astProcedureDeclaration->astBody)
-				PrintExpression(context, procedure->astProcedureDeclaration->astBody);
-		}
+		if (e->procedureDeclaration.astBody)
+			PrintExpression(context, e->procedureDeclaration.astBody);
+
 		--indentLevels;
 	} break;
 	case ASTNODETYPE_BLOCK:

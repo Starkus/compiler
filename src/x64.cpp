@@ -488,6 +488,14 @@ String X64IRValueToStr(Context *context, IRValue value)
 			result = TPrintF("%S+0%xh", result, offset);
 		else if (offset < 0)
 			result = TPrintF("%S-0%xh", result, -offset);
+
+		// Array indexing
+		if (value.value.elementSize > 0)
+		{
+			String indexRegisterStr = X64IRValueToStr(context, IRValueValue(context, value.value.indexValueIdx));
+			result = TPrintF("%S+%S*%llu", result, indexRegisterStr, value.value.elementSize);
+		}
+
 		goto decoratePtr;
 	}
 
@@ -805,7 +813,7 @@ void X64MovNoTmp(Context *context, X64Procedure *x64Proc, IRValue dst, IRValue s
 				srcType.integerInfo.isSigned;
 			if (srcType.size == 4)
 			{
-				if (isSigned && dstType.size > 4)
+				if (isSigned && dstType.size > 4 && src.valueType != IRVALUETYPE_IMMEDIATE_INTEGER)
 				{
 					// MOVSXD is R-RM
 					IRValue newValue = IRValueNewValue(context, "_movsxd_tmp"_s, dst.typeTableIdx,
@@ -1979,12 +1987,21 @@ void X64PrintStaticData(Context *context, String name, IRValue value, s64 typeTa
 		int alignment = alignmentOverride < 0 ? 8 : alignmentOverride;
 		bytesSoFar = X64StaticDataAlignTo(context, bytesSoFar, alignment);
 
+		bool isArray = false;
+		s64 elementTypeIdx = -1;
+		if (typeTableIdx > 0)
+		{
+			TypeInfo typeInfo = context->typeTable[typeTableIdx];
+			isArray = typeInfo.typeCategory == TYPECATEGORY_ARRAY;
+			elementTypeIdx = typeInfo.arrayInfo.elementTypeTableIdx;
+		}
+
 		Array<IRValue, FrameAllocator> members = value.immediateStructMembers;
 		for (int memberIdx = 0; memberIdx < members.size; ++memberIdx)
 		{
 			String memberName = memberIdx ? "   "_s : name;
-			X64PrintStaticData(context, memberName, members[memberIdx],
-					members[memberIdx].typeTableIdx);
+			s64 memberTypeIdx = isArray ? elementTypeIdx : members[memberIdx].typeTableIdx;
+			X64PrintStaticData(context, memberName, members[memberIdx], memberTypeIdx);
 		}
 	} break;
 	case IRVALUETYPE_VALUE_DEREFERENCE:
@@ -2674,6 +2691,7 @@ unalignedMovups:;
 						TYPETABLEIDX_TYPE_INFO_STRUCT_MEMBER_STRUCT, VALUEFLAGS_ON_STATIC_STORAGE);
 				IRStaticVariable membersStaticVar = { membersValueIdx };
 				membersStaticVar.initialValue.valueType = IRVALUETYPE_IMMEDIATE_GROUP;
+				membersStaticVar.initialValue.typeTableIdx = -1;
 				ArrayInit(&membersStaticVar.initialValue.immediateStructMembers,
 						typeInfo.structInfo.members.size);
 				for (s64 memberIdx = 0; memberIdx < (s64)typeInfo.structInfo.members.size; ++memberIdx)
@@ -2683,6 +2701,7 @@ unalignedMovups:;
 
 					IRValue memberImm;
 					memberImm.valueType = IRVALUETYPE_IMMEDIATE_GROUP;
+					memberImm.typeTableIdx = -1;
 					ArrayInit(&memberImm.immediateStructMembers, 4);
 					*ArrayAdd(&memberImm.immediateStructMembers) =
 						{ IRValueImmediateString(context, member.name) };

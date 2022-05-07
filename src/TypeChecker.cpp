@@ -1415,6 +1415,20 @@ Constant TryEvaluateConstant(Context *context, ASTExpression *expression)
 			goto error;
 		}
 	} break;
+	case ASTNODETYPE_CAST:
+	{
+		Constant constant = TryEvaluateConstant(context, expression->castNode.expression);
+		bool isFloat = constant.type == CONSTANTTYPE_FLOATING;
+		bool castToFloat = context->typeTable[expression->typeTableIdx].typeCategory ==
+			TYPECATEGORY_FLOATING;
+		if (!isFloat && castToFloat)
+			result.valueAsFloat = (f64)constant.valueAsInt;
+		else if (isFloat && !castToFloat)
+			result.valueAsInt = (s64)constant.valueAsFloat;
+		else
+			result = constant;
+		result.type = castToFloat ? CONSTANTTYPE_FLOATING : CONSTANTTYPE_INTEGER;
+	} break;
 	default:
 		goto error;
 	}
@@ -2611,7 +2625,7 @@ TypeCheckExpressionResult TryTypeCheckExpression(Context *context, ASTExpression
 				staticDef->constant = TryEvaluateConstant(context, astStaticDef->expression);
 				if (staticDef->constant.type == CONSTANTTYPE_INVALID)
 					LogError(context, astStaticDef->expression->any.loc,
-							"Failed to evaluate constant in default parameter"_s);
+							"Failed to evaluate constant"_s);
 			}
 		}
 	} break;

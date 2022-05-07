@@ -571,6 +571,9 @@ int main(int argc, char **argv)
 
 	GenerateSyntaxTree(&context);
 
+	if (context.config.logAST)
+		PrintAST(&context);
+
 	TimerSplit("Generating AST"_s);
 	PhaseAllocator::Wipe();
 

@@ -358,8 +358,25 @@ IRValue IRDoArrayAccess(Context *context, IRValue arrayValue, IRValue indexValue
 		// @Todo: move x64 specifics like element size limitations and force to register to x64
 		// backend.
 		IRValue indexForceReg = IRValueNewValue(context, "_idx"_s, TYPETABLEIDX_S64,
-				VALUEFLAGS_TRY_IMMITATE, indexValue.value.valueIdx);
+				VALUEFLAGS_FORCE_REGISTER | VALUEFLAGS_TRY_IMMITATE, indexValue.value.valueIdx);
 		IRDoAssignment(context, indexForceReg, indexValue);
+
+		u32 flags = context->values[arrayValue.value.valueIdx].flags;
+		if (flags & VALUEFLAGS_ON_STATIC_STORAGE)
+		{
+			// @Improve: This is x64 specific. Move to x64 backend.
+			// Apparently with [array+index*size] syntax, array ends up being 32 bit displacement.
+			// We can't expect a part of the data segment to be that close.
+			IRValue arrayForceReg = IRValueNewValue(context, "_arr"_s,
+					GetTypeInfoPointerOf(context, arrayValue.typeTableIdx),
+					VALUEFLAGS_FORCE_REGISTER | VALUEFLAGS_TRY_IMMITATE, arrayValue.value.valueIdx);
+			IRInstruction leaInst = { IRINSTRUCTIONTYPE_LOAD_EFFECTIVE_ADDRESS };
+			leaInst.unaryOperation.in = arrayValue;
+			leaInst.unaryOperation.out = arrayForceReg;
+			*AddInstruction(context) = leaInst;
+
+			arrayValue = arrayForceReg;
+		}
 
 		IRValue result = IRValueDereference(arrayValue.value.valueIdx, elementTypeIdx);
 		result.value.indexValueIdx = indexForceReg.value.valueIdx;
@@ -369,22 +386,16 @@ IRValue IRDoArrayAccess(Context *context, IRValue arrayValue, IRValue indexValue
 
 	// Fall back to simple add instruction
 	IRValue offsetValue;
-	if (indexValue.valueType == IRVALUETYPE_IMMEDIATE_INTEGER)
-		offsetValue = IRValueImmediate(indexValue.immediate * elementSize, TYPETABLEIDX_S64);
+	offsetValue = IRValueNewValue(context, "_array_offset"_s, TYPETABLEIDX_S64, 0);
+	if (elementSize == 1)
+		IRDoAssignment(context, offsetValue, indexValue);
 	else
 	{
-		offsetValue = IRValueNewValue(context, "_array_offset"_s, TYPETABLEIDX_S64, 0);
-		if (elementSize == 1)
-			IRDoAssignment(context, offsetValue, indexValue);
-		else
-		{
-			offsetValue = IRValueNewValue(context, "_array_offset"_s, TYPETABLEIDX_S64, 0);
-			IRInstruction multiplyInst = { IRINSTRUCTIONTYPE_MULTIPLY };
-			multiplyInst.binaryOperation.left  = indexValue;
-			multiplyInst.binaryOperation.right = IRValueImmediate(elementSize);
-			multiplyInst.binaryOperation.out   = offsetValue;
-			*AddInstruction(context) = multiplyInst;
-		}
+		IRInstruction multiplyInst = { IRINSTRUCTIONTYPE_MULTIPLY };
+		multiplyInst.binaryOperation.left  = indexValue;
+		multiplyInst.binaryOperation.right = IRValueImmediate(elementSize);
+		multiplyInst.binaryOperation.out   = offsetValue;
+		*AddInstruction(context) = multiplyInst;
 	}
 
 	IRValue pointerToElementValue = IRValueNewValue(context, "_array_element"_s,
@@ -516,6 +527,21 @@ void IRDoAssignment(Context *context, IRValue dstValue, IRValue srcValue)
 		inst.copyMemory.size = sizeValue;
 
 		*AddInstruction(context) = inst;
+	}
+	else if (dstTypeInfo.typeCategory == TYPECATEGORY_FLOATING &&
+			 srcValue.valueType == IRVALUETYPE_IMMEDIATE_INTEGER)
+	{
+		// Can't just pretend we can assign an integer immediate to a floating point value. We need
+		// to convert it to a floating point number first.
+		// @Check: Maybe we should do this on backend?
+		IRInstruction inst = {};
+
+		inst.type = IRINSTRUCTIONTYPE_ASSIGNMENT;
+		inst.assignment.dst = dstValue;
+		inst.assignment.src = IRValueImmediateFloat(context, (f64)srcValue.immediate);
+
+		*AddInstruction(context) = inst;
+
 	}
 	else
 	{
