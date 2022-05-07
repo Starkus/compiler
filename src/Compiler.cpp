@@ -207,6 +207,37 @@ HANDLE Win32OpenFileRead(String filename)
 	DWORD error = GetLastError();
 	if (error != ERROR_SUCCESS || file == INVALID_HANDLE_VALUE)
 	{
+		// This exe's full name, up to second-to-last slash, plus filename.
+		written = GetModuleFileNameA(nullptr, fullname, MAX_PATH);
+		Print("%s\n", fullname);
+		int slashCounter = 0;
+		for (char *scan = &fullname[written - 1]; scan > fullname; --scan)
+		{
+			if (*scan == '/' || *scan == '\\')
+				++slashCounter;
+			if (slashCounter == 2)
+			{
+				strncpy(scan + 1, filename.data, filename.size);
+				scan[filename.size + 1] = 0;
+				break;
+			}
+		}
+
+		Print("%s\n", fullname);
+		file = CreateFileA(
+				fullname,
+				GENERIC_READ,
+				FILE_SHARE_READ,
+				nullptr,
+				OPEN_EXISTING,
+				FILE_ATTRIBUTE_NORMAL,
+				nullptr
+				);
+	}
+
+	error = GetLastError();
+	if (error != ERROR_SUCCESS || file == INVALID_HANDLE_VALUE)
+	{
 		Print("Failed to read file \"%S\"", filename);
 		CRASH;
 	}

@@ -2846,7 +2846,24 @@ unalignedMovups:;
 
 	BucketArrayInit(&context->outputBuffer);
 
-	PrintOut(context, "include ..\\core\\memory.asm\n\n");
+	String compilerPath = { 0, (char *)PhaseAllocator::Alloc(MAX_PATH) };
+	{
+		DWORD written = GetModuleFileNameA(nullptr, (char *)compilerPath.data, MAX_PATH);
+		int slashCounter = 0;
+		for (const char *scan = &compilerPath.data[written - 1]; scan > compilerPath.data; --scan)
+		{
+			if (*scan == '/' || *scan == '\\')
+				++slashCounter;
+			if (slashCounter == 2)
+			{
+				compilerPath.size = scan - compilerPath.data;
+				break;
+			}
+		}
+		Print("%S\n", compilerPath);
+	}
+
+	PrintOut(context, "include <%S\\core\\memory.asm>\n\n", compilerPath);
 
 	PrintOut(context, "_DATA SEGMENT\n");
 
@@ -3109,20 +3126,8 @@ nextTuple:
 			"/Zd "
 			"/Zi "
 			"/Fm "
-			"/I \"%S\\include\" " // msvcPath
-			"/I \"%S\\include\\%S\\ucrt\" " // windowsSDKPath, windowsSDKVersion
-			"/I \"%S\\include\\%S\\shared\" " // windowsSDKPath, windowsSDKVersion
-			"/I \"%S\\include\\%S\\um\" " // windowsSDKPath, windowsSDKVersion
-			"/I \"%S\\include\\%S\\winrt\" " // windowsSDKPath, windowsSDKVersion
-			"/I \"%S\\include\\%S\\cppwinrt\" " // windowsSDKPath, windowsSDKVersion
 			"%c",
 			msvcPath,
-			msvcPath,
-			windowsSDKPath, windowsSDKVersion,
-			windowsSDKPath, windowsSDKVersion,
-			windowsSDKPath, windowsSDKVersion,
-			windowsSDKPath, windowsSDKVersion,
-			windowsSDKPath, windowsSDKVersion,
 			0
 			);
 
