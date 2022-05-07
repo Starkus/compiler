@@ -209,7 +209,6 @@ HANDLE Win32OpenFileRead(String filename)
 	{
 		// This exe's full name, up to second-to-last slash, plus filename.
 		written = GetModuleFileNameA(nullptr, fullname, MAX_PATH);
-		Print("%s\n", fullname);
 		int slashCounter = 0;
 		for (char *scan = &fullname[written - 1]; scan > fullname; --scan)
 		{
@@ -223,7 +222,6 @@ HANDLE Win32OpenFileRead(String filename)
 			}
 		}
 
-		Print("%s\n", fullname);
 		file = CreateFileA(
 				fullname,
 				GENERIC_READ,
