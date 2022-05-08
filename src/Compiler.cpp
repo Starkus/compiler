@@ -21,6 +21,9 @@ FileHandle g_hStderr;
 
 s64 Print(const char *format, ...)
 {
+	// Log file
+	static FileHandle logFileHandle = SYSOpenFileWrite("output/log.txt"_s);
+
 	char *buffer = (char *)g_memory->phasePtr;
 
 	va_list args;
@@ -35,7 +38,6 @@ s64 Print(const char *format, ...)
 	s64 bytesWritten = SYSWriteFile(g_hStdout, buffer, strlen(buffer));
 
 	// Log file
-	static FileHandle logFileHandle = SYSOpenFileWrite("output/log.txt"_s);
 	SYSWriteFile(logFileHandle, buffer, strlen(buffer));
 
 #if DEBUG_BUILD
@@ -475,15 +477,15 @@ int main(int argc, char **argv)
 
 	TypeCheckMain(&context);
 
+	if (context.config.logAST)
+		PrintAST(&context);
+
 	TimerSplit("Type checking"_s);
 	PhaseAllocator::Wipe();
 
 	IRGenMain(&context);
 
-	if (context.config.logIR)
-	{
-		PrintIRInstructions(&context);
-	}
+	PrintIRInstructions(&context);
 
 	TimerSplit("IR generation"_s);
 	PhaseAllocator::Wipe();

@@ -63,6 +63,7 @@ Main :: () -> s64
 
 	anIndex := 4;
 	arrayA[anIndex] = 5;
+	PrintF("arrayA but last one is 5: %\n", arrayA);
 
 	Print("Test ok\n");
 	return 0;

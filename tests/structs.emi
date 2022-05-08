@@ -57,7 +57,7 @@ Main :: () -> s64
 
 	// Struct literals
 	literalCouple : Couple = { 40, 23, 1.73, 41, 29, 1.71 };
-	PrintF("Literal couple: %\n", couple);
+	PrintF("Literal couple: %\n", literalCouple);
 
 	incompleteLiteral : Couple = { 40, 22 };
 	PrintF("Incomplete literal couple: %\n", incompleteLiteral);

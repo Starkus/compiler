@@ -13,28 +13,50 @@ typedef int FileHandle;
 
 #define BREAK asm("int $3")
 #define ASSUME(expr) do { __builtin_assume(expr); (void)(expr); } while(0)
-//#define ASSUME(expr)
+
+String SYSExpandPathCompilerRelative(String relativePath)
+{
+	char relativeCStr[SYS_MAX_PATH];
+	strncpy(relativeCStr, relativePath.data, relativePath.size);
+	relativeCStr[relativePath.size] = 0;
+	char *absolutePath = (char *)PhaseAllocator::Alloc(SYS_MAX_PATH);
+	realpath(relativeCStr, absolutePath);
+
+	String result;
+	result.data = absolutePath;
+	result.size = strlen(absolutePath);
+	return result;
+}
+
+String SYSExpandPathWorkingDirectoryRelative(String relativePath)
+{
+	String result;
+
+	char *absolutePath = (char *)PhaseAllocator::Alloc(SYS_MAX_PATH);
+	result.data = absolutePath;
+
+	ASSERT(getcwd(absolutePath, SYS_MAX_PATH));
+	s64 written = strlen(absolutePath);
+	absolutePath[written++] = '/';
+	strncpy(absolutePath + written, relativePath.data, relativePath.size);
+	absolutePath[written + relativePath.size] = 0;
+
+	result.size = written + relativePath.size;
+
+	return result;
+}
 
 FileHandle SYSOpenFileRead(String filename)
 {
-	char fullname[PATH_MAX];
-	ASSERT(getcwd(fullname, SYS_MAX_PATH));
-	s64 written = strlen(fullname);
-	fullname[written++] = '/';
-	strncpy(fullname + written, filename.data, filename.size);
-	fullname[written + filename.size] = 0;
-	return open(fullname, O_RDONLY);
+	String fullname = SYSExpandPathWorkingDirectoryRelative(filename);
+	return open(fullname.data, O_RDONLY);
 }
 
 FileHandle SYSOpenFileWrite(String filename)
 {
-	char fullname[PATH_MAX];
-	ASSERT(getcwd(fullname, SYS_MAX_PATH));
-	s64 written = strlen(fullname);
-	fullname[written++] = '/';
-	strncpy(fullname + written, filename.data, filename.size);
-	fullname[written + filename.size] = 0;
-	return open(fullname, O_WRONLY | O_CREAT | O_TRUNC, S_IRUSR | S_IWUSR | S_IRGRP | S_IWGRP);
+	String fullname = SYSExpandPathWorkingDirectoryRelative(filename);
+	return open(fullname.data, O_WRONLY | O_CREAT | O_TRUNC,
+			S_IRUSR | S_IWUSR | S_IRGRP | S_IWGRP);
 }
 
 s64 SYSWriteFile(FileHandle fileHandle, void *buffer, s64 size)
@@ -91,20 +113,6 @@ void SYSCloseFile(FileHandle file)
 	close(file);
 }
 
-String SYSGetFullPathName(String filename)
-{
-	char filenameCStr[SYS_MAX_PATH];
-	strncpy(filenameCStr, filename.data, filename.size);
-	filenameCStr[filename.size] = 0;
-	char *buffer = (char *)PhaseAllocator::Alloc(SYS_MAX_PATH);
-	realpath(filenameCStr, buffer);
-
-	String outputPath;
-	outputPath.data = buffer;
-	outputPath.size = strlen(buffer);
-	return outputPath;
-}
-
 void *SYSAlloc(u64 size)
 {
 	return valloc(size);
@@ -116,4 +124,9 @@ void SYSCreateDirectory(String pathname)
 	strncpy(pathnameCStr, pathname.data, pathname.size);
 	pathnameCStr[pathname.size] = 0;
 	mkdir(pathnameCStr, 0777);
+}
+
+void SYSRunAssemblerAndLinker()
+{
+	// @Todo
 }

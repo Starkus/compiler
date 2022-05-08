@@ -319,9 +319,11 @@ void PrintExpression(Context *context, ASTExpression *e)
 
 		Indent();
 		Print("Parameters:\n");
+		++indentLevels;
 		for (int i = 0; i < e->procedureDeclaration.prototype.astParameters.size; ++i)
 		{
 			ASTProcedureParameter astParam = e->procedureDeclaration.prototype.astParameters[i];
+			Indent();
 			Print("Parameter #%d ", i);
 			String typeStr = ASTTypeToString(astParam.astType);
 			Print("\"%S\" of type \"%S\"", astParam.name, typeStr);
@@ -336,10 +338,11 @@ void PrintExpression(Context *context, ASTExpression *e)
 				--indentLevels;
 			}
 		}
+		--indentLevels;
 
-		Procedure *procedure = GetProcedure(context, e->procedureDeclaration.procedureIdx);
-		if (procedure->astProcedureDeclaration->astBody)
-			PrintExpression(context, procedure->astProcedureDeclaration->astBody);
+		if (e->procedureDeclaration.astBody)
+			PrintExpression(context, e->procedureDeclaration.astBody);
+
 		--indentLevels;
 	} break;
 	case ASTNODETYPE_BLOCK:
@@ -494,6 +497,10 @@ void PrintExpression(Context *context, ASTExpression *e)
 	{
 		Print("Break\n");
 	} break;
+	case ASTNODETYPE_CONTINUE:
+	{
+		Print("Continue\n");
+	} break;
 	case ASTNODETYPE_STRUCT_DECLARATION:
 	{
 		Print("Struct\n");
@@ -555,10 +562,14 @@ void PrintExpression(Context *context, ASTExpression *e)
 		PrintExpression(context, e->typeOfNode.expression);
 		--indentLevels;
 	} break;
+	case ASTNODETYPE_GARBAGE:
+	{
+		Print("Garbage\n");
+	} break;
 	default:
 	{
 		Print("UNKNOWN!\n");
-		CRASH;
+		//CRASH;
 	} break;
 	}
 }

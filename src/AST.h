@@ -245,6 +245,7 @@ struct ASTProcedureCall : ASTBase
 enum IntrinsicType
 {
 	INTRINSIC_UNSET,
+	INTRINSIC_BREAKPOINT,
 	INTRINSIC_SQRT32,
 	INTRINSIC_SQRT64,
 };

@@ -2,7 +2,7 @@ enum IRValueType
 {
 	IRVALUETYPE_INVALID = -1,
 	IRVALUETYPE_VALUE,
-	IRVALUETYPE_MEMORY,
+	IRVALUETYPE_VALUE_DEREFERENCE,
 	IRVALUETYPE_PROCEDURE,
 	IRVALUETYPE_IMMEDIATE_INTEGER,
 	IRVALUETYPE_IMMEDIATE_FLOAT,
@@ -14,7 +14,6 @@ struct IRValue
 	IRValueType valueType;
 	union
 	{
-		u32 valueIdx;
 		s64 immediate;
 		f64 immediateFloat;
 		u32 immediateStringIdx;
@@ -22,16 +21,14 @@ struct IRValue
 		s32 procedureIdx;
 		struct
 		{
-			u32 baseValueIdx;
+			u32 valueIdx;
 			u32 indexValueIdx;
 			u64 elementSize;
 			s64 offset;
-		} memory;
+		} value;
 	};
 	s64 typeTableIdx;
 };
-static_assert(offsetof(IRValue, valueIdx) == offsetof(IRValue, memory.baseValueIdx),
-	"IRValue::valueIdx and IRValue::memory.baseValueIdx should have the same offset");
 
 struct IRLabel
 {

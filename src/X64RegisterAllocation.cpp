@@ -103,41 +103,42 @@ inline bool AddValue(Context *context, u32 valueIdx, X64Procedure *proc,
 }
 
 // @Speed: delete? this will most likely get inlined anyways
-inline bool AddIfValue(Context *context, IRValue value, X64Procedure *proc,
+inline bool AddIfValue(Context *context, IRValue irValue, X64Procedure *proc,
 		DynamicArray<u32, PhaseAllocator> *array)
 {
-	if (value.valueType != IRVALUETYPE_VALUE && value.valueType != IRVALUETYPE_MEMORY)
+	if (irValue.valueType != IRVALUETYPE_VALUE &&
+			irValue.valueType != IRVALUETYPE_VALUE_DEREFERENCE)
 		return false;
 
-	bool mainValueAdded = AddValue(context, value.valueIdx, proc, array);
+	bool mainValueAdded = AddValue(context, irValue.value.valueIdx, proc, array);
 	bool indexValueAdded = false;
 
-	if (value.memory.elementSize > 0)
-		indexValueAdded = AddValue(context, value.memory.indexValueIdx, proc, array);
+	if (irValue.value.elementSize > 0)
+		indexValueAdded = AddValue(context, irValue.value.indexValueIdx, proc, array);
 
 	return mainValueAdded || indexValueAdded;
 }
 
-inline void RemoveIfValue(Context *context, IRValue value, X64Procedure *proc,
+inline void RemoveIfValue(Context *context, IRValue irValue, X64Procedure *proc,
 		DynamicArray<u32, PhaseAllocator> *array)
 {
-	if (value.valueType == IRVALUETYPE_VALUE)
+	if (irValue.valueType == IRVALUETYPE_VALUE)
 	{
 		for (int i = 0; i < array->size; ++i)
 		{
-			if ((*array)[i] == value.valueIdx)
+			if ((*array)[i] == irValue.value.valueIdx)
 			{
 				(*array)[i] = (*array)[--array->size];
 				break;
 			}
 		}
 	}
-	else if (value.valueType == IRVALUETYPE_MEMORY)
+	else if (irValue.valueType == IRVALUETYPE_VALUE_DEREFERENCE)
 	{
 		// The value is actually _used_ here, and not written to. Add instead.
-		AddValue(context, value.valueIdx, proc, array);
-		if (value.memory.elementSize > 0)
-			AddValue(context, value.memory.indexValueIdx, proc, array);
+		AddValue(context, irValue.value.valueIdx, proc, array);
+		if (irValue.value.elementSize > 0)
+			AddValue(context, irValue.value.indexValueIdx, proc, array);
 	}
 }
 
@@ -193,10 +194,10 @@ void DoLivenessAnalisisOnInstruction(Context *context, BasicBlock *basicBlock, X
 				AddValue(context, x64ParameterValuesWrite[paramIdx], basicBlock->procedure, liveValues);
 			else switch (paramIdx)
 			{
-				case 0: AddValue(context, XMM0.valueIdx, basicBlock->procedure, liveValues); break;
-				case 1: AddValue(context, XMM1.valueIdx, basicBlock->procedure, liveValues); break;
-				case 2: AddValue(context, XMM2.valueIdx, basicBlock->procedure, liveValues); break;
-				case 3: AddValue(context, XMM3.valueIdx, basicBlock->procedure, liveValues); break;
+				case 0: AddValue(context, XMM0.value.valueIdx, basicBlock->procedure, liveValues); break;
+				case 1: AddValue(context, XMM1.value.valueIdx, basicBlock->procedure, liveValues); break;
+				case 2: AddValue(context, XMM2.value.valueIdx, basicBlock->procedure, liveValues); break;
+				case 3: AddValue(context, XMM3.value.valueIdx, basicBlock->procedure, liveValues); break;
 				default: ASSERT(false);
 			}
 		}
@@ -236,10 +237,10 @@ void DoLivenessAnalisisOnInstruction(Context *context, BasicBlock *basicBlock, X
 				AddValue(context, x64ParameterValuesWrite[paramIdx], basicBlock->procedure, liveValues);
 			else switch (paramIdx)
 			{
-				case 0: AddValue(context, XMM0.valueIdx, basicBlock->procedure, liveValues); break;
-				case 1: AddValue(context, XMM1.valueIdx, basicBlock->procedure, liveValues); break;
-				case 2: AddValue(context, XMM2.valueIdx, basicBlock->procedure, liveValues); break;
-				case 3: AddValue(context, XMM3.valueIdx, basicBlock->procedure, liveValues); break;
+				case 0: AddValue(context, XMM0.value.valueIdx, basicBlock->procedure, liveValues); break;
+				case 1: AddValue(context, XMM1.value.valueIdx, basicBlock->procedure, liveValues); break;
+				case 2: AddValue(context, XMM2.value.valueIdx, basicBlock->procedure, liveValues); break;
+				case 3: AddValue(context, XMM3.value.valueIdx, basicBlock->procedure, liveValues); break;
 				default: ASSERT(false);
 			}
 		}
@@ -251,8 +252,8 @@ void DoLivenessAnalisisOnInstruction(Context *context, BasicBlock *basicBlock, X
 	case X64_IDIV:
 	case X64_MUL:
 	{
-		AddValue(context, RAX.valueIdx, basicBlock->procedure, liveValues);
-		AddValue(context, RDX.valueIdx, basicBlock->procedure, liveValues);
+		AddValue(context, RAX.value.valueIdx, basicBlock->procedure, liveValues);
+		AddValue(context, RDX.value.valueIdx, basicBlock->procedure, liveValues);
 		AddIfValue(context, inst->dst, basicBlock->procedure, liveValues);
 	} break;
 	case X64_CQO:
@@ -260,7 +261,7 @@ void DoLivenessAnalisisOnInstruction(Context *context, BasicBlock *basicBlock, X
 		// CQO writes to both RAX and RDX
 		for (int i = 0; i < liveValues->size; ++i)
 		{
-			if ((*liveValues)[i] == RAX.valueIdx || (*liveValues)[i] == RDX.valueIdx)
+			if ((*liveValues)[i] == RAX.value.valueIdx || (*liveValues)[i] == RDX.value.valueIdx)
 				(*liveValues)[i--] = (*liveValues)[--liveValues->size];
 		}
 	} break;
@@ -270,7 +271,7 @@ void DoLivenessAnalisisOnInstruction(Context *context, BasicBlock *basicBlock, X
 	{
 		// Detect xors of same thing (zero-ing)
 		if (inst->src.valueType != IRVALUETYPE_IMMEDIATE_INTEGER &&
-			inst->dst.valueIdx == inst->src.valueIdx)
+			memcmp(&inst->dst.value, &inst->src.value, sizeof(inst->src.value)) == 0)
 			RemoveIfValue(context, inst->dst, basicBlock->procedure, liveValues);
 		else
 		{
@@ -410,8 +411,8 @@ alreadyExists:
 		// all the currently live values.
 		if (inst->type == X64_CALL || inst->type == X64_CALL_Indirect)
 		{
-			DynamicArrayAddUnique(edges, RAX.valueIdx);
-			DynamicArrayAddUnique(edges, XMM0.valueIdx);
+			DynamicArrayAddUnique(edges, RAX.value.valueIdx);
+			DynamicArrayAddUnique(edges, XMM0.value.valueIdx);
 		}
 	}
 }
@@ -661,9 +662,9 @@ next:
 
 inline u64 BitIfRegister(Context *context, IRValue irValue)
 {
-	if (irValue.valueType == IRVALUETYPE_VALUE || irValue.valueType == IRVALUETYPE_MEMORY)
+	if (irValue.valueType == IRVALUETYPE_VALUE || irValue.valueType == IRVALUETYPE_VALUE_DEREFERENCE)
 	{
-		Value value = context->values[irValue.valueIdx];
+		Value value = context->values[irValue.value.valueIdx];
 		if (value.flags & VALUEFLAGS_IS_USED && VALUEFLAGS_IS_ALLOCATED &&
 				!(value.flags & VALUEFLAGS_IS_MEMORY))
 		{
@@ -711,8 +712,8 @@ inline u64 RegisterSavingInstruction(Context *context, X64Instruction *inst, u64
 
 				X64Instruction pushInst = { X64_Push_Value };
 				pushInst.valueIdx = newValueIdx;
-				X64Instruction saveInst = { movType, IRValueMemory(newValueIdx, 0, TYPETABLEIDX_S64), reg };
-				X64Instruction restoreInst = { movType, reg, IRValueMemory(newValueIdx, 0, TYPETABLEIDX_S64) };
+				X64Instruction saveInst = { movType, IRValueValue(newValueIdx, TYPETABLEIDX_S64), reg };
+				X64Instruction restoreInst = { movType, reg, IRValueValue(newValueIdx, TYPETABLEIDX_S64) };
 
 				patchInst.patchInstructions[count * 2] = pushInst;
 				patchInst.patchInstructions[count * 2 + 1] = saveInst;
@@ -818,13 +819,14 @@ void X64AllocateRegisters(Context *context, Array<X64Procedure, PhaseAllocator> 
 			u32 nodeToRemoveIdx = U32_MAX;
 			s64 mostEdges;
 
+			// Leave values that want to immitate others at the bottom (unless they are
+			// FORCE_REGISTER!)
 			for (u32 nodeIdx = 0; nodeIdx < interferenceGraph.count; ++nodeIdx)
 			{
 				if (interferenceGraph.removed[nodeIdx])
 					continue;
-				// Leave values that want to immitate others at the bottom
 				u32 vFlags = context->values[interferenceGraph.valueIndices[nodeIdx]].flags;
-				if (vFlags & VALUEFLAGS_TRY_IMMITATE)
+				if (vFlags & VALUEFLAGS_TRY_IMMITATE && !(vFlags & VALUEFLAGS_FORCE_REGISTER))
 				{
 					nodeToRemoveIdx = nodeIdx;
 					goto gotNodeToRemove;
@@ -886,7 +888,7 @@ gotNodeToRemove:
 				for (int i = 0; i < edges.size; ++i)
 				{
 					u32 valueIdx = interferenceGraph.valueIndices[nodeToRemoveIdx];
-					if (valueIdx < RAX.valueIdx && edges[i] == valueIdx)
+					if (valueIdx < RAX.value.valueIdx && edges[i] == valueIdx)
 					{
 						// The only allocated things thus far should be physical register values
 						ASSERT(!(context->values[valueIdx].flags & VALUEFLAGS_IS_ALLOCATED));
@@ -931,8 +933,8 @@ gotNodeToRemove:
 				if ((immitateValue.flags & VALUEFLAGS_IS_ALLOCATED) &&
 				  !(immitateValue.flags & VALUEFLAGS_IS_MEMORY))
 				{
-					TypeInfo otherTypeInfo = context->typeTable[immitateValue.typeTableIdx];
-					bool isOtherXMM = otherTypeInfo.size > 8 || otherTypeInfo.typeCategory == TYPECATEGORY_FLOATING;
+					bool isOtherXMM = valueIsXmmBits[immitateValueIdx >> 6] &
+						((u64)1 << (immitateValueIdx & 63));
 					if (isXMM != isOtherXMM)
 						goto skipImmitate;
 
@@ -957,9 +959,11 @@ gotNodeToRemove:
 					v->flags |= VALUEFLAGS_IS_ALLOCATED;
 					continue;
 				}
+#if 0//DEBUG_BUILD
 				else if (!(immitateValue.flags & VALUEFLAGS_IS_ALLOCATED) &&
 						 CanBeRegister(context, immitateValueIdx))
 					Print("Lost opportunity to immitate value because of allocation order!\n");
+#endif
 			}
 skipImmitate:
 
@@ -987,7 +991,10 @@ skipImmitate:
 			if (!(v->flags & VALUEFLAGS_IS_ALLOCATED))
 			{
 				if (v->flags & VALUEFLAGS_FORCE_REGISTER)
-					continue; // @Check: what?? we can't just not allocate this value?
+				{
+					ASSERT(!"Can't allocate value to register!");
+					continue;
+				}
 
 				// Spill!
 				*DynamicArrayAdd(&currentLeafBlock->procedure->spilledValues) = valueIdx;
@@ -1033,11 +1040,11 @@ skipImmitate:
 				X64InstructionType movType = i >= XMM0_idx ? X64_MOVSD : X64_MOV;
 
 				X64Instruction *saveInst = ArrayAdd(&patchTop.patchInstructions);
-				*saveInst = { movType, IRValueMemory(newValueIdx, 0, TYPETABLEIDX_S64),
+				*saveInst = { movType, IRValueValue(newValueIdx, TYPETABLEIDX_S64),
 					reg };
 
 				X64Instruction *restoreInst = ArrayAdd(&patchBottom.patchInstructions);
-				*restoreInst = { movType, reg, IRValueMemory(newValueIdx, 0, TYPETABLEIDX_S64) };
+				*restoreInst = { movType, reg, IRValueValue(newValueIdx, TYPETABLEIDX_S64) };
 			}
 		}
 

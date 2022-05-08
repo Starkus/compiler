@@ -75,22 +75,24 @@ bool IRShouldPassByCopy(Context *context, s64 typeTableIdx)
 			typeInfo.size != 8);
 }
 
-IRValue IRValueValue(u32 valueIdx, s64 typeTableIdx)
+IRValue IRValueValue(u32 valueIdx, s64 typeTableIdx, s64 offset = 0)
 {
 	IRValue result;
 	result.valueType = IRVALUETYPE_VALUE;
-	result.valueIdx = valueIdx;
-	result.memory.elementSize = 0;
+	result.value.valueIdx = valueIdx;
+	result.value.elementSize = 0;
+	result.value.offset = offset;
 	result.typeTableIdx = typeTableIdx;
 	return result;
 }
 
-IRValue IRValueValue(Context *context, u32 valueIdx)
+IRValue IRValueValue(Context *context, u32 valueIdx, s64 offset = 0)
 {
 	IRValue result;
 	result.valueType = IRVALUETYPE_VALUE;
-	result.valueIdx = valueIdx;
-	result.memory.elementSize = 0;
+	result.value.valueIdx = valueIdx;
+	result.value.elementSize = 0;
+	result.value.offset = offset;
 	result.typeTableIdx = context->values[valueIdx].typeTableIdx;
 	return result;
 }
@@ -101,27 +103,26 @@ IRValue IRValueTCValue(Context *context, TCValue tcValue)
 	result.valueType = IRVALUETYPE_VALUE;
 	if (tcValue.type == TCVALUETYPE_VALUE)
 	{
-		result.valueIdx = tcValue.valueIdx;
+		result.value = { tcValue.valueIdx };
 		result.typeTableIdx = context->values[tcValue.valueIdx].typeTableIdx;
 	}
 	else
 	{
 		u32 procIdx = context->irProcedureStack[context->irProcedureStack.size - 1].procedureIdx;
 		u32 paramValueIdx = GetProcedure(context, procIdx)->parameterValues[tcValue.parameterIdx];
-		result.valueIdx = paramValueIdx;
-		result.memory.elementSize = 0;
+		result.value = { paramValueIdx };
 		result.typeTableIdx = context->values[paramValueIdx].typeTableIdx;
 	}
 	return result;
 }
 
-IRValue IRValueMemory(u32 baseValueIdx, s64 offset, s64 typeTableIdx)
+IRValue IRValueDereference(u32 valueIdx, s64 typeTableIdx, s64 offset = 0)
 {
 	IRValue result = {};
-	result.valueType = IRVALUETYPE_MEMORY;
-	result.memory.baseValueIdx = baseValueIdx;
-	result.memory.offset = offset;
-	result.memory.elementSize = 0;
+	result.valueType = IRVALUETYPE_VALUE_DEREFERENCE;
+	result.value.valueIdx = valueIdx;
+	result.value.offset = offset;
+	result.value.elementSize = 0;
 	result.typeTableIdx = typeTableIdx;
 	return result;
 }
@@ -209,7 +210,7 @@ IRValue IRValueNewValue(Context *context, s64 typeTableIdx, u32 flags, u32 immit
 
 	IRValue result = {};
 	result.valueType = IRVALUETYPE_VALUE;
-	result.valueIdx = newValue;
+	result.value = { newValue };
 	result.typeTableIdx = typeTableIdx;
 	return result;
 }
@@ -217,11 +218,11 @@ IRValue IRValueNewValue(Context *context, s64 typeTableIdx, u32 flags, u32 immit
 IRValue IRValueNewValue(Context *context, String name, s64 typeTableIdx, u32 flags,
 		u32 immitateValueIdx = 0)
 {
-	u32 newValue = NewValue(context, name, typeTableIdx, flags, immitateValueIdx);
+	u32 newValueIdx = NewValue(context, name, typeTableIdx, flags, immitateValueIdx);
 
 	IRValue result = {};
 	result.valueType = IRVALUETYPE_VALUE;
-	result.valueIdx = newValue;
+	result.value = { newValueIdx };
 	result.typeTableIdx = typeTableIdx;
 	return result;
 }
@@ -231,7 +232,7 @@ IRValue IRValueTypeOf(Context *context, s64 typeTableIdx)
 	static s64 typeInfoPointerTypeIdx = GetTypeInfoPointerOf(context,
 			TYPETABLEIDX_TYPE_INFO_STRUCT);
 	u32 typeValueIdx = context->typeTable[typeTableIdx].valueIdx;
-	return IRValueMemory(typeValueIdx, 0, typeInfoPointerTypeIdx);
+	return IRValueValue(typeValueIdx, typeInfoPointerTypeIdx);
 }
 
 IRValue IRGenFromExpression(Context *context, ASTExpression *expression);
@@ -246,29 +247,47 @@ IRValue IRDereferenceValue(Context *context, IRValue in)
 	// generate IR.
 	//ASSERT(pointedTypeIdx != TYPETABLEIDX_VOID);
 
-	// We don't know which will be memory and which registers. Do the assignment for everybody.
-	if (in.valueType == IRVALUETYPE_VALUE || in.valueType == IRVALUETYPE_MEMORY)
+	if (in.valueType == IRVALUETYPE_VALUE || in.valueType == IRVALUETYPE_VALUE_DEREFERENCE)
 	{
-		String name = TPrintF("_deref_%S", context->values[in.valueIdx].name);
-		u32 newValueIdx = NewValue(context, name, in.typeTableIdx, VALUEFLAGS_TRY_IMMITATE, in.valueIdx);
-		IRValue value = IRValueValue(newValueIdx, in.typeTableIdx);
+		// Copy first to a register always. Since this is a very short lived value, we should always
+		// be able to store it in a register.
 
-		IRInstruction inst = {};
-		inst.type = IRINSTRUCTIONTYPE_ASSIGNMENT;
-		inst.assignment.dst = value;
+		// It's important that the value is in a register before dereferencing, because values in
+		// memory are already dereferenced. If the value is in memory, first we dereference the
+		// memory to get the pointer itself:
+		//     mov rax, [rsp+123]
+		// then we can dereference that pointer once it's on a register:
+		//     mov out, [rax]
+
+		String name = TPrintF("_deref_forcereg_%S", context->values[in.value.valueIdx].name);
+		u32 tempValueIdx = NewValue(context, name, in.typeTableIdx, VALUEFLAGS_TRY_IMMITATE |
+				VALUEFLAGS_FORCE_REGISTER, in.value.valueIdx);
+		IRValue tmpValue = IRValueValue(tempValueIdx, in.typeTableIdx);
+
+		IRInstruction inst = { IRINSTRUCTIONTYPE_ASSIGNMENT };
+		inst.assignment.dst = tmpValue;
 		inst.assignment.src = in;
 		*AddInstruction(context) = inst;
 
-		IRValue result = IRValueMemory(newValueIdx, 0, pointedTypeIdx);
+		name = TPrintF("_deref_%S", context->values[in.value.valueIdx].name);
+		u32 newValueIdx = NewValue(context, name, in.typeTableIdx, VALUEFLAGS_TRY_IMMITATE,
+				in.value.valueIdx);
+		IRValue value = IRValueValue(newValueIdx, in.typeTableIdx);
+
+		inst.assignment.dst = value;
+		inst.assignment.src = tmpValue;
+		*AddInstruction(context) = inst;
+
+		IRValue result = IRValueDereference(newValueIdx, pointedTypeIdx);
 		return result;
 	}
-	ASSERT(!"Dereferenced value must be either REGISTER or MEMORY");
+	ASSERT(!"Dereferenced value must be either VALUE or VALUE_DEREFERENCE");
 	return {};
 }
 
 IRValue IRPointerToValue(Context *context, IRValue in)
 {
-	ASSERT(in.valueType == IRVALUETYPE_VALUE || in.valueType == IRVALUETYPE_MEMORY);
+	ASSERT(in.valueType == IRVALUETYPE_VALUE || in.valueType == IRVALUETYPE_VALUE_DEREFERENCE);
 	s64 pointerTypeIdx = GetTypeInfoPointerOf(context, in.typeTableIdx);
 
 	IRValue result = IRValueNewValue(context, "_pointerof"_s, pointerTypeIdx, 0);
@@ -282,22 +301,34 @@ IRValue IRPointerToValue(Context *context, IRValue in)
 	return result;
 }
 
+void IRDoAssignment(Context *context, IRValue dstValue, IRValue srcValue);
 IRValue IRDoMemberAccess(Context *context, IRValue structValue, StructMember structMember)
 {
-	ASSERT(structValue.valueType == IRVALUETYPE_VALUE || structValue.valueType == IRVALUETYPE_MEMORY);
+	ASSERT(structValue.valueType == IRVALUETYPE_VALUE ||
+		   structValue.valueType == IRVALUETYPE_VALUE_DEREFERENCE);
 
-	s64 offset = structMember.offset;
-	if (structValue.valueType == IRVALUETYPE_MEMORY)
-		offset += structValue.memory.offset;
-	IRValue result = IRValueMemory(structValue.valueIdx, offset, structMember.typeTableIdx);
+	IRAddComment(context, TPrintF("Accessing struct member \"%S.%S\"",
+				context->values[structValue.value.valueIdx].name, structMember.name));
+
+	s64 offset = structMember.offset + structValue.value.offset;
+	IRValue result = IRValueDereference(structValue.value.valueIdx, structMember.typeTableIdx,
+			offset);
+	result = IRPointerToValue(context, result);
+	result.valueType = IRVALUETYPE_VALUE_DEREFERENCE;
+	result.typeTableIdx = structMember.typeTableIdx;
 	return result;
 }
 
-void IRDoAssignment(Context *context, IRValue dstValue, IRValue srcValue);
 IRValue IRDoArrayAccess(Context *context, IRValue arrayValue, IRValue indexValue, s64 elementTypeIdx)
 {
 	TypeInfo arrayTypeInfo = context->typeTable[arrayValue.typeTableIdx];
 	s64 pointerToElementTypeIdx = GetTypeInfoPointerOf(context, elementTypeIdx);
+
+	// arrayValue must be an array (or string). If it's a pointer, it should be dereferenced before
+	// calling this procedure.
+	ASSERT(arrayTypeInfo.typeCategory == TYPECATEGORY_ARRAY ||
+		   arrayValue.typeTableIdx == TYPETABLEIDX_STRING_STRUCT);
+
 	// Dynamic arrays
 	if (arrayValue.typeTableIdx == TYPETABLEIDX_STRING_STRUCT ||
 			arrayTypeInfo.arrayInfo.count == 0)
@@ -317,46 +348,54 @@ IRValue IRDoArrayAccess(Context *context, IRValue arrayValue, IRValue indexValue
 
 	if (indexValue.valueType == IRVALUETYPE_IMMEDIATE_INTEGER)
 	{
-		if (indexValue.immediate == 0)
-			return IRValueMemory(arrayValue.valueIdx, 0, elementTypeIdx);
-		else
-			return IRValueMemory(arrayValue.valueIdx, indexValue.immediate * elementSize,
-					elementTypeIdx);
+		return IRValueDereference(arrayValue.value.valueIdx, elementTypeIdx,
+				indexValue.immediate * elementSize);
 	}
 	else if ((indexValue.valueType == IRVALUETYPE_VALUE ||
-			indexValue.valueType == IRVALUETYPE_MEMORY) &&
+			indexValue.valueType == IRVALUETYPE_VALUE_DEREFERENCE) &&
 			CountOnes(elementSize) == 1 && elementSize <= 8)
 	{
 		// @Todo: move x64 specifics like element size limitations and force to register to x64
 		// backend.
 		IRValue indexForceReg = IRValueNewValue(context, "_idx"_s, TYPETABLEIDX_S64,
-				VALUEFLAGS_TRY_IMMITATE, indexValue.valueIdx);
+				VALUEFLAGS_FORCE_REGISTER | VALUEFLAGS_TRY_IMMITATE, indexValue.value.valueIdx);
 		IRDoAssignment(context, indexForceReg, indexValue);
 
-		IRValue result = IRValueMemory(arrayValue.valueIdx, 0, elementTypeIdx);
-		result.memory.indexValueIdx = indexForceReg.valueIdx;
-		result.memory.elementSize = elementSize;
+		u32 flags = context->values[arrayValue.value.valueIdx].flags;
+		if (flags & VALUEFLAGS_ON_STATIC_STORAGE)
+		{
+			// @Improve: This is x64 specific. Move to x64 backend.
+			// Apparently with [array+index*size] syntax, array ends up being 32 bit displacement.
+			// We can't expect a part of the data segment to be that close.
+			IRValue arrayForceReg = IRValueNewValue(context, "_arr"_s,
+					GetTypeInfoPointerOf(context, arrayValue.typeTableIdx),
+					VALUEFLAGS_FORCE_REGISTER | VALUEFLAGS_TRY_IMMITATE, arrayValue.value.valueIdx);
+			IRInstruction leaInst = { IRINSTRUCTIONTYPE_LOAD_EFFECTIVE_ADDRESS };
+			leaInst.unaryOperation.in = arrayValue;
+			leaInst.unaryOperation.out = arrayForceReg;
+			*AddInstruction(context) = leaInst;
+
+			arrayValue = arrayForceReg;
+		}
+
+		IRValue result = IRValueDereference(arrayValue.value.valueIdx, elementTypeIdx);
+		result.value.indexValueIdx = indexForceReg.value.valueIdx;
+		result.value.elementSize = elementSize;
 		return result;
 	}
 
 	// Fall back to simple add instruction
 	IRValue offsetValue;
-	if (indexValue.valueType == IRVALUETYPE_IMMEDIATE_INTEGER)
-		offsetValue = IRValueImmediate(indexValue.immediate * elementSize, TYPETABLEIDX_S64);
+	offsetValue = IRValueNewValue(context, "_array_offset"_s, TYPETABLEIDX_S64, 0);
+	if (elementSize == 1)
+		IRDoAssignment(context, offsetValue, indexValue);
 	else
 	{
-		offsetValue = IRValueNewValue(context, "_array_offset"_s, TYPETABLEIDX_S64, 0);
-		if (elementSize == 1)
-			IRDoAssignment(context, offsetValue, indexValue);
-		else
-		{
-			offsetValue = IRValueNewValue(context, "_array_offset"_s, TYPETABLEIDX_S64, 0);
-			IRInstruction multiplyInst = { IRINSTRUCTIONTYPE_MULTIPLY };
-			multiplyInst.binaryOperation.left  = indexValue;
-			multiplyInst.binaryOperation.right = IRValueImmediate(elementSize);
-			multiplyInst.binaryOperation.out   = offsetValue;
-			*AddInstruction(context) = multiplyInst;
-		}
+		IRInstruction multiplyInst = { IRINSTRUCTIONTYPE_MULTIPLY };
+		multiplyInst.binaryOperation.left  = indexValue;
+		multiplyInst.binaryOperation.right = IRValueImmediate(elementSize);
+		multiplyInst.binaryOperation.out   = offsetValue;
+		*AddInstruction(context) = multiplyInst;
 	}
 
 	IRValue pointerToElementValue = IRValueNewValue(context, "_array_element"_s,
@@ -368,7 +407,7 @@ IRValue IRDoArrayAccess(Context *context, IRValue arrayValue, IRValue indexValue
 	addOffsetInst.binaryOperation.out = pointerToElementValue;
 	*AddInstruction(context) = addOffsetInst;
 
-	return IRValueMemory(pointerToElementValue.valueIdx, 0, elementTypeIdx);
+	return IRValueDereference(pointerToElementValue.value.valueIdx, elementTypeIdx);
 }
 
 inline void IRPushValueIntoStack(Context *context, u32 valueIdx)
@@ -414,7 +453,7 @@ void IRDoAssignment(Context *context, IRValue dstValue, IRValue srcValue)
 		TypeInfo dataTypeInfo = context->typeTable[srcValue.typeTableIdx];
 
 		// If data isn't in memory, copy to a variable
-		if (dataValue.valueType != IRVALUETYPE_MEMORY &&
+		if (dataValue.valueType != IRVALUETYPE_VALUE_DEREFERENCE &&
 			dataTypeInfo.typeCategory != TYPECATEGORY_STRUCT &&
 			dataTypeInfo.typeCategory != TYPECATEGORY_UNION &&
 			dataTypeInfo.typeCategory != TYPECATEGORY_ARRAY)
@@ -489,6 +528,21 @@ void IRDoAssignment(Context *context, IRValue dstValue, IRValue srcValue)
 
 		*AddInstruction(context) = inst;
 	}
+	else if (dstTypeInfo.typeCategory == TYPECATEGORY_FLOATING &&
+			 srcValue.valueType == IRVALUETYPE_IMMEDIATE_INTEGER)
+	{
+		// Can't just pretend we can assign an integer immediate to a floating point value. We need
+		// to convert it to a floating point number first.
+		// @Check: Maybe we should do this on backend?
+		IRInstruction inst = {};
+
+		inst.type = IRINSTRUCTIONTYPE_ASSIGNMENT;
+		inst.assignment.dst = dstValue;
+		inst.assignment.src = IRValueImmediateFloat(context, (f64)srcValue.immediate);
+
+		*AddInstruction(context) = inst;
+
+	}
 	else
 	{
 		IRInstruction inst = {};
@@ -515,8 +569,7 @@ void IRInsertLabelInstruction(Context *context, IRLabel *label)
 
 IRValue IRDoCast(Context *context, IRValue value, s64 typeTableIdx)
 {
-	u32 immitateFlag = value.valueType == IRVALUETYPE_VALUE ? VALUEFLAGS_TRY_IMMITATE : 0;
-	IRValue result = IRValueNewValue(context, "_cast"_s, typeTableIdx, immitateFlag, value.valueIdx);
+	IRValue result = IRValueNewValue(context, "_cast"_s, typeTableIdx, 0);
 	IRDoAssignment(context, result, value);
 	return result;
 }
@@ -530,31 +583,33 @@ IRValue IRInstructionFromBinaryOperation(Context *context, ASTExpression *expres
 
 	if (expression->binaryOperation.op == TOKEN_OP_MEMBER_ACCESS)
 	{
-		IRValue value = IRGenFromExpression(context, leftHand);
+		IRValue irValue = IRGenFromExpression(context, leftHand);
 
-		TypeInfo structTypeInfo = context->typeTable[value.typeTableIdx];
-		if (structTypeInfo.typeCategory == TYPECATEGORY_POINTER)
+		TypeInfo structTypeInfo = context->typeTable[irValue.typeTableIdx];
+		if (irValue.valueType == IRVALUETYPE_VALUE_DEREFERENCE &&
+			structTypeInfo.typeCategory == TYPECATEGORY_POINTER)
 		{
 			// Dereference the pointer to the struct
-			String name = TPrintF("_deref_%S", context->values[value.valueIdx].name);
-			u32 newValueIdx = NewValue(context, name, value.typeTableIdx, 0);
-			IRValue newValue = IRValueValue(newValueIdx, value.typeTableIdx);
+			String name = TPrintF("_derefstrctptr_%S", context->values[irValue.value.valueIdx].name);
+			u32 newValueIdx = NewValue(context, name, irValue.typeTableIdx,
+					VALUEFLAGS_FORCE_REGISTER);
+			IRValue newValue = IRValueValue(newValueIdx, irValue.typeTableIdx);
 
 			IRInstruction inst = {};
 			inst.type = IRINSTRUCTIONTYPE_ASSIGNMENT;
 			inst.assignment.dst = newValue;
-			inst.assignment.src = value;
+			inst.assignment.src = irValue;
 			*AddInstruction(context) = inst;
 
 			s64 pointedTypeIdx = structTypeInfo.pointerInfo.pointedTypeTableIdx;
-			value = IRValueMemory(newValueIdx, 0, pointedTypeIdx);
+			irValue = IRValueValue(newValueIdx, pointedTypeIdx);
 		}
 
 		ASSERT(rightHand->nodeType == ASTNODETYPE_IDENTIFIER);
 		ASSERT(rightHand->identifier.type == NAMETYPE_STRUCT_MEMBER);
 		StructMember structMember = *rightHand->identifier.structMember;
 
-		result = IRDoMemberAccess(context, value, structMember);
+		result = IRDoMemberAccess(context, irValue, structMember);
 	}
 	else if (expression->binaryOperation.op == TOKEN_OP_ARRAY_ACCESS)
 	{
@@ -792,9 +847,9 @@ IRValue IRInstructionFromBinaryOperation(Context *context, ASTExpression *expres
 		if (outValue.valueType == IRVALUETYPE_VALUE &&
 			inst.binaryOperation.left.valueType == IRVALUETYPE_VALUE)
 		{
-			Value *v = &context->values[outValue.valueIdx];
+			Value *v = &context->values[inst.binaryOperation.left.value.valueIdx];
 			v->flags |= VALUEFLAGS_TRY_IMMITATE;
-			v->tryImmitateValueIdx = inst.binaryOperation.left.valueIdx;
+			v->tryImmitateValueIdx = outValue.value.valueIdx;
 		}
 
 		inst.binaryOperation.out = outValue;
@@ -915,6 +970,7 @@ void IRConditionalJumpFromExpression(Context *context, ASTExpression *conditionE
 		return;
 	}
 #if 0
+	// @Check: Don't remember why this wasn't working.
 	else if (conditionExp->nodeType == ASTNODETYPE_UNARY_OPERATION)
 	{
 		IRInstruction jump = {};
@@ -981,7 +1037,7 @@ IRValue IRDoInlineProcedureCall(Context *context, ASTProcedureCall astProcCall)
 
 	TypeInfoProcedure procTypeInfo = context->typeTable[procedure->typeTableIdx].procedureInfo;
 	IRValue returnValue = IRValueNewValue(context, "_inline_return"_s, procTypeInfo.returnTypeTableIdx, 0);
-	IRPushValueIntoStack(context, returnValue.valueIdx);
+	IRPushValueIntoStack(context, returnValue.value.valueIdx);
 	bool isVarargs = procTypeInfo.isVarargs;
 
 	IRProcedureScope *stackTop = &context->irProcedureStack[context->irProcedureStack.size - 1];
@@ -993,7 +1049,7 @@ IRValue IRDoInlineProcedureCall(Context *context, ASTProcedureCall astProcCall)
 		Procedure p = *procedure;
 		p.instructions = callingProcedure->instructions;
 		p.name = TPrintF("_%S_inline", procedure->name);
-		p.returnValueIdx = returnValue.valueIdx;
+		p.returnValueIdx = returnValue.value.valueIdx;
 		if (procedure->parameterValues.size)
 			DynamicArrayInit(&p.parameterValues, procedure->parameterValues.size);
 		*tempProc = p;
@@ -1010,14 +1066,14 @@ IRValue IRDoInlineProcedureCall(Context *context, ASTProcedureCall astProcCall)
 		ASTExpression *arg = &astProcCall.arguments[argIdx];
 		IRValue argValue = IRGenFromExpression(context, arg);
 
-		if (argValue.valueType == IRVALUETYPE_VALUE || argValue.valueType == IRVALUETYPE_MEMORY)
-			*DynamicArrayAdd(&tempProc->parameterValues) = argValue.valueIdx;
+		if (argValue.valueType == IRVALUETYPE_VALUE)
+			*DynamicArrayAdd(&tempProc->parameterValues) = argValue.value.valueIdx;
 		else
 		{
 			IRValue param = IRValueNewValue(context,
 					procTypeInfo.parameters[argIdx].typeTableIdx, 0);
 			IRDoAssignment(context, param, argValue);
-			*DynamicArrayAdd(&tempProc->parameterValues) = param.valueIdx;
+			*DynamicArrayAdd(&tempProc->parameterValues) = param.value.valueIdx;
 		}
 	}
 
@@ -1037,7 +1093,7 @@ IRValue IRDoInlineProcedureCall(Context *context, ASTProcedureCall astProcCall)
 			ASSERT(!"Invalid constant type");
 		IRValue param = IRValueNewValue(context, procParam.typeTableIdx, 0);
 		IRDoAssignment(context, param, arg);
-		*DynamicArrayAdd(&tempProc->parameterValues) = param.valueIdx;
+		*DynamicArrayAdd(&tempProc->parameterValues) = param.value.valueIdx;
 	}
 
 	// Varargs
@@ -1049,7 +1105,7 @@ IRValue IRDoInlineProcedureCall(Context *context, ASTProcedureCall astProcCall)
 
 		s64 varargsCount = astProcCall.arguments.size - procParamCount;
 		IRValue varargsParam = IRValueNewValue(context, "_inline_varargsarr"_s, pointerToVarargsTypeIdx, 0);
-		*DynamicArrayAdd(&tempProc->parameterValues) = varargsParam.valueIdx;
+		*DynamicArrayAdd(&tempProc->parameterValues) = varargsParam.value.valueIdx;
 
 		if (varargsCount == 1)
 		{
@@ -1552,18 +1608,26 @@ IRValue IRGenFromExpression(Context *context, ASTExpression *expression)
 			{
 			case STATICDEFINITIONTYPE_CONSTANT:
 			{
+				Constant constant = expression->identifier.staticDefinition->constant;
 				TypeCategory typeCat = context->typeTable[expression->typeTableIdx].typeCategory;
 				if (typeCat == TYPECATEGORY_FLOATING)
 				{
-					f64 f = expression->identifier.staticDefinition->constant.valueAsFloat;
+					f64 f;
+					if (constant.type == CONSTANTTYPE_INTEGER)
+						f = (f64)constant.valueAsInt;
+					else if (constant.type == CONSTANTTYPE_FLOATING)
+						f = constant.valueAsFloat;
+					else
+						ASSERT(false);
 					result = IRValueImmediateFloat(context, f);
 				}
 				else
-					result = IRValueImmediate(expression->identifier.staticDefinition->constant.valueAsInt);
+					result = IRValueImmediate(constant.valueAsInt);
 			} break;
 			case STATICDEFINITIONTYPE_PROCEDURE:
 			{
-				result = IRValueProcedure(context, expression->identifier.staticDefinition->procedureIdx);
+				result = IRValueProcedure(context,
+						expression->identifier.staticDefinition->procedureIdx);
 			} break;
 			default:
 				ASSERT(!"Invalid static definition type found while generating IR");
@@ -1580,7 +1644,7 @@ IRValue IRGenFromExpression(Context *context, ASTExpression *expression)
 			TCValue tcValue = expression->identifier.tcValue;
 			result = IRValueTCValue(context, tcValue);
 			if (tcValue.type == TCVALUETYPE_PARAMETER &&
-				context->values[result.valueIdx].flags & VALUEFLAGS_PARAMETER_BY_COPY)
+				context->values[result.value.valueIdx].flags & VALUEFLAGS_PARAMETER_BY_COPY)
 				result = IRDereferenceValue(context, result);
 		} break;
 		default:
@@ -1655,7 +1719,7 @@ IRValue IRGenFromExpression(Context *context, ASTExpression *expression)
 				*ArrayAdd(&procCallInst.procedureCall.parameters) =
 					IRPointerToValue(context, tempVarIRValue);
 
-				result = IRValueMemory(tempValueIdx, 0, expression->typeTableIdx);
+				result = IRValueValue(tempValueIdx, expression->typeTableIdx);
 			}
 			else
 			{
@@ -1873,8 +1937,9 @@ skipGeneratingVarargsArray:
 
 		if (expression->binaryOperation.op == TOKEN_OP_ASSIGNMENT)
 		{
+			IRValue srcValue = IRGenFromExpression(context, rightHand);
 			IRValue dstValue = IRGenFromExpression(context, leftHand);
-			IRAssignmentFromExpression(context, dstValue, rightHand);
+			IRDoAssignment(context, dstValue, srcValue);
 			result = dstValue;
 		}
 		else
@@ -1921,7 +1986,7 @@ skipGeneratingVarargsArray:
 		{
 			IRValue groupIRValue = IRValueNewValue(context, "_groupLiteral"_s,
 					expression->typeTableIdx, 0);
-			IRPushValueIntoStack(context, groupIRValue.valueIdx);
+			IRPushValueIntoStack(context, groupIRValue.value.valueIdx);
 			IRFillValueWithGroupLiteral(context, groupIRValue, expression->literal);
 			result = groupIRValue;
 		} break;
@@ -2003,6 +2068,7 @@ skipGeneratingVarargsArray:
 			to =   IRGenFromExpression(context, binaryOp.rightHand);
 
 			// Assign 'i'
+			IRAddComment(context, "Assign 'i'"_s);
 			IRDoAssignment(context, indexValue, from);
 		}
 		else
@@ -2040,9 +2106,11 @@ skipGeneratingVarargsArray:
 				to = IRValueImmediate(rangeTypeInfo.arrayInfo.count);
 
 			// Assign 'i'
+			IRAddComment(context, "Assign 'i'"_s);
 			IRDoAssignment(context, indexValue, from);
 
 			// Assign 'it'
+			IRAddComment(context, "Assign 'it'"_s);
 			IRValue elementVarValue = IRValueValue(elementValueIdx, pointerToElementTypeTableIdx);
 			IRValue elementValue = IRDoArrayAccess(context, arrayValue, indexValue, elementTypeIdx);
 			elementValue = IRPointerToValue(context, elementValue);

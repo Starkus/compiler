@@ -13,16 +13,54 @@ inline bool SYSFileExists(const char *filename)
 	return attrib != INVALID_FILE_ATTRIBUTES && attrib != FILE_ATTRIBUTE_DIRECTORY;
 }
 
+String SYSExpandPathCompilerRelative(String relativePath)
+{
+	String result;
+
+	char *absolutePath = (char *)PhaseAllocator::Alloc(SYS_MAX_PATH);
+	result.data = absolutePath;
+
+	DWORD written = GetModuleFileNameA(nullptr, absolutePath, SYS_MAX_PATH);
+	int slashCounter = 0;
+	for (char *scan = &absolutePath[written - 1]; scan > absolutePath; --scan)
+	{
+		if (*scan == '/' || *scan == '\\')
+			++slashCounter;
+		if (slashCounter == 2)
+		{
+			strncpy(scan + 1, relativePath.data, relativePath.size);
+			scan[relativePath.size + 1] = 0;
+
+			result.size = written + relativePath.size;
+			return result;
+		}
+	}
+	CRASH;
+}
+
+String SYSExpandPathWorkingDirectoryRelative(String relativePath)
+{
+	String result;
+
+	char *absolutePath = (char *)PhaseAllocator::Alloc(SYS_MAX_PATH);
+	result.data = absolutePath;
+
+	DWORD written = GetCurrentDirectory(MAX_PATH, absolutePath);
+	absolutePath[written++] = '/';
+	strncpy(absolutePath + written, relativePath.data, relativePath.size);
+	absolutePath[written + relativePath.size] = 0;
+
+	result.size = written + relativePath.size;
+
+	return result;
+}
+
 FileHandle SYSOpenFileRead(String filename)
 {
-	char fullname[MAX_PATH];
-	DWORD written = GetCurrentDirectory(MAX_PATH, fullname);
-	fullname[written++] = '/';
-	strncpy(fullname + written, filename.data, filename.size);
-	fullname[written + filename.size] = 0;
+	String absolutePath = SYSExpandPathWorkingDirectoryRelative(filename);
 
 	HANDLE file = CreateFileA(
-			fullname,
+			absolutePath.data, // We know this string is null terminated.
 			GENERIC_READ,
 			FILE_SHARE_READ,
 			nullptr,
@@ -30,16 +68,40 @@ FileHandle SYSOpenFileRead(String filename)
 			FILE_ATTRIBUTE_NORMAL,
 			nullptr
 			);
+
 	DWORD error = GetLastError();
-	ASSERT(error == ERROR_SUCCESS);
-	ASSERT(file != INVALID_HANDLE_VALUE);
+	if (error != ERROR_SUCCESS || file == INVALID_HANDLE_VALUE)
+	{
+		// This exe's full name, up to second-to-last slash, plus filename.
+		String absolutePath = SYSExpandPathCompilerRelative(filename);
+
+		file = CreateFileA(
+				absolutePath.data, // We know this string is null terminated.
+				GENERIC_READ,
+				FILE_SHARE_READ,
+				nullptr,
+				OPEN_EXISTING,
+				FILE_ATTRIBUTE_NORMAL,
+				nullptr
+				);
+	}
+
+	error = GetLastError();
+	if (error != ERROR_SUCCESS || file == INVALID_HANDLE_VALUE)
+	{
+		Print("Failed to read file \"%S\"", filename);
+		CRASH;
+	}
+
 	return file;
 }
 
 FileHandle SYSOpenFileWrite(const char *filename)
 {
+	String absolutePath = SYSExpandPathWorkingDirectoryRelative(filename);
+
 	HANDLE result = CreateFileA(
-			filename,
+			absolutePath.data,
 			GENERIC_WRITE,
 			0,
 			nullptr,
@@ -108,6 +170,8 @@ inline u64 SYSPerformanceFrequency()
 	return largeInteger.QuadPart;
 }
 
+// Use the ExpandPath procedures instead of this.
+#if 0
 String SYSGetFullPathName(String filename)
 {
 	char filenameCStr[SYS_MAX_PATH];
@@ -118,6 +182,7 @@ String SYSGetFullPathName(String filename)
 	outputPath.data = buffer;
 	return outputPath;
 }
+#endif
 
 void *SYSAlloc(u64 size)
 {
@@ -255,20 +320,8 @@ nextTuple:
 			"/Zd "
 			"/Zi "
 			"/Fm "
-			"/I \"%S\\include\" " // msvcPath
-			"/I \"%S\\include\\%S\\ucrt\" " // windowsSDKPath, windowsSDKVersion
-			"/I \"%S\\include\\%S\\shared\" " // windowsSDKPath, windowsSDKVersion
-			"/I \"%S\\include\\%S\\um\" " // windowsSDKPath, windowsSDKVersion
-			"/I \"%S\\include\\%S\\winrt\" " // windowsSDKPath, windowsSDKVersion
-			"/I \"%S\\include\\%S\\cppwinrt\" " // windowsSDKPath, windowsSDKVersion
 			"%c",
 			msvcPath,
-			msvcPath,
-			windowsSDKPath, windowsSDKVersion,
-			windowsSDKPath, windowsSDKVersion,
-			windowsSDKPath, windowsSDKVersion,
-			windowsSDKPath, windowsSDKVersion,
-			windowsSDKPath, windowsSDKVersion,
 			0
 			);
 

@@ -1417,6 +1417,20 @@ Constant TryEvaluateConstant(Context *context, ASTExpression *expression)
 			goto error;
 		}
 	} break;
+	case ASTNODETYPE_CAST:
+	{
+		Constant constant = TryEvaluateConstant(context, expression->castNode.expression);
+		bool isFloat = constant.type == CONSTANTTYPE_FLOATING;
+		bool castToFloat = context->typeTable[expression->typeTableIdx].typeCategory ==
+			TYPECATEGORY_FLOATING;
+		if (!isFloat && castToFloat)
+			result.valueAsFloat = (f64)constant.valueAsInt;
+		else if (isFloat && !castToFloat)
+			result.valueAsInt = (s64)constant.valueAsFloat;
+		else
+			result = constant;
+		result.type = castToFloat ? CONSTANTTYPE_FLOATING : CONSTANTTYPE_INTEGER;
+	} break;
 	default:
 		goto error;
 	}
@@ -2610,7 +2624,7 @@ TypeCheckExpressionResult TryTypeCheckExpression(Context *context, ASTExpression
 				staticDef->constant = TryEvaluateConstant(context, astStaticDef->expression);
 				if (staticDef->constant.type == CONSTANTTYPE_INVALID)
 					LogError(context, astStaticDef->expression->any.loc,
-							"Failed to evaluate constant in default parameter"_s);
+							"Failed to evaluate constant"_s);
 			}
 		}
 	} break;
@@ -3385,7 +3399,9 @@ skipOverload:
 	{
 		if (expression->intrinsic.type == INTRINSIC_UNSET)
 		{
-			if (StringEquals(expression->intrinsic.name, "sqrt32"_s))
+			if (StringEquals(expression->intrinsic.name, "breakpoint"_s))
+				expression->intrinsic.type = INTRINSIC_BREAKPOINT;
+			else if (StringEquals(expression->intrinsic.name, "sqrt32"_s))
 				expression->intrinsic.type = INTRINSIC_SQRT32;
 			else if (StringEquals(expression->intrinsic.name, "sqrt64"_s))
 				expression->intrinsic.type = INTRINSIC_SQRT64;
@@ -3396,6 +3412,10 @@ skipOverload:
 		FixedArray<s64, 4> argTypes;
 		switch (expression->intrinsic.type)
 		{
+		case INTRINSIC_BREAKPOINT:
+		{
+			argTypes.size = 0;
+		} break;
 		case INTRINSIC_SQRT32:
 		{
 			argTypes[0] = TYPETABLEIDX_F32;
