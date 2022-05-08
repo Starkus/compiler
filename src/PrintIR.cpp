@@ -284,6 +284,14 @@ void PrintIRInstruction(Context *context, IRInstruction inst)
 		PrintIRValue(context, inst.copyMemory.size);
 		PIRPrintOut(context, ")\n");
 	} break;
+	case IRINSTRUCTIONTYPE_ZERO_MEMORY:
+	{
+		PIRPrintOut(context, "zeroMemory(");
+		PrintIRValue(context, inst.zeroMemory.dst);
+		PIRPrintOut(context, ", ");
+		PrintIRValue(context, inst.zeroMemory.size);
+		PIRPrintOut(context, ")\n");
+	} break;
 	default:
 	{
 		PIRPrintOut(context, "???INST\n");

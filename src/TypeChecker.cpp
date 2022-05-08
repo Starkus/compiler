@@ -3401,7 +3401,9 @@ skipOverload:
 	{
 		if (expression->intrinsic.type == INTRINSIC_UNSET)
 		{
-			if (StringEquals(expression->intrinsic.name, "sqrt32"_s))
+			if (StringEquals(expression->intrinsic.name, "breakpoint"_s))
+				expression->intrinsic.type = INTRINSIC_BREAKPOINT;
+			else if (StringEquals(expression->intrinsic.name, "sqrt32"_s))
 				expression->intrinsic.type = INTRINSIC_SQRT32;
 			else if (StringEquals(expression->intrinsic.name, "sqrt64"_s))
 				expression->intrinsic.type = INTRINSIC_SQRT64;
@@ -3412,6 +3414,10 @@ skipOverload:
 		FixedArray<s64, 4> argTypes;
 		switch (expression->intrinsic.type)
 		{
+		case INTRINSIC_BREAKPOINT:
+		{
+			argTypes.size = 0;
+		} break;
 		case INTRINSIC_SQRT32:
 		{
 			argTypes[0] = TYPETABLEIDX_F32;

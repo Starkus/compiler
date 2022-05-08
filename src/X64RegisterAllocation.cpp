@@ -271,7 +271,7 @@ void DoLivenessAnalisisOnInstruction(Context *context, BasicBlock *basicBlock, X
 	{
 		// Detect xors of same thing (zero-ing)
 		if (inst->src.valueType != IRVALUETYPE_IMMEDIATE_INTEGER &&
-			inst->dst.value.valueIdx == inst->src.value.valueIdx)
+			memcmp(&inst->dst.value, &inst->src.value, sizeof(inst->src.value)) == 0)
 			RemoveIfValue(context, inst->dst, basicBlock->procedure, liveValues);
 		else
 		{

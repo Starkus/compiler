@@ -242,7 +242,7 @@ GetProcAddress :: #external (hModule : ^void, lpProcName : ^u8) -> ^void;
 GetDC :: #external (hWnd : ^void) -> ^void;
 ReleaseDC :: #external (hWnd : ^void, hdc : ^void);
 ChoosePixelFormat :: #external (hdc : ^void, ppfd : ^PIXELFORMATDESCRIPTOR) -> s64;
-SetPixelFormat :: #external (hdc : ^void, format : s64, ppfd : ^PIXELFORMATDESCRIPTOR);
+SetPixelFormat :: #external (hdc : ^void, format : s64, ppfd : ^PIXELFORMATDESCRIPTOR) -> bool;
 PostQuitMessage :: #external (nExitCode : s64);
 DestroyWindow :: #external (hWnd : ^void) -> bool;
 TerminateProcess :: #external (uExitCode : u32);
