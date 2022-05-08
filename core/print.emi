@@ -202,8 +202,6 @@ PrintF :: (format : String, ..args)
 			Print("<Unknown type>");
 	}
 
-	stdOut := GetStdHandle(-11);
-	bytesWritten : s64 = ?;
 	argIdx := 0;
 	for (0..format.size)
 	{
@@ -215,7 +213,9 @@ PrintF :: (format : String, ..args)
 		}
 		else
 		{
-			WriteFile(stdOut, ^char, 1, ^bytesWritten, 0);
+			// @Improve: don't call full blown Print just to print one char?
+			str : String = { 1, ^char };
+			Print(str);
 		}
 	}
 }

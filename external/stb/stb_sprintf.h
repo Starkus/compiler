@@ -577,10 +577,18 @@ STBSP__PUBLICDEF int STB_SPRINTF_DECORATE(vsprintfcb)(STBSP_SPRINTFCB *callback,
 
       case 'S':
          // get the string
+#if _MSC_VER
          s = va_arg(va, char *);
          // get the length
          n = *(int *)s;
          s = *(char **)(s + 8);
+#else
+         {
+           String string = va_arg(va, String);
+           n = string.size;
+           s = (char *)string.data;
+         }
+#endif
          sn = s + n;
          if (sn == 0)
             sn = (char *)"null";

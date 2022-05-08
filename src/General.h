@@ -24,6 +24,8 @@ typedef uint64_t u64;
 typedef float f32;
 typedef double f64;
 
+s64 Print(const char *format, ...);
+
 #define U8_MAX 0xFF
 #define U16_MAX 0xFFFF
 #define U32_MAX 0xFFFFFFFF
@@ -39,12 +41,12 @@ typedef double f64;
 #define S32_MAX ((s32)0x7FFFFFFF)
 #define S64_MAX ((s64)0x7FFFFFFFFFFFFFFF)
 
-#define CRASH do { *((int*)0xDEADBEEFDEADBEEF) = 1; __assume(0); } while (false)
+#define CRASH do { *((int*)0xDEADBEEFDEADBEEF) = 1; ASSUME(0); } while (false)
 
 #if DEBUG_BUILD
-#define ASSERT(expr) do { if (!(expr)) { Print("!!!ASSERT FAILED!!!\n>   Expression: { %s }\n>   %s:%d\n", #expr, __FILE__, __LINE__); __debugbreak(); } __assume(expr); } while (false)
+#define ASSERT(expr) do { if (!(expr)) { Print("!!!ASSERT FAILED!!!\n>   Expression: { %s }\n> %s:%d\n", #expr, __FILE__, __LINE__); BREAK; } ASSUME(expr); } while (false)
 #else
-#define ASSERT(expr) do { __assume(expr); } while (false)
+#define ASSERT(expr) do { ASSUME(expr); } while (false)
 #endif
 
 #define NOMANGLE extern "C"

@@ -1,5 +1,8 @@
 #include <math.h>
+
+#if _MSC_VER
 #include <intrin.h>
+#endif
 
 const f32 PI = 3.1415926535897932384626433832795f;
 const f32 HALFPI = 1.5707963267948966192313216916398f;
@@ -10,22 +13,34 @@ const f64 PI2_64 = 6.283185307179586476925286766559;
 
 inline s64 CountOnes(s64 n)
 {
+#if _MSC_VER
 	return __popcnt64(n);
+#else
+	return __builtin_popcount(n);
+#endif
 }
 
 inline u8 Nlz(u32 x)
 {
+#if _MSC_VER
 	unsigned long i;
 	if (_BitScanReverse(&i, x))
 		return 31 - (u8)i;
 	return 32;
+#else
+	return __builtin_clz(x);
+#endif
 }
 
 inline u8 Ntz(u32 n)
 {
+#if _MSC_VER
 	unsigned long i;
 	_BitScanForward(&i, n);
 	return (u8)i;
+#else
+	return __builtin_ctz(n);
+#endif
 }
 
 inline u32 NextPowerOf2(u32 n)
@@ -40,17 +55,25 @@ inline u32 LastPowerOf2(u32 n)
 
 inline u8 Nlz64(u64 x)
 {
+#if _MSC_VER
 	unsigned long i;
 	if (_BitScanReverse64(&i, x))
 		return 63 - (u8)i;
 	return 64;
+#else
+	return __builtin_clz(x);
+#endif
 }
 
 inline u8 Ntz64(u64 n)
 {
+#if _MSC_VER
 	unsigned long i;
 	_BitScanForward64(&i, n);
 	return (u8)i;
+#else
+	return __builtin_ctz(n);
+#endif
 }
 
 inline u64 NextPowerOf264(u64 n)

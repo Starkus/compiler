@@ -9,111 +9,99 @@ void MemoryInit(Memory *memory)
 	memory->phasePtr = memory->phaseMem;
 }
 
-class FrameAllocator
+void *FrameAllocator::Alloc(u64 size)
 {
-	public:
-	static void *Alloc(u64 size)
-	{
 #if DEBUG_BUILD
-		if (*((u64 *)g_memory->framePtr) != 0xCDCDCDCDCDCDCDCD) CRASH; // Watch for memory corruption
+	if (*((u64 *)g_memory->framePtr) != 0xCDCDCDCDCDCDCDCD) CRASH; // Watch for memory corruption
 #endif
-		ASSERT((u8 *)g_memory->framePtr + size < (u8 *)g_memory->frameMem + Memory::frameSize); // Out of memory!
-		void *result;
+	ASSERT((u8 *)g_memory->framePtr + size < (u8 *)g_memory->frameMem + Memory::frameSize); // Out of memory!
+	void *result;
 
-		// Alignment
-		int alignment = size > 16 ? 16 : NextPowerOf2((int)size);
-		int alignmentMask = alignment - 1;
-		if ((u64)g_memory->framePtr & alignmentMask)
-			g_memory->framePtr = (void *)(((u64)g_memory->framePtr & ~alignmentMask) + alignment);
+	// Alignment
+	int alignment = size > 16 ? 16 : NextPowerOf2((int)size);
+	int alignmentMask = alignment - 1;
+	if ((u64)g_memory->framePtr & alignmentMask)
+		g_memory->framePtr = (void *)(((u64)g_memory->framePtr & ~alignmentMask) + alignment);
 
-		result = g_memory->framePtr;
-		g_memory->framePtr = (u8 *)g_memory->framePtr + size;
+	result = g_memory->framePtr;
+	g_memory->framePtr = (u8 *)g_memory->framePtr + size;
 
-		return result;
-	}
-	static void *Realloc(void *ptr, u64 newSize)
-	{
-		//Print("WARNING: FRAME REALLOC\n");
-
-		void *newBlock = Alloc(newSize);
-		memcpy(newBlock, ptr, newSize);
-		return newBlock;
-	}
-	static void Free(void *ptr)
-	{
-		(void) ptr;
-	}
-	static void Wipe()
-	{
-#if DEBUG_BUILD
-		memset(g_memory->frameMem, 0xCD, Memory::frameSize);
-#endif
-
-		g_memory->framePtr = g_memory->frameMem;
-	}
-};
-
-class PhaseAllocator
+	return result;
+}
+void *FrameAllocator::Realloc(void *ptr, u64 newSize)
 {
-	public:
-	static void *Alloc(u64 size)
-	{
-#if DEBUG_BUILD
-		if (*((u64 *)g_memory->phasePtr) != 0x5555555555555555) CRASH; // Watch for memory corruption
-#endif
-		ASSERT((u8 *)g_memory->phasePtr + size < (u8 *)g_memory->phaseMem + Memory::phaseSize); // Out of memory!
-		void *result;
+	//Print("WARNING: FRAME REALLOC\n");
 
-		// Alignment
-		int alignment = size > 16 ? 16 : NextPowerOf2((int)size);
-		int alignmentMask = alignment - 1;
-		if ((u64)g_memory->phasePtr & alignmentMask)
-			g_memory->phasePtr = (void *)(((u64)g_memory->phasePtr & ~alignmentMask) + alignment);
-
-		result = g_memory->phasePtr;
-		g_memory->phasePtr = (u8 *)g_memory->phasePtr + size;
-
-		return result;
-	}
-	static void *Realloc(void *ptr, u64 newSize)
-	{
-		//Print("WARNING: FRAME REALLOC\n");
-
-		void *newBlock = Alloc(newSize);
-		memcpy(newBlock, ptr, newSize);
-		return newBlock;
-	}
-	static void Free(void *ptr)
-	{
-		(void) ptr;
-	}
-	static void Wipe()
-	{
-#if DEBUG_BUILD
-		memset(g_memory->phaseMem, 0x55, Memory::phaseSize);
-#endif
-
-		g_memory->phasePtr = g_memory->phaseMem;
-	}
-};
-
-class HeapAllocator
+	void *newBlock = Alloc(newSize);
+	memcpy(newBlock, ptr, newSize);
+	return newBlock;
+}
+void FrameAllocator::Free(void *ptr)
 {
-	public:
-	static void *Alloc(u64 size)
-	{
-		return malloc(size);
-	}
-	static void *Realloc(void *ptr, u64 newSize)
-	{
-		return realloc(ptr, newSize);
-	}
-	static void Free(void *ptr)
-	{
-		free(ptr);
-	}
-	static void Wipe()
-	{
-		ASSERT(false);
-	}
-};
+	(void) ptr;
+}
+void FrameAllocator::Wipe()
+{
+#if DEBUG_BUILD
+	memset(g_memory->frameMem, 0xCD, Memory::frameSize);
+#endif
+
+	g_memory->framePtr = g_memory->frameMem;
+}
+
+void *PhaseAllocator::Alloc(u64 size)
+{
+#if DEBUG_BUILD
+	if (*((u64 *)g_memory->phasePtr) != 0x5555555555555555) CRASH; // Watch for memory corruption
+#endif
+	ASSERT((u8 *)g_memory->phasePtr + size < (u8 *)g_memory->phaseMem + Memory::phaseSize); // Out of memory!
+	void *result;
+
+	// Alignment
+	int alignment = size > 16 ? 16 : NextPowerOf2((int)size);
+	int alignmentMask = alignment - 1;
+	if ((u64)g_memory->phasePtr & alignmentMask)
+		g_memory->phasePtr = (void *)(((u64)g_memory->phasePtr & ~alignmentMask) + alignment);
+
+	result = g_memory->phasePtr;
+	g_memory->phasePtr = (u8 *)g_memory->phasePtr + size;
+
+	return result;
+}
+void *PhaseAllocator::Realloc(void *ptr, u64 newSize)
+{
+	//Print("WARNING: FRAME REALLOC\n");
+
+	void *newBlock = Alloc(newSize);
+	memcpy(newBlock, ptr, newSize);
+	return newBlock;
+}
+void Free(void *ptr)
+{
+	(void) ptr;
+}
+void PhaseAllocator::Wipe()
+{
+#if DEBUG_BUILD
+	memset(g_memory->phaseMem, 0x55, Memory::phaseSize);
+#endif
+
+	g_memory->phasePtr = g_memory->phaseMem;
+}
+
+void *HeapAllocator::Alloc(u64 size)
+{
+	return malloc(size);
+}
+void *HeapAllocator::Realloc(void *ptr, u64 newSize)
+{
+	return realloc(ptr, newSize);
+}
+void HeapAllocator::Free(void *ptr)
+{
+	free(ptr);
+}
+void HeapAllocator::Wipe()
+{
+	ASSERT(false);
+}

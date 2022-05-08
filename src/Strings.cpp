@@ -275,11 +275,11 @@ f64 F64FromString(String string)
 
 	// Table of multiples of 10 so we can divide/multiply by 10 many times in one go.
 	u64 divTable[] = {
-		1,					10,					100,				1000,
-		10000,				100000,				1000000,			10000000,
-		100000000,			1000000000,			10000000000,		100000000000,
-		1000000000000,		10000000000000,		100000000000000,	1000000000000000,
-		10000000000000000,	100000000000000000,	1000000000000000000,10000000000000000000 };
+		1U,					10U,					100U,					1000U,
+		10000U,				100000U,				1000000U,				10000000U,
+		100000000U,			1000000000U,			10000000000U,			100000000000U,
+		1000000000000U,		10000000000000U,		100000000000000U,		1000000000000000U,
+		10000000000000000U,	100000000000000000U,	1000000000000000000U,	10000000000000000000U };
 	u64 div;
 	if (fractionDigits == 20)
 	{
@@ -289,7 +289,7 @@ f64 F64FromString(String string)
 
 		// Doubling 'fraction' here would overflow. Instead we divide 'div' by 2 until it fits in 64
 		// bits (which results in 10^19 / 8).
-		div = 12500000000000000000;
+		div = 12500000000000000000U;
 
 		// @Check: isn't mantissa always 0 here? 20 fraction digits means all our digits went into
 		// the fraction part.

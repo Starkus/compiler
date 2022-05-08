@@ -317,6 +317,16 @@ void DoLivenessAnalisisOnInstruction(Context *context, BasicBlock *basicBlock, X
 			u32 currentIdx = 0;
 			u32 count = context->beInterferenceGraph.count;
 			u32 *buffer = context->beInterferenceGraph.valueIndices;
+			// Align to 32 bytes
+			while (((u64)&buffer[currentIdx] & 31) && currentIdx < count)
+			{
+				if (buffer[currentIdx] == valueIdx)
+				{
+					nodeIdx = currentIdx;
+					goto nodeFound;
+				}
+				++currentIdx;
+			}
 			while (currentIdx + 8 <= count)
 			{
 				__m256i res = _mm256_cmpeq_epi32(src, *(__m256i *)&buffer[currentIdx]);
@@ -328,6 +338,7 @@ void DoLivenessAnalisisOnInstruction(Context *context, BasicBlock *basicBlock, X
 				}
 				currentIdx += 8;
 			}
+			// Leftovers
 			while (currentIdx < count)
 			{
 				if (buffer[currentIdx] == valueIdx)
@@ -375,6 +386,9 @@ nodeFound:
 				__m256i src = _mm256_set1_epi32(edgeValueIdx);
 				u32 *scan = edges->data;
 				u32 *end  = scan + edges->size;
+				while (((u64)scan & 31) && scan < end)
+					if (*scan++ == edgeValueIdx)
+						goto alreadyExists;
 				while (scan + 8 <= end)
 				{
 					__m256i res = _mm256_cmpeq_epi32(src, *(__m256i *)scan);
@@ -802,6 +816,7 @@ void X64AllocateRegisters(Context *context, Array<X64Procedure, PhaseAllocator> 
 		while (nodeStack.size < interferenceGraph.count)
 		{
 			u32 nodeToRemoveIdx = U32_MAX;
+			s64 mostEdges;
 
 			for (u32 nodeIdx = 0; nodeIdx < interferenceGraph.count; ++nodeIdx)
 			{
@@ -829,7 +844,7 @@ void X64AllocateRegisters(Context *context, Array<X64Procedure, PhaseAllocator> 
 			}
 
 			// Here we pick one that we're probably going to spill. Choose the one with most edges.
-			s64 mostEdges = -1;
+			mostEdges = -1;
 			for (u32 nodeIdx = 0; nodeIdx < interferenceGraph.count; ++nodeIdx)
 			{
 				if (interferenceGraph.removed[nodeIdx])

@@ -8,3 +8,5 @@ struct String
 		return data != nullptr;
 	}
 };
+
+inline String operator""_s(const char *str, u64 size);

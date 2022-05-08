@@ -1,23 +1,23 @@
-#include <windows.h>
-#include <strsafe.h>
-#include <shlobj_core.h>
-#include <Shlobj.h>
+#include "General.h"
+#include "Strings.h"
+#include "MemoryAlloc.h"
+
+#if _MSC_VER
+#include "Windows.cpp"
+#else
+#include "Linux.cpp"
+#endif
 
 #define STB_SPRINTF_IMPLEMENTATION
 #include "stb/stb_sprintf.h"
 
-long long Print(const char *format, ...);
-
-#include "General.h"
 #include "Config.h"
 #include "Maths.h"
-#include "MemoryAlloc.h"
 #include "Containers.h"
-#include "Strings.h"
 
 Memory *g_memory;
-HANDLE g_hStdout;
-HANDLE g_hStderr;
+FileHandle g_hStdout;
+FileHandle g_hStderr;
 
 s64 Print(const char *format, ...)
 {
@@ -27,23 +27,16 @@ s64 Print(const char *format, ...)
 	va_start(args, format);
 
 	s64 size = stbsp_vsprintf(buffer, format, args);
+#if _MSC_VER
 	OutputDebugStringA(buffer);
+#endif
 
 	// Stdout
-	DWORD bytesWritten;
-	WriteFile(g_hStdout, buffer, (DWORD)strlen(buffer), &bytesWritten, nullptr);
+	s64 bytesWritten = SYSWriteFile(g_hStdout, buffer, strlen(buffer));
 
 	// Log file
-	static HANDLE logFileHandle = CreateFileA(
-			"output/log.txt",
-			GENERIC_WRITE,
-			0,
-			nullptr,
-			CREATE_ALWAYS,
-			FILE_ATTRIBUTE_NORMAL,
-			nullptr
-			);
-	WriteFile(logFileHandle, buffer, (DWORD)strlen(buffer), &bytesWritten, nullptr);
+	static FileHandle logFileHandle = SYSOpenFileWrite("output/log.txt"_s);
+	SYSWriteFile(logFileHandle, buffer, strlen(buffer));
 
 #if DEBUG_BUILD
 	memset(g_memory->phasePtr, 0x55, size + 1);
@@ -72,18 +65,13 @@ u64 g_lastPerfCounter;
 u64 g_perfFrequency;
 void SetUpTimers()
 {
-	LARGE_INTEGER largeInteger;
-	QueryPerformanceCounter(&largeInteger);
-	g_firstPerfCounter = largeInteger.LowPart;
-	g_lastPerfCounter  = largeInteger.LowPart;
-	QueryPerformanceFrequency(&largeInteger);
-	g_perfFrequency = largeInteger.LowPart;
+	g_firstPerfCounter = SYSPerformanceCounter();
+	g_lastPerfCounter  = g_firstPerfCounter;
+	g_perfFrequency = SYSPerformanceFrequency();
 }
 void TimerSplit(String message)
 {
-	LARGE_INTEGER largeInteger;
-	QueryPerformanceCounter(&largeInteger);
-	u64 newPerfCounter = largeInteger.LowPart;
+	u64 newPerfCounter = SYSPerformanceCounter();
 	f64 time = (f64)(newPerfCounter - g_firstPerfCounter) / (f64)g_perfFrequency;
 	f64 deltaTime = (f64)(newPerfCounter - g_lastPerfCounter) / (f64)g_perfFrequency;
 	g_lastPerfCounter = newPerfCounter;
@@ -179,74 +167,6 @@ struct Context
 	InterferenceGraph beInterferenceGraph;
 	BucketArray<BEInstruction, PhaseAllocator, 128> bePatchedInstructions;
 };
-
-inline bool Win32FileExists(const char *filename)
-{
-	DWORD attrib = GetFileAttributesA(filename);
-	return attrib != INVALID_FILE_ATTRIBUTES && attrib != FILE_ATTRIBUTE_DIRECTORY;
-}
-
-HANDLE Win32OpenFileRead(String filename)
-{
-	char fullname[MAX_PATH];
-	DWORD written = GetCurrentDirectory(MAX_PATH, fullname);
-	fullname[written++] = '/';
-	strncpy(fullname + written, filename.data, filename.size);
-	fullname[written + filename.size] = 0;
-
-	HANDLE file = CreateFileA(
-			fullname,
-			GENERIC_READ,
-			FILE_SHARE_READ,
-			nullptr,
-			OPEN_EXISTING,
-			FILE_ATTRIBUTE_NORMAL,
-			nullptr
-			);
-	DWORD error = GetLastError();
-	ASSERT(error == ERROR_SUCCESS);
-	ASSERT(file != INVALID_HANDLE_VALUE);
-	return file;
-}
-
-void Win32ReadEntireFile(HANDLE file, u8 **fileBuffer, u64 *fileSize, void *(*allocFunc)(u64))
-{
-	if (file == INVALID_HANDLE_VALUE)
-		*fileBuffer = nullptr;
-	else
-	{
-		DWORD fileSizeDword = GetFileSize(file, nullptr);
-		ASSERT(fileSizeDword);
-		*fileSize = (u64)fileSizeDword;
-		DWORD error = GetLastError();
-		ASSERT(error == ERROR_SUCCESS);
-
-		*fileBuffer = (u8 *)allocFunc(*fileSize);
-		DWORD bytesRead;
-		bool success = ReadFile(
-				file,
-				*fileBuffer,
-				fileSizeDword,
-				&bytesRead,
-				nullptr
-				);
-		ASSERT(success);
-		ASSERT(bytesRead == *fileSize);
-	}
-}
-
-bool Win32AreSameFile(HANDLE file1, HANDLE file2) {
-	BY_HANDLE_FILE_INFORMATION info1 = { 0 };
-	BY_HANDLE_FILE_INFORMATION info2 = { 0 };
-	if (GetFileInformationByHandle(file1, &info1) &&
-		GetFileInformationByHandle(file2, &info2))
-	{
-		return info1.nFileIndexHigh       == info2.nFileIndexHigh &&
-			   info1.nFileIndexLow        == info2.nFileIndexLow &&
-			   info1.dwVolumeSerialNumber == info2.dwVolumeSerialNumber;
-	}
-	return false;
-}
 
 String GetSourceLine(Context *context, s32 fileIdx, s32 line)
 {
@@ -437,17 +357,17 @@ void UnexpectedTokenError(Context *context, Token *token)
 
 bool CompilerAddSourceFile(Context *context, String filename, SourceLocation loc)
 {
-	HANDLE file = Win32OpenFileRead(filename);
-	if (file == INVALID_HANDLE_VALUE)
+	FileHandle file = SYSOpenFileRead(filename);
+	if (file == SYS_INVALID_FILE_HANDLE)
 		LogError(context, loc,
 				TPrintF("Included source file \"%S\" doesn't exist!", filename));
 
 	for (int i = 0; i < context->sourceFiles.size; ++i)
 	{
 		String currentFilename = context->sourceFiles[i].name;
-		HANDLE currentFile = Win32OpenFileRead(currentFilename);
+		FileHandle currentFile = SYSOpenFileRead(currentFilename);
 
-		if (Win32AreSameFile(file, currentFile))
+		if (SYSAreSameFile(file, currentFile))
 		{
 			LogWarning(context, loc, TPrintF("File included twice: \"%S\"", filename));
 			LogNote(context, context->sourceFiles[i].includeLoc, "First included here"_s);
@@ -456,7 +376,7 @@ bool CompilerAddSourceFile(Context *context, String filename, SourceLocation loc
 	}
 
 	SourceFile newSourceFile = { filename, loc };
-	Win32ReadEntireFile(file, &newSourceFile.buffer, &newSourceFile.size, FrameAllocator::Alloc);
+	SYSReadEntireFile(file, &newSourceFile.buffer, &newSourceFile.size, FrameAllocator::Alloc);
 
 	*DynamicArrayAdd(&context->sourceFiles) = newSourceFile;
 
@@ -475,8 +395,13 @@ int main(int argc, char **argv)
 {
 	SetUpTimers();
 
+#if _MSC_VER
 	g_hStdout = GetStdHandle(STD_OUTPUT_HANDLE);
 	g_hStderr = GetStdHandle(STD_ERROR_HANDLE);
+#else
+	g_hStdout = fileno(stdout);
+	g_hStderr = fileno(stderr);
+#endif
 
 	if (argc < 2)
 		return 1;
@@ -484,8 +409,8 @@ int main(int argc, char **argv)
 	// Allocate memory
 	Memory memory;
 	g_memory = &memory;
-	memory.frameMem = VirtualAlloc(0, Memory::frameSize, MEM_COMMIT, PAGE_READWRITE);
-	memory.phaseMem = VirtualAlloc(0, Memory::phaseSize, MEM_COMMIT, PAGE_READWRITE);
+	memory.frameMem = SYSAlloc(Memory::frameSize);
+	memory.phaseMem = SYSAlloc(Memory::phaseSize);
 	MemoryInit(&memory);
 
 	Context context = {};
@@ -498,6 +423,11 @@ int main(int argc, char **argv)
 	DynamicArrayInit(&inputFiles, 16);
 	*DynamicArrayAdd(&inputFiles) = "core/basic.emi"_s;
 	*DynamicArrayAdd(&inputFiles) = "core/print.emi"_s;
+#if _MSC_VER
+	*DynamicArrayAdd(&inputFiles) = "core/basic_windows.emi"_s;
+#else
+	*DynamicArrayAdd(&inputFiles) = "core/basic_linux.emi"_s;
+#endif
 	for (int argIdx = 1; argIdx < argc; ++argIdx)
 	{
 		char *arg = argv[argIdx];

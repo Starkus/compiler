@@ -1,0 +1,16 @@
+STDIN  :: 0;
+STDOUT :: 1;
+STDERR :: 2;
+
+write :: #external (handle: s64, buffer: ^void, bytesToWrite: u64) -> u64;
+Print :: (string: String)
+{
+	write(STDOUT, string.data, string.size);
+}
+
+exit :: #external (uExitCode : u32);
+__LinuxMain :: ()
+{
+	errorCode := Main();
+	exit(cast(u32)errorCode);
+}

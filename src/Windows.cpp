@@ -1,0 +1,362 @@
+#include <windows.h>
+#include <strsafe.h>
+#include <shlobj_core.h>
+#include <Shlobj.h>
+
+typedef HANDLE FileHandle;
+#define SYS_MAX_PATH MAX_PATH
+#define BREAK __debugbreak()
+
+inline bool SYSFileExists(const char *filename)
+{
+	DWORD attrib = GetFileAttributesA(filename);
+	return attrib != INVALID_FILE_ATTRIBUTES && attrib != FILE_ATTRIBUTE_DIRECTORY;
+}
+
+FileHandle SYSOpenFileRead(String filename)
+{
+	char fullname[MAX_PATH];
+	DWORD written = GetCurrentDirectory(MAX_PATH, fullname);
+	fullname[written++] = '/';
+	strncpy(fullname + written, filename.data, filename.size);
+	fullname[written + filename.size] = 0;
+
+	HANDLE file = CreateFileA(
+			fullname,
+			GENERIC_READ,
+			FILE_SHARE_READ,
+			nullptr,
+			OPEN_EXISTING,
+			FILE_ATTRIBUTE_NORMAL,
+			nullptr
+			);
+	DWORD error = GetLastError();
+	ASSERT(error == ERROR_SUCCESS);
+	ASSERT(file != INVALID_HANDLE_VALUE);
+	return file;
+}
+
+FileHandle SYSOpenFileWrite(const char *filename)
+{
+	HANDLE result = CreateFileA(
+			filename,
+			GENERIC_WRITE,
+			0,
+			nullptr,
+			CREATE_ALWAYS,
+			FILE_ATTRIBUTE_NORMAL,
+			nullptr
+			);
+	return result;
+}
+
+u64 SYSGetFileSize(FileHandle file)
+{
+	DWORD fileSizeDword = GetFileSize(file, nullptr);
+	return (u64)fileSizeDword;
+}
+
+void SYSReadEntireFile(FileHandle file, u8 **fileBuffer, u64 *fileSize, void *(*allocFunc)(u64))
+{
+	if (file == INVALID_HANDLE_VALUE)
+		*fileBuffer = nullptr;
+	else
+	{
+		*fileSize = SYSGetFileSize(file, nullptr);
+		ASSERT(*fileSize);
+		DWORD error = GetLastError();
+		ASSERT(error == ERROR_SUCCESS);
+
+		*fileBuffer = (u8 *)allocFunc(*fileSize);
+		DWORD bytesRead;
+		bool success = ReadFile(
+				file,
+				*fileBuffer,
+				fileSizeDword,
+				&bytesRead,
+				nullptr
+				);
+		ASSERT(success);
+		ASSERT(bytesRead == *fileSize);
+	}
+}
+
+bool SYSAreSameFile(FileHandle file1, FileHandle file2) {
+	BY_HANDLE_FILE_INFORMATION info1 = { 0 };
+	BY_HANDLE_FILE_INFORMATION info2 = { 0 };
+	if (GetFileInformationByHandle(file1, &info1) &&
+		GetFileInformationByHandle(file2, &info2))
+	{
+		return info1.nFileIndexHigh       == info2.nFileIndexHigh &&
+			   info1.nFileIndexLow        == info2.nFileIndexLow &&
+			   info1.dwVolumeSerialNumber == info2.dwVolumeSerialNumber;
+	}
+	return false;
+}
+
+inline u64 SYSPerformanceCounter()
+{
+	LARGE_INTEGER largeInteger;
+	QueryPerformanceCounter(&largeInteger);
+	return largeInteger.QuadPart;
+}
+
+inline u64 SYSPerformanceFrequency()
+{
+	LARGE_INTEGER largeInteger;
+	QueryPerformanceFrequency(&largeInteger);
+	return largeInteger.QuadPart;
+}
+
+String SYSGetFullPathName(String filename)
+{
+	char filenameCStr[SYS_MAX_PATH];
+	strncpy(filenameCStr, filename.data, filename.size);
+	char *buffer = (char *)PhaseAllocator::Alloc(SYS_MAX_PATH);
+	String outputPath;
+	outputPath.size = GetFullPathNameA(filenameCStr, SYS_MAX_PATH, buffer, nullptr);
+	outputPath.data = buffer;
+	return outputPath;
+}
+
+void *SYSAlloc(u64 size)
+{
+	return VirtualAlloc(0, size, MEM_COMMIT, PAGE_READWRITE);
+}
+
+void SYSCreateDirectory(String pathname)
+{
+	char pathnameCStr[SYS_MAX_PATH];
+	strncpy(pathnameCStr, pathname.data, pathname.size);
+	CreateDirectoryA(pathnameCStr, nullptr);
+}
+
+void SYSRunAssemblerAndLinker()
+{
+	// Run MASM
+	PWSTR programFilesPathWstr;
+	SHGetKnownFolderPath(FOLDERID_ProgramFilesX86, 0, NULL, &programFilesPathWstr);
+	String programFilesPath = StupidStrToString(programFilesPathWstr, PhaseAllocator::Alloc);
+
+	String visualStudioPath = TPrintF("%S\\Microsoft Visual Studio", programFilesPath);
+	{
+		// Get anything starting with 20...
+		String wildcard = TPrintF("%S\\20*", visualStudioPath);
+		WIN32_FIND_DATAA foundData = {};
+		HANDLE findHandle = FindFirstFileA(StringToCStr(wildcard, PhaseAllocator::Alloc), &foundData);
+		const char *newestVersionStr = nullptr;
+		int newestVersion = 0;
+		if (findHandle != INVALID_HANDLE_VALUE) while (true)
+		{
+			int foundVersion = atoi(foundData.cFileName);
+			if (foundVersion > newestVersion)
+			{
+				newestVersion = foundVersion;
+				newestVersionStr = foundData.cFileName;
+			}
+			if (!FindNextFileA(findHandle, &foundData)) break;
+		}
+		visualStudioPath = TPrintF("%S\\%s", visualStudioPath, newestVersionStr);
+	}
+
+	String msvcPath = {};
+	{
+		String buildToolsPath = TPrintF("%S\\BuildTools", visualStudioPath);
+		String enterprisePath = TPrintF("%S\\Enterprise", visualStudioPath);
+		String professionalPath = TPrintF("%S\\Professional", visualStudioPath);
+		String communityPath = TPrintF("%S\\Community", visualStudioPath);
+		if (GetFileAttributes(StringToCStr(buildToolsPath, PhaseAllocator::Alloc)) != INVALID_FILE_ATTRIBUTES)
+			msvcPath = buildToolsPath;
+		else if (GetFileAttributes(StringToCStr(enterprisePath, PhaseAllocator::Alloc)) != INVALID_FILE_ATTRIBUTES)
+			msvcPath = enterprisePath;
+		else if (GetFileAttributes(StringToCStr(professionalPath, PhaseAllocator::Alloc)) != INVALID_FILE_ATTRIBUTES)
+			msvcPath = professionalPath;
+		else if (GetFileAttributes(StringToCStr(communityPath, PhaseAllocator::Alloc)) != INVALID_FILE_ATTRIBUTES)
+			msvcPath = communityPath;
+		msvcPath = TPrintF("%S\\VC\\Tools\\MSVC", msvcPath);
+
+		String wildcard = StringConcat(msvcPath, "\\*"_s);
+		WIN32_FIND_DATAA foundData = {};
+		HANDLE findHandle = FindFirstFileA(StringToCStr(wildcard, PhaseAllocator::Alloc), &foundData);
+		if (findHandle != INVALID_HANDLE_VALUE)
+		{
+			while (foundData.cFileName[0] == '.')
+				FindNextFileA(findHandle, &foundData);
+			msvcPath = TPrintF("%S\\%s", msvcPath, foundData.cFileName);
+		}
+	}
+
+	String windowsSDKPath = TPrintF("%S\\Windows Kits\\10", programFilesPath);
+	String windowsSDKVersion = {};
+	{
+		String wildcard = TPrintF("%S\\include\\10.*", windowsSDKPath);
+		WIN32_FIND_DATAA foundData = {};
+		HANDLE findHandle = FindFirstFileA(StringToCStr(wildcard, PhaseAllocator::Alloc), &foundData);
+		s64 highestTuple[4] = {};
+		const char *latestVersionName = nullptr;
+		if (findHandle != INVALID_HANDLE_VALUE) while (true)
+		{
+			s64 tuple[4];
+			int numDigits = 0;
+			int foundNumbers = 0;
+			// Parse tuple
+			for (const char *scan = foundData.cFileName; ; ++scan)
+			{
+				if (*scan == '.' || *scan == 0)
+				{
+					tuple[foundNumbers++] = IntFromString({ numDigits, scan - numDigits });
+					numDigits = 0;
+				}
+				else
+					++numDigits;
+				if (!*scan) break;
+			}
+			// Replace if greater
+			for (int i = 0; i < 4; ++i)
+			{
+				if (tuple[i] < highestTuple[i])
+					goto nextTuple;
+				if (tuple[i] > highestTuple[i])
+					break;
+				// If same keep going
+			}
+			memcpy(highestTuple, tuple, sizeof(highestTuple));
+			latestVersionName = foundData.cFileName;
+nextTuple:
+			if (!FindNextFileA(findHandle, &foundData)) break;
+		}
+		windowsSDKVersion = CStrToString(latestVersionName);
+	}
+
+	bool useWindowsSubsystem = false;
+	StaticDefinition *subsystemStaticDef = FindStaticDefinitionByName(context,
+			"compiler_subsystem"_s);
+	if (subsystemStaticDef)
+	{
+		ASSERT(subsystemStaticDef->definitionType == STATICDEFINITIONTYPE_CONSTANT);
+		ASSERT(subsystemStaticDef->constant.type == CONSTANTTYPE_INTEGER);
+		useWindowsSubsystem = subsystemStaticDef->constant.valueAsInt == 1;
+	}
+
+	String subsystemArgument;
+	if (useWindowsSubsystem)
+		subsystemArgument = "/subsystem:WINDOWS "_s;
+	else
+		subsystemArgument = "/subsystem:CONSOLE "_s;
+
+	String libsToLinkStr = {};
+	for (int i = 0; i < context->libsToLink.size; ++i)
+		libsToLinkStr = TPrintF("%S %S", libsToLinkStr, context->libsToLink[i]);
+
+	String commandLine = TPrintF(
+			"%S\\bin\\Hostx64\\x64\\ml64.exe " // msvcPath
+			"out.asm "
+			"/nologo /c "
+			"/Zd "
+			"/Zi "
+			"/Fm "
+			"/I \"%S\\include\" " // msvcPath
+			"/I \"%S\\include\\%S\\ucrt\" " // windowsSDKPath, windowsSDKVersion
+			"/I \"%S\\include\\%S\\shared\" " // windowsSDKPath, windowsSDKVersion
+			"/I \"%S\\include\\%S\\um\" " // windowsSDKPath, windowsSDKVersion
+			"/I \"%S\\include\\%S\\winrt\" " // windowsSDKPath, windowsSDKVersion
+			"/I \"%S\\include\\%S\\cppwinrt\" " // windowsSDKPath, windowsSDKVersion
+			"%c",
+			msvcPath,
+			msvcPath,
+			windowsSDKPath, windowsSDKVersion,
+			windowsSDKPath, windowsSDKVersion,
+			windowsSDKPath, windowsSDKVersion,
+			windowsSDKPath, windowsSDKVersion,
+			windowsSDKPath, windowsSDKVersion,
+			0
+			);
+
+	STARTUPINFO startupInfo = {};
+	PROCESS_INFORMATION processInformation = {};
+	startupInfo.cb = sizeof(STARTUPINFO);
+	if (!CreateProcessA(
+			NULL,
+			(LPSTR)commandLine.data,
+			NULL,
+			NULL,
+			false,
+			0,
+			NULL,
+			outputPath.data,
+			&startupInfo,
+			&processInformation
+			))
+	{
+		Print("Failed to call ml64.exe (%d)\n", GetLastError());
+		CRASH;
+	}
+	WaitForSingleObject(processInformation.hProcess, INFINITE);
+
+	TimerSplit("Calling ML64"_s);
+
+	DWORD exitCode;
+	GetExitCodeProcess(processInformation.hProcess, &exitCode);
+	if (exitCode != 0)
+	{
+		Print("ml64.exe returned an error (%d)\n", exitCode);
+		CRASH;
+	}
+	CloseHandle(processInformation.hProcess);
+	CloseHandle(processInformation.hThread);
+
+	commandLine = TPrintF(
+			"%S\\bin\\Hostx64\\x64\\link.exe " // msvcPath
+			"out.obj "
+			"/nologo "
+			"%S " // subsystemArgument
+			"kernel32.lib "
+			"user32.lib "
+			"gdi32.lib "
+			"winmm.lib "
+			"%S " // libsToLinkStr
+			"/nologo "
+			"/debug:full "
+			"/entry:__WindowsMain "
+			"/opt:ref "
+			"/incremental:no "
+			"/dynamicbase:no "
+			"/libpath:\"%S\\lib\\x64\" " // msvcPath
+			"/libpath:\"%S\\lib\\%S\\ucrt\\x64\" " // windowsSDKPath, windowsSDKVersion
+			"/libpath:\"%S\\lib\\%S\\um\\x64\" " // windowsSDKPath, windowsSDKVersion
+			"/out:out.exe%c",
+			msvcPath,
+			subsystemArgument,
+			libsToLinkStr,
+			msvcPath,
+			windowsSDKPath, windowsSDKVersion,
+			windowsSDKPath, windowsSDKVersion,
+			0
+			);
+
+	startupInfo = {};
+	processInformation = {};
+	startupInfo.cb = sizeof(STARTUPINFO);
+	if (!CreateProcessA(
+			NULL,
+			(LPSTR)commandLine.data,
+			NULL,
+			NULL,
+			false,
+			0,
+			NULL,
+			outputPath.data,
+			&startupInfo,
+			&processInformation
+			))
+	{
+		Print("Failed to call link.exe (%d)\n", GetLastError());
+		CRASH;
+	}
+	WaitForSingleObject(processInformation.hProcess, INFINITE);
+
+	TimerSplit("Calling LINK"_s);
+
+	CloseHandle(processInformation.hProcess);
+	CloseHandle(processInformation.hThread);
+}

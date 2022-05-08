@@ -410,15 +410,6 @@ s64 PrintOut(Context *context, const char *format, ...)
 
 	s64 size = stbsp_vsprintf(buffer, format, args);
 
-#if PRINT_ASM_OUTPUT
-	if (!context->config.silent)
-	{
-		OutputDebugStringA(buffer);
-		DWORD bytesWritten;
-		WriteFile(g_hStdout, buffer, (DWORD)size, &bytesWritten, nullptr); // Stdout
-	}
-#endif
-
 	s64 bytesToWrite = size;
 	const char *in = buffer;
 	while (bytesToWrite > 0)
@@ -474,6 +465,7 @@ String X64IRValueToStr(Context *context, IRValue value)
 
 	u64 size = 0;
 	TypeInfo typeInfo = context->typeTable[value.typeTableIdx];
+	bool isXMM;
 	size = typeInfo.size;
 	Value v = context->values[value.valueIdx];
 
@@ -493,7 +485,7 @@ String X64IRValueToStr(Context *context, IRValue value)
 		goto decoratePtr;
 	}
 
-	bool isXMM = typeInfo.size > 8 || typeInfo.typeCategory == TYPECATEGORY_FLOATING;
+	isXMM = typeInfo.size > 8 || typeInfo.typeCategory == TYPECATEGORY_FLOATING;
 
 	if (v.flags & VALUEFLAGS_IS_ALLOCATED)
 	{
@@ -703,6 +695,7 @@ String X64IRValueToStr(Context *context, IRValue value)
 
 decoratePtr:
 	{
+#if _MSC_VER
 		switch (size)
 		{
 		case 1:
@@ -723,6 +716,29 @@ decoratePtr:
 		default:
 			ASSERT(!"Invalid register size");
 		}
+#else
+		//result = TPrintF("[%S]", result);
+		switch (size)
+		{
+		case 1:
+			result = TPrintF("BYTE [%S]", result);
+			break;
+		case 2:
+			result = TPrintF("WORD [%S]", result);
+			break;
+		case 4:
+			result = TPrintF("DWORD [%S]", result);
+			break;
+		case 8:
+			result = TPrintF("QWORD [%S]", result);
+			break;
+		case 16:
+			result = TPrintF("OWORD [%S]", result);
+			break;
+		default:
+			ASSERT(!"Invalid register size");
+		}
+#endif
 	}
 	return result;
 }
@@ -1055,7 +1071,7 @@ void X64ConvertInstruction(Context *context, IRInstruction inst, X64Procedure *x
 			break;
 		case X64FLOATINGTYPE_F64:
 			result.type = X64_XORPD;
-			result.src = IRValueImmediateFloat(context, -0.0);
+			result.src = IRValueImmediateFloat(context, -0.0, TYPETABLEIDX_128);
 			break;
 		}
 		result.dst = inst.unaryOperation.out;
@@ -1803,8 +1819,10 @@ String X64InstructionToStr(Context *context, X64Instruction inst)
 	case X64_CALL:
 		return TPrintF("call %S", GetProcedure(context, inst.procedureIdx)->name);
 	case X64_CALL_Indirect:
+	{
 		String proc = X64IRValueToStr(context, inst.procedureIRValue);
 		return TPrintF("call %S", proc);
+	}
 	case X64_JMP:
 	case X64_JE:
 	case X64_JNE:
@@ -1871,7 +1889,11 @@ void X64PrintInstructions(Context *context, Array<X64Procedure, PhaseAllocator> 
 	{
 		X64Procedure x64Proc = x64Procedures[procedureIdx];
 
+#if _MSC_VER
 		PrintOut(context, "\n%S PROC\n", x64Proc.name);
+#else
+		PrintOut(context, "\n%S:\n", x64Proc.name);
+#endif
 		PrintOut(context, "push rbp\n");
 		PrintOut(context, "mov rbp, rsp\n");
 		if (x64Proc.stackSize > 0)
@@ -1888,7 +1910,9 @@ void X64PrintInstructions(Context *context, Array<X64Procedure, PhaseAllocator> 
 
 		PrintOut(context, "leave\n");
 		PrintOut(context, "ret\n");
+#if _MSC_VER
 		PrintOut(context, "%S ENDP\n", x64Proc.name);
+#endif
 	}
 }
 
@@ -1947,11 +1971,10 @@ void X64PrintStaticData(Context *context, String name, IRValue value, s64 typeTa
 			PrintOut(context, "%S DD 0%.8xH\n", name, asU32);
 		} break;
 		case 8:
+		default:
 			PrintOut(context, "%S DQ 0%.16llxH\n", name,
 					value.immediate);
 			break;
-		default:
-			ASSERT(!"Invalid immediate size");
 		}
 		bytesSoFar += typeInfo.size;
 	} break;
@@ -2019,25 +2042,14 @@ void X64PrintStaticData(Context *context, String name, IRValue value, s64 typeTa
 
 void WriteOutOutputBuffer(Context *context, String filename)
 {
-	HANDLE outputFile = CreateFileA(
-			StringToCStr(filename, PhaseAllocator::Alloc),
-			GENERIC_WRITE,
-			0,
-			nullptr,
-			CREATE_ALWAYS,
-			FILE_ATTRIBUTE_NORMAL,
-			nullptr
-			);
+	FileHandle outputFile = SYSOpenFileWrite(filename);
 	for (int i = 0; i < context->outputBuffer.buckets.size; ++i)
 	{
-		DWORD bytesWritten;
-		WriteFile(outputFile,
+		SYSWriteFile(outputFile,
 				context->outputBuffer.buckets[i].data,
-				(DWORD)context->outputBuffer.buckets[i].size,
-				&bytesWritten,
-				nullptr);
+				context->outputBuffer.buckets[i].size);
 	}
-	CloseHandle(outputFile);
+	SYSCloseFile(outputFile);
 }
 
 void BackendMain(Context *context)
@@ -2825,9 +2837,13 @@ unalignedMovups:;
 
 	BucketArrayInit(&context->outputBuffer);
 
-	PrintOut(context, "include ..\\core\\memory.asm\n\n");
+	PrintOut(context, "%cinclude \"core/memory.asm\"\n\n", '%');
 
+#if _MSC_VER
 	PrintOut(context, "_DATA SEGMENT\n");
+#else
+	PrintOut(context, "section .data\n");
+#endif
 
 	// String literals
 	s64 strCount = (s64)BucketArrayCount(&context->stringLiterals);
@@ -2907,13 +2923,19 @@ unalignedMovups:;
 		X64PrintStaticData(context, name, staticVar.initialValue, value.typeTableIdx, 16);
 	}
 
+#if _MSC_VER
 	PrintOut(context, "_DATA ENDS\n");
+#endif
 
 	for (int procedureIdx = 1; procedureIdx < procedureCount; ++procedureIdx)
 	{
 		StaticDefinition *staticDef = FindStaticDefinitionByProcedure(context, procedureIdx);
 		if (staticDef)
+#if _MSC_VER
 			PrintOut(context, "PUBLIC %S\n", staticDef->name);
+#else
+			PrintOut(context, "GLOBAL %S\n", staticDef->name);
+#endif
 	}
 
 	for (int varIdx = 0; varIdx < context->irExternalVariables.size; ++varIdx)
@@ -2929,7 +2951,11 @@ unalignedMovups:;
 			case 8: type = "QWORD"_s; break;
 			default: type = "QWORD"_s;
 		}
+#if _MSC_VER
 		PrintOut(context, "EXTRN %S:%S\n", v.name, type);
+#else
+		PrintOut(context, "EXTERN %S:%S\n", v.name, type);
+#endif
 	}
 
 	u64 externalProcedureCount = BucketArrayCount(&context->externalProcedures);
@@ -2937,259 +2963,38 @@ unalignedMovups:;
 	{
 		StaticDefinition *staticDef = FindStaticDefinitionByProcedure(context, -procedureIdx);
 		if (staticDef)
+#if _MSC_VER
 			PrintOut(context, "EXTRN %S:proc\n", staticDef->name);
+#else
+			PrintOut(context, "EXTERN %S:proc\n", staticDef->name);
+#endif
 	}
 
+#if _MSC_VER
 	PrintOut(context, "_TEXT SEGMENT\n");
+#else
+	PrintOut(context, "section .text\n");
+#endif
 
 	// Code
 	X64PrintInstructions(context, x64Procedures);
 
+#if _MSC_VER
 	PrintOut(context, "_TEXT ENDS\n");
 	PrintOut(context, "END\n");
+#endif
 
 	String outputPath;
 	String assemblyOutputFilename;
 	{
-		char *buffer = (char *)PhaseAllocator::Alloc(MAX_PATH);
-		outputPath.size = GetFullPathNameA("output", MAX_PATH, buffer, nullptr);
-		outputPath.data = buffer;
+		outputPath = SYSGetFullPathName("output"_s);
 
-		CreateDirectoryA(outputPath.data, nullptr);
+		SYSCreateDirectory(outputPath);
 
-		buffer = (char *)PhaseAllocator::Alloc(MAX_PATH);
-		assemblyOutputFilename.size = GetFullPathNameA("output\\out.asm", MAX_PATH, buffer, nullptr);
-		assemblyOutputFilename.data = buffer;
+		//assemblyOutputFilename = SYSGetFullPathName("output/out.asm"_s);
 	}
 
-	WriteOutOutputBuffer(context, assemblyOutputFilename);
+	WriteOutOutputBuffer(context, "output/out.asm"_s);
 
 	TimerSplit("X64 output file write"_s);
-
-	// Run MASM
-	PWSTR programFilesPathWstr;
-	SHGetKnownFolderPath(FOLDERID_ProgramFilesX86, 0, NULL, &programFilesPathWstr);
-	String programFilesPath = StupidStrToString(programFilesPathWstr, PhaseAllocator::Alloc);
-
-	String visualStudioPath = TPrintF("%S\\Microsoft Visual Studio", programFilesPath);
-	{
-		// Get anything starting with 20...
-		String wildcard = TPrintF("%S\\20*", visualStudioPath);
-		WIN32_FIND_DATAA foundData = {};
-		HANDLE findHandle = FindFirstFileA(StringToCStr(wildcard, PhaseAllocator::Alloc), &foundData);
-		const char *newestVersionStr = nullptr;
-		int newestVersion = 0;
-		if (findHandle != INVALID_HANDLE_VALUE) while (true)
-		{
-			int foundVersion = atoi(foundData.cFileName);
-			if (foundVersion > newestVersion)
-			{
-				newestVersion = foundVersion;
-				newestVersionStr = foundData.cFileName;
-			}
-			if (!FindNextFileA(findHandle, &foundData)) break;
-		}
-		visualStudioPath = TPrintF("%S\\%s", visualStudioPath, newestVersionStr);
-	}
-
-	String msvcPath = {};
-	{
-		String buildToolsPath = TPrintF("%S\\BuildTools", visualStudioPath);
-		String enterprisePath = TPrintF("%S\\Enterprise", visualStudioPath);
-		String professionalPath = TPrintF("%S\\Professional", visualStudioPath);
-		String communityPath = TPrintF("%S\\Community", visualStudioPath);
-		if (GetFileAttributes(StringToCStr(buildToolsPath, PhaseAllocator::Alloc)) != INVALID_FILE_ATTRIBUTES)
-			msvcPath = buildToolsPath;
-		else if (GetFileAttributes(StringToCStr(enterprisePath, PhaseAllocator::Alloc)) != INVALID_FILE_ATTRIBUTES)
-			msvcPath = enterprisePath;
-		else if (GetFileAttributes(StringToCStr(professionalPath, PhaseAllocator::Alloc)) != INVALID_FILE_ATTRIBUTES)
-			msvcPath = professionalPath;
-		else if (GetFileAttributes(StringToCStr(communityPath, PhaseAllocator::Alloc)) != INVALID_FILE_ATTRIBUTES)
-			msvcPath = communityPath;
-		msvcPath = TPrintF("%S\\VC\\Tools\\MSVC", msvcPath);
-
-		String wildcard = StringConcat(msvcPath, "\\*"_s);
-		WIN32_FIND_DATAA foundData = {};
-		HANDLE findHandle = FindFirstFileA(StringToCStr(wildcard, PhaseAllocator::Alloc), &foundData);
-		if (findHandle != INVALID_HANDLE_VALUE)
-		{
-			while (foundData.cFileName[0] == '.')
-				FindNextFileA(findHandle, &foundData);
-			msvcPath = TPrintF("%S\\%s", msvcPath, foundData.cFileName);
-		}
-	}
-
-	String windowsSDKPath = TPrintF("%S\\Windows Kits\\10", programFilesPath);
-	String windowsSDKVersion = {};
-	{
-		String wildcard = TPrintF("%S\\include\\10.*", windowsSDKPath);
-		WIN32_FIND_DATAA foundData = {};
-		HANDLE findHandle = FindFirstFileA(StringToCStr(wildcard, PhaseAllocator::Alloc), &foundData);
-		s64 highestTuple[4] = {};
-		const char *latestVersionName = nullptr;
-		if (findHandle != INVALID_HANDLE_VALUE) while (true)
-		{
-			s64 tuple[4];
-			int numDigits = 0;
-			int foundNumbers = 0;
-			// Parse tuple
-			for (const char *scan = foundData.cFileName; ; ++scan)
-			{
-				if (*scan == '.' || *scan == 0)
-				{
-					tuple[foundNumbers++] = IntFromString({ numDigits, scan - numDigits });
-					numDigits = 0;
-				}
-				else
-					++numDigits;
-				if (!*scan) break;
-			}
-			// Replace if greater
-			for (int i = 0; i < 4; ++i)
-			{
-				if (tuple[i] < highestTuple[i])
-					goto nextTuple;
-				if (tuple[i] > highestTuple[i])
-					break;
-				// If same keep going
-			}
-			memcpy(highestTuple, tuple, sizeof(highestTuple));
-			latestVersionName = foundData.cFileName;
-nextTuple:
-			if (!FindNextFileA(findHandle, &foundData)) break;
-		}
-		windowsSDKVersion = CStrToString(latestVersionName);
-	}
-
-	bool useWindowsSubsystem = false;
-	StaticDefinition *subsystemStaticDef = FindStaticDefinitionByName(context,
-			"compiler_subsystem"_s);
-	if (subsystemStaticDef)
-	{
-		ASSERT(subsystemStaticDef->definitionType == STATICDEFINITIONTYPE_CONSTANT);
-		ASSERT(subsystemStaticDef->constant.type == CONSTANTTYPE_INTEGER);
-		useWindowsSubsystem = subsystemStaticDef->constant.valueAsInt == 1;
-	}
-
-	String subsystemArgument;
-	if (useWindowsSubsystem)
-		subsystemArgument = "/subsystem:WINDOWS "_s;
-	else
-		subsystemArgument = "/subsystem:CONSOLE "_s;
-
-	String libsToLinkStr = {};
-	for (int i = 0; i < context->libsToLink.size; ++i)
-		libsToLinkStr = TPrintF("%S %S", libsToLinkStr, context->libsToLink[i]);
-
-	String commandLine = TPrintF(
-			"%S\\bin\\Hostx64\\x64\\ml64.exe " // msvcPath
-			"out.asm "
-			"/nologo /c "
-			"/Zd "
-			"/Zi "
-			"/Fm "
-			"/I \"%S\\include\" " // msvcPath
-			"/I \"%S\\include\\%S\\ucrt\" " // windowsSDKPath, windowsSDKVersion
-			"/I \"%S\\include\\%S\\shared\" " // windowsSDKPath, windowsSDKVersion
-			"/I \"%S\\include\\%S\\um\" " // windowsSDKPath, windowsSDKVersion
-			"/I \"%S\\include\\%S\\winrt\" " // windowsSDKPath, windowsSDKVersion
-			"/I \"%S\\include\\%S\\cppwinrt\" " // windowsSDKPath, windowsSDKVersion
-			"%c",
-			msvcPath,
-			msvcPath,
-			windowsSDKPath, windowsSDKVersion,
-			windowsSDKPath, windowsSDKVersion,
-			windowsSDKPath, windowsSDKVersion,
-			windowsSDKPath, windowsSDKVersion,
-			windowsSDKPath, windowsSDKVersion,
-			0
-			);
-
-	STARTUPINFO startupInfo = {};
-	PROCESS_INFORMATION processInformation = {};
-	startupInfo.cb = sizeof(STARTUPINFO);
-	if (!CreateProcessA(
-			NULL,
-			(LPSTR)commandLine.data,
-			NULL,
-			NULL,
-			false,
-			0,
-			NULL,
-			outputPath.data,
-			&startupInfo,
-			&processInformation
-			))
-	{
-		Print("Failed to call ml64.exe (%d)\n", GetLastError());
-		CRASH;
-	}
-	WaitForSingleObject(processInformation.hProcess, INFINITE);
-
-	TimerSplit("Calling ML64"_s);
-
-	DWORD exitCode;
-	GetExitCodeProcess(processInformation.hProcess, &exitCode);
-	if (exitCode != 0)
-	{
-		Print("ml64.exe returned an error (%d)\n", exitCode);
-		CRASH;
-	}
-	CloseHandle(processInformation.hProcess);
-	CloseHandle(processInformation.hThread);
-
-	commandLine = TPrintF(
-			"%S\\bin\\Hostx64\\x64\\link.exe " // msvcPath
-			"out.obj "
-			"/nologo "
-			"%S " // subsystemArgument
-			"kernel32.lib "
-			"user32.lib "
-			"gdi32.lib "
-			"winmm.lib "
-			"%S " // libsToLinkStr
-			"/nologo "
-			"/debug:full "
-			"/entry:__WindowsMain "
-			"/opt:ref "
-			"/incremental:no "
-			"/dynamicbase:no "
-			"/libpath:\"%S\\lib\\x64\" " // msvcPath
-			"/libpath:\"%S\\lib\\%S\\ucrt\\x64\" " // windowsSDKPath, windowsSDKVersion
-			"/libpath:\"%S\\lib\\%S\\um\\x64\" " // windowsSDKPath, windowsSDKVersion
-			"/out:out.exe%c",
-			msvcPath,
-			subsystemArgument,
-			libsToLinkStr,
-			msvcPath,
-			windowsSDKPath, windowsSDKVersion,
-			windowsSDKPath, windowsSDKVersion,
-			0
-			);
-
-	startupInfo = {};
-	processInformation = {};
-	startupInfo.cb = sizeof(STARTUPINFO);
-	if (!CreateProcessA(
-			NULL,
-			(LPSTR)commandLine.data,
-			NULL,
-			NULL,
-			false,
-			0,
-			NULL,
-			outputPath.data,
-			&startupInfo,
-			&processInformation
-			))
-	{
-		Print("Failed to call link.exe (%d)\n", GetLastError());
-		CRASH;
-	}
-	WaitForSingleObject(processInformation.hProcess, INFINITE);
-
-	TimerSplit("Calling LINK"_s);
-
-	CloseHandle(processInformation.hProcess);
-	CloseHandle(processInformation.hThread);
 }

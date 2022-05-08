@@ -957,6 +957,7 @@ bool AreTypeInfosEqual(Context *context, TypeInfo a, TypeInfo b)
 		return a.arrayInfo.elementTypeTableIdx == b.arrayInfo.elementTypeTableIdx &&
 			a.arrayInfo.count == b.arrayInfo.count;
 	case TYPECATEGORY_PROCEDURE:
+	{
 		if (a.procedureInfo.parameters.size != b.procedureInfo.parameters.size)
 			return false;
 		if (a.procedureInfo.isVarargs != b.procedureInfo.isVarargs)
@@ -980,6 +981,7 @@ bool AreTypeInfosEqual(Context *context, TypeInfo a, TypeInfo b)
 				return false;
 		}
 		return true;
+	}
 	case TYPECATEGORY_INVALID:
 		return b.typeCategory == TYPECATEGORY_INVALID;
 	default:
@@ -1975,7 +1977,6 @@ ASTExpression InlineProcedureCopyTreeBranch(Context *context, const ASTExpressio
 				ASTExpression e = {};
 				e.typeTableIdx = varDecl.typeTableIdx;
 				e.nodeType = ASTNODETYPE_IDENTIFIER;
-				e.identifier.string;
 				e.identifier.type = NAMETYPE_VARIABLE;
 				e.identifier.tcValue = tcValue;
 				*varExp = e;
@@ -2071,7 +2072,6 @@ ASTExpression InlineProcedureCopyTreeBranch(Context *context, const ASTExpressio
 				ASTExpression e = {};
 				e.typeTableIdx = usingExp->variableDeclaration.typeTableIdx;
 				e.nodeType = ASTNODETYPE_IDENTIFIER;
-				e.identifier.string;
 				e.identifier.type = NAMETYPE_VARIABLE;
 				e.identifier.tcValue = { TCVALUETYPE_VALUE, usingExp->variableDeclaration.valueIdx };
 				*varExp = e;
@@ -2417,7 +2417,6 @@ TypeCheckExpressionResult TryTypeCheckExpression(Context *context, ASTExpression
 				ASTExpression e = {};
 				e.typeTableIdx = varDecl->typeTableIdx;
 				e.nodeType = ASTNODETYPE_IDENTIFIER;
-				e.identifier.string;
 				e.identifier.type = NAMETYPE_VARIABLE;
 				e.identifier.tcValue = tcValue;
 				*varExp = e;
@@ -2729,7 +2728,6 @@ TypeCheckExpressionResult TryTypeCheckExpression(Context *context, ASTExpression
 				ASTExpression e = {};
 				e.typeTableIdx = usingExp->variableDeclaration.typeTableIdx;
 				e.nodeType = ASTNODETYPE_IDENTIFIER;
-				e.identifier.string;
 				e.identifier.type = NAMETYPE_VARIABLE;
 				e.identifier.tcValue = { TCVALUETYPE_VALUE, usingExp->variableDeclaration.valueIdx };
 				*varExp = e;
