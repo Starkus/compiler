@@ -2884,7 +2884,7 @@ unalignedMovups:;
 	BucketArrayInit(&context->outputBuffer);
 
 #if _MSC_VER
-	String memoryUtilFullpath = SYSExpandPathCompilerRelative("core/memory_masm.asm"_s);
+	String memoryUtilFullpath = SYSExpandPathCompilerRelative("core\\memory_masm.asm"_s);
 	PrintOut(context, "include <%S>\n\n", memoryUtilFullpath);
 #else
 	String memoryUtilFullpath = SYSExpandPathCompilerRelative("core/memory_nasm.asm"_s);
@@ -3036,19 +3036,38 @@ unalignedMovups:;
 	PrintOut(context, "END\n");
 #endif
 
-	String outputPath;
-	String assemblyOutputFilename;
-	{
-		outputPath = SYSExpandPathWorkingDirectoryRelative("output"_s);
-
-		SYSCreateDirectory(outputPath);
-
-		//assemblyOutputFilename = SYSGetFullPathName("output/out.asm"_s);
-	}
+	String outputPath = SYSExpandPathWorkingDirectoryRelative("output"_s);
+	SYSCreateDirectory(outputPath);
 
 	WriteOutOutputBuffer(context, "output/out.asm"_s);
 
 	TimerSplit("X64 output file write"_s);
 
-	SYSRunAssemblerAndLinker();
+	String extraLinkerArguments = {};
+	for (int i = 0; i < context->libsToLink.size; ++i)
+		extraLinkerArguments = TPrintF("%S %S", extraLinkerArguments, context->libsToLink[i]);
+
+#if _MSC_VER
+	bool useWindowsSubsystem = false;
+	StaticDefinition *subsystemStaticDef = FindStaticDefinitionByName(context,
+			"compiler_subsystem"_s);
+	if (subsystemStaticDef)
+	{
+		ASSERT(subsystemStaticDef->definitionType == STATICDEFINITIONTYPE_CONSTANT);
+		ASSERT(subsystemStaticDef->constant.type == CONSTANTTYPE_INTEGER);
+		useWindowsSubsystem = subsystemStaticDef->constant.valueAsInt == 1;
+	}
+
+	String subsystemArgument;
+	if (useWindowsSubsystem)
+		subsystemArgument = "/subsystem:WINDOWS "_s;
+	else
+		subsystemArgument = "/subsystem:CONSOLE "_s;
+
+	extraLinkerArguments = TPrintF("%S %S", extraLinkerArguments, subsystemArgument);
+#endif
+
+	SYSRunAssemblerAndLinker(outputPath, ""_s, extraLinkerArguments);
+
+	TimerSplit("Calling assembler and linker"_s);
 }

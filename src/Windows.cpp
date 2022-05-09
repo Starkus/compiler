@@ -4,8 +4,22 @@
 #include <Shlobj.h>
 
 typedef HANDLE FileHandle;
+#define SYS_INVALID_FILE_HANDLE INVALID_HANDLE_VALUE
 #define SYS_MAX_PATH MAX_PATH
 #define BREAK __debugbreak()
+#define ASSUME(expr) __assume(expr)
+
+String StupidStrToString(const wchar_t *wstr, void *(*allocFunc)(u64))
+{
+	s64 size = 0;
+	for (const wchar_t *scan = wstr; *scan; ++scan)
+		++size;
+	char *buffer = (char *)allocFunc(size);
+	char *dstScan = buffer;
+	for (const wchar_t *scan = wstr; *scan; ++scan)
+		*dstScan++ = (char)*scan;
+	return { size, buffer };
+}
 
 inline bool SYSFileExists(const char *filename)
 {
@@ -31,7 +45,7 @@ String SYSExpandPathCompilerRelative(String relativePath)
 			strncpy(scan + 1, relativePath.data, relativePath.size);
 			scan[relativePath.size + 1] = 0;
 
-			result.size = written + relativePath.size;
+			result.size = scan + relativePath.size + 1 - absolutePath;
 			return result;
 		}
 	}
@@ -73,7 +87,7 @@ FileHandle SYSOpenFileRead(String filename)
 	if (error != ERROR_SUCCESS || file == INVALID_HANDLE_VALUE)
 	{
 		// This exe's full name, up to second-to-last slash, plus filename.
-		String absolutePath = SYSExpandPathCompilerRelative(filename);
+		absolutePath = SYSExpandPathCompilerRelative(filename);
 
 		file = CreateFileA(
 				absolutePath.data, // We know this string is null terminated.
@@ -96,7 +110,7 @@ FileHandle SYSOpenFileRead(String filename)
 	return file;
 }
 
-FileHandle SYSOpenFileWrite(const char *filename)
+FileHandle SYSOpenFileWrite(String filename)
 {
 	String absolutePath = SYSExpandPathWorkingDirectoryRelative(filename);
 
@@ -112,6 +126,15 @@ FileHandle SYSOpenFileWrite(const char *filename)
 	return result;
 }
 
+s64 SYSWriteFile(FileHandle file, void *buffer, s64 size)
+{
+	DWORD written;
+	ASSERT((DWORD)size == size);
+	WriteFile(file, buffer, (DWORD)size, &written, nullptr);
+	s64 writtenS64 = written;
+	return writtenS64;
+}
+
 u64 SYSGetFileSize(FileHandle file)
 {
 	DWORD fileSizeDword = GetFileSize(file, nullptr);
@@ -124,7 +147,7 @@ void SYSReadEntireFile(FileHandle file, u8 **fileBuffer, u64 *fileSize, void *(*
 		*fileBuffer = nullptr;
 	else
 	{
-		*fileSize = SYSGetFileSize(file, nullptr);
+		*fileSize = SYSGetFileSize(file);
 		ASSERT(*fileSize);
 		DWORD error = GetLastError();
 		ASSERT(error == ERROR_SUCCESS);
@@ -134,7 +157,7 @@ void SYSReadEntireFile(FileHandle file, u8 **fileBuffer, u64 *fileSize, void *(*
 		bool success = ReadFile(
 				file,
 				*fileBuffer,
-				fileSizeDword,
+				(DWORD)*fileSize,
 				&bytesRead,
 				nullptr
 				);
@@ -154,6 +177,11 @@ bool SYSAreSameFile(FileHandle file1, FileHandle file2) {
 			   info1.dwVolumeSerialNumber == info2.dwVolumeSerialNumber;
 	}
 	return false;
+}
+
+void SYSCloseFile(FileHandle file)
+{
+	CloseHandle(file);
 }
 
 inline u64 SYSPerformanceCounter()
@@ -196,7 +224,8 @@ void SYSCreateDirectory(String pathname)
 	CreateDirectoryA(pathnameCStr, nullptr);
 }
 
-void SYSRunAssemblerAndLinker()
+void SYSRunAssemblerAndLinker(String outputPath, String extraAssemblerArguments,
+		String extraLinkerArguments)
 {
 	// Run MASM
 	PWSTR programFilesPathWstr;
@@ -293,26 +322,6 @@ nextTuple:
 		windowsSDKVersion = CStrToString(latestVersionName);
 	}
 
-	bool useWindowsSubsystem = false;
-	StaticDefinition *subsystemStaticDef = FindStaticDefinitionByName(context,
-			"compiler_subsystem"_s);
-	if (subsystemStaticDef)
-	{
-		ASSERT(subsystemStaticDef->definitionType == STATICDEFINITIONTYPE_CONSTANT);
-		ASSERT(subsystemStaticDef->constant.type == CONSTANTTYPE_INTEGER);
-		useWindowsSubsystem = subsystemStaticDef->constant.valueAsInt == 1;
-	}
-
-	String subsystemArgument;
-	if (useWindowsSubsystem)
-		subsystemArgument = "/subsystem:WINDOWS "_s;
-	else
-		subsystemArgument = "/subsystem:CONSOLE "_s;
-
-	String libsToLinkStr = {};
-	for (int i = 0; i < context->libsToLink.size; ++i)
-		libsToLinkStr = TPrintF("%S %S", libsToLinkStr, context->libsToLink[i]);
-
 	String commandLine = TPrintF(
 			"%S\\bin\\Hostx64\\x64\\ml64.exe " // msvcPath
 			"out.asm "
@@ -320,8 +329,10 @@ nextTuple:
 			"/Zd "
 			"/Zi "
 			"/Fm "
+			"%S " // extraAssemblerArguments
 			"%c",
 			msvcPath,
+			extraAssemblerArguments,
 			0
 			);
 
@@ -346,8 +357,6 @@ nextTuple:
 	}
 	WaitForSingleObject(processInformation.hProcess, INFINITE);
 
-	TimerSplit("Calling ML64"_s);
-
 	DWORD exitCode;
 	GetExitCodeProcess(processInformation.hProcess, &exitCode);
 	if (exitCode != 0)
@@ -362,25 +371,23 @@ nextTuple:
 			"%S\\bin\\Hostx64\\x64\\link.exe " // msvcPath
 			"out.obj "
 			"/nologo "
-			"%S " // subsystemArgument
 			"kernel32.lib "
 			"user32.lib "
 			"gdi32.lib "
 			"winmm.lib "
-			"%S " // libsToLinkStr
 			"/nologo "
 			"/debug:full "
 			"/entry:__WindowsMain "
 			"/opt:ref "
 			"/incremental:no "
 			"/dynamicbase:no "
+			"%S " // extraLinkerArguments
 			"/libpath:\"%S\\lib\\x64\" " // msvcPath
 			"/libpath:\"%S\\lib\\%S\\ucrt\\x64\" " // windowsSDKPath, windowsSDKVersion
 			"/libpath:\"%S\\lib\\%S\\um\\x64\" " // windowsSDKPath, windowsSDKVersion
 			"/out:out.exe%c",
 			msvcPath,
-			subsystemArgument,
-			libsToLinkStr,
+			extraLinkerArguments,
 			msvcPath,
 			windowsSDKPath, windowsSDKVersion,
 			windowsSDKPath, windowsSDKVersion,
@@ -407,8 +414,6 @@ nextTuple:
 		CRASH;
 	}
 	WaitForSingleObject(processInformation.hProcess, INFINITE);
-
-	TimerSplit("Calling LINK"_s);
 
 	CloseHandle(processInformation.hProcess);
 	CloseHandle(processInformation.hThread);

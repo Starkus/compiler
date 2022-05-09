@@ -80,7 +80,7 @@ void SYSReadEntireFile(FileHandle file, u8 **fileBuffer, u64 *fileSize, void *(*
 		*fileSize = SYSGetFileSize(file);
 		ASSERT(*fileSize);
 		*fileBuffer = (u8 *)allocFunc(*fileSize);
-		u64 bytesRead = read( file, *fileBuffer, *fileSize);
+		u64 bytesRead = read(file, *fileBuffer, *fileSize);
 		ASSERT(bytesRead == *fileSize);
 	}
 }
@@ -126,7 +126,8 @@ void SYSCreateDirectory(String pathname)
 	mkdir(pathnameCStr, 0777);
 }
 
-void SYSRunAssemblerAndLinker()
+void SYSRunAssemblerAndLinker(String outputPath, String extraAssemblerArguments,
+		String extraLinkerArguments)
 {
 	// @Todo
 }

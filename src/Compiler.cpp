@@ -2,6 +2,8 @@
 #include "Strings.h"
 #include "MemoryAlloc.h"
 
+const String TPrintF(const char *format, ...);
+
 #if _MSC_VER
 #include "Windows.cpp"
 #else
@@ -35,7 +37,7 @@ s64 Print(const char *format, ...)
 #endif
 
 	// Stdout
-	s64 bytesWritten = SYSWriteFile(g_hStdout, buffer, strlen(buffer));
+	SYSWriteFile(g_hStdout, buffer, strlen(buffer));
 
 	// Log file
 	SYSWriteFile(logFileHandle, buffer, strlen(buffer));
