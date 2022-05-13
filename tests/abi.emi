@@ -22,9 +22,57 @@ manyArgs :: (a : s64, b : s64, c : s64, d : s64, e : s64, f : s64, g : s64, h : 
 	return errors;
 }
 
+floatArgs :: (a : f64, b : f64, c : f64, d : f64, e : f64, f : f64, g : f64, h : f64) -> s64
+{
+	PrintF("manyArgs(%, %, %, %, %, %, %, %)\n", a, b, c, d, e, f, g, h);
+	errors := 8;
+	if a == 1.5 errors -= 1;
+	if b == 2.5 errors -= 1;
+	if c == 3.5 errors -= 1;
+	if d == 4.5 errors -= 1;
+	if e == 5.5 errors -= 1;
+	if f == 6.5 errors -= 1;
+	if g == 7.5 errors -= 1;
+	if h == 8.5 errors -= 1;
+	a = 1.5;
+	b = 2.5;
+	c = 3.5;
+	d = 4.5;
+	e = 5.5;
+	f = 6.5;
+	g = 7.5;
+	h = 8.5;
+	return errors;
+}
+
+mixedArgs :: (a : s64, b : f64, c : s64, d : f64, e : s64, f : f64, g : s64, h : f64) -> s64
+{
+	PrintF("manyArgs(%, %, %, %, %, %, %, %)\n", a, b, c, d, e, f, g, h);
+	errors := 8;
+	if a == 1   errors -= 1;
+	if b == 2.5 errors -= 1;
+	if c == 3   errors -= 1;
+	if d == 4.5 errors -= 1;
+	if e == 5   errors -= 1;
+	if f == 6.5 errors -= 1;
+	if g == 7   errors -= 1;
+	if h == 8.5 errors -= 1;
+	a = 1;
+	b = 2.5;
+	c = 3;
+	d = 4.5;
+	e = 5;
+	f = 6.5;
+	g = 7;
+	h = 8.5;
+	return errors;
+}
+
 Main :: () -> s64
 {
 	errorCode := manyArgs(1, 2, 3, 4, 5, 6, 7, 8);
+	if !errorCode errorCode = floatArgs(1.5, 2.5, 3.5, 4.5, 5.5, 6.5, 7.5, 8.5);
+	if !errorCode errorCode = mixedArgs(1, 2.5, 3, 4.5, 5, 6.5, 7, 8.5);
 	if errorCode == 0
 		Print("Test ok\n");
 	return errorCode;

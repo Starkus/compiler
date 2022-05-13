@@ -231,8 +231,8 @@ s32 x64ScratchRegisters[] = {
 	R10_idx, R11_idx, R12_idx, R13_idx,
 	R14_idx, R15_idx };
 
-u32 x64ParameterValuesWrite[32];
-u32 x64ParameterValuesRead[32];
+u32 x64SpilledParametersWrite[32];
+u32 x64SpilledParametersRead[32];
 
 IRValue RAX;
 IRValue RCX;
@@ -539,7 +539,7 @@ String X64IRValueToStr(Context *context, IRValue value)
 				case R14_idx: result = "r14"_s; break;
 				case R15_idx: result = "r15"_s; break;
 				default:
-					ASSERT(!"Value assigned invalid register!");
+					ASSERTF(false, "Value \"%S\" not allocated to GP register!", v.name);
 			}
 
 			if (offset > 0)
@@ -579,7 +579,7 @@ String X64IRValueToStr(Context *context, IRValue value)
 				case R14_idx: result = "r14"_s; break;
 				case R15_idx: result = "r15"_s; break;
 				default:
-					ASSERT(!"Value assigned invalid register!");
+					ASSERTF(false, "Value \"%S\" not allocated to GP register!", v.name);
 				}
 				break;
 			case 4:
@@ -602,7 +602,7 @@ String X64IRValueToStr(Context *context, IRValue value)
 				case R14_idx: result = "r14d"_s; break;
 				case R15_idx: result = "r15d"_s; break;
 				default:
-					ASSERT(!"Value assigned invalid register!");
+					ASSERTF(false, "Value \"%S\" not allocated to GP register!", v.name);
 				}
 				break;
 			case 2:
@@ -625,7 +625,7 @@ String X64IRValueToStr(Context *context, IRValue value)
 				case R14_idx: result = "r14w"_s; break;
 				case R15_idx: result = "r15w"_s; break;
 				default:
-					ASSERT(!"Value assigned invalid register!");
+					ASSERTF(false, "Value \"%S\" not allocated to GP register!", v.name);
 				}
 				break;
 			case 1:
@@ -648,7 +648,7 @@ String X64IRValueToStr(Context *context, IRValue value)
 				case R14_idx: result = "r14b"_s; break;
 				case R15_idx: result = "r15b"_s; break;
 				default:
-					ASSERT(!"Value assigned invalid register!");
+					ASSERTF(false, "Value \"%S\" not allocated to GP register!", v.name);
 				}
 				break;
 			default:
@@ -686,7 +686,7 @@ String X64IRValueToStr(Context *context, IRValue value)
 		case XMM14_idx: result = "xmm14"_s; break;
 		case XMM15_idx: result = "xmm15"_s; break;
 		default:
-			ASSERT(!"Value assigned invalid register!");
+			ASSERTF(false, "Value \"%S\" not allocated to XMM register!", v.name);
 		}
 	}
 	// Not allocated
@@ -1408,6 +1408,7 @@ void X64ConvertInstruction(Context *context, IRInstruction inst, X64Procedure *x
 			result.procedureIRValue = inst.procedureCall.procIRValue;
 		}
 
+#if _MSC_VER
 		// @Incomplete: implement calling conventions other than MS ABI
 		for (int i = 0; i < inst.procedureCall.parameters.size; ++i)
 		{
@@ -1431,11 +1432,56 @@ void X64ConvertInstruction(Context *context, IRInstruction inst, X64Procedure *x
 				dst = isXMM ? XMM3 : R9;
 				break;
 			default:
-				dst = IRValueValue(x64ParameterValuesWrite[i], TYPETABLEIDX_S64);
+				dst = IRValueValue(x64SpilledParametersWrite[i], TYPETABLEIDX_S64);
 			}
 			dst.typeTableIdx = paramType;
 			X64Mov(context, x64Proc, dst, param);
 		}
+#else
+		s32 numberOfGPR = 0;
+		s32 numberOfXMM = 0;
+		s32 numberOfSpilled = 0;
+		for (int i = 0; i < inst.procedureCall.parameters.size; ++i)
+		{
+			IRValue param = inst.procedureCall.parameters[i];
+			s64 paramType = param.typeTableIdx;
+			bool isXMM = context->typeTable[paramType].typeCategory == TYPECATEGORY_FLOATING;
+
+			IRValue dst;
+			if (!isXMM) switch(numberOfGPR++)
+			{
+			case 0:
+				dst = RDI;
+				break;
+			case 1:
+				dst = RSI;
+				break;
+			case 2:
+				dst = RDX;
+				break;
+			case 3:
+				dst = RCX;
+				break;
+			case 4:
+				dst = R8;
+				break;
+			case 5:
+				dst = R9;
+				break;
+			default:
+				dst = IRValueValue(x64SpilledParametersWrite[numberOfSpilled++], TYPETABLEIDX_S64);
+			}
+			else
+			{
+				if (numberOfXMM < 16)
+					dst = IRValueValue(XMM0.value.valueIdx + numberOfXMM++, TYPETABLEIDX_F64);
+				else
+					dst = IRValueValue(x64SpilledParametersWrite[numberOfSpilled++], TYPETABLEIDX_S64);
+			}
+			dst.typeTableIdx = paramType;
+			X64Mov(context, x64Proc, dst, param);
+		}
+#endif
 
 		*BucketArrayAdd(&x64Proc->instructions) = result;
 
@@ -2359,32 +2405,23 @@ void BackendMain(Context *context)
 	x64Registers[30] = XMM14;
 	x64Registers[31] = XMM15;
 
-	x64ParameterValuesRead[0] = RCX.value.valueIdx;
-	x64ParameterValuesRead[1] = RDX.value.valueIdx;
-	x64ParameterValuesRead[2] = R8.value.valueIdx;
-	x64ParameterValuesRead[3] = R9.value.valueIdx;
-	for (int paramIdx = 4; paramIdx < 32; ++paramIdx)
+	for (int paramIdx = 0; paramIdx < 32; ++paramIdx)
 	{
 		u32 newValueIdx = NewValue(context, TPrintF("_param%d", paramIdx), TYPETABLEIDX_S64,
 				VALUEFLAGS_IS_ALLOCATED | VALUEFLAGS_IS_MEMORY | VALUEFLAGS_BASE_RELATIVE);
 		// Add 16, 8 for return address, and 8 because we push RBP
-		// (remember by now we are at parameter index 4+).
 		context->values[newValueIdx].stackOffset = 16 + paramIdx * 8;
-		x64ParameterValuesRead[paramIdx] = newValueIdx;
+		x64SpilledParametersRead[paramIdx] = newValueIdx;
 	}
 
-	x64ParameterValuesWrite[0] = RCX.value.valueIdx;
-	x64ParameterValuesWrite[1] = RDX.value.valueIdx;
-	x64ParameterValuesWrite[2] = R8.value.valueIdx;
-	x64ParameterValuesWrite[3] = R9.value.valueIdx;
-	for (int paramIdx = 4; paramIdx < 32; ++paramIdx)
+	for (int paramIdx = 0; paramIdx < 32; ++paramIdx)
 	{
 		u32 newValueIdx = NewValue(context, TPrintF("_param%d", paramIdx), TYPETABLEIDX_S64,
 				VALUEFLAGS_IS_ALLOCATED | VALUEFLAGS_IS_MEMORY);
 		// Add 16, 8 for return address, and 8 because we push RBP
 		// (remember by now we are at parameter index 4+).
 		context->values[newValueIdx].stackOffset = paramIdx * 8;
-		x64ParameterValuesWrite[paramIdx] = newValueIdx;
+		x64SpilledParametersWrite[paramIdx] = newValueIdx;
 	}
 
 	Array<X64Procedure, PhaseAllocator> x64Procedures;
@@ -2408,10 +2445,12 @@ void BackendMain(Context *context)
 
 		BucketArrayInit(&x64Proc->instructions);
 
-		// Allocate parameters
 		bool returnByCopy = IRShouldPassByCopy(context, procTypeInfo.returnTypeTableIdx);
-		int paramIdx = 0;
 		int paramCount = (int)proc->parameterValues.size;
+
+		// Allocate parameters
+#if _MSC_VER
+		int paramIdx = 0;
 		if (procTypeInfo.returnTypeTableIdx != TYPETABLEIDX_VOID && returnByCopy)
 		{
 			++paramIdx;
@@ -2442,7 +2481,7 @@ void BackendMain(Context *context)
 				src = floating ? XMM3 : R9;
 				break;
 			default:
-				src = IRValueValue(x64ParameterValuesRead[paramIdx], TYPETABLEIDX_S64);
+				src = IRValueValue(x64SpilledParametersRead[paramIdx], TYPETABLEIDX_S64);
 			}
 			if (floating)
 				src.typeTableIdx = paramTypeIdx;
@@ -2452,6 +2491,60 @@ void BackendMain(Context *context)
 
 			X64Mov(context, x64Proc, IRValueValue(paramValueIdx, paramTypeIdx), src);
 		}
+#else
+		s32 numberOfGPR = 0;
+		s32 numberOfXMM = 0;
+		s32 numberOfSpilled = 0;
+		for (int i = 0; i < paramCount; ++i)
+		{
+			u32 paramValueIdx = proc->parameterValues[i];
+			Value *v = &context->values[paramValueIdx];
+			s64 paramTypeIdx = v->typeTableIdx;
+			if (IRShouldPassByCopy(context, paramTypeIdx))
+				paramTypeIdx = GetTypeInfoPointerOf(context, paramTypeIdx);
+			bool isXMM = context->typeTable[paramTypeIdx].typeCategory == TYPECATEGORY_FLOATING;
+
+			IRValue src;
+			if (!isXMM) switch(numberOfGPR++)
+			{
+			case 0:
+				src = RDI;
+				break;
+			case 1:
+				src = RSI;
+				break;
+			case 2:
+				src = RDX;
+				break;
+			case 3:
+				src = RCX;
+				break;
+			case 4:
+				src = R8;
+				break;
+			case 5:
+				src = R9;
+				break;
+			default:
+				src = IRValueValue(x64SpilledParametersRead[numberOfSpilled++], TYPETABLEIDX_S64);
+			}
+			else
+			{
+				if (numberOfXMM < 16)
+					src = IRValueValue(XMM0.value.valueIdx + numberOfXMM++, TYPETABLEIDX_F64);
+				else
+					src = IRValueValue(x64SpilledParametersRead[numberOfSpilled++], TYPETABLEIDX_S64);
+			}
+
+			if (isXMM)
+				src.typeTableIdx = paramTypeIdx;
+
+			v->flags |= VALUEFLAGS_TRY_IMMITATE;
+			v->tryImmitateValueIdx = src.value.valueIdx;
+
+			X64Mov(context, x64Proc, IRValueValue(paramValueIdx, paramTypeIdx), src);
+		}
+#endif
 
 		u64 instructionCount = BucketArrayCount(&proc->instructions);
 		for (int instructionIdx = 0; instructionIdx < instructionCount; ++instructionIdx)
