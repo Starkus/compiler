@@ -11,6 +11,6 @@ Print :: (string: String)
 ExitProcess :: #external (uExitCode : u32);
 __WindowsMain :: ()
 {
-	errorCode := Main();
+	errorCode : s64 = Main();
 	ExitProcess(cast(u32)errorCode);
 }

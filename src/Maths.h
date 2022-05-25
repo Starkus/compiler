@@ -61,7 +61,7 @@ inline u8 Nlz64(u64 x)
 		return 63 - (u8)i;
 	return 64;
 #else
-	return __builtin_clz(x);
+	return __builtin_clzll(x);
 #endif
 }
 
@@ -72,7 +72,7 @@ inline u8 Ntz64(u64 n)
 	_BitScanForward64(&i, n);
 	return (u8)i;
 #else
-	return __builtin_ctz(n);
+	return __builtin_ctzll(n);
 #endif
 }
 

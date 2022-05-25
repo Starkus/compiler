@@ -24,7 +24,7 @@ manyArgs :: (a : s64, b : s64, c : s64, d : s64, e : s64, f : s64, g : s64, h : 
 
 floatArgs :: (a : f64, b : f64, c : f64, d : f64, e : f64, f : f64, g : f64, h : f64) -> s64
 {
-	PrintF("manyArgs(%, %, %, %, %, %, %, %)\n", a, b, c, d, e, f, g, h);
+	PrintF("floatArgs(%, %, %, %, %, %, %, %)\n", a, b, c, d, e, f, g, h);
 	errors := 8;
 	if a == 1.5 errors -= 1;
 	if b == 2.5 errors -= 1;
@@ -47,7 +47,7 @@ floatArgs :: (a : f64, b : f64, c : f64, d : f64, e : f64, f : f64, g : f64, h :
 
 mixedArgs :: (a : s64, b : f64, c : s64, d : f64, e : s64, f : f64, g : s64, h : f64) -> s64
 {
-	PrintF("manyArgs(%, %, %, %, %, %, %, %)\n", a, b, c, d, e, f, g, h);
+	PrintF("mixedArgs(%, %, %, %, %, %, %, %)\n", a, b, c, d, e, f, g, h);
 	errors := 8;
 	if a == 1   errors -= 1;
 	if b == 2.5 errors -= 1;
@@ -68,11 +68,51 @@ mixedArgs :: (a : s64, b : f64, c : s64, d : f64, e : s64, f : f64, g : s64, h :
 	return errors;
 }
 
+variadicArgs :: (..args) -> s64
+{
+	PrintF("variadicArgs(%, %, %, %, %, %, %, %)\n", args);
+	errors := 8;
+	if @cast(^s64)args[0].data == 1   errors -= 1;
+	if @cast(^f64)args[1].data == 2.5 errors -= 1;
+	if @cast(^s64)args[2].data == 3   errors -= 1;
+	if @cast(^f64)args[3].data == 4.5 errors -= 1;
+	if @cast(^s64)args[4].data == 5   errors -= 1;
+	if @cast(^f64)args[5].data == 6.5 errors -= 1;
+	if @cast(^s64)args[6].data == 7   errors -= 1;
+	if @cast(^f64)args[7].data == 8.5 errors -= 1;
+	@cast(^s64)args[0].data = 1;
+	@cast(^f64)args[1].data = 2.5;
+	@cast(^s64)args[2].data = 3;
+	@cast(^f64)args[3].data = 4.5;
+	@cast(^s64)args[4].data = 5;
+	@cast(^f64)args[5].data = 6.5;
+	@cast(^s64)args[6].data = 7;
+	@cast(^f64)args[7].data = 8.5;
+	return errors;
+}
+
+BigStruct :: struct
+{
+	a : u64;
+	b : u64;
+	c : u64;
+};
+
+bigStruct :: (a : BigStruct) -> s64
+{
+	PrintF("bigStruct(%)\n", a);
+	a.a = a.b;
+	a.b = a.c;
+	return 0;
+}
+
 Main :: () -> s64
 {
 	errorCode := manyArgs(1, 2, 3, 4, 5, 6, 7, 8);
 	if !errorCode errorCode = floatArgs(1.5, 2.5, 3.5, 4.5, 5.5, 6.5, 7.5, 8.5);
 	if !errorCode errorCode = mixedArgs(1, 2.5, 3, 4.5, 5, 6.5, 7, 8.5);
+	if !errorCode errorCode = variadicArgs(1, 2.5, 3, 4.5, 5, 6.5, 7, 8.5);
+	if !errorCode errorCode = bigStruct({ 1, 2, 3 });
 	if errorCode == 0
 		Print("Test ok\n");
 	return errorCode;

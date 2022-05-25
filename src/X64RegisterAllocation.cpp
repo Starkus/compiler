@@ -174,48 +174,9 @@ void DoLivenessAnalisisOnInstruction(Context *context, BasicBlock *basicBlock, X
 		for (int i = 0; i < liveValues->size; ++i)
 			inst->liveValues[i] = (*liveValues)[i];
 
-		Procedure *proc = GetProcedure(context, inst->procedureIdx);
-		ASSERT(context->typeTable[proc->typeTableIdx].typeCategory == TYPECATEGORY_PROCEDURE);
-		TypeInfoProcedure procTypeInfo = context->typeTable[proc->typeTableIdx].procedureInfo;
-
-		int totalParameters = procTypeInfo.parameters.size;
-		bool hasReturnValueParam = proc->returnValueIdx != U32_MAX &&
-			IRShouldPassByCopy(context, procTypeInfo.returnTypeTableIdx);
-		// Take into account return value pointer in RCX
-		if (hasReturnValueParam)
-			++totalParameters;
-		// Add varargs list parameter
-		if (procTypeInfo.isVarargs)
-			++totalParameters;
-		for (int paramIdx = 0, i = 0; paramIdx < totalParameters; ++paramIdx)
-		{
-			s64 paramTypeIdx;
-			if (hasReturnValueParam && paramIdx == 0)
-				paramTypeIdx = TYPETABLEIDX_S64;
-			else if (procTypeInfo.isVarargs && paramIdx == totalParameters - 1)
-				paramTypeIdx = TYPETABLEIDX_S64;
-			else
-				paramTypeIdx = procTypeInfo.parameters[i++].typeTableIdx;
-			bool isXMM = context->typeTable[paramTypeIdx].typeCategory == TYPECATEGORY_FLOATING;
-			if (paramIdx >= 4)
-				AddValue(context, x64SpilledParametersWrite[paramIdx], basicBlock->procedure, liveValues);
-			else if (!isXMM) switch (paramIdx)
-			{
-				case 0: AddValue(context, RCX.value.valueIdx, basicBlock->procedure, liveValues); break;
-				case 1: AddValue(context, RDX.value.valueIdx, basicBlock->procedure, liveValues); break;
-				case 2: AddValue(context,  R8.value.valueIdx, basicBlock->procedure, liveValues); break;
-				case 3: AddValue(context,  R9.value.valueIdx, basicBlock->procedure, liveValues); break;
-				default: ASSERT(false);
-			}
-			else switch (paramIdx)
-			{
-				case 0: AddValue(context, XMM0.value.valueIdx, basicBlock->procedure, liveValues); break;
-				case 1: AddValue(context, XMM1.value.valueIdx, basicBlock->procedure, liveValues); break;
-				case 2: AddValue(context, XMM2.value.valueIdx, basicBlock->procedure, liveValues); break;
-				case 3: AddValue(context, XMM3.value.valueIdx, basicBlock->procedure, liveValues); break;
-				default: ASSERT(false);
-			}
-		}
+		int totalParameters = inst->parameterValues.size;
+		for (int paramIdx = 0; paramIdx < totalParameters; ++paramIdx)
+			AddValue(context, inst->parameterValues[paramIdx], basicBlock->procedure, liveValues);
 	} break;
 	case X64_CALL_Indirect:
 	{
@@ -226,44 +187,9 @@ void DoLivenessAnalisisOnInstruction(Context *context, BasicBlock *basicBlock, X
 
 		AddIfValue(context, inst->dst, basicBlock->procedure, liveValues);
 
-		s64 procTypeIdx = inst->dst.typeTableIdx;
-		ASSERT(context->typeTable[procTypeIdx].typeCategory == TYPECATEGORY_PROCEDURE);
-		TypeInfoProcedure procTypeInfo = context->typeTable[procTypeIdx].procedureInfo;
-
-		s64 returnTypeIdx = procTypeInfo.returnTypeTableIdx;
-
-		int paramIdx = 0;
-
-		int totalParameters = procTypeInfo.parameters.size;
-		// Take into account return value pointer in RCX
-		if (returnTypeIdx > 0 && IRShouldPassByCopy(context, returnTypeIdx))
-			++totalParameters;
-		// Add varargs list parameter
-		if (procTypeInfo.isVarargs)
-			++totalParameters;
-		for (int i = 0; i < procTypeInfo.parameters.size; ++i, ++paramIdx)
-		{
-			bool isXMM = context->typeTable[procTypeInfo.parameters[i].typeTableIdx].typeCategory ==
-				TYPECATEGORY_FLOATING;
-			if (paramIdx >= 4)
-				AddValue(context, x64SpilledParametersWrite[paramIdx], basicBlock->procedure, liveValues);
-			else if (!isXMM) switch (paramIdx)
-			{
-				case 0: AddValue(context, RCX.value.valueIdx, basicBlock->procedure, liveValues); break;
-				case 1: AddValue(context, RDX.value.valueIdx, basicBlock->procedure, liveValues); break;
-				case 2: AddValue(context,  R8.value.valueIdx, basicBlock->procedure, liveValues); break;
-				case 3: AddValue(context,  R9.value.valueIdx, basicBlock->procedure, liveValues); break;
-				default: ASSERT(false);
-			}
-			else switch (paramIdx)
-			{
-				case 0: AddValue(context, XMM0.value.valueIdx, basicBlock->procedure, liveValues); break;
-				case 1: AddValue(context, XMM1.value.valueIdx, basicBlock->procedure, liveValues); break;
-				case 2: AddValue(context, XMM2.value.valueIdx, basicBlock->procedure, liveValues); break;
-				case 3: AddValue(context, XMM3.value.valueIdx, basicBlock->procedure, liveValues); break;
-				default: ASSERT(false);
-			}
-		}
+		int totalParameters = inst->parameterValues.size;
+		for (int paramIdx = 0; paramIdx < totalParameters; ++paramIdx)
+			AddValue(context, inst->parameterValues[paramIdx], basicBlock->procedure, liveValues);
 	} break;
 	case X64_DIV:
 	case X64_IDIV:

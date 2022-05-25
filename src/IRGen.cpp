@@ -1101,19 +1101,22 @@ IRValue IRDoInlineProcedureCall(Context *context, ASTProcedureCall astProcCall)
 	{
 		static s64 anyPointerTypeIdx = GetTypeInfoPointerOf(context, TYPETABLEIDX_ANY_STRUCT);
 		static s64 arrayOfAnyTypeIdx = GetTypeInfoArrayOf(context, TYPETABLEIDX_ANY_STRUCT, 0);
-		static s64 pointerToVarargsTypeIdx = GetTypeInfoPointerOf(context, arrayOfAnyTypeIdx);
 
 		s64 varargsCount = astProcCall.arguments.size - procParamCount;
-		IRValue varargsParam = IRValueNewValue(context, "_inline_varargsarr"_s, pointerToVarargsTypeIdx, 0);
-		*DynamicArrayAdd(&tempProc->parameterValues) = varargsParam.value.valueIdx;
 
 		if (varargsCount == 1)
 		{
 			ASTExpression *varargsArrayExp = &astProcCall.arguments[procParamCount];
 			if (varargsArrayExp->typeTableIdx == arrayOfAnyTypeIdx)
 			{
+				IRAddComment(context, "Forwarding varargs array"_s);
+
 				IRValue varargsArray = IRGenFromExpression(context, varargsArrayExp);
-				IRDoAssignment(context, varargsParam, varargsArray);
+
+				ASSERT(varargsArray.valueType == IRVALUETYPE_VALUE ||
+					   varargsArray.valueType == IRVALUETYPE_VALUE_DEREFERENCE);
+				*DynamicArrayAdd(&tempProc->parameterValues) = varargsArray.value.valueIdx;
+
 				goto skipGeneratingVarargsArray;
 			}
 		}
@@ -1173,7 +1176,7 @@ IRValue IRDoInlineProcedureCall(Context *context, ASTProcedureCall astProcCall)
 		}
 
 		// Pass array as parameter!
-		IRDoAssignment(context, varargsParam, IRPointerToValue(context, arrayIRValue));
+		*DynamicArrayAdd(&tempProc->parameterValues) = arrayValueIdx;
 	}
 skipGeneratingVarargsArray:
 
@@ -1396,14 +1399,7 @@ IRValue IRGenFromExpression(Context *context, ASTExpression *expression)
 		for (int i = 0; i < procedure->parameterValues.size; ++i)
 		{
 			s32 paramValueIdx = procedure->parameterValues[i];
-
 			Value *paramValue = &context->values[paramValueIdx];
-			if (IRShouldPassByCopy(context, paramValue->typeTableIdx))
-			{
-				paramValue->flags |= VALUEFLAGS_PARAMETER_BY_COPY;
-				paramValue->typeTableIdx = GetTypeInfoPointerOf(context, paramValue->typeTableIdx);
-			}
-
 			IRPushValueIntoStack(context, paramValueIdx);
 		}
 
@@ -1736,37 +1732,10 @@ IRValue IRGenFromExpression(Context *context, ASTExpression *expression)
 			ASTExpression *arg = &astProcCall->arguments[argIdx];
 			s64 argTypeTableIdx = procTypeInfo.parameters[argIdx].typeTableIdx;
 
-			if (IRShouldPassByCopy(context, argTypeTableIdx))
-			{
-				// Struct/array by copy:
-				// Declare a variable in the stack, copy the struct/array to it, then pass the new
-				// variable as parameter to the procedure.
-				static u64 structByCopyDeclarationUniqueID = 0;
-
-				IRAddComment(context, "Copy argument to the stack to pass as pointer"_s);
-				// Allocate stack space for temp struct
-				String tempVarName = TPrintF("_valueByCopy%llu", structByCopyDeclarationUniqueID++);
-				u32 tempValueIdx = IRAddTempValue(context, tempVarName, argTypeTableIdx,
-						VALUEFLAGS_FORCE_MEMORY);
-				IRValue tempVarIRValue = IRValueValue(context, tempValueIdx);
-
-				IRValue argValue = IRGenFromExpression(context, arg);
-
-				// Copy
-				IRDoAssignment(context, tempVarIRValue, argValue);
-
-				IRValue pointerToVarValue = IRPointerToValue(context, tempVarIRValue);
-
-				// Add register as parameter
-				*ArrayAdd(&procCallInst.procedureCall.parameters) = pointerToVarValue;
-			}
-			else
-			{
-				IRValue param = IRGenFromExpression(context, arg);
-				if (param.typeTableIdx != argTypeTableIdx)
-					param = IRDoCast(context, param, argTypeTableIdx);
-				*ArrayAdd(&procCallInst.procedureCall.parameters) = param;
-			}
+			IRValue param = IRGenFromExpression(context, arg);
+			if (param.typeTableIdx != argTypeTableIdx)
+				param = IRDoCast(context, param, argTypeTableIdx);
+			*ArrayAdd(&procCallInst.procedureCall.parameters) = param;
 		}
 
 		// Default parameters
@@ -1799,9 +1768,14 @@ IRValue IRGenFromExpression(Context *context, ASTExpression *expression)
 				ASTExpression *varargsArrayExp = &astProcCall->arguments[procParamCount];
 				if (varargsArrayExp->typeTableIdx == arrayOfAnyTypeIdx)
 				{
+					IRAddComment(context, "Forwarding varargs array"_s);
+
 					IRValue varargsArray = IRGenFromExpression(context, varargsArrayExp);
-					*ArrayAdd(&procCallInst.procedureCall.parameters) =
-						IRPointerToValue(context, varargsArray);
+
+					ASSERT(varargsArray.valueType == IRVALUETYPE_VALUE ||
+						   varargsArray.valueType == IRVALUETYPE_VALUE_DEREFERENCE);
+					*ArrayAdd(&procCallInst.procedureCall.parameters) = varargsArray;
+
 					goto skipGeneratingVarargsArray;
 				}
 			}
@@ -1861,7 +1835,7 @@ IRValue IRGenFromExpression(Context *context, ASTExpression *expression)
 			}
 
 			// Pass array as parameter!
-			*ArrayAdd(&procCallInst.procedureCall.parameters) = IRPointerToValue(context, arrayIRValue);
+			*ArrayAdd(&procCallInst.procedureCall.parameters) = arrayIRValue;
 		}
 
 skipGeneratingVarargsArray:

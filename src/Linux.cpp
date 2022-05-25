@@ -2,9 +2,11 @@
 #include <time.h>
 #include <unistd.h>
 #include <sys/stat.h>
+#include <sys/wait.h>
 #include <fcntl.h>
 #include <immintrin.h>
 #include <linux/limits.h>
+#include <stdio.h>
 
 typedef int FileHandle;
 
@@ -129,5 +131,33 @@ void SYSCreateDirectory(String pathname)
 void SYSRunAssemblerAndLinker(String outputPath, String extraAssemblerArguments,
 		String extraLinkerArguments)
 {
-	// @Todo
+	return;
+	pid_t pid = fork();
+
+	if (pid == 0)
+	{
+		const char *nasmArgs[] =
+		{
+			"-f elf64",
+			SYSExpandPathWorkingDirectoryRelative("output/out.asm"_s).data,
+			0
+		};
+		if (execvp("nasm", (char **)nasmArgs) == -1)
+		{
+			Print("Error executing nasm!\n");
+			return;
+		}
+	}
+
+	s32 timeout = 10000;
+	int status;
+	while (!waitpid(pid, &status, WNOHANG))
+	{
+		if (--timeout < 0)
+		{
+			Print("Timeout waiting for nasm!\n");
+			return;
+		}
+		sleep(1);
+	}
 }

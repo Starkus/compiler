@@ -2,15 +2,29 @@ STDIN  :: 0;
 STDOUT :: 1;
 STDERR :: 2;
 
+O_ACCMODE  :: 0x00000003;
+O_RDONLY   :: 0x00000000;
+O_WRONLY   :: 0x00000001;
+O_RDWR     :: 0x00000002;
+O_CREAT    :: 0x00000100;
+O_EXCL     :: 0x00000200;
+O_NOCTTY   :: 0x00000400;
+O_TRUNC    :: 0x00001000;
+O_APPEND   :: 0x00002000;
+O_NONBLOCK :: 0x00004000;
+
+// Declare syscalls for typechecking
 write :: #external (handle: s64, buffer: ^void, bytesToWrite: u64) -> u64;
+open  :: #external (filename : ^u8, flags : s32, mode : s32) -> s32;
+exit  :: #external (errorCode : s64);
+
 Print :: (string: String)
 {
 	write(STDOUT, string.data, string.size);
 }
 
-exit :: #external (uExitCode : u32);
 __LinuxMain :: ()
 {
-	errorCode := Main();
-	exit(cast(u32)errorCode);
+	errorCode : s64 = Main();
+	exit(errorCode);
 }

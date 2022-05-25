@@ -143,8 +143,11 @@ PrintF :: (format : String, ..args)
 					buffer[str.size] = @it;
 					str.size += 1;
 				}
+
+				// Insert ", "
 				@(cast(^u32) str.data + str.size) = 0x203A;
 				str.size += 2;
+
 				Print(str);
 				PrintArgument(member);
 			}
