@@ -569,7 +569,8 @@ void IRInsertLabelInstruction(Context *context, IRLabel *label)
 
 IRValue IRDoCast(Context *context, IRValue value, s64 typeTableIdx)
 {
-	IRValue result = IRValueNewValue(context, "_cast"_s, typeTableIdx, 0);
+	u32 tempValueIdx = IRAddTempValue(context, "_cast"_s, typeTableIdx, 0);
+	IRValue result = IRValueValue(tempValueIdx, typeTableIdx, 0);
 	IRDoAssignment(context, result, value);
 	return result;
 }
@@ -1399,7 +1400,6 @@ IRValue IRGenFromExpression(Context *context, ASTExpression *expression)
 		for (int i = 0; i < procedure->parameterValues.size; ++i)
 		{
 			s32 paramValueIdx = procedure->parameterValues[i];
-			Value *paramValue = &context->values[paramValueIdx];
 			IRPushValueIntoStack(context, paramValueIdx);
 		}
 

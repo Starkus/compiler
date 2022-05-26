@@ -71,6 +71,8 @@ Main :: () -> s64
 	if (bigU <= mediumU)		{ Print(incorrect); error = 1; } else Print(correct);
 	Print("\n");
 
+	PrintF("Error code: %\n", error);
+
 	if !error
 		Print("Test ok\n");
 	return error;

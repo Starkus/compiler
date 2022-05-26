@@ -1113,6 +1113,8 @@ bool FitsInOperand(Context *context, u8 acceptableOperands, IRValue value)
 
 bool CanValueBeMemory(Context *context, IRValue value)
 {
+	if (value.valueType == IRVALUETYPE_VALUE_DEREFERENCE)
+		return true;
 	bool isImmediate = value.valueType == IRVALUETYPE_IMMEDIATE_INTEGER ||
 					   value.valueType == IRVALUETYPE_IMMEDIATE_FLOAT;
 	if (isImmediate)
@@ -1268,14 +1270,6 @@ void X64Mov(Context *context, X64Procedure *x64Proc, IRValue dst, IRValue src)
 		src = tmp;
 	}
 
-	if (dst.valueType == IRVALUETYPE_VALUE_DEREFERENCE &&
-			context->typeTable[dst.typeTableIdx].typeCategory == TYPECATEGORY_POINTER)
-	{
-		X64Instruction ins = { X64_Comment };
-		ins.comment = "asdasd"_s;
-		*BucketArrayAdd(&x64Proc->instructions) = ins;
-	}
-
 	X64MovNoTmp(context, x64Proc, dst, src);
 }
 
@@ -1404,6 +1398,19 @@ void X64CopyMemory(Context *context, X64Procedure *x64Proc, IRValue dst, IRValue
 	*ArrayAdd(&result.parameterValues) = RDX.value.valueIdx;
 	*ArrayAdd(&result.parameterValues) = R8.value.valueIdx;
 	*BucketArrayAdd(&x64Proc->instructions) = result;
+}
+
+bool X64WinABIShouldPassByCopy(Context *context, s64 typeTableIdx)
+{
+	TypeInfo typeInfo = context->typeTable[typeTableIdx];
+	// @Speed
+	return  typeInfo.typeCategory == TYPECATEGORY_ARRAY ||
+		  ((typeInfo.typeCategory == TYPECATEGORY_STRUCT ||
+			typeInfo.typeCategory == TYPECATEGORY_UNION) &&
+			typeInfo.size != 1 &&
+			typeInfo.size != 2 &&
+			typeInfo.size != 4 &&
+			typeInfo.size != 8);
 }
 
 void X64ConvertInstruction(Context *context, IRInstruction inst, X64Procedure *x64Proc)
@@ -1832,12 +1839,33 @@ void X64ConvertInstruction(Context *context, IRInstruction inst, X64Procedure *x
 		ArrayInit(&result.parameterValues, inst.procedureCall.parameters.size * 2);
 
 #if _MSC_VER
-		// @Incomplete: implement calling conventions other than MS ABI
 		for (int i = 0; i < inst.procedureCall.parameters.size; ++i)
 		{
 			IRValue param = inst.procedureCall.parameters[i];
-			s64 paramType = param.typeTableIdx;
-			bool isXMM = context->typeTable[paramType].typeCategory == TYPECATEGORY_FLOATING;
+			s64 paramTypeIdx = param.typeTableIdx;
+			TypeInfo paramType = context->typeTable[paramTypeIdx];
+
+			if (X64WinABIShouldPassByCopy(context, paramTypeIdx))
+			{
+				static s64 voidPtrTypeIdx = GetTypeInfoPointerOf(context, TYPETABLEIDX_VOID);
+
+				u32 tmpValueIdx = NewValue(context, "paramcpy"_s, paramTypeIdx, 0);
+				IRValue tmpValue = IRValueValue(tmpValueIdx, voidPtrTypeIdx);
+
+				X64Instruction pushInst = { X64_Push_Value };
+				pushInst.valueIdx = tmpValueIdx;
+				*BucketArrayAdd(&x64Proc->instructions) = pushInst;
+
+				IRValue ptr = IRValueNewValue(context, "paramptr"_s, TYPETABLEIDX_S64, 0);
+				*BucketArrayAdd(&x64Proc->instructions) = { X64_LEA, ptr, tmpValue };
+
+				X64CopyMemory(context, x64Proc, ptr, param, IRValueImmediate(paramType.size));
+
+				param = ptr;
+				paramTypeIdx = TYPETABLEIDX_S64;
+			}
+
+			bool isXMM = paramType.typeCategory == TYPECATEGORY_FLOATING;
 
 			IRValue dst;
 			switch(i)
@@ -1857,7 +1885,7 @@ void X64ConvertInstruction(Context *context, IRInstruction inst, X64Procedure *x
 			default:
 				dst = IRValueValue(x64SpilledParametersWrite[i], TYPETABLEIDX_S64);
 			}
-			dst.typeTableIdx = paramType;
+			dst.typeTableIdx = paramTypeIdx;
 			X64Mov(context, x64Proc, dst, param);
 
 			*ArrayAdd(&result.parameterValues) = dst.value.valueIdx;
@@ -2949,35 +2977,42 @@ void BackendMain(Context *context)
 			u32 paramValueIdx = proc->parameterValues[i];
 			Value *v = &context->values[paramValueIdx];
 			s64 paramTypeIdx = v->typeTableIdx;
-			if (IRShouldPassByCopy(context, paramTypeIdx))
-				paramTypeIdx = GetTypeInfoPointerOf(context, paramTypeIdx);
-			bool floating = context->typeTable[paramTypeIdx].typeCategory == TYPECATEGORY_FLOATING;
+			TypeInfo paramType = context->typeTable[paramTypeIdx];
+			bool isXMM = paramType.typeCategory == TYPECATEGORY_FLOATING;
 
 			IRValue src;
 			switch (paramIdx)
 			{
 			case 0:
-				src = floating ? XMM0 : RCX;
+				src = isXMM ? XMM0 : RCX;
 				break;
 			case 1:
-				src = floating ? XMM1 : RDX;
+				src = isXMM ? XMM1 : RDX;
 				break;
 			case 2:
-				src = floating ? XMM2 : R8;
+				src = isXMM ? XMM2 : R8;
 				break;
 			case 3:
-				src = floating ? XMM3 : R9;
+				src = isXMM ? XMM3 : R9;
 				break;
 			default:
 				src = IRValueValue(x64SpilledParametersRead[paramIdx], TYPETABLEIDX_S64);
 			}
-			if (floating)
+			if (isXMM)
 				src.typeTableIdx = paramTypeIdx;
 
 			v->flags |= VALUEFLAGS_TRY_IMMITATE;
 			v->tryImmitateValueIdx = src.value.valueIdx;
 
-			X64Mov(context, x64Proc, IRValueValue(paramValueIdx, paramTypeIdx), src);
+			if (X64WinABIShouldPassByCopy(context, paramTypeIdx))
+			{
+				s64 ptrTypeIdx = GetTypeInfoPointerOf(context, paramTypeIdx);
+				src.typeTableIdx = ptrTypeIdx;
+				X64CopyMemory(context, x64Proc, IRValueValue(paramValueIdx, ptrTypeIdx), src,
+						IRValueImmediate(paramType.size));
+			}
+			else
+				X64Mov(context, x64Proc, IRValueValue(paramValueIdx, paramTypeIdx), src);
 		}
 #else
 		s32 numberOfGPR = 0;

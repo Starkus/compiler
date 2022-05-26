@@ -1,5 +1,5 @@
-const u64 calleeSaveRegisters = 0b00000000001111100000111100000110;
-const u64 callerSaveRegisters = 0b11111111110000001111000011111000;
+const u64 callerSaveRegisters = 0b00000000001111100000111100000110;
+const u64 calleeSaveRegisters = 0b11111111110000001111000011111000;
 /* For reference
 IRValue x64Registers[X64REGISTER_Count] = {
 	RAX,	RCX,	RDX,	RBX,
@@ -174,7 +174,7 @@ void DoLivenessAnalisisOnInstruction(Context *context, BasicBlock *basicBlock, X
 		for (int i = 0; i < liveValues->size; ++i)
 			inst->liveValues[i] = (*liveValues)[i];
 
-		int totalParameters = inst->parameterValues.size;
+		u64 totalParameters = inst->parameterValues.size;
 		for (int paramIdx = 0; paramIdx < totalParameters; ++paramIdx)
 			AddValue(context, inst->parameterValues[paramIdx], basicBlock->procedure, liveValues);
 	} break;
@@ -187,7 +187,7 @@ void DoLivenessAnalisisOnInstruction(Context *context, BasicBlock *basicBlock, X
 
 		AddIfValue(context, inst->dst, basicBlock->procedure, liveValues);
 
-		int totalParameters = inst->parameterValues.size;
+		u64 totalParameters = inst->parameterValues.size;
 		for (int paramIdx = 0; paramIdx < totalParameters; ++paramIdx)
 			AddValue(context, inst->parameterValues[paramIdx], basicBlock->procedure, liveValues);
 	} break;
@@ -625,7 +625,7 @@ inline u64 RegisterSavingInstruction(Context *context, X64Instruction *inst, u64
 	case X64_CALL:
 	case X64_CALL_Indirect:
 	{
-		// Callee save registers
+		// Caller save registers
 		u64 liveRegisterBits = 0;
 		for (int i = 0; i < inst->liveValues.size; ++i)
 		{
@@ -635,11 +635,11 @@ inline u64 RegisterSavingInstruction(Context *context, X64Instruction *inst, u64
 				liveRegisterBits |= (1ll << v.allocatedRegister);
 		}
 
-		u64 usedCalleeSaveRegisters = calleeSaveRegisters & liveRegisterBits;
-		s64 calleeSaveRegCount = CountOnes(usedCalleeSaveRegisters);
+		u64 usedCalleeSaveRegisters = callerSaveRegisters & liveRegisterBits;
+		s64 callerSaveRegCount = CountOnes(usedCalleeSaveRegisters);
 		X64Instruction patchInst = { X64_Patch_Many };
-		ArrayInit(&patchInst.patchInstructions, 1 + 3 * calleeSaveRegCount);
-		patchInst.patchInstructions.size = 1 + 3 * calleeSaveRegCount;
+		ArrayInit(&patchInst.patchInstructions, 1 + 3 * callerSaveRegCount);
+		patchInst.patchInstructions.size = 1 + 3 * callerSaveRegCount;
 		int count = 0;
 		for (int i = 0; i < 64; ++i)
 		{
@@ -660,12 +660,12 @@ inline u64 RegisterSavingInstruction(Context *context, X64Instruction *inst, u64
 
 				patchInst.patchInstructions[count * 2] = pushInst;
 				patchInst.patchInstructions[count * 2 + 1] = saveInst;
-				patchInst.patchInstructions[calleeSaveRegCount * 2 + 1 + count] = restoreInst;
+				patchInst.patchInstructions[callerSaveRegCount * 2 + 1 + count] = restoreInst;
 				++count;
 			}
 		}
 
-		patchInst.patchInstructions[calleeSaveRegCount * 2] = *inst;
+		patchInst.patchInstructions[callerSaveRegCount * 2] = *inst;
 		*inst = patchInst;
 	} break;
 	default:
@@ -959,13 +959,13 @@ skipImmitate:
 			inst = X64InstructionStreamAdvance(&stream);
 		}
 
-		// Caller save registers
-		u64 usedCallerSaveRegisters = callerSaveRegisters & usedRegisters;
-		s64 callerSaveRegCount = CountOnes(usedCallerSaveRegisters);
+		// Callee save registers
+		u64 usedCallerSaveRegisters = calleeSaveRegisters & usedRegisters;
+		s64 calleeSaveRegCount = CountOnes(usedCallerSaveRegisters);
 		X64Instruction patchTop =    { X64_Patch_Many };
 		X64Instruction patchBottom = { X64_Patch_Many };
-		ArrayInit(&patchTop.patchInstructions, 1 + callerSaveRegCount);
-		ArrayInit(&patchBottom.patchInstructions, 1 + callerSaveRegCount);
+		ArrayInit(&patchTop.patchInstructions, 1 + calleeSaveRegCount);
+		ArrayInit(&patchBottom.patchInstructions, 1 + calleeSaveRegCount);
 
 		u64 instructionCount = BucketArrayCount(&proc->instructions);
 		*ArrayAdd(&patchBottom.patchInstructions) = proc->instructions[instructionCount - 1];
