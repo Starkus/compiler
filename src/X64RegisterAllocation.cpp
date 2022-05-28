@@ -368,17 +368,16 @@ void DoLivenessAnalisis(Context *context, BasicBlock *basicBlock,
 				basicBlock->beginIdx, basicBlock->endIdx);
 
 	for (int i = 0; i < basicBlock->liveValuesAtOutput.size; ++i)
-	{
 		DynamicArrayAddUnique(liveValues, basicBlock->liveValuesAtOutput[i]);
-	}
+
 	for (int i = 0; i < liveValues->size; ++i)
-	{
 		DynamicArrayAddUnique(&basicBlock->liveValuesAtOutput, (*liveValues)[i]);
-	}
 
 	if (basicBlock->procedure->returnValueIdx != U32_MAX)
 		AddValue(context, basicBlock->procedure->returnValueIdx, basicBlock->procedure,
 				liveValues);
+
+	// Check all basic block instructions
 	for (s64 instructionIdx = basicBlock->endIdx; instructionIdx >= basicBlock->beginIdx;
 			--instructionIdx)
 	{
@@ -431,7 +430,23 @@ void GenerateBasicBlocks(Context *context, Array<X64Procedure, PhaseAllocator> x
 			if (context->config.logAllocationInfo)
 				Print("\t%S\n", X64InstructionToStr(context, inst));
 
-			switch (inst.type)
+			if (inst.type >= X64_Jump_Begin && inst.type <= X64_Jump_End)
+			{
+				if (context->config.logAllocationInfo)
+					Print("- Split\n");
+
+				currentBasicBlock->endIdx = instructionIdx;
+				BasicBlock *previousBlock = currentBasicBlock;
+				currentBasicBlock = PushBasicBlock(currentBasicBlock, &context->beBasicBlocks);
+
+				// Only on conditional jumps, add previous block as input too.
+				if (inst.type != X64_JMP)
+				{
+					*DynamicArrayAdd(&previousBlock->outputs) = currentBasicBlock;
+					*DynamicArrayAdd(&currentBasicBlock->inputs) = previousBlock;
+				}
+			}
+			else switch (inst.type)
 			{
 			case X64_Label:
 			{
@@ -439,23 +454,6 @@ void GenerateBasicBlocks(Context *context, Array<X64Procedure, PhaseAllocator> x
 					Print("- Split\n");
 
 				currentBasicBlock->endIdx = instructionIdx - 1;
-				BasicBlock *previousBlock = currentBasicBlock;
-				currentBasicBlock = PushBasicBlock(currentBasicBlock, &context->beBasicBlocks);
-				*DynamicArrayAdd(&currentBasicBlock->inputs) = previousBlock;
-				*DynamicArrayAdd(&previousBlock->outputs) = currentBasicBlock;
-			} break;
-			case X64_JE:
-			case X64_JNE:
-			case X64_JG:
-			case X64_JL:
-			case X64_JGE:
-			case X64_JLE:
-			case X64_JMP:
-			{
-				if (context->config.logAllocationInfo)
-					Print("- Split\n");
-
-				currentBasicBlock->endIdx = instructionIdx;
 				BasicBlock *previousBlock = currentBasicBlock;
 				currentBasicBlock = PushBasicBlock(currentBasicBlock, &context->beBasicBlocks);
 				*DynamicArrayAdd(&currentBasicBlock->inputs) = previousBlock;
@@ -481,13 +479,7 @@ void GenerateBasicBlocks(Context *context, Array<X64Procedure, PhaseAllocator> x
 
 		IRLabel *label = nullptr;
 		X64Instruction endInstruction = jumpBlock->procedure->instructions[jumpBlock->endIdx];
-		if (endInstruction.type == X64_JMP ||
-			endInstruction.type == X64_JE ||
-			endInstruction.type == X64_JNE ||
-			endInstruction.type == X64_JG ||
-			endInstruction.type == X64_JL ||
-			endInstruction.type == X64_JGE ||
-			endInstruction.type == X64_JLE)
+		if (endInstruction.type >= X64_Jump_Begin && endInstruction.type <= X64_Jump_End)
 			label = endInstruction.label;
 		else
 			continue;

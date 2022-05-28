@@ -2509,33 +2509,20 @@ void X64PrintInstructions(Context *context, Array<X64Procedure, PhaseAllocator> 
 	}
 }
 
-s64 X64StaticDataAlignTo(Context *context, s64 bytesSoFar, s64 alignment)
+inline void X64StaticDataAlignTo(Context *context, s64 alignment)
 {
-	s64 padding = (-bytesSoFar & (alignment - 1));
-	if (padding)
-	{
-		PrintOut(context, "    DB 00");
-		for (int i = 1; i < padding; ++i)
-		{
-			PrintOut(context, ", 00");
-		}
-		PrintOut(context, "\n");
-		bytesSoFar += padding;
-	}
-	return bytesSoFar;
+	PrintOut(context, "ALIGN %d\n", alignment);
 }
 
 void X64PrintStaticData(Context *context, String name, IRValue value, s64 typeTableIdx,
 		int alignmentOverride = -1)
 {
-	static s64 bytesSoFar = 0;
-
 	switch (value.valueType)
 	{
 	case IRVALUETYPE_IMMEDIATE_STRING:
 	{
 		int alignment = alignmentOverride < 0 ? 8 : alignmentOverride;
-		bytesSoFar = X64StaticDataAlignTo(context, bytesSoFar, alignment);
+		X64StaticDataAlignTo(context, alignment);
 
 		String str = context->stringLiterals[value.immediateStringIdx];
 		s64 size = str.size;
@@ -2547,14 +2534,12 @@ void X64PrintStaticData(Context *context, String name, IRValue value, s64 typeTa
 				if (str.data[i] == '\\') --size;
 			PrintOut(context, "%S DQ %.16llxH, _str_%d\n", name, size, value.immediateStringIdx);
 		}
-
-		bytesSoFar += 16;
 	} break;
 	case IRVALUETYPE_IMMEDIATE_FLOAT:
 	{
 		TypeInfo typeInfo = context->typeTable[typeTableIdx];
 		int alignment = alignmentOverride < 0 ? (int)typeInfo.size : alignmentOverride;
-		bytesSoFar = X64StaticDataAlignTo(context, bytesSoFar, alignment);
+		X64StaticDataAlignTo(context, alignment);
 		switch (typeInfo.size)
 		{
 		case 4:
@@ -2569,12 +2554,11 @@ void X64PrintStaticData(Context *context, String name, IRValue value, s64 typeTa
 					value.immediate);
 			break;
 		}
-		bytesSoFar += typeInfo.size;
 	} break;
 	case IRVALUETYPE_IMMEDIATE_GROUP:
 	{
 		int alignment = alignmentOverride < 0 ? 8 : alignmentOverride;
-		bytesSoFar = X64StaticDataAlignTo(context, bytesSoFar, alignment);
+		X64StaticDataAlignTo(context, alignment);
 
 		bool isArray = false;
 		s64 elementTypeIdx = -1;
@@ -2598,14 +2582,12 @@ void X64PrintStaticData(Context *context, String name, IRValue value, s64 typeTa
 		// @Improve: We are kinda using this to mean 'this is a value in data section, just put the
 		// name in' which has nothing to do with 'VALUE_DEREFERENCE'...
 		int alignment = alignmentOverride < 0 ? 8 : alignmentOverride;
-		bytesSoFar = X64StaticDataAlignTo(context, bytesSoFar, alignment);
+		X64StaticDataAlignTo(context, alignment);
 
 		Value v = context->values[value.value.valueIdx];
 		ASSERT(v.flags & VALUEFLAGS_ON_STATIC_STORAGE);
 		ASSERT(v.name.size);
 		PrintOut(context, "%S DQ %S\n", name, v.name);
-
-		bytesSoFar += 8;
 	} break;
 	case IRVALUETYPE_INVALID:
 	{
@@ -2617,7 +2599,7 @@ void X64PrintStaticData(Context *context, String name, IRValue value, s64 typeTa
 	{
 		TypeInfo typeInfo = context->typeTable[typeTableIdx];
 		int alignment = alignmentOverride < 0 ? (int)typeInfo.size : alignmentOverride;
-		bytesSoFar = X64StaticDataAlignTo(context, bytesSoFar, alignment);
+		X64StaticDataAlignTo(context, alignment);
 		switch (typeInfo.size)
 		{
 		case 1:
@@ -2639,7 +2621,6 @@ void X64PrintStaticData(Context *context, String name, IRValue value, s64 typeTa
 		default:
 			ASSERT(!"Invalid immediate size");
 		}
-		bytesSoFar += typeInfo.size;
 	}
 	}
 }
@@ -3698,8 +3679,7 @@ unalignedMovups:;
 		bytesWritten += size;
 	}
 
-	//int padding = 16 - (bytesWritten & 15);
-	X64StaticDataAlignTo(context, bytesWritten, 16);
+	X64StaticDataAlignTo(context, 16);
 
 	const u64 staticVariableCount = context->irStaticVariables.size;
 	for (int staticVariableIdx = 0; staticVariableIdx < staticVariableCount; ++staticVariableIdx)
