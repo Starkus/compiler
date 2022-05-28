@@ -17,6 +17,7 @@ O_NONBLOCK :: 0x00004000;
 write :: #external (handle: s64, buffer: ^void, bytesToWrite: u64) -> u64;
 open  :: #external (filename : ^u8, flags : s32, mode : s32) -> s32;
 exit  :: #external (errorCode : s64);
+exit_group :: #external (errorCode : s64);
 
 Print :: (string: String)
 {
@@ -26,5 +27,5 @@ Print :: (string: String)
 __LinuxMain :: ()
 {
 	errorCode : s64 = Main();
-	exit(errorCode);
+	exit_group(errorCode);
 }

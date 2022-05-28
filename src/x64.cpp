@@ -1812,20 +1812,6 @@ void X64ConvertInstruction(Context *context, IRInstruction inst, X64Procedure *x
 		{
 			result.type = X64_CALL;
 			result.procedureIdx = inst.procedureCall.procedureIdx;
-#if !_MSC_VER
-			// Check syscalls
-			String procName = GetProcedure(context, inst.procedureCall.procedureIdx)->name;
-			int syscallCount = ArrayCount(x64LinuxSyscallNames);
-			for (int i = 0; i < syscallCount; ++i)
-			{
-				if (StringEquals(procName, x64LinuxSyscallNames[i]))
-				{
-					result.type = X64_SYSCALL;
-					X64Mov(context, x64Proc, RAX, IRValueImmediate(i));
-					break;
-				}
-			}
-#endif
 		}
 		else
 		{
@@ -2044,6 +2030,24 @@ void X64ConvertInstruction(Context *context, IRInstruction inst, X64Procedure *x
 			}
 		}
 #endif
+
+#if !_MSC_VER
+		// Check syscalls
+		if (inst.type == IRINSTRUCTIONTYPE_PROCEDURE_CALL)
+		{
+			String procName = GetProcedure(context, inst.procedureCall.procedureIdx)->name;
+			int syscallCount = ArrayCount(x64LinuxSyscallNames);
+			for (int i = 0; i < syscallCount; ++i)
+			{
+				if (StringEquals(procName, x64LinuxSyscallNames[i]))
+				{
+					result.type = X64_SYSCALL;
+					X64Mov(context, x64Proc, RAX, IRValueImmediate(i));
+					break;
+				}
+			}
+#endif
+		}
 
 		*BucketArrayAdd(&x64Proc->instructions) = result;
 
@@ -2999,6 +3003,11 @@ void BackendMain(Context *context)
 		s32 numberOfGPR = 0;
 		s32 numberOfXMM = 0;
 		s32 numberOfSpilled = 0;
+		if (procTypeInfo.returnTypeTableIdx != TYPETABLEIDX_VOID && returnByCopy)
+		{
+			X64Mov(context, x64Proc, IRValueValue(proc->returnValueIdx, TYPETABLEIDX_S64), RDI);
+			++numberOfGPR;
+		}
 		for (int i = 0; i < paramCount; ++i)
 		{
 			u32 paramValueIdx = proc->parameterValues[i];

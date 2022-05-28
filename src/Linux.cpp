@@ -131,33 +131,36 @@ void SYSCreateDirectory(String pathname)
 void SYSRunAssemblerAndLinker(String outputPath, String extraAssemblerArguments,
 		String extraLinkerArguments)
 {
-	return;
-	pid_t pid = fork();
+	int status;
 
-	if (pid == 0)
+	const char *nasmArgs[] =
 	{
-		const char *nasmArgs[] =
-		{
-			"-f elf64",
-			SYSExpandPathWorkingDirectoryRelative("output/out.asm"_s).data,
-			0
-		};
-		if (execvp("nasm", (char **)nasmArgs) == -1)
-		{
-			Print("Error executing nasm!\n");
-			return;
-		}
+		"nasm",
+		"-f elf64",
+		"-F dwarf",
+		"-g",
+		SYSExpandPathWorkingDirectoryRelative("output/out.asm"_s).data,
+		0
+	};
+	if (execvp("nasm", (char **)nasmArgs) == -1)
+	{
+		Print("Error executing nasm!\n");
+		return;
 	}
 
-	s32 timeout = 10000;
-	int status;
-	while (!waitpid(pid, &status, WNOHANG))
+	String outputArg = TPrintF("-o %S%c", SYSExpandPathWorkingDirectoryRelative("output/out"_s),
+			0);
+	const char *ldArgs[] =
 	{
-		if (--timeout < 0)
-		{
-			Print("Timeout waiting for nasm!\n");
-			return;
-		}
-		sleep(1);
+		"ld",
+		SYSExpandPathWorkingDirectoryRelative("output/out.o"_s).data,
+		outputArg.data,
+		"-e __LinuxMain",
+		0
+	};
+	if (execvp("ld", (char **)ldArgs) == -1)
+	{
+		Print("Error executing ld!\n");
+		return;
 	}
 }
