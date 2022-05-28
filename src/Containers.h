@@ -1,3 +1,18 @@
+template <typename T>
+struct ArrayView
+{
+	T *data;
+	u64 size;
+
+	const T &operator[](s64 idx) const
+	{
+#if DEBUG_BUILD
+		ASSERT(idx >= 0 && (u64)idx < size);
+#endif
+		return data[idx];
+	}
+};
+
 template <typename T, typename A>
 struct Array
 {
@@ -21,6 +36,11 @@ struct Array
 		ASSERT(idx >= 0 && (u64)idx < _capacity);
 #endif
 		return data[idx];
+	}
+
+	operator ArrayView<T>()
+	{
+		return { data, size };
 	}
 };
 
@@ -68,6 +88,11 @@ struct FixedArray
 		ASSERT(idx >= 0 && (u64)idx < capacity);
 		return data[idx];
 	}
+
+	operator ArrayView<T>()
+	{
+		return { data, size };
+	}
 };
 
 template <typename T, u64 capacity>
@@ -102,6 +127,11 @@ struct DynamicArray
 	{
 		ASSERT(idx >= 0 && (u64)idx < capacity);
 		return data[idx];
+	}
+
+	operator ArrayView<T>()
+	{
+		return { data, size };
 	}
 };
 

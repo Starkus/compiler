@@ -1,11 +1,11 @@
 #include <memory.h>
 #include <time.h>
-#include <unistd.h>
 #include <sys/stat.h>
 #include <sys/wait.h>
 #include <fcntl.h>
 #include <immintrin.h>
 #include <linux/limits.h>
+#include <linux/unistd.h>
 #include <stdio.h>
 
 typedef int FileHandle;
@@ -131,36 +131,66 @@ void SYSCreateDirectory(String pathname)
 void SYSRunAssemblerAndLinker(String outputPath, String extraAssemblerArguments,
 		String extraLinkerArguments)
 {
-	int status;
-
-	const char *nasmArgs[] =
-	{
-		"nasm",
-		"-f elf64",
-		"-F dwarf",
-		"-g",
-		SYSExpandPathWorkingDirectoryRelative("output/out.asm"_s).data,
-		0
-	};
-	if (execvp("nasm", (char **)nasmArgs) == -1)
+#if 1
+	String nasmCmd = TPrintF("nasm -f elf64 -F dwarf -g %S%c",
+			SYSExpandPathWorkingDirectoryRelative("output/out.asm"_s), 0);
+	int status = system(nasmCmd.data);
+	if (status)
 	{
 		Print("Error executing nasm!\n");
-		return;
+		exit(status);
 	}
 
-	String outputArg = TPrintF("-o %S%c", SYSExpandPathWorkingDirectoryRelative("output/out"_s),
-			0);
-	const char *ldArgs[] =
-	{
-		"ld",
-		SYSExpandPathWorkingDirectoryRelative("output/out.o"_s).data,
-		outputArg.data,
-		"-e __LinuxMain",
-		0
-	};
-	if (execvp("ld", (char **)ldArgs) == -1)
+	String ldCmd = TPrintF("ld %S -o %S -e __LinuxMain%c",
+		SYSExpandPathWorkingDirectoryRelative("output/out.o"_s),
+		SYSExpandPathWorkingDirectoryRelative("output/out"_s), 0);
+	status = system(ldCmd.data);
+	if (status)
 	{
 		Print("Error executing ld!\n");
-		return;
+		exit(status);
 	}
+#else
+	int status;
+	pid_t pid = fork();
+
+	if (pid == 0)
+	{
+		const char *nasmArgs[] =
+		{
+			"nasm",
+			"-f elf64",
+			"-F dwarf",
+			"-g",
+			SYSExpandPathWorkingDirectoryRelative("output/out.asm"_s).data,
+			0
+		};
+		if (execvp("nasm", (char **)nasmArgs) == -1)
+		{
+			Print("Error executing nasm!\n");
+			exit(1);
+		}
+	}
+	else
+	{
+		while (waitpid(pid, &status, WNOHANG) == 0)
+			sleep(1);
+
+		String outputArg = TPrintF("-o %S%c", SYSExpandPathWorkingDirectoryRelative("output/out"_s),
+				0);
+		const char *ldArgs[] =
+		{
+			"ld",
+			SYSExpandPathWorkingDirectoryRelative("output/out.o"_s).data,
+			outputArg.data,
+			"-e __LinuxMain",
+			0
+		};
+		if (execvp("ld", (char **)ldArgs) == -1)
+		{
+			Print("Error executing ld!\n");
+			exit(1);
+		}
+	}
+#endif
 }

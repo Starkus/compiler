@@ -1320,9 +1320,9 @@ void X64Test(Context *context, X64Procedure *x64Proc, IRValue value)
 	*BucketArrayAdd(&x64Proc->instructions) = cmpInst;
 }
 
-IRValue X64PushRegisterParameter(IRValue src, s32 *numberOfGPR, s32 *numberOfXMM)
+IRValue X64PushRegisterParameter(s64 typeTableIdx, s32 *numberOfGPR, s32 *numberOfXMM)
 {
-	bool isXMM = src.typeTableIdx == TYPETABLEIDX_F32 || src.typeTableIdx == TYPETABLEIDX_F64;
+	bool isXMM = typeTableIdx == TYPETABLEIDX_F32 || typeTableIdx == TYPETABLEIDX_F64;
 
 	if (!isXMM) switch((*numberOfGPR)++)
 	{
@@ -1411,6 +1411,197 @@ bool X64WinABIShouldPassByCopy(Context *context, s64 typeTableIdx)
 			typeInfo.size != 2 &&
 			typeInfo.size != 4 &&
 			typeInfo.size != 8);
+}
+
+Array<u32, PhaseAllocator> X64ReadyLinuxParameters(Context *context, X64Procedure *x64Proc,
+		ArrayView<IRValue> parameters, bool isCaller)
+{
+	int parameterCount = parameters.size;
+
+	Array<u32, PhaseAllocator> parameterValues;
+	ArrayInit(&parameterValues, parameterCount * 2);
+
+	s32 numberOfGPR = 0;
+	s32 numberOfXMM = 0;
+	s32 numberOfSpilled = 0;
+	for (int i = 0; i < parameterCount; ++i)
+	{
+		IRValue param = parameters[i];
+		s64 paramTypeIdx = param.typeTableIdx;
+
+		TypeInfo paramTypeInfo = context->typeTable[paramTypeIdx];
+		bool isStruct = paramTypeInfo.typeCategory == TYPECATEGORY_STRUCT ||
+			(paramTypeInfo.typeCategory == TYPECATEGORY_ARRAY && paramTypeInfo.arrayInfo.count == 0);
+		if (isStruct && paramTypeInfo.size <= 16)
+		{
+			Array<StructMember, FrameAllocator> members;
+			if (paramTypeInfo.typeCategory == TYPECATEGORY_STRUCT)
+				members = paramTypeInfo.structInfo.members;
+			else if (paramTypeInfo.typeCategory == TYPECATEGORY_ARRAY)
+				members = context->typeTable[TYPETABLEIDX_ARRAY_STRUCT].structInfo.members;
+
+			IRValue first, second;
+			int regCount = 1;
+
+			first = IRValueDereference(param.value.valueIdx, TYPETABLEIDX_S64, 0);
+			if (members[0].typeTableIdx == TYPETABLEIDX_F64 ||
+			   (members.size == 2 &&
+				members[0].typeTableIdx == TYPETABLEIDX_F32 &&
+				members[1].typeTableIdx == TYPETABLEIDX_F32))
+			{
+				// An F64 or two consecutive F32s into an XMM register.
+				first.typeTableIdx = TYPETABLEIDX_F64;
+			}
+			else if (members[0].typeTableIdx == TYPETABLEIDX_F32 &&
+					(members.size == 1 || members[1].offset >= 8))
+			{
+				// An only F32 into XMM register
+				first.typeTableIdx = TYPETABLEIDX_F32;
+			}
+			else
+			{
+				if (paramTypeInfo.size > 4)
+					first.typeTableIdx = TYPETABLEIDX_S64;
+				else if (paramTypeInfo.size > 2)
+					first.typeTableIdx = TYPETABLEIDX_S32;
+				else if (paramTypeInfo.size > 1)
+					first.typeTableIdx = TYPETABLEIDX_S16;
+				else
+					first.typeTableIdx = TYPETABLEIDX_S8;
+			}
+
+			int firstMember = 0;
+			for (; firstMember < members.size; ++firstMember)
+			{
+				if (members[firstMember].offset >= 8)
+					break;
+			}
+			if (firstMember > 0 && firstMember < members.size)
+			{
+				second = IRValueDereference(param.value.valueIdx, TYPETABLEIDX_S64, 8);
+				regCount = 2;
+
+				if (members[firstMember].typeTableIdx == TYPETABLEIDX_F64 ||
+				   (firstMember < members.size - 1 &&
+					members[firstMember].typeTableIdx   == TYPETABLEIDX_F32 &&
+					members[firstMember+1].typeTableIdx == TYPETABLEIDX_F32))
+				{
+					// An F64 or two consecutive F32s into an XMM register.
+					second.typeTableIdx = TYPETABLEIDX_F64;
+				}
+				else if (members[firstMember].typeTableIdx == TYPETABLEIDX_F32 &&
+						(firstMember == members.size - 1 ||
+						 members[firstMember+1].offset >= 8))
+				{
+					// An only F32 into XMM register
+					second.typeTableIdx = TYPETABLEIDX_F32;
+				}
+				else
+				{
+					if (paramTypeInfo.size > 12)
+						second.typeTableIdx = TYPETABLEIDX_S64;
+					else if (paramTypeInfo.size > 10)
+						second.typeTableIdx = TYPETABLEIDX_S32;
+					else if (paramTypeInfo.size > 9)
+						second.typeTableIdx = TYPETABLEIDX_S16;
+					else
+						second.typeTableIdx = TYPETABLEIDX_S8;
+				}
+			}
+
+			s32 oldNumberOfGPR = numberOfGPR;
+			s32 oldNumberOfXMM = numberOfXMM;
+			if (regCount >= 1)
+			{
+				IRValue firstSlot = X64PushRegisterParameter(first.typeTableIdx, &numberOfGPR, &numberOfXMM);
+				IRValue secondSlot = { IRVALUETYPE_INVALID };
+				if (regCount >= 2)
+					secondSlot = X64PushRegisterParameter(second.typeTableIdx, &numberOfGPR, &numberOfXMM);
+
+				if (firstSlot.valueType != IRVALUETYPE_INVALID &&
+				   (regCount < 2 || secondSlot.valueType != IRVALUETYPE_INVALID))
+				{
+					if (isCaller)
+					{
+						X64Mov(context, x64Proc, firstSlot,  first);
+						X64Mov(context, x64Proc, secondSlot, second);
+					}
+					else
+					{
+						X64Mov(context, x64Proc, first,  firstSlot);
+						X64Mov(context, x64Proc, second, secondSlot);
+					}
+
+					*ArrayAdd(&parameterValues) = firstSlot.value.valueIdx;
+					*ArrayAdd(&parameterValues) = secondSlot.value.valueIdx;
+
+					continue;
+				}
+				else
+				{
+					// Restore number of used registers and keep going.
+					numberOfGPR = oldNumberOfGPR;
+					numberOfXMM = oldNumberOfXMM;
+				}
+			}
+		}
+
+		if (paramTypeInfo.size > 8)
+		{
+			int sizeLeft = paramTypeInfo.size;
+			while (sizeLeft > 0)
+			{
+				s64 typeTableIdx = TYPETABLEIDX_S8;
+				if (sizeLeft > 4)
+					typeTableIdx = TYPETABLEIDX_S64;
+				else if (sizeLeft > 2)
+					typeTableIdx = TYPETABLEIDX_S32;
+				else if (sizeLeft > 1)
+					typeTableIdx = TYPETABLEIDX_S16;
+				param.typeTableIdx = typeTableIdx;
+
+				if (isCaller)
+				{
+					IRValue slot = IRValueDereference(x64SpilledParametersWrite[numberOfSpilled++],
+							typeTableIdx);
+					X64Mov(context, x64Proc, slot, param);
+				}
+				else
+				{
+					IRValue slot = IRValueDereference(x64SpilledParametersRead[numberOfSpilled++],
+							typeTableIdx);
+					X64Mov(context, x64Proc, param, slot);
+				}
+				param.value.offset += 8;
+				sizeLeft -= 8;
+			}
+		}
+		else
+		{
+			IRValue slot;
+			if (isCaller)
+			{
+				slot = X64PushRegisterParameter(param.typeTableIdx, &numberOfGPR, &numberOfXMM);
+				if (slot.valueType == IRVALUETYPE_INVALID)
+					slot = IRValueDereference(x64SpilledParametersWrite[numberOfSpilled++],
+							TYPETABLEIDX_S64);
+
+				X64Mov(context, x64Proc, slot, param);
+			}
+			else
+			{
+				slot = X64PushRegisterParameter(param.typeTableIdx, &numberOfGPR, &numberOfXMM);
+				if (slot.valueType == IRVALUETYPE_INVALID)
+					slot = IRValueDereference(x64SpilledParametersRead[numberOfSpilled++],
+							TYPETABLEIDX_S64);
+
+				X64Mov(context, x64Proc, param, slot);
+			}
+
+			*ArrayAdd(&parameterValues) = slot.value.valueIdx;
+		}
+	}
+	return parameterValues;
 }
 
 void X64ConvertInstruction(Context *context, IRInstruction inst, X64Procedure *x64Proc)
@@ -1877,158 +2068,11 @@ void X64ConvertInstruction(Context *context, IRInstruction inst, X64Procedure *x
 			*ArrayAdd(&result.parameterValues) = dst.value.valueIdx;
 		}
 #else
-		s32 numberOfGPR = 0;
-		s32 numberOfXMM = 0;
-		s32 numberOfSpilled = 0;
-		for (int i = 0; i < inst.procedureCall.parameters.size; ++i)
-		{
-			IRValue param = inst.procedureCall.parameters[i];
-			s64 paramTypeIdx = param.typeTableIdx;
+		Array<u32, PhaseAllocator> paramValues =
+			X64ReadyLinuxParameters(context, x64Proc, inst.procedureCall.parameters, true);
 
-			TypeInfo paramTypeInfo = context->typeTable[paramTypeIdx];
-			bool isStruct = paramTypeInfo.typeCategory == TYPECATEGORY_STRUCT ||
-				(paramTypeInfo.typeCategory == TYPECATEGORY_ARRAY && paramTypeInfo.arrayInfo.count == 0);
-			if (isStruct && paramTypeInfo.size <= 16)
-			{
-				Array<StructMember, FrameAllocator> members;
-				if (paramTypeInfo.typeCategory == TYPECATEGORY_STRUCT)
-					members = paramTypeInfo.structInfo.members;
-				else if (paramTypeInfo.typeCategory == TYPECATEGORY_ARRAY)
-					members = context->typeTable[TYPETABLEIDX_ARRAY_STRUCT].structInfo.members;
-
-				IRValue first, second;
-				int regCount = 1;
-
-				first = IRValueDereference(param.value.valueIdx, TYPETABLEIDX_S64, 0);
-				if (members[0].typeTableIdx == TYPETABLEIDX_F64 ||
-				   (members.size == 2 &&
-					members[0].typeTableIdx == TYPETABLEIDX_F32 &&
-					members[1].typeTableIdx == TYPETABLEIDX_F32))
-				{
-					// An F64 or two consecutive F32s into an XMM register.
-					first.typeTableIdx = TYPETABLEIDX_F64;
-				}
-				else if (members[0].typeTableIdx == TYPETABLEIDX_F32 &&
-						(members.size == 1 || members[1].offset >= 8))
-				{
-					// An only F32 into XMM register
-					first.typeTableIdx = TYPETABLEIDX_F32;
-				}
-				else
-				{
-					if (paramTypeInfo.size > 4)
-						first.typeTableIdx = TYPETABLEIDX_S64;
-					else if (paramTypeInfo.size > 2)
-						first.typeTableIdx = TYPETABLEIDX_S32;
-					else if (paramTypeInfo.size > 1)
-						first.typeTableIdx = TYPETABLEIDX_S16;
-					else
-						first.typeTableIdx = TYPETABLEIDX_S8;
-				}
-
-				int firstMember = 0;
-				for (; firstMember < members.size; ++firstMember)
-				{
-					if (members[firstMember].offset >= 8)
-						break;
-				}
-				if (firstMember > 0 && firstMember < members.size)
-				{
-					second = IRValueDereference(param.value.valueIdx, TYPETABLEIDX_S64, 8);
-					regCount = 2;
-
-					if (members[firstMember].typeTableIdx == TYPETABLEIDX_F64 ||
-					   (firstMember < members.size - 1 &&
-						members[firstMember].typeTableIdx   == TYPETABLEIDX_F32 &&
-						members[firstMember+1].typeTableIdx == TYPETABLEIDX_F32))
-					{
-						// An F64 or two consecutive F32s into an XMM register.
-						second.typeTableIdx = TYPETABLEIDX_F64;
-					}
-					else if (members[firstMember].typeTableIdx == TYPETABLEIDX_F32 &&
-							(firstMember == members.size - 1 ||
-							 members[firstMember+1].offset >= 8))
-					{
-						// An only F32 into XMM register
-						second.typeTableIdx = TYPETABLEIDX_F32;
-					}
-					else
-					{
-						if (paramTypeInfo.size > 12)
-							second.typeTableIdx = TYPETABLEIDX_S64;
-						else if (paramTypeInfo.size > 10)
-							second.typeTableIdx = TYPETABLEIDX_S32;
-						else if (paramTypeInfo.size > 9)
-							second.typeTableIdx = TYPETABLEIDX_S16;
-						else
-							second.typeTableIdx = TYPETABLEIDX_S8;
-					}
-				}
-
-				s32 oldNumberOfGPR = numberOfGPR;
-				s32 oldNumberOfXMM = numberOfXMM;
-				if (regCount >= 1)
-				{
-					IRValue firstDst = X64PushRegisterParameter(first, &numberOfGPR, &numberOfXMM);
-					IRValue secondDst = { IRVALUETYPE_INVALID };
-					if (regCount >= 2)
-						secondDst = X64PushRegisterParameter(second, &numberOfGPR, &numberOfXMM);
-
-					if (firstDst.valueType != IRVALUETYPE_INVALID &&
-					   (regCount < 2 || secondDst.valueType != IRVALUETYPE_INVALID))
-					{
-						X64Mov(context, x64Proc, firstDst,  first);
-						X64Mov(context, x64Proc, secondDst, second);
-
-						*ArrayAdd(&result.parameterValues) = firstDst.value.valueIdx;
-						*ArrayAdd(&result.parameterValues) = secondDst.value.valueIdx;
-
-						continue;
-					}
-					else
-					{
-						// Restore number of used registers and keep going.
-						numberOfGPR = oldNumberOfGPR;
-						numberOfXMM = oldNumberOfXMM;
-					}
-				}
-			}
-
-			if (paramTypeInfo.size > 8)
-			{
-				int sizeLeft = paramTypeInfo.size;
-				IRValue src = param;
-				while (sizeLeft > 0)
-				{
-					IRValue dst = IRValueDereference(x64SpilledParametersWrite[numberOfSpilled++],
-							TYPETABLEIDX_S64);
-
-					s64 typeTableIdx = TYPETABLEIDX_S8;
-					if (sizeLeft > 4)
-						typeTableIdx = TYPETABLEIDX_S64;
-					else if (sizeLeft > 2)
-						typeTableIdx = TYPETABLEIDX_S32;
-					else if (sizeLeft > 1)
-						typeTableIdx = TYPETABLEIDX_S16;
-					dst.typeTableIdx = typeTableIdx;
-					src.typeTableIdx = typeTableIdx;
-
-					X64Mov(context, x64Proc, dst, src);
-					src.value.offset += 8;
-					sizeLeft -= 8;
-				}
-			}
-			else
-			{
-				IRValue dst = X64PushRegisterParameter(param, &numberOfGPR, &numberOfXMM);
-				if (dst.valueType == IRVALUETYPE_INVALID)
-					dst = IRValueDereference(x64SpilledParametersWrite[numberOfSpilled++],
-							TYPETABLEIDX_S64);
-				X64Mov(context, x64Proc, dst, param);
-
-				*ArrayAdd(&result.parameterValues) = dst.value.valueIdx;
-			}
-		}
+		result.parameterValues.data = paramValues.data;
+		result.parameterValues.size = paramValues.size;
 #endif
 
 #if !_MSC_VER
@@ -2946,13 +2990,14 @@ void BackendMain(Context *context)
 
 		BucketArrayInit(&x64Proc->instructions);
 
-		bool returnByCopy = IRShouldPassByCopy(context, procTypeInfo.returnTypeTableIdx);
+		bool returnByCopy = procTypeInfo.returnTypeTableIdx != TYPETABLEIDX_VOID &&
+				IRShouldPassByCopy(context, procTypeInfo.returnTypeTableIdx);
 		int paramCount = (int)proc->parameterValues.size;
 
 		// Allocate parameters
 #if _MSC_VER
 		int paramIdx = 0;
-		if (procTypeInfo.returnTypeTableIdx != TYPETABLEIDX_VOID && returnByCopy)
+		if (returnByCopy)
 		{
 			++paramIdx;
 			X64Mov(context, x64Proc, IRValueValue(proc->returnValueIdx, TYPETABLEIDX_S64), RCX);
@@ -3000,182 +3045,17 @@ void BackendMain(Context *context)
 				X64Mov(context, x64Proc, IRValueValue(paramValueIdx, paramTypeIdx), src);
 		}
 #else
-		s32 numberOfGPR = 0;
-		s32 numberOfXMM = 0;
-		s32 numberOfSpilled = 0;
-		if (procTypeInfo.returnTypeTableIdx != TYPETABLEIDX_VOID && returnByCopy)
-		{
-			X64Mov(context, x64Proc, IRValueValue(proc->returnValueIdx, TYPETABLEIDX_S64), RDI);
-			++numberOfGPR;
-		}
-		for (int i = 0; i < paramCount; ++i)
-		{
-			u32 paramValueIdx = proc->parameterValues[i];
-			Value *v = &context->values[paramValueIdx];
-			s64 paramTypeIdx = v->typeTableIdx;
-			TypeInfo paramTypeInfo = context->typeTable[paramTypeIdx];
+		Array<IRValue, PhaseAllocator> params;
+		ArrayInit(&params, paramCount + returnByCopy);
 
-			bool isStruct = paramTypeInfo.typeCategory == TYPECATEGORY_STRUCT ||
-				(paramTypeInfo.typeCategory == TYPECATEGORY_ARRAY && paramTypeInfo.arrayInfo.count == 0) ||
-				paramTypeIdx == TYPETABLEIDX_STRING_STRUCT;
-			if (isStruct && paramTypeInfo.size <= 16)
-			{
-				Array<StructMember, FrameAllocator> members;
-				if (paramTypeInfo.typeCategory == TYPECATEGORY_STRUCT)
-					members = paramTypeInfo.structInfo.members;
-				else if (paramTypeInfo.typeCategory == TYPECATEGORY_ARRAY)
-					members = context->typeTable[TYPETABLEIDX_ARRAY_STRUCT].structInfo.members;
+		// Pointer to return value
+		if (returnByCopy)
+			*ArrayAdd(&params) = IRValueValue(proc->returnValueIdx, TYPETABLEIDX_S64);
 
-				IRValue firstDst, secondDst;
-				int regCount = 1;
+		for (int paramIdx = 0; paramIdx < paramCount; ++paramIdx)
+			*ArrayAdd(&params) = IRValueValue(context, proc->parameterValues[paramIdx]);
 
-				firstDst = IRValueDereference(paramValueIdx, TYPETABLEIDX_S64, 0);
-				if (members[0].typeTableIdx == TYPETABLEIDX_F64 ||
-				   (members.size == 2 &&
-					members[0].typeTableIdx == TYPETABLEIDX_F32 &&
-					members[1].typeTableIdx == TYPETABLEIDX_F32))
-				{
-					// An F64 or two consecutive F32s into an XMM register.
-					firstDst.typeTableIdx = TYPETABLEIDX_F64;
-				}
-				else if (members[0].typeTableIdx == TYPETABLEIDX_F32 &&
-						(members.size == 1 || members[1].offset >= 8))
-				{
-					// An only F32 into XMM register
-					firstDst.typeTableIdx = TYPETABLEIDX_F32;
-				}
-				else
-				{
-					if (paramTypeInfo.size > 4)
-						firstDst.typeTableIdx = TYPETABLEIDX_S64;
-					else if (paramTypeInfo.size > 2)
-						firstDst.typeTableIdx = TYPETABLEIDX_S32;
-					else if (paramTypeInfo.size > 1)
-						firstDst.typeTableIdx = TYPETABLEIDX_S16;
-					else
-						firstDst.typeTableIdx = TYPETABLEIDX_S8;
-				}
-
-				int firstMember = 0;
-				for (; firstMember < members.size; ++firstMember)
-				{
-					if (members[firstMember].offset >= 8)
-						break;
-				}
-				if (firstMember > 0 && firstMember < members.size)
-				{
-					secondDst = IRValueDereference(paramValueIdx, TYPETABLEIDX_S64, 8);
-					regCount = 2;
-
-					if (members[firstMember].typeTableIdx == TYPETABLEIDX_F64 ||
-					   (firstMember < members.size - 1 &&
-						members[firstMember].typeTableIdx   == TYPETABLEIDX_F32 &&
-						members[firstMember+1].typeTableIdx == TYPETABLEIDX_F32))
-					{
-						// An F64 or two consecutive F32s into an XMM register.
-						secondDst.typeTableIdx = TYPETABLEIDX_F64;
-					}
-					else if (members[firstMember].typeTableIdx == TYPETABLEIDX_F32 &&
-							(firstMember == members.size - 1 ||
-							 members[firstMember+1].offset >= 8))
-					{
-						// An only F32 into XMM register
-						secondDst.typeTableIdx = TYPETABLEIDX_F32;
-					}
-					else
-					{
-						if (paramTypeInfo.size > 12)
-							secondDst.typeTableIdx = TYPETABLEIDX_S64;
-						else if (paramTypeInfo.size > 10)
-							secondDst.typeTableIdx = TYPETABLEIDX_S32;
-						else if (paramTypeInfo.size > 9)
-							secondDst.typeTableIdx = TYPETABLEIDX_S16;
-						else
-							secondDst.typeTableIdx = TYPETABLEIDX_S8;
-					}
-				}
-
-				s32 oldNumberOfGPR = numberOfGPR;
-				s32 oldNumberOfXMM = numberOfXMM;
-				if (regCount >= 1)
-				{
-					IRValue firstSrc = X64PushRegisterParameter(firstDst, &numberOfGPR, &numberOfXMM);
-					IRValue secondSrc = { IRVALUETYPE_INVALID };
-					if (regCount >= 2)
-						secondSrc = X64PushRegisterParameter(secondDst, &numberOfGPR, &numberOfXMM);
-
-					if (firstSrc.valueType != IRVALUETYPE_INVALID &&
-					   (regCount < 2 || secondSrc.valueType != IRVALUETYPE_INVALID))
-					{
-						X64Mov(context, x64Proc, firstDst,  firstSrc);
-						X64Mov(context, x64Proc, secondDst, secondSrc);
-						continue;
-					}
-					else
-					{
-						// Restore number of used registers and keep going.
-						numberOfGPR = oldNumberOfGPR;
-						numberOfXMM = oldNumberOfXMM;
-					}
-				}
-			}
-
-			if (paramTypeInfo.size > 8)
-			{
-				int sizeLeft = paramTypeInfo.size;
-				IRValue dst = IRValueDereference(paramValueIdx, 0, 0);
-				while (sizeLeft > 0)
-				{
-					IRValue src = IRValueDereference(x64SpilledParametersRead[numberOfSpilled++],
-							TYPETABLEIDX_S64);
-
-					s64 typeTableIdx = TYPETABLEIDX_S8;
-					if (sizeLeft > 4)
-						typeTableIdx = TYPETABLEIDX_S64;
-					else if (sizeLeft > 2)
-						typeTableIdx = TYPETABLEIDX_S32;
-					else if (sizeLeft > 1)
-						typeTableIdx = TYPETABLEIDX_S16;
-					src.typeTableIdx = typeTableIdx;
-					dst.typeTableIdx = typeTableIdx;
-
-					X64Mov(context, x64Proc, dst, src);
-					dst.value.offset += 8;
-					sizeLeft -= 8;
-				}
-				continue;
-			}
-
-			bool isXMM = paramTypeInfo.typeCategory == TYPECATEGORY_FLOATING;
-
-			IRValue src;
-			if (!isXMM) switch(numberOfGPR++)
-			{
-			case 0: src = RDI; break;
-			case 1: src = RSI; break;
-			case 2: src = RDX; break;
-			case 3: src = RCX; break;
-			case 4: src = R8;  break;
-			case 5: src = R9;  break;
-			default:
-				src = IRValueValue(x64SpilledParametersRead[numberOfSpilled++], TYPETABLEIDX_S64);
-			}
-			else
-			{
-				if (numberOfXMM < 16)
-					src = IRValueValue(XMM0.value.valueIdx + numberOfXMM++, TYPETABLEIDX_F64);
-				else
-					src = IRValueValue(x64SpilledParametersRead[numberOfSpilled++], TYPETABLEIDX_S64);
-			}
-
-			if (isXMM)
-				src.typeTableIdx = paramTypeIdx;
-
-			v->flags |= VALUEFLAGS_TRY_IMMITATE;
-			v->tryImmitateValueIdx = src.value.valueIdx;
-
-			X64Mov(context, x64Proc, IRValueValue(paramValueIdx, paramTypeIdx), src);
-		}
+		X64ReadyLinuxParameters(context, x64Proc, params, false);
 #endif
 
 		u64 instructionCount = BucketArrayCount(&proc->instructions);
