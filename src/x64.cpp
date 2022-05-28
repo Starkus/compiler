@@ -1413,10 +1413,90 @@ bool X64WinABIShouldPassByCopy(Context *context, s64 typeTableIdx)
 			typeInfo.size != 8);
 }
 
+Array<u32, PhaseAllocator> X64ReadyWin64Parameters(Context *context, X64Procedure *x64Proc,
+		ArrayView<IRValue> parameters, bool isCaller)
+{
+	int parameterCount = (int)parameters.size;
+
+	Array<u32, PhaseAllocator> parameterValues;
+	ArrayInit(&parameterValues, parameterCount * 2);
+
+	for (int i = 0; i < parameterCount; ++i)
+	{
+		IRValue param = parameters[i];
+		s64 paramTypeIdx = param.typeTableIdx;
+		TypeInfo paramType = context->typeTable[paramTypeIdx];
+
+		if (isCaller && X64WinABIShouldPassByCopy(context, paramTypeIdx))
+		{
+			static s64 voidPtrTypeIdx = GetTypeInfoPointerOf(context, TYPETABLEIDX_VOID);
+
+			u32 tmpValueIdx = NewValue(context, "paramcpy"_s, paramTypeIdx, 0);
+			IRValue tmpValue = IRValueValue(tmpValueIdx, voidPtrTypeIdx);
+
+			X64Instruction pushInst = { X64_Push_Value };
+			pushInst.valueIdx = tmpValueIdx;
+			*BucketArrayAdd(&x64Proc->instructions) = pushInst;
+
+			IRValue ptr = IRValueNewValue(context, "paramptr"_s, TYPETABLEIDX_S64, 0);
+			*BucketArrayAdd(&x64Proc->instructions) = { X64_LEA, ptr, tmpValue };
+
+			X64CopyMemory(context, x64Proc, ptr, param, IRValueImmediate(paramType.size));
+			param = ptr;
+			paramTypeIdx = TYPETABLEIDX_S64;
+		}
+
+		bool isXMM = paramType.typeCategory == TYPECATEGORY_FLOATING;
+
+		IRValue slot;
+		switch(i)
+		{
+		case 0:
+			slot = isXMM ? XMM0 : RCX;
+			break;
+		case 1:
+			slot = isXMM ? XMM1 : RDX;
+			break;
+		case 2:
+			slot = isXMM ? XMM2 : R8;
+			break;
+		case 3:
+			slot = isXMM ? XMM3 : R9;
+			break;
+		default:
+			if (isCaller)
+				slot = IRValueValue(x64SpilledParametersWrite[i], TYPETABLEIDX_S64);
+			else
+				slot = IRValueValue(x64SpilledParametersRead[i], TYPETABLEIDX_S64);
+		}
+		slot.typeTableIdx = paramTypeIdx;
+
+		if (isCaller)
+			X64Mov(context, x64Proc, slot, param);
+		else
+		{
+			if (X64WinABIShouldPassByCopy(context, paramTypeIdx))
+			{
+				s64 ptrTypeIdx = GetTypeInfoPointerOf(context, paramTypeIdx);
+				param.typeTableIdx = ptrTypeIdx;
+				slot.typeTableIdx = ptrTypeIdx;
+				X64CopyMemory(context, x64Proc, param, slot,
+						IRValueImmediate(paramType.size));
+			}
+			else
+				X64Mov(context, x64Proc, param, slot);
+		}
+
+		*ArrayAdd(&parameterValues) = slot.value.valueIdx;
+	}
+
+	return parameterValues;
+}
+
 Array<u32, PhaseAllocator> X64ReadyLinuxParameters(Context *context, X64Procedure *x64Proc,
 		ArrayView<IRValue> parameters, bool isCaller)
 {
-	int parameterCount = parameters.size;
+	int parameterCount = (int)parameters.size;
 
 	Array<u32, PhaseAllocator> parameterValues;
 	ArrayInit(&parameterValues, parameterCount * 2);
@@ -1440,7 +1520,7 @@ Array<u32, PhaseAllocator> X64ReadyLinuxParameters(Context *context, X64Procedur
 			else if (paramTypeInfo.typeCategory == TYPECATEGORY_ARRAY)
 				members = context->typeTable[TYPETABLEIDX_ARRAY_STRUCT].structInfo.members;
 
-			IRValue first, second;
+			IRValue first, second = {};
 			int regCount = 1;
 
 			first = IRValueDereference(param.value.valueIdx, TYPETABLEIDX_S64, 0);
@@ -1548,7 +1628,7 @@ Array<u32, PhaseAllocator> X64ReadyLinuxParameters(Context *context, X64Procedur
 
 		if (paramTypeInfo.size > 8)
 		{
-			int sizeLeft = paramTypeInfo.size;
+			int sizeLeft = (int)paramTypeInfo.size;
 			while (sizeLeft > 0)
 			{
 				s64 typeTableIdx = TYPETABLEIDX_S8;
@@ -2016,57 +2096,11 @@ void X64ConvertInstruction(Context *context, IRInstruction inst, X64Procedure *x
 		ArrayInit(&result.parameterValues, inst.procedureCall.parameters.size * 2);
 
 #if _MSC_VER
-		for (int i = 0; i < inst.procedureCall.parameters.size; ++i)
-		{
-			IRValue param = inst.procedureCall.parameters[i];
-			s64 paramTypeIdx = param.typeTableIdx;
-			TypeInfo paramType = context->typeTable[paramTypeIdx];
+		Array<u32, PhaseAllocator> params = X64ReadyWin64Parameters(context, x64Proc,
+		inst.procedureCall.parameters, true);
 
-			if (X64WinABIShouldPassByCopy(context, paramTypeIdx))
-			{
-				static s64 voidPtrTypeIdx = GetTypeInfoPointerOf(context, TYPETABLEIDX_VOID);
-
-				u32 tmpValueIdx = NewValue(context, "paramcpy"_s, paramTypeIdx, 0);
-				IRValue tmpValue = IRValueValue(tmpValueIdx, voidPtrTypeIdx);
-
-				X64Instruction pushInst = { X64_Push_Value };
-				pushInst.valueIdx = tmpValueIdx;
-				*BucketArrayAdd(&x64Proc->instructions) = pushInst;
-
-				IRValue ptr = IRValueNewValue(context, "paramptr"_s, TYPETABLEIDX_S64, 0);
-				*BucketArrayAdd(&x64Proc->instructions) = { X64_LEA, ptr, tmpValue };
-
-				X64CopyMemory(context, x64Proc, ptr, param, IRValueImmediate(paramType.size));
-
-				param = ptr;
-				paramTypeIdx = TYPETABLEIDX_S64;
-			}
-
-			bool isXMM = paramType.typeCategory == TYPECATEGORY_FLOATING;
-
-			IRValue dst;
-			switch(i)
-			{
-			case 0:
-				dst = isXMM ? XMM0 : RCX;
-				break;
-			case 1:
-				dst = isXMM ? XMM1 : RDX;
-				break;
-			case 2:
-				dst = isXMM ? XMM2 : R8;
-				break;
-			case 3:
-				dst = isXMM ? XMM3 : R9;
-				break;
-			default:
-				dst = IRValueValue(x64SpilledParametersWrite[i], TYPETABLEIDX_S64);
-			}
-			dst.typeTableIdx = paramTypeIdx;
-			X64Mov(context, x64Proc, dst, param);
-
-			*ArrayAdd(&result.parameterValues) = dst.value.valueIdx;
-		}
+		result.parameterValues.data = params.data;
+		result.parameterValues.size = params.size;
 #else
 		Array<u32, PhaseAllocator> paramValues =
 			X64ReadyLinuxParameters(context, x64Proc, inst.procedureCall.parameters, true);
@@ -2090,8 +2124,8 @@ void X64ConvertInstruction(Context *context, IRInstruction inst, X64Procedure *x
 					break;
 				}
 			}
-#endif
 		}
+#endif
 
 		*BucketArrayAdd(&x64Proc->instructions) = result;
 
@@ -2996,54 +3030,17 @@ void BackendMain(Context *context)
 
 		// Allocate parameters
 #if _MSC_VER
-		int paramIdx = 0;
+		Array<IRValue, PhaseAllocator> params;
+		ArrayInit(&params, paramCount + returnByCopy);
+
+		// Pointer to return value
 		if (returnByCopy)
-		{
-			++paramIdx;
-			X64Mov(context, x64Proc, IRValueValue(proc->returnValueIdx, TYPETABLEIDX_S64), RCX);
-		}
-		for (int i = 0; i < paramCount; ++i, ++paramIdx)
-		{
-			u32 paramValueIdx = proc->parameterValues[i];
-			Value *v = &context->values[paramValueIdx];
-			s64 paramTypeIdx = v->typeTableIdx;
-			TypeInfo paramType = context->typeTable[paramTypeIdx];
-			bool isXMM = paramType.typeCategory == TYPECATEGORY_FLOATING;
+			*ArrayAdd(&params) = IRValueValue(proc->returnValueIdx, TYPETABLEIDX_S64);
 
-			IRValue src;
-			switch (paramIdx)
-			{
-			case 0:
-				src = isXMM ? XMM0 : RCX;
-				break;
-			case 1:
-				src = isXMM ? XMM1 : RDX;
-				break;
-			case 2:
-				src = isXMM ? XMM2 : R8;
-				break;
-			case 3:
-				src = isXMM ? XMM3 : R9;
-				break;
-			default:
-				src = IRValueValue(x64SpilledParametersRead[paramIdx], TYPETABLEIDX_S64);
-			}
-			if (isXMM)
-				src.typeTableIdx = paramTypeIdx;
+		for (int paramIdx = 0; paramIdx < paramCount; ++paramIdx)
+			*ArrayAdd(&params) = IRValueValue(context, proc->parameterValues[paramIdx]);
 
-			v->flags |= VALUEFLAGS_TRY_IMMITATE;
-			v->tryImmitateValueIdx = src.value.valueIdx;
-
-			if (X64WinABIShouldPassByCopy(context, paramTypeIdx))
-			{
-				s64 ptrTypeIdx = GetTypeInfoPointerOf(context, paramTypeIdx);
-				src.typeTableIdx = ptrTypeIdx;
-				X64CopyMemory(context, x64Proc, IRValueValue(paramValueIdx, ptrTypeIdx), src,
-						IRValueImmediate(paramType.size));
-			}
-			else
-				X64Mov(context, x64Proc, IRValueValue(paramValueIdx, paramTypeIdx), src);
-		}
+		X64ReadyWin64Parameters(context, x64Proc, params, false);
 #else
 		Array<IRValue, PhaseAllocator> params;
 		ArrayInit(&params, paramCount + returnByCopy);
