@@ -1696,9 +1696,6 @@ IRValue IRGenFromExpression(Context *context, ASTExpression *expression)
 
 		// Remember parameter count because we need space for them in the stack
 		IRProcedureScope stackTop = context->irProcedureStack[context->irProcedureStack.size - 1];
-		Procedure *currentProc = GetProcedure(context, stackTop.procedureIdx);
-		if (currentProc->allocatedParameterCount < paramCount)
-			currentProc->allocatedParameterCount = paramCount;
 
 		// Return value
 		procCallInst.procedureCall.out.valueType = IRVALUETYPE_INVALID;

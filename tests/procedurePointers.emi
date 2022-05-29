@@ -8,6 +8,11 @@ ReturnNumber :: () -> s32
 	return 42;
 }
 
+ReturnNumberDifferentCC :: #convention(win64) () -> s32
+{
+	return 43;
+}
+
 Params :: (one : s32, two : s32, three : s32)
 {
 	PrintF("Params: %, %, %\n", one, two, three);
@@ -29,6 +34,7 @@ Main :: () -> s64
 	pointerToProce();
 
 	pointerToReturnNumber : () -> s32 = ReturnNumber;
+	//pointerToReturnNumber = ReturnNumberDifferentCC; // Calling convention mismatch, should give an error!
 	number : s32 = pointerToReturnNumber();
 	PrintF("Received number % through procedure pointer call\n", number);
 

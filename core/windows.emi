@@ -135,7 +135,7 @@ WNDCLASSEXA :: struct
 {
 	cbSize : u32;
 	style : u32;
-	lpfnWndProc : (hWnd : ^void, uMsg : u32, wParam : u64, lParam : u64) -> u64;
+	lpfnWndProc : #convention(win64) (hWnd : ^void, uMsg : u32, wParam : u64, lParam : u64) -> u64;
 	cbClsExtra : s32;
 	cbWndExtra : s32;
 	hInstance : ^void;
@@ -200,7 +200,7 @@ LARGE_INTEGER :: union
 	quadPart : u64;
 };
 
-CreateFileA :: #external (
+CreateFileA :: #external #convention(win64) (
 		lpFileName : ^u8,
 		dwDesiredAccess : u32,
 		dwShareMode : u32,
@@ -208,15 +208,15 @@ CreateFileA :: #external (
 		dwCreationDisposition : u32,
 		dwFlagsAndAttributes : u32,
 		hTemplateFile : ^void) -> ^void;
-CloseHandle :: #external (handle : ^void);
-GetFileSize :: #external (handle : ^void, lpFileSizeHigh : ^u32) -> u32;
-ReadFile :: #external (hFile : ^void, lpBuffer : ^void, nNumberOfBytesToRead : u32, lpNumberOfBytesRead : ^u32, lpOverlapped : ^void) -> bool;
-VirtualAlloc :: #external (lpAddress : ^void, dwSize : u64, flAllocationType : u32, flProtect : u32) -> ^void;
-VirtualFree :: #external (lpAddress : ^void, dwSize : u64, dwFreeType : u32) -> bool;
-AttachConsole :: #external (handle : ^void);
-GetModuleHandleA :: #external (lpModuleName : ^void) -> ^void;
-RegisterClassExA :: #external (wndClass : ^WNDCLASSEXA) -> u16;
-CreateWindowExA :: #external (
+CloseHandle :: #external #convention(win64) (handle : ^void);
+GetFileSize :: #external #convention(win64) (handle : ^void, lpFileSizeHigh : ^u32) -> u32;
+ReadFile :: #external #convention(win64) (hFile : ^void, lpBuffer : ^void, nNumberOfBytesToRead : u32, lpNumberOfBytesRead : ^u32, lpOverlapped : ^void) -> bool;
+VirtualAlloc :: #external #convention(win64) (lpAddress : ^void, dwSize : u64, flAllocationType : u32, flProtect : u32) -> ^void;
+VirtualFree :: #external #convention(win64) (lpAddress : ^void, dwSize : u64, dwFreeType : u32) -> bool;
+AttachConsole :: #external #convention(win64) (handle : ^void);
+GetModuleHandleA :: #external #convention(win64) (lpModuleName : ^void) -> ^void;
+RegisterClassExA :: #external #convention(win64) (wndClass : ^WNDCLASSEXA) -> u16;
+CreateWindowExA :: #external #convention(win64) (
 		dwExStyle : u32,
 		lpClassName : ^u8,
 		lpWindowName : ^u8,
@@ -230,21 +230,20 @@ CreateWindowExA :: #external (
 		hInstance : ^void,
 		lpParam : ^void
 	) -> ^void;
-ShowWindow :: #external (hWnd : ^void, nCmdShow : s32);
-GetLastError :: #external () -> u32;
-DefWindowProcA :: #external (hWnd : ^void, uMsg : u32, wParam : u64, lParam : u64) -> u64;
-PeekMessageA :: #external (lpMsg : ^MSG, hWnd : ^void, wMsgFilterMin : u32, wMsgFilterMax : u32,
-		wRemoveMsg : u32) -> bool;
-TranslateMessage :: #external (message : ^MSG) -> bool;
-DispatchMessageA :: #external (message : ^MSG) -> s64;
-LoadModule :: #external (lpLibFileName : ^u8) -> ^void;
-GetProcAddress :: #external (hModule : ^void, lpProcName : ^u8) -> ^void;
-GetDC :: #external (hWnd : ^void) -> ^void;
-ReleaseDC :: #external (hWnd : ^void, hdc : ^void);
-ChoosePixelFormat :: #external (hdc : ^void, ppfd : ^PIXELFORMATDESCRIPTOR) -> s64;
-SetPixelFormat :: #external (hdc : ^void, format : s64, ppfd : ^PIXELFORMATDESCRIPTOR) -> bool;
-PostQuitMessage :: #external (nExitCode : s64);
-DestroyWindow :: #external (hWnd : ^void) -> bool;
-TerminateProcess :: #external (uExitCode : u32);
-QueryPerformanceCounter :: #external (lpPerformanceCount : ^LARGE_INTEGER) -> bool;
-QueryPerformanceFrequency :: #external (lpFrequency : ^LARGE_INTEGER) -> bool;
+ShowWindow :: #external #convention(win64) (hWnd : ^void, nCmdShow : s32);
+GetLastError :: #external #convention(win64) () -> u32;
+DefWindowProcA :: #external #convention(win64) (hWnd : ^void, uMsg : u32, wParam : u64, lParam : u64) -> u64;
+PeekMessageA :: #external #convention(win64) (lpMsg : ^MSG, hWnd : ^void, wMsgFilterMin : u32, wMsgFilterMax : u32, wRemoveMsg : u32) -> bool;
+TranslateMessage :: #external #convention(win64) (message : ^MSG) -> bool;
+DispatchMessageA :: #external #convention(win64) (message : ^MSG) -> s64;
+LoadModule :: #external #convention(win64) (lpLibFileName : ^u8) -> ^void;
+GetProcAddress :: #external #convention(win64) (hModule : ^void, lpProcName : ^u8) -> ^void;
+GetDC :: #external #convention(win64) (hWnd : ^void) -> ^void;
+ReleaseDC :: #external #convention(win64) (hWnd : ^void, hdc : ^void);
+ChoosePixelFormat :: #external #convention(win64) (hdc : ^void, ppfd : ^PIXELFORMATDESCRIPTOR) -> s64;
+SetPixelFormat :: #external #convention(win64) (hdc : ^void, format : s64, ppfd : ^PIXELFORMATDESCRIPTOR) -> bool;
+PostQuitMessage :: #external #convention(win64) (nExitCode : s64);
+DestroyWindow :: #external #convention(win64) (hWnd : ^void) -> bool;
+TerminateProcess :: #external #convention(win64) (uExitCode : u32);
+QueryPerformanceCounter :: #external #convention(win64) (lpPerformanceCount : ^LARGE_INTEGER) -> bool;
+QueryPerformanceFrequency :: #external #convention(win64) (lpFrequency : ^LARGE_INTEGER) -> bool;

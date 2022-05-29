@@ -514,10 +514,9 @@ void ResolveStackOffsets(Context *context, Array<X64Procedure, PhaseAllocator> x
 		X64Procedure *proc = &x64Procedures[procedureIdx];
 		s64 stackCursor = 0;
 
-		// @Incomplete: implement calling conventions other than MS ABI
+		// Allocate space for the parameters we pass on the stack to procedures we call.
 		s64 allocParameters = proc->allocatedParameterCount;
-		if (allocParameters < 4) allocParameters = 4;
-		else if (allocParameters & 1) ++allocParameters;
+		if (allocParameters & 1) ++allocParameters;
 		stackCursor += allocParameters * 8;
 		if (stackCursor & 15)
 			stackCursor = (stackCursor + 16) & (~15);

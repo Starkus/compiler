@@ -115,6 +115,7 @@ struct TypeInfoProcedure
 {
 	s64 returnTypeTableIdx;
 	Array<ProcedureParameter, FrameAllocator> parameters;
+	CallingConvention callingConvention;
 	bool isVarargs;
 };
 
@@ -188,7 +189,6 @@ struct Procedure
 
 	// IRGen
 	BucketArray<IRInstruction, FrameAllocator, 256> instructions;
-	s64 allocatedParameterCount;
 };
 
 enum TCYieldCause
@@ -406,6 +406,10 @@ String TypeInfoToString(Context *context, s64 typeTableIdx)
 	case TYPECATEGORY_PROCEDURE:
 	{
 		String result = "("_s;
+		if (typeInfo.procedureInfo.callingConvention == CC_WIN64)
+			result = "cc:win64 ("_s;
+		else if (typeInfo.procedureInfo.callingConvention == CC_LINUX64)
+			result = "cc:linux64 ("_s;
 		for (int i = 0; i < typeInfo.procedureInfo.parameters.size; ++i)
 		{
 			if (i) result = StringConcat(result, ", "_s);
@@ -958,6 +962,8 @@ bool AreTypeInfosEqual(Context *context, TypeInfo a, TypeInfo b)
 			a.arrayInfo.count == b.arrayInfo.count;
 	case TYPECATEGORY_PROCEDURE:
 	{
+		if (a.procedureInfo.callingConvention != b.procedureInfo.callingConvention)
+			return false;
 		if (a.procedureInfo.parameters.size != b.procedureInfo.parameters.size)
 			return false;
 		if (a.procedureInfo.isVarargs != b.procedureInfo.isVarargs)
@@ -1897,6 +1903,7 @@ TypeInfo TypeInfoFromASTProcedurePrototype(Context *context, ASTProcedurePrototy
 	t.size = g_pointerSize;
 	t.typeCategory = TYPECATEGORY_PROCEDURE;
 	t.procedureInfo.isVarargs = prototype.isVarargs;
+	t.procedureInfo.callingConvention = prototype.callingConvention;
 	t.procedureInfo.returnTypeTableIdx = prototype.returnTypeIdx;
 
 	int astParametersCount = (int)prototype.astParameters.size;
@@ -2285,11 +2292,15 @@ ASTExpression InlineProcedureCopyTreeBranch(Context *context, const ASTExpressio
 	case ASTNODETYPE_INTRINSIC:
 	{
 		ASTIntrinsic astIntrinsic = expression->intrinsic;
-		DynamicArrayInit(&astIntrinsic.arguments, expression->intrinsic.arguments.size);
-		for (int argIdx = 0; argIdx < expression->intrinsic.arguments.size; ++argIdx)
+		u64 argCount = expression->intrinsic.arguments.size;
+		if (argCount)
 		{
-			*DynamicArrayAdd(&astIntrinsic.arguments) = InlineProcedureCopyTreeBranch(context,
-					&expression->intrinsic.arguments[argIdx]);
+			DynamicArrayInit(&astIntrinsic.arguments, argCount);
+			for (int argIdx = 0; argIdx < argCount; ++argIdx)
+			{
+				*DynamicArrayAdd(&astIntrinsic.arguments) = InlineProcedureCopyTreeBranch(context,
+						&expression->intrinsic.arguments[argIdx]);
+			}
 		}
 		result.intrinsic = astIntrinsic;
 		return result;

@@ -1,5 +1,5 @@
-GetStdHandle :: #external (handle: s64) -> s64;
-WriteFile :: #external (handle: s64, buffer: ^void, bytesToWrite: s64, bytesWritten: ^s64,
+GetStdHandle :: #external #convention(win64) (handle: s64) -> s64;
+WriteFile :: #external #convention(win64) (handle: s64, buffer: ^void, bytesToWrite: s64, bytesWritten: ^s64,
 		overlapped: ^void) -> bool;
 Print :: (string: String)
 {
@@ -8,7 +8,7 @@ Print :: (string: String)
 	WriteFile(stdOut, string.data, cast(s64) string.size, ^bytesWritten, 0);
 }
 
-ExitProcess :: #external (uExitCode : u32);
+ExitProcess :: #external #convention(win64) (uExitCode : u32);
 __WindowsMain :: ()
 {
 	errorCode : s64 = Main();

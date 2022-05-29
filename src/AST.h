@@ -125,6 +125,13 @@ struct ASTEnumDeclaration : ASTBase
 	DynamicArray<ASTEnumMember, FrameAllocator> members;
 };
 
+enum CallingConvention
+{
+	CC_DEFAULT,
+	CC_WIN64,
+	CC_LINUX64
+};
+
 struct ASTType;
 struct ASTProcedureParameter;
 struct ASTProcedurePrototype : ASTBase
@@ -132,6 +139,7 @@ struct ASTProcedurePrototype : ASTBase
 	DynamicArray<ASTProcedureParameter, FrameAllocator> astParameters;
 	ASTType *astReturnType;
 
+	CallingConvention callingConvention;
 	bool isVarargs;
 	String varargsName;
 	SourceLocation varargsLoc;

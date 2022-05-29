@@ -70,7 +70,8 @@ ASTType ParseType(Context *context)
 		astType.name = context->token->string;
 		Advance(context);
 	}
-	else if (context->token->type == '(')
+	else if (context->token->type == '(' ||
+			 context->token->type == TOKEN_KEYWORD_CALLING_CONVENTION)
 	{
 		astType.nodeType = ASTTYPENODETYPE_PROCEDURE;
 		astType.procedurePrototype = ParseProcedurePrototype(context);
@@ -622,6 +623,26 @@ ASTProcedurePrototype ParseProcedurePrototype(Context *context)
 {
 	ASTProcedurePrototype prototype = {};
 	prototype.loc = context->token->loc;
+	prototype.callingConvention = CC_DEFAULT;
+
+	if (context->token->type == TOKEN_KEYWORD_CALLING_CONVENTION)
+	{
+		Advance(context);
+		AssertToken(context, context->token, '(');
+		Advance(context);
+
+		AssertToken(context, context->token, TOKEN_IDENTIFIER);
+		if (StringEquals(context->token->string, "win64"_s))
+			prototype.callingConvention = CC_WIN64;
+		else if (StringEquals(context->token->string, "linux64"_s))
+			prototype.callingConvention = CC_LINUX64;
+		else
+			LogError(context, context->token->loc, "Invalid calling convention specified"_s);
+		Advance(context);
+
+		AssertToken(context, context->token, ')');
+		Advance(context);
+	}
 
 	DynamicArrayInit(&prototype.astParameters, 4);
 
@@ -970,7 +991,8 @@ ASTStaticDefinition ParseStaticDefinition(Context *context)
 			break;
 	}
 
-	if (context->token->type == '(')
+	if (context->token->type == '(' ||
+		context->token->type == TOKEN_KEYWORD_CALLING_CONVENTION)
 	{
 		expression.nodeType = ASTNODETYPE_PROCEDURE_DECLARATION;
 

@@ -1335,7 +1335,7 @@ IRValue X64PushRegisterParameter(s64 typeTableIdx, s32 *numberOfGPR, s32 *number
 	}
 	else if (*numberOfXMM < 16)
 	{
-		return IRValueValue(XMM0.value.valueIdx + (*numberOfXMM)++, TYPETABLEIDX_F64);
+		return IRValueValue(XMM0.value.valueIdx + (*numberOfXMM)++, typeTableIdx);
 	}
 	return { IRVALUETYPE_INVALID };
 }
@@ -1490,6 +1490,12 @@ Array<u32, PhaseAllocator> X64ReadyWin64Parameters(Context *context, X64Procedur
 		*ArrayAdd(&parameterValues) = slot.value.valueIdx;
 	}
 
+	if (isCaller)
+	{
+		if (x64Proc->allocatedParameterCount < parameterCount)
+			x64Proc->allocatedParameterCount = parameterCount;
+	}
+
 	return parameterValues;
 }
 
@@ -1515,10 +1521,10 @@ Array<u32, PhaseAllocator> X64ReadyLinuxParameters(Context *context, X64Procedur
 		if (isStruct && paramTypeInfo.size <= 16)
 		{
 			Array<StructMember, FrameAllocator> members;
-			if (paramTypeInfo.typeCategory == TYPECATEGORY_STRUCT)
-				members = paramTypeInfo.structInfo.members;
-			else if (paramTypeInfo.typeCategory == TYPECATEGORY_ARRAY)
+			if (paramTypeInfo.typeCategory == TYPECATEGORY_ARRAY)
 				members = context->typeTable[TYPETABLEIDX_ARRAY_STRUCT].structInfo.members;
+			else
+				members = paramTypeInfo.structInfo.members;
 
 			IRValue first, second = {};
 			int regCount = 1;
@@ -1604,12 +1610,14 @@ Array<u32, PhaseAllocator> X64ReadyLinuxParameters(Context *context, X64Procedur
 					if (isCaller)
 					{
 						X64Mov(context, x64Proc, firstSlot,  first);
-						X64Mov(context, x64Proc, secondSlot, second);
+						if (secondSlot.valueType != IRVALUETYPE_INVALID)
+							X64Mov(context, x64Proc, secondSlot, second);
 					}
 					else
 					{
 						X64Mov(context, x64Proc, first,  firstSlot);
-						X64Mov(context, x64Proc, second, secondSlot);
+						if (secondSlot.valueType != IRVALUETYPE_INVALID)
+							X64Mov(context, x64Proc, second, secondSlot);
 					}
 
 					*ArrayAdd(&parameterValues) = firstSlot.value.valueIdx;
@@ -1681,6 +1689,13 @@ Array<u32, PhaseAllocator> X64ReadyLinuxParameters(Context *context, X64Procedur
 			*ArrayAdd(&parameterValues) = slot.value.valueIdx;
 		}
 	}
+
+	if (isCaller)
+	{
+		if (x64Proc->allocatedParameterCount < numberOfSpilled)
+			x64Proc->allocatedParameterCount = numberOfSpilled;
+	}
+
 	return parameterValues;
 }
 
@@ -2076,6 +2091,8 @@ void X64ConvertInstruction(Context *context, IRInstruction inst, X64Procedure *x
 	case IRINSTRUCTIONTYPE_PROCEDURE_CALL:
 	case IRINSTRUCTIONTYPE_PROCEDURE_CALL_INDIRECT:
 	{
+		CallingConvention callingConvention;
+
 		// At this point, we have the actual values that go into registers/stack slots. If something
 		// is passed by copy, we already have the pointer to the copy as argument value, so we don't
 		// care.
@@ -2083,11 +2100,17 @@ void X64ConvertInstruction(Context *context, IRInstruction inst, X64Procedure *x
 		{
 			result.type = X64_CALL;
 			result.procedureIdx = inst.procedureCall.procedureIdx;
+
+			s64 procTypeIdx = GetProcedure(context, result.procedureIdx)->typeTableIdx;
+			callingConvention = context->typeTable[procTypeIdx].procedureInfo.callingConvention;
 		}
 		else
 		{
 			result.type = X64_CALL_Indirect;
 			result.procedureIRValue = inst.procedureCall.procIRValue;
+
+			s64 procTypeIdx = inst.procedureCall.procIRValue.typeTableIdx;
+			callingConvention = context->typeTable[procTypeIdx].procedureInfo.callingConvention;
 		}
 
 		// At worst each parameter should add 2 values to this array, this is why we multiply
@@ -2095,19 +2118,22 @@ void X64ConvertInstruction(Context *context, IRInstruction inst, X64Procedure *x
 		// @Improve: dynamic array.
 		ArrayInit(&result.parameterValues, inst.procedureCall.parameters.size * 2);
 
-#if _MSC_VER
-		Array<u32, PhaseAllocator> params = X64ReadyWin64Parameters(context, x64Proc,
-		inst.procedureCall.parameters, true);
-
-		result.parameterValues.data = params.data;
-		result.parameterValues.size = params.size;
-#else
-		Array<u32, PhaseAllocator> paramValues =
-			X64ReadyLinuxParameters(context, x64Proc, inst.procedureCall.parameters, true);
+		Array<u32, PhaseAllocator> paramValues;
+		switch (callingConvention)
+		{
+			case CC_WIN64:
+				paramValues =
+					X64ReadyWin64Parameters(context, x64Proc, inst.procedureCall.parameters, true);
+				break;
+			case CC_DEFAULT:
+			case CC_LINUX64:
+			default:
+				paramValues =
+					X64ReadyLinuxParameters(context, x64Proc, inst.procedureCall.parameters, true);
+		}
 
 		result.parameterValues.data = paramValues.data;
 		result.parameterValues.size = paramValues.size;
-#endif
 
 #if !_MSC_VER
 		// Check syscalls
@@ -2998,7 +3024,6 @@ void BackendMain(Context *context)
 		u32 newValueIdx = NewValue(context, TPrintF("_param%d", paramIdx), TYPETABLEIDX_S64,
 				VALUEFLAGS_IS_ALLOCATED | VALUEFLAGS_IS_MEMORY);
 		// Add 16, 8 for return address, and 8 because we push RBP
-		// (remember by now we are at parameter index 4+).
 		context->values[newValueIdx].stackOffset = paramIdx * 8;
 		x64SpilledParametersWrite[paramIdx] = newValueIdx;
 	}
@@ -3017,7 +3042,7 @@ void BackendMain(Context *context)
 		TypeInfoProcedure procTypeInfo = context->typeTable[proc->typeTableIdx].procedureInfo;
 
 		x64Proc->name = GetProcedure(context, procedureIdx)->name;
-		x64Proc->allocatedParameterCount = proc->allocatedParameterCount;
+		x64Proc->allocatedParameterCount = 0;
 		x64Proc->returnValueIdx = proc->returnValueIdx;
 		x64Proc->stackSize = 0;
 		DynamicArrayInit(&x64Proc->spilledValues, 8);
@@ -3029,7 +3054,6 @@ void BackendMain(Context *context)
 		int paramCount = (int)proc->parameterValues.size;
 
 		// Allocate parameters
-#if _MSC_VER
 		Array<IRValue, PhaseAllocator> params;
 		ArrayInit(&params, paramCount + returnByCopy);
 
@@ -3040,20 +3064,15 @@ void BackendMain(Context *context)
 		for (int paramIdx = 0; paramIdx < paramCount; ++paramIdx)
 			*ArrayAdd(&params) = IRValueValue(context, proc->parameterValues[paramIdx]);
 
-		X64ReadyWin64Parameters(context, x64Proc, params, false);
-#else
-		Array<IRValue, PhaseAllocator> params;
-		ArrayInit(&params, paramCount + returnByCopy);
-
-		// Pointer to return value
-		if (returnByCopy)
-			*ArrayAdd(&params) = IRValueValue(proc->returnValueIdx, TYPETABLEIDX_S64);
-
-		for (int paramIdx = 0; paramIdx < paramCount; ++paramIdx)
-			*ArrayAdd(&params) = IRValueValue(context, proc->parameterValues[paramIdx]);
-
-		X64ReadyLinuxParameters(context, x64Proc, params, false);
-#endif
+		switch (procTypeInfo.callingConvention)
+		{
+			case CC_WIN64:
+				X64ReadyWin64Parameters(context, x64Proc, params, false);
+				break;
+			case CC_DEFAULT:
+			case CC_LINUX64:
+				X64ReadyLinuxParameters(context, x64Proc, params, false);
+		}
 
 		u64 instructionCount = BucketArrayCount(&proc->instructions);
 		for (int instructionIdx = 0; instructionIdx < instructionCount; ++instructionIdx)

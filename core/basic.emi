@@ -91,3 +91,8 @@ Any :: struct
 	typeInfo : ^TypeInfo;
 	data : ^void;
 };
+
+Breakpoint :: #inline ()
+{
+	#intrinsic(breakpoint);
+}

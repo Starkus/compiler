@@ -385,6 +385,8 @@ Token ReadTokenAndAdvance(Context *context, Tokenizer *tokenizer)
 				result.type = TOKEN_KEYWORD_INLINE;
 			else if (StringEquals(result.string, "#external"_s))
 				result.type = TOKEN_KEYWORD_EXTERNAL;
+			else if (StringEquals(result.string, "#convention"_s))
+				result.type = TOKEN_KEYWORD_CALLING_CONVENTION;
 			else if (StringEquals(result.string, "#intrinsic"_s))
 				result.type = TOKEN_KEYWORD_INTRINSIC;
 			else if (StringEquals(result.string, "#operator"_s))
