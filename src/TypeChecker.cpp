@@ -726,7 +726,17 @@ const StructMember *FindStructMemberByName(Context *context, TypeInfo structType
 				   memberTypeInfo.typeCategory == TYPECATEGORY_UNION);
 			const StructMember *found = FindStructMemberByName(context, memberTypeInfo, name);
 			if (found)
+			{
+				if (currentMember->offset)
+				{
+					// Copy struct member and add the parent member's offset.
+					StructMember *shiftedMember = (StructMember *)FrameAllocator::Alloc(sizeof(StructMember));
+					memcpy(shiftedMember, found, sizeof(StructMember));
+					shiftedMember->offset += currentMember->offset;
+					return shiftedMember;
+				}
 				return found;
+			}
 		}
 	}
 	return nullptr;

@@ -72,22 +72,22 @@ variadicArgs :: (..args) -> s64
 {
 	PrintF("variadicArgs(%, %, %, %, %, %, %, %)\n", args);
 	errors := 8;
-	if @cast(^s64)args[0].data == 1   errors -= 1;
-	if @cast(^f64)args[1].data == 2.5 errors -= 1;
-	if @cast(^s64)args[2].data == 3   errors -= 1;
-	if @cast(^f64)args[3].data == 4.5 errors -= 1;
-	if @cast(^s64)args[4].data == 5   errors -= 1;
-	if @cast(^f64)args[5].data == 6.5 errors -= 1;
-	if @cast(^s64)args[6].data == 7   errors -= 1;
-	if @cast(^f64)args[7].data == 8.5 errors -= 1;
-	@cast(^s64)args[0].data = 1;
-	@cast(^f64)args[1].data = 2.5;
-	@cast(^s64)args[2].data = 3;
-	@cast(^f64)args[3].data = 4.5;
-	@cast(^s64)args[4].data = 5;
-	@cast(^f64)args[5].data = 6.5;
-	@cast(^s64)args[6].data = 7;
-	@cast(^f64)args[7].data = 8.5;
+	if args[0].asS64 == 1   errors -= 1;
+	if args[1].asF64 == 2.5 errors -= 1;
+	if args[2].asS64 == 3   errors -= 1;
+	if args[3].asF64 == 4.5 errors -= 1;
+	if args[4].asS64 == 5   errors -= 1;
+	if args[5].asF64 == 6.5 errors -= 1;
+	if args[6].asS64 == 7   errors -= 1;
+	if args[7].asF64 == 8.5 errors -= 1;
+	args[0].asS64 = 1;
+	args[1].asF64 = 2.5;
+	args[2].asS64 = 3;
+	args[3].asF64 = 4.5;
+	args[4].asS64 = 5;
+	args[5].asF64 = 6.5;
+	args[6].asS64 = 7;
+	args[7].asF64 = 8.5;
 	return errors;
 }
 

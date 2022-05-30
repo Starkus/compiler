@@ -1,6 +1,8 @@
 @echo off
 setlocal EnableDelayedExpansion
 
+set start=%time%
+
 for %%f in (tests/*) do (
 	echo | set /p=Running %%f...
 	bin\Compiler.exe tests/%%f >NUL 2>NUL
@@ -12,3 +14,6 @@ for %%f in (tests/*) do (
 		IF !ERRORLEVEL! EQU 0 echo [60GTest [32msuccess[0m
 	)
 )
+
+set end=%time%
+cmd /c timediff.bat Tests %start% %end%

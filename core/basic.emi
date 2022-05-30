@@ -89,7 +89,20 @@ TypeInfoProcedurePointer :: struct
 Any :: struct
 {
 	typeInfo : ^TypeInfo;
-	data : ^void;
+	union
+	{
+		data : ^void;
+		asS8  : s8;
+		asS16 : s16;
+		asS32 : s32;
+		asS64 : s64;
+		asU8  : u8;
+		asU16 : u16;
+		asU32 : u32;
+		asU64 : u64;
+		asF32 : f32;
+		asF64 : f64;
+	};
 };
 
 Breakpoint :: #inline ()

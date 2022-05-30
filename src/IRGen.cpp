@@ -446,39 +446,62 @@ void IRDoAssignment(Context *context, IRValue dstValue, IRValue srcValue)
 		*AddInstruction(context) = typeAssignInst;
 
 		// Access data member
+		static s64 voidPtrTypeIdx = GetTypeInfoPointerOf(context, TYPETABLEIDX_VOID);
 		IRValue dataMember = IRDoMemberAccess(context, dstValue,
 				anyTypeInfo.structInfo.members[1]);
+		dataMember.typeTableIdx = voidPtrTypeIdx;
 
 		IRValue dataValue = srcValue;
 		TypeInfo dataTypeInfo = context->typeTable[srcValue.typeTableIdx];
 
-		// If data isn't in memory, copy to a variable
-		if (dataValue.valueType != IRVALUETYPE_VALUE_DEREFERENCE &&
-			dataTypeInfo.typeCategory != TYPECATEGORY_STRUCT &&
+		if (dataTypeInfo.typeCategory != TYPECATEGORY_STRUCT &&
 			dataTypeInfo.typeCategory != TYPECATEGORY_UNION &&
 			dataTypeInfo.typeCategory != TYPECATEGORY_ARRAY)
 		{
-			static u64 tempVarForAnyUniqueID = 0;
-			String tempVarName = TPrintF("_tempVarForAny%llu", tempVarForAnyUniqueID++);
-			u32 tempValue = IRAddTempValue(context, tempVarName, srcValue.typeTableIdx,
-					VALUEFLAGS_FORCE_MEMORY);
-			IRValue tempVarIRValue = IRValueValue(tempValue, srcValue.typeTableIdx);
+			// If data isn't in memory, copy to a variable
+			if (IRShouldPassByCopy(context, dataValue.typeTableIdx))
+			{
+				static u64 tempVarForAnyUniqueID = 0;
+				String tempVarName = TPrintF("_tempVarForAny%llu", tempVarForAnyUniqueID++);
+				u32 tempValue = IRAddTempValue(context, tempVarName, srcValue.typeTableIdx,
+						VALUEFLAGS_FORCE_MEMORY);
+				IRValue tempVarIRValue = IRValueValue(tempValue, srcValue.typeTableIdx);
 
-			IRInstruction dataCopyInst = {};
-			dataCopyInst.type = IRINSTRUCTIONTYPE_ASSIGNMENT;
-			dataCopyInst.assignment.src = dataValue;
-			dataCopyInst.assignment.dst = tempVarIRValue;
-			*AddInstruction(context) = dataCopyInst;
+				IRInstruction dataCopyInst = {};
+				dataCopyInst.type = IRINSTRUCTIONTYPE_ASSIGNMENT;
+				dataCopyInst.assignment.src = dataValue;
+				dataCopyInst.assignment.dst = tempVarIRValue;
+				*AddInstruction(context) = dataCopyInst;
 
-			dataValue = tempVarIRValue;
+				dataValue = tempVarIRValue;
+
+				IRInstruction dataAssignInst = {};
+				dataAssignInst.type = IRINSTRUCTIONTYPE_ASSIGNMENT;
+				dataAssignInst.assignment.src = IRPointerToValue(context, dataValue);
+				dataAssignInst.assignment.dst = dataMember;
+				*AddInstruction(context) = dataAssignInst;
+			}
+			// Small primitives are stored directly on the Any struct.
+			else
+			{
+				dataMember.typeTableIdx = dataValue.typeTableIdx;
+
+				IRInstruction dataAssignInst = {};
+				dataAssignInst.type = IRINSTRUCTIONTYPE_ASSIGNMENT;
+				dataAssignInst.assignment.src = dataValue;
+				dataAssignInst.assignment.dst = dataMember;
+				*AddInstruction(context) = dataAssignInst;
+			}
 		}
-
-		// Write pointer to data to it
-		IRInstruction dataAssignInst = {};
-		dataAssignInst.type = IRINSTRUCTIONTYPE_ASSIGNMENT;
-		dataAssignInst.assignment.src = IRPointerToValue(context, dataValue);
-		dataAssignInst.assignment.dst = dataMember;
-		*AddInstruction(context) = dataAssignInst;
+		// These are already in memory, just save a pointer
+		else
+		{
+			IRInstruction dataAssignInst = {};
+			dataAssignInst.type = IRINSTRUCTIONTYPE_ASSIGNMENT;
+			dataAssignInst.assignment.src = IRPointerToValue(context, dataValue);
+			dataAssignInst.assignment.dst = dataMember;
+			*AddInstruction(context) = dataAssignInst;
+		}
 
 		return;
 	}

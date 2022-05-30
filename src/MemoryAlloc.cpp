@@ -1,3 +1,5 @@
+#define ENABLE_ALIGNMENT 1
+
 void MemoryInit(Memory *memory)
 {
 #if DEBUG_BUILD
@@ -17,11 +19,13 @@ void *FrameAllocator::Alloc(u64 size)
 	ASSERT((u8 *)g_memory->framePtr + size < (u8 *)g_memory->frameMem + Memory::frameSize); // Out of memory!
 	void *result;
 
+#if ENABLE_ALIGNMENT
 	// Alignment
 	int alignment = size > 16 ? 16 : NextPowerOf2((int)size);
 	int alignmentMask = alignment - 1;
 	if ((u64)g_memory->framePtr & alignmentMask)
 		g_memory->framePtr = (void *)(((u64)g_memory->framePtr & ~alignmentMask) + alignment);
+#endif
 
 	result = g_memory->framePtr;
 	g_memory->framePtr = (u8 *)g_memory->framePtr + size;
@@ -57,11 +61,13 @@ void *PhaseAllocator::Alloc(u64 size)
 	ASSERT((u8 *)g_memory->phasePtr + size < (u8 *)g_memory->phaseMem + Memory::phaseSize); // Out of memory!
 	void *result;
 
+#if ENABLE_ALIGNMENT
 	// Alignment
 	int alignment = size > 16 ? 16 : NextPowerOf2((int)size);
 	int alignmentMask = alignment - 1;
 	if ((u64)g_memory->phasePtr & alignmentMask)
 		g_memory->phasePtr = (void *)(((u64)g_memory->phasePtr & ~alignmentMask) + alignment);
+#endif
 
 	result = g_memory->phasePtr;
 	g_memory->phasePtr = (u8 *)g_memory->phasePtr + size;

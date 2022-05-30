@@ -161,7 +161,7 @@ PrintF :: (format : String, ..args)
 		else if arg.typeInfo.typeKind == TypeKind_Enum
 		{
 			enumInfo := cast(^TypeInfoEnum) arg.typeInfo;
-			num := arg.asS64;
+			num := @ cast(^s64) arg.data;
 			for (enumInfo.values)
 			{
 				if @it == num
@@ -195,7 +195,7 @@ PrintF :: (format : String, ..args)
 		}
 		else if arg.typeInfo.typeKind == TypeKind_Pointer
 		{
-			pointer : ^void = cast(^void) arg.asU64;
+			pointer : ^void = @ cast(^^void) arg.data;
 			if pointer == null
 				Print("null");
 			else

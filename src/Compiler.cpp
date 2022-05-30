@@ -17,9 +17,13 @@ const String TPrintF(const char *format, ...);
 #include "Maths.h"
 #include "Containers.h"
 
+#include "Superluminal/PerformanceAPI_loader.h"
+
 Memory *g_memory;
 FileHandle g_hStdout;
 FileHandle g_hStderr;
+
+PerformanceAPI_Functions performanceAPI;
 
 s64 Print(const char *format, ...)
 {
@@ -397,6 +401,8 @@ bool CompilerAddSourceFile(Context *context, String filename, SourceLocation loc
 
 int main(int argc, char **argv)
 {
+	PerformanceAPI_LoadFrom(L"external/Superluminal/PerformanceAPI.dll", &performanceAPI);
+
 	SetUpTimers();
 
 #if _MSC_VER
