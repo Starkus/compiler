@@ -721,12 +721,20 @@ void X64AllocateRegisters(Context *context, Array<X64Procedure, PhaseAllocator> 
 
 		String procName = currentLeafBlock->procedure->name;
 
+#if USE_PROFILER_API
+		performanceAPI.BeginEvent("Liveness analisis", StringToCStr(procName, PhaseAllocator::Alloc), PERFORMANCEAPI_DEFAULT_COLOR);
+#endif
+
 		context->beInterferenceGraph.count = 0;
 
 		// @Todo: iterative instead of recursive?
 		DynamicArray<u32, PhaseAllocator> liveValues;
 		DynamicArrayInit(&liveValues, 32);
 		DoLivenessAnalisis(context, currentLeafBlock, &liveValues);
+
+#if USE_PROFILER_API
+		performanceAPI.EndEvent();
+#endif
 
 		InterferenceGraph interferenceGraph = context->beInterferenceGraph;
 
@@ -752,20 +760,6 @@ void X64AllocateRegisters(Context *context, Array<X64Procedure, PhaseAllocator> 
 		{
 			u32 nodeToRemoveIdx = U32_MAX;
 			s64 mostEdges;
-
-			// Leave values that want to immitate others at the bottom (unless they are
-			// FORCE_REGISTER!)
-			for (u32 nodeIdx = 0; nodeIdx < interferenceGraph.count; ++nodeIdx)
-			{
-				if (interferenceGraph.removed[nodeIdx])
-					continue;
-				u32 vFlags = context->values[interferenceGraph.valueIndices[nodeIdx]].flags;
-				if (vFlags & VALUEFLAGS_TRY_IMMITATE && !(vFlags & VALUEFLAGS_FORCE_REGISTER))
-				{
-					nodeToRemoveIdx = nodeIdx;
-					goto gotNodeToRemove;
-				}
-			}
 
 			// Remove nodes that have a number of edges that fit in the available registers
 			for (u32 nodeIdx = 0; nodeIdx < interferenceGraph.count; ++nodeIdx)
@@ -857,12 +851,14 @@ gotNodeToRemove:
 			{
 				u32 immitateValueIdx = v->tryImmitateValueIdx;
 				Value immitateValue = context->values[immitateValueIdx];
+#if 0
 				while (immitateValue.flags & VALUEFLAGS_TRY_IMMITATE &&
 					   immitateValueIdx != immitateValue.tryImmitateValueIdx)
 				{
 					immitateValueIdx = immitateValue.tryImmitateValueIdx;
 					immitateValue = context->values[immitateValueIdx];
 				}
+#endif
 
 				if ((immitateValue.flags & VALUEFLAGS_IS_ALLOCATED) &&
 				  !(immitateValue.flags & VALUEFLAGS_IS_MEMORY))
@@ -893,11 +889,13 @@ gotNodeToRemove:
 					v->flags |= VALUEFLAGS_IS_ALLOCATED;
 					continue;
 				}
-#if 0//DEBUG_BUILD
 				else if (!(immitateValue.flags & VALUEFLAGS_IS_ALLOCATED) &&
+						 !(immitateValue.flags & VALUEFLAGS_TRY_IMMITATE) &&
 						 CanBeRegister(context, immitateValueIdx))
-					Print("Lost opportunity to immitate value because of allocation order!\n");
-#endif
+				{
+					context->values[immitateValueIdx].flags |= VALUEFLAGS_TRY_IMMITATE;
+					context->values[immitateValueIdx].tryImmitateValueIdx = valueIdx;
+				}
 			}
 skipImmitate:
 

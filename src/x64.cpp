@@ -1251,7 +1251,8 @@ void X64Mov(Context *context, X64Procedure *x64Proc, IRValue dst, IRValue src)
 {
 	if (CanValueBeMemory(context, dst) && CanValueBeMemory(context, src))
 	{
-		u32 srcUsedFlag = context->values[src.value.valueIdx].flags & VALUEFLAGS_IS_USED;
+		Value srcValue = context->values[src.value.valueIdx];
+		u32 srcUsedFlag = srcValue.flags & VALUEFLAGS_IS_USED;
 		u32 immitateFlag = src.valueType == IRVALUETYPE_VALUE ? VALUEFLAGS_TRY_IMMITATE : 0;
 		IRValue tmp = IRValueNewValue(context, "_movtmp"_s, dst.typeTableIdx,
 				VALUEFLAGS_FORCE_REGISTER | srcUsedFlag | immitateFlag, src.value.valueIdx);
@@ -2314,10 +2315,10 @@ doRM_RMI:
 		}
 
 		u32 immitateFlag = left.valueType == IRVALUETYPE_VALUE ? VALUEFLAGS_TRY_IMMITATE : 0;
-		IRValue tmp = IRValueNewValue(context, "_rmrmitmp"_s, left.typeTableIdx, immitateFlag,
-				left.value.valueIdx);
+		IRValue tmp = IRValueNewValue(context, "_rmrmitmp"_s, left.typeTableIdx,
+				VALUEFLAGS_FORCE_REGISTER | immitateFlag, left.value.valueIdx);
 
-		X64Mov(context, x64Proc, tmp, left);
+		X64MovNoTmp(context, x64Proc, tmp, left);
 
 		result.dst = tmp;
 		result.src = right;
@@ -2334,9 +2335,10 @@ doX_XM:
 		IRValue out = inst.binaryOperation.out;
 
 		u32 immitateFlagLeft = out.valueType == IRVALUETYPE_VALUE ? VALUEFLAGS_TRY_IMMITATE : 0;
-		IRValue tmp = IRValueNewValue(context, left.typeTableIdx, immitateFlagLeft, out.value.valueIdx);
+		IRValue tmp = IRValueNewValue(context, left.typeTableIdx,
+				VALUEFLAGS_FORCE_REGISTER | immitateFlagLeft, out.value.valueIdx);
 
-		X64Mov(context, x64Proc, tmp, left);
+		X64MovNoTmp(context, x64Proc, tmp, left);
 
 		u8 accepted = x64InstructionInfos[result.type].operandTypesRight;
 		if (!FitsInOperand(context, accepted, right) ||

@@ -2,6 +2,8 @@
 #include "Strings.h"
 #include "MemoryAlloc.h"
 
+#define USE_PROFILER_API 0
+
 const String TPrintF(const char *format, ...);
 
 #if _MSC_VER
@@ -17,13 +19,15 @@ const String TPrintF(const char *format, ...);
 #include "Maths.h"
 #include "Containers.h"
 
+#if USE_PROFILER_API
 #include "Superluminal/PerformanceAPI_loader.h"
+
+PerformanceAPI_Functions performanceAPI;
+#endif
 
 Memory *g_memory;
 FileHandle g_hStdout;
 FileHandle g_hStderr;
-
-PerformanceAPI_Functions performanceAPI;
 
 s64 Print(const char *format, ...)
 {
@@ -401,7 +405,9 @@ bool CompilerAddSourceFile(Context *context, String filename, SourceLocation loc
 
 int main(int argc, char **argv)
 {
+#if USE_PROFILER_API
 	PerformanceAPI_LoadFrom(L"external/Superluminal/PerformanceAPI.dll", &performanceAPI);
+#endif
 
 	SetUpTimers();
 

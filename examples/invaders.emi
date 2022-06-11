@@ -13,7 +13,7 @@ screenHeight :s s32 = 600;
 deviceContext :s ^void;
 glContext :s ^void;
 
-Win32WindowCallback :: (hWnd : ^void, message : u32, wParam : u64, lParam : u64) -> u64
+Win32WindowCallback :: #convention(win64) (hWnd : ^void, message : u32, wParam : u64, lParam : u64) -> u64
 {
 	if message == WM_CLOSE
 		PostQuitMessage(0);
