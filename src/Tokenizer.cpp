@@ -221,7 +221,6 @@ Token ParseNumber(Context *context, Tokenizer *tokenizer, Token baseToken)
 		}
 	}
 numberDone:
-	result.loc.size = result.size;
 	return result;
 }
 
@@ -248,10 +247,10 @@ Token ReadTokenAndAdvance(Context *context, Tokenizer *tokenizer)
 			break;
 	}
 
+	const char *fileBuffer = (const char *)context->sourceFiles[tokenizer->fileIdx].buffer;
 	result.begin = tokenizer->cursor;
 	result.loc.fileIdx = tokenizer->fileIdx;
-	result.loc.line = tokenizer->line;
-	result.loc.character = (s32)(tokenizer->cursor - tokenizer->beginningOfLine);
+	result.loc.character = (s32)(tokenizer->cursor - fileBuffer);
 
 	if (!*tokenizer->cursor || tokenizer->cursor >= tokenizer->end)
 	{
@@ -277,7 +276,6 @@ Token ReadTokenAndAdvance(Context *context, Tokenizer *tokenizer)
 			if (!*tokenizer->cursor || tokenizer->cursor >= tokenizer->end)
 				LogError(context, result.loc, "String literal never closed!"_s);
 		}
-		result.loc.size = result.size + 2;
 		++tokenizer->cursor;
 	}
 	else if (*tokenizer->cursor == '\'')
@@ -294,8 +292,6 @@ Token ReadTokenAndAdvance(Context *context, Tokenizer *tokenizer)
 		++tokenizer->cursor;
 		ASSERT(*tokenizer->cursor == '\'');
 		++tokenizer->cursor;
-
-		result.loc.size = result.size;
 	}
 	else if (IsAlpha(*tokenizer->cursor) || *tokenizer->cursor == '_')
 	{
@@ -305,7 +301,6 @@ Token ReadTokenAndAdvance(Context *context, Tokenizer *tokenizer)
 			++result.size;
 			++tokenizer->cursor;
 		}
-		result.loc.size = result.size;
 
 		// Keywords
 		if (TokenIsStr(&result, "if"))

@@ -1398,6 +1398,20 @@ void IRAssignmentFromExpression(Context *context, IRValue dstValue, ASTExpressio
 
 IRValue IRGenFromExpression(Context *context, ASTExpression *expression)
 {
+#if DEBUG_BUILD
+	SourceLocation loc = expression->any.loc;
+	static u32 lastFileIdx = loc.fileIdx;
+	static u32 lastLine = ExpandSourceLocation(context, loc).line;
+
+	FatSourceLocation fatLoc = ExpandSourceLocation(context, loc);
+	if (loc.fileIdx != lastFileIdx || fatLoc.line != lastLine)
+		if (context->irProcedureStack.size > 0)
+			IRAddComment(context, { fatLoc.lineSize, fatLoc.beginingOfLine });
+
+	lastFileIdx = loc.fileIdx;
+	lastLine = fatLoc.line;
+#endif
+
 	IRValue result = {};
 	result.valueType = IRVALUETYPE_INVALID;
 
@@ -1462,9 +1476,6 @@ IRValue IRGenFromExpression(Context *context, ASTExpression *expression)
 
 		for (int i = 0; i < expression->block.statements.size; ++i)
 		{
-			SourceLocation loc = expression->block.statements[i].any.loc;
-			IRAddComment(context, GetSourceLine(context, loc.fileIdx, loc.line));
-
 			IRGenFromExpression(context, &expression->block.statements[i]);
 		}
 
