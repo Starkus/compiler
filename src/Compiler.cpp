@@ -180,6 +180,32 @@ struct Context
 	BucketArray<BEInstruction, PhaseAllocator, 128> bePatchedInstructions;
 };
 
+String GetSourceLine(Context *context, s32 fileIdx, s32 line)
+{
+	SourceFile sourceFile = context->sourceFiles[fileIdx];
+	String sourceLine = {};
+	{
+		int l = 1;
+		for (const char *scan = (const char *)sourceFile.buffer; *scan; ++scan)
+		{
+			if (l == line)
+			{
+				sourceLine.data = scan;
+				break;
+			}
+			if (*scan == '\n')
+				++l;
+		}
+		for (const char *scan = sourceLine.data; ; ++scan)
+		{
+			if (!*scan || *scan == '\n' || *scan == '\r')
+				break;
+			++sourceLine.size;
+		}
+	}
+	return sourceLine;
+}
+
 const String TokenTypeToString(s32 type)
 {
 	switch (type)
@@ -272,7 +298,8 @@ const String TokenTypeToString(s32 type)
 	return { 5, str };
 }
 
-String TokenToStringOrType(Token token)
+// @Speed: pass token by copy?
+const String TokenToString(Token *token)
 {
 	if (token->type >= TOKEN_KEYWORD_Begin && token->type <= TOKEN_KEYWORD_End)
 		return token->string;
@@ -280,80 +307,26 @@ String TokenToStringOrType(Token token)
 	return TokenTypeToString(token->type);
 }
 
-struct FatSourceLocation
-{
-	const char *beginingOfLine;
-	u32 lineSize;
-	u32 size;
-	u32 line;
-	u32 character;
-};
-
-Token ReadTokenAndAdvance(Context *context, Tokenizer *tokenizer);
-FatSourceLocation ExpandSourceLocation(Context *context, SourceLocation loc)
-{
-	SourceFile sourceFile = context->sourceFiles[loc.fileIdx];
-
-	FatSourceLocation result;
-	result.beginingOfLine = (const char *)sourceFile.buffer;
-	result.lineSize = 0;
-	result.line = 1;
-	result.character = 0;
-
-	ASSERT(loc.character < sourceFile.size);
-
-	const char *scan = (const char *)sourceFile.buffer;
-	for (u32 charIdx = 0; charIdx < loc.character; ++charIdx)
-	{
-		if (*scan == '\n')
-		{
-			++result.line;
-			result.character = 0;
-			result.beginingOfLine = ++scan;
-		}
-		else
-		{
-			++result.character;
-			++scan;
-		}
-	}
-
-	Tokenizer tokenizer = {
-		scan,
-		(const char *)sourceFile.buffer + sourceFile.size,
-		(s32)result.line,
-		(s32)loc.fileIdx,
-		nullptr
-	};
-	Token t = ReadTokenAndAdvance(context, &tokenizer);
-	result.size = t.size;
-
-	for (const char *lineScan = result.beginingOfLine; *lineScan && *lineScan != '\n'; ++lineScan)
-		++result.lineSize;
-
-	return result;
-}
-
 void Log(Context *context, SourceLocation loc, String str)
 {
-	FatSourceLocation fatLoc = ExpandSourceLocation(context, loc);
-
-	// Info
 	SourceFile sourceFile = context->sourceFiles[loc.fileIdx];
-	Print("%S %d:%d %S\n", sourceFile.name, fatLoc.line, fatLoc.character, str);
+	Print("%S %d:%d %S\n", sourceFile.name, loc.line, loc.character, str);
 
-	// Source line
-	Print("... %.*s\n... ", fatLoc.lineSize, fatLoc.beginingOfLine);
+	String sourceLine = GetSourceLine(context, loc.fileIdx, loc.line);
+	Print("... %S\n... ", sourceLine);
 
-	// Token underline
-	for (u32 i = 0; i < fatLoc.character; ++i)
+	int shift = 0;
+	for (u32 i = 0; i < loc.character; ++i)
 	{
-		if (fatLoc.beginingOfLine[i] == '\t')
-			Print("\t");
+		if (sourceLine.data[i] == '\t')
+			shift += 4;
 		else
-			Print(" ");
+			++shift;
 	}
-	for (u32 i = 0; i < fatLoc.size; ++i)
+
+	for (int i = 0; i < shift; ++i)
+		Print(" ");
+	for (u32 i = 0; i < loc.size; ++i)
 		Print("^");
 	Print("\n");
 }
@@ -379,7 +352,7 @@ void AssertToken(Context *context, Token *token, int type)
 {
 	if (token->type != type)
 	{
-		const String tokenTypeGot = TokenToStringOrType(token);
+		const String tokenTypeGot = TokenToString(token);
 		const String tokenTypeExp = TokenTypeToString(type);
 		const String errorStr = TPrintF("Expected token of type %S but got %S",
 				tokenTypeExp, tokenTypeGot);

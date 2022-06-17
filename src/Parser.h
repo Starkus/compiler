@@ -7,7 +7,7 @@ struct Tokenizer
 	const char *beginningOfLine;
 };
 
-enum TokenType : u8
+enum TokenType
 {
 	TOKEN_INVALID			= 0,
 	TOKEN_IDENTIFIER		= 1,
@@ -98,7 +98,9 @@ enum TokenType : u8
 struct SourceLocation
 {
 	u32 fileIdx;
+	u32 line;
 	u32 character;
+	u32 size;
 };
 
 struct SourceFile
@@ -112,7 +114,16 @@ struct SourceFile
 struct Token
 {
 	enum TokenType type;
-	u32 size;
+	union
+	{
+		String string;
+		struct
+		{
+			u32 size;
+			const char *begin;
+		};
+	};
+
 	SourceLocation loc;
 };
 static_assert(offsetof(Token, string.size) == offsetof(Token, size), "Token::size and Token::string::size should have same offset");
