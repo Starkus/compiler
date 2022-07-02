@@ -206,7 +206,7 @@ bool TryParseBinaryOperation(Context *context, ASTExpression leftHand, s32 prevP
 	} break;
 	default:
 	{
-		String opStr = TokenTypeToString(context->token->type);
+		String opStr = TokenToString(context->token);
 		LogError(context, context->token->loc, TPrintF("Unexpected operator %S", opStr));
 	} break;
 	}
@@ -461,37 +461,9 @@ ASTStructDeclaration ParseStructOrUnion(Context *context)
 	Advance(context);
 	while (context->token->type != '}')
 	{
-		if (context->token->type == TOKEN_KEYWORD_OPERATOR)
-		{
-			Advance(context);
-			ASTOperatorOverload overload = {};
+		ASTStructMemberDeclaration member = ParseStructMemberDeclaration(context);
+		*DynamicArrayAdd(&structDeclaration.members) = member;
 
-			AssertToken(context, context->token, '(');
-			Advance(context);
-
-			overload.op = context->token->type;
-			ASSERT(overload.op >= TOKEN_OP_Begin && overload.op <= TOKEN_OP_End);
-			Advance(context);
-
-			AssertToken(context, context->token, ',');
-			Advance(context);
-
-			AssertToken(context, context->token, TOKEN_IDENTIFIER);
-			overload.name = context->token->string;
-			Advance(context);
-
-			AssertToken(context, context->token, ')');
-			Advance(context);
-
-			if (structDeclaration.overloads.size == 0)
-				DynamicArrayInit(&structDeclaration.overloads, 4);
-			*DynamicArrayAdd(&structDeclaration.overloads) = overload;
-		}
-		else
-		{
-			ASTStructMemberDeclaration member = ParseStructMemberDeclaration(context);
-			*DynamicArrayAdd(&structDeclaration.members) = member;
-		}
 		AssertToken(context, context->token, ';');
 		Advance(context);
 	}
@@ -1015,17 +987,19 @@ ASTStaticDefinition ParseStaticDefinition(Context *context)
 
 		expression.procedureDeclaration = procDecl;
 	}
-	else if (context->token->type == TOKEN_KEYWORD_STRUCT ||
-			 context->token->type == TOKEN_KEYWORD_UNION ||
-			 context->token->type == TOKEN_KEYWORD_ENUM)
+	else switch (context->token->type)
+	{
+	case TOKEN_KEYWORD_STRUCT:
+	case TOKEN_KEYWORD_UNION:
+	case TOKEN_KEYWORD_ENUM:
 	{
 		expression.nodeType = ASTNODETYPE_TYPE;
 		expression.astType = ParseType(context);
 
 		AssertToken(context, context->token, ';');
 		Advance(context);
-	}
-	else if (context->token->type == TOKEN_KEYWORD_TYPE)
+	} break;
+	case TOKEN_KEYWORD_TYPE:
 	{
 		Advance(context);
 		expression.nodeType = ASTNODETYPE_TYPE;
@@ -1033,13 +1007,23 @@ ASTStaticDefinition ParseStaticDefinition(Context *context)
 
 		AssertToken(context, context->token, ';');
 		Advance(context);
-	}
-	else
+	} break;
+	case TOKEN_KEYWORD_ALIAS:
+	{
+		Advance(context);
+		expression.nodeType = ASTNODETYPE_ALIAS;
+		expression.astType = ParseType(context);
+
+		AssertToken(context, context->token, ';');
+		Advance(context);
+	} break;
+	default:
 	{
 		expression = ParseExpression(context, -1);
 
 		AssertToken(context, context->token, ';');
 		Advance(context);
+	}
 	}
 
 	result.expression = NewTreeNode(context);
@@ -1225,6 +1209,37 @@ ASTExpression ParseStaticStatement(Context *context)
 			*DynamicArrayAdd(&result.block.statements) = ParseStaticStatement(context);
 		}
 		Advance(context);
+	} break;
+	case TOKEN_KEYWORD_OPERATOR:
+	{
+		Advance(context);
+
+		enum TokenType op = context->token->type;
+		if (op < TOKEN_OP_Begin || op > TOKEN_OP_End)
+			UnexpectedTokenError(context, context->token);
+		Advance(context);
+
+		AssertToken(context, context->token, TOKEN_OP_STATIC_DEF);
+		Advance(context);
+
+		bool isInline = false;
+		if (context->token->type == TOKEN_KEYWORD_INLINE)
+		{
+			isInline = true;
+			Advance(context);
+		}
+
+		ASTOperatorOverload overload = {};
+		overload.loc = context->token->loc;
+		overload.op = op;
+		overload.isInline = isInline;
+		overload.prototype = ParseProcedurePrototype(context);
+
+		overload.astBody = NewTreeNode(context);
+		*overload.astBody = ParseStatement(context);
+
+		result.nodeType = ASTNODETYPE_OPERATOR_OVERLOAD;
+		result.operatorOverload = overload;
 	} break;
 	default:
 	{

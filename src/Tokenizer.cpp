@@ -381,6 +381,8 @@ Token ReadTokenAndAdvance(Context *context, Tokenizer *tokenizer)
 			}
 			else if (StringEquals(result.string, "#type"_s))
 				result.type = TOKEN_KEYWORD_TYPE;
+			else if (StringEquals(result.string, "#alias"_s))
+				result.type = TOKEN_KEYWORD_ALIAS;
 			else if (StringEquals(result.string, "#inline"_s))
 				result.type = TOKEN_KEYWORD_INLINE;
 			else if (StringEquals(result.string, "#external"_s))

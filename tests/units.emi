@@ -1,0 +1,43 @@
+meters :: #type f32;
+metersSquared :: #type f32;
+metersPerSecond :: #type f32;
+seconds :: #type f32;
+
+#operator * :: #inline (a : meters, b : meters) -> metersSquared
+{
+	return cast(metersSquared)(cast(f32)a * cast(f32)b);
+}
+
+#operator / :: #inline (a : meters, b : seconds) -> metersPerSecond
+{
+	return cast(metersPerSecond)(cast(f32)a / cast(f32)b);
+}
+
+/*
+radians :: #type f32;
+degrees :: #type f32;
+#operator cast :: #inline (a : radians) -> degrees
+{
+	return cast(degrees)(cast(f32)a * 57.295779513082320876798154814105);
+}
+#operator cast :: #inline (a : degrees) -> radians
+{
+	return cast(radians)(cast(f32)a * 0.01745329251994329576923690768489);
+}
+*/
+
+Main :: () -> s64
+{
+	distance : meters = 50;
+	distance += 25;
+	area : metersSquared = distance * distance;
+	travelTime : seconds = 4;
+	speed : metersPerSecond = distance / travelTime;
+
+	PrintF("distance: %m\n", distance);
+	PrintF("area: %m2\n", area);
+	PrintF("travelTime: %sec\n", travelTime);
+	PrintF("speed: %m/s\n", speed);
+
+	return 0;
+}

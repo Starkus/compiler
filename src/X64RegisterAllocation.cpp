@@ -701,7 +701,7 @@ void X64AllocateRegisters(Context *context, Array<X64Procedure, PhaseAllocator> 
 			s64 typeTableIdx = context->values[valueIdx].typeTableIdx;
 			if (typeTableIdx >= 0)
 			{
-				TypeInfo typeInfo = context->typeTable[typeTableIdx];
+				TypeInfo typeInfo = context->typeTable[StripAllAliases(context, typeTableIdx)];
 				bool isXMM = typeInfo.size > 8 || typeInfo.typeCategory == TYPECATEGORY_FLOATING;
 				if (isXMM)
 					valueIsXmmBits[valueIdx >> 6] |= ((u64)1 << (valueIdx & 63));

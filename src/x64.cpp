@@ -790,7 +790,7 @@ String X64IRValueToStr(Context *context, IRValue value)
 	}
 
 	u64 size = 0;
-	TypeInfo typeInfo = context->typeTable[value.typeTableIdx];
+	TypeInfo typeInfo = context->typeTable[StripAllAliases(context, value.typeTableIdx)];
 	bool isXMM;
 	size = typeInfo.size;
 	Value v = context->values[value.value.valueIdx];
@@ -1131,8 +1131,8 @@ void X64Mov(Context *context, X64Procedure *x64Proc, IRValue dst, IRValue src);
 void X64MovNoTmp(Context *context, X64Procedure *x64Proc, IRValue dst, IRValue src)
 {
 	X64Instruction result;
-	TypeInfo dstType = context->typeTable[dst.typeTableIdx];
-	TypeInfo srcType = context->typeTable[src.typeTableIdx];
+	TypeInfo dstType = context->typeTable[StripAllAliases(context, dst.typeTableIdx)];
+	TypeInfo srcType = context->typeTable[StripAllAliases(context, src.typeTableIdx)];
 
 	// MOVUPS
 	if (dstType.size == 16)
@@ -1425,7 +1425,7 @@ Array<u32, PhaseAllocator> X64ReadyWin64Parameters(Context *context, X64Procedur
 	for (int i = 0; i < parameterCount; ++i)
 	{
 		IRValue param = parameters[i];
-		s64 paramTypeIdx = param.typeTableIdx;
+		s64 paramTypeIdx = StripAllAliases(context, param.typeTableIdx);
 		TypeInfo paramType = context->typeTable[paramTypeIdx];
 
 		if (isCaller && X64WinABIShouldPassByCopy(context, paramTypeIdx))
@@ -1707,21 +1707,24 @@ void X64ConvertInstruction(Context *context, IRInstruction inst, X64Procedure *x
 	X64FloatingType floatingType = X64FLOATINGTYPE_NONE;
 	bool isSigned = false;
 	{
-		TypeInfo typeInfo = context->typeTable[TYPETABLEIDX_S64];
+		s64 typeTableIdx = TYPETABLEIDX_S64;
 		if      (inst.type >= IRINSTRUCTIONTYPE_COMPARE_BEGIN &&
 				 inst.type <  IRINSTRUCTIONTYPE_COMPARE_END)
-			typeInfo = context->typeTable[inst.binaryOperation.left.typeTableIdx];
+			typeTableIdx = inst.binaryOperation.left.typeTableIdx;
 		else if (inst.type >= IRINSTRUCTIONTYPE_BINARY_BEGIN &&
 				 inst.type <  IRINSTRUCTIONTYPE_BINARY_END)
-			typeInfo = context->typeTable[inst.binaryOperation.left.typeTableIdx];
+			typeTableIdx = inst.binaryOperation.left.typeTableIdx;
 		else if (inst.type >= IRINSTRUCTIONTYPE_UNARY_BEGIN &&
 				 inst.type <  IRINSTRUCTIONTYPE_UNARY_END)
-			typeInfo = context->typeTable[inst.unaryOperation.in.typeTableIdx];
+			typeTableIdx = inst.unaryOperation.in.typeTableIdx;
 		else if (inst.type >= IRINSTRUCTIONTYPE_COMPARE_JUMP_BEGIN &&
 				 inst.type <  IRINSTRUCTIONTYPE_COMPARE_JUMP_END)
-			typeInfo = context->typeTable[inst.conditionalJump2.left.typeTableIdx];
+			typeTableIdx = inst.conditionalJump2.left.typeTableIdx;
 		else if (inst.type == IRINSTRUCTIONTYPE_ASSIGNMENT)
-			typeInfo = context->typeTable[inst.assignment.dst.typeTableIdx];
+			typeTableIdx = inst.assignment.dst.typeTableIdx;
+
+		typeTableIdx = StripAllAliases(context, typeTableIdx);
+		TypeInfo typeInfo = context->typeTable[typeTableIdx];
 
 		if (typeInfo.typeCategory == TYPECATEGORY_FLOATING)
 		{
@@ -3489,11 +3492,23 @@ unalignedMovups:;
 				*ArrayAdd(&newStaticVar.initialValue.immediateStructMembers) =
 				{ IRValueImmediate(typeInfo.procedureInfo.isVarargs, TYPETABLEIDX_BOOL) };
 			} break;
+			case TYPECATEGORY_ALIAS:
+			{
+				TypeInfo aliasedType = context->typeTable[typeInfo.aliasInfo.aliasedTypeIdx];
+
+				ArrayInit(&newStaticVar.initialValue.immediateStructMembers, 3);
+				*ArrayAdd(&newStaticVar.initialValue.immediateStructMembers) =
+				{ IRValueImmediate(7, TYPETABLEIDX_S8) };
+				*ArrayAdd(&newStaticVar.initialValue.immediateStructMembers) =
+				{ IRValueImmediate(typeInfo.size, TYPETABLEIDX_S64) };
+				*ArrayAdd(&newStaticVar.initialValue.immediateStructMembers) =
+				{ IRValueDereference(aliasedType.valueIdx, pointerToTypeInfoIdx) };
+			} break;
 			case TYPECATEGORY_INVALID:
 			{
 				ArrayInit(&newStaticVar.initialValue.immediateStructMembers, 1);
 				*ArrayAdd(&newStaticVar.initialValue.immediateStructMembers) =
-				{ IRValueImmediate(7, TYPETABLEIDX_S8) };
+				{ IRValueImmediate(8, TYPETABLEIDX_S8) };
 			} break;
 			default:
 				ASSERT(false);

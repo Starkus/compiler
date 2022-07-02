@@ -506,6 +506,9 @@ void IRDoAssignment(Context *context, IRValue dstValue, IRValue srcValue)
 		return;
 	}
 
+	dstValue.typeTableIdx = StripAllAliases(context, dstValue.typeTableIdx);
+	srcValue.typeTableIdx = StripAllAliases(context, srcValue.typeTableIdx);
+
 	// Cast static array to dynamic array
 	TypeInfo dstTypeInfo = context->typeTable[dstValue.typeTableIdx];
 	TypeInfo srcTypeInfo = context->typeTable[srcValue.typeTableIdx];
@@ -1396,6 +1399,48 @@ void IRAssignmentFromExpression(Context *context, IRValue dstValue, ASTExpressio
 	}
 }
 
+void IRGenProcedure(Context *context, s32 procedureIdx, SourceLocation loc)
+{
+	Procedure *procedure = GetProcedure(context, procedureIdx);
+	BucketArrayInit(&procedure->instructions);
+
+	IRProcedureScope *currentProc = PushIRProcedure(context, loc, procedureIdx);
+	IRLabel *returnLabel = NewLabel(context, "return"_s);
+	currentProc->returnLabel = returnLabel;
+
+	for (int i = 0; i < procedure->parameterValues.size; ++i)
+	{
+		s32 paramValueIdx = procedure->parameterValues[i];
+		IRPushValueIntoStack(context, paramValueIdx);
+	}
+
+	s32 returnValueIdx = procedure->returnValueIdx;
+	Value *returnValue = &context->values[returnValueIdx];
+	if (IRShouldPassByCopy(context, returnValue->typeTableIdx))
+	{
+		returnValue->flags |= VALUEFLAGS_PARAMETER_BY_COPY;
+		returnValue->typeTableIdx = GetTypeInfoPointerOf(context, returnValue->typeTableIdx);
+	}
+	IRPushValueIntoStack(context, returnValueIdx);
+
+	if (procedure->astBody)
+	{
+		IRGenFromExpression(context, procedure->astBody);
+
+		IRInstruction *returnLabelInst = AddInstruction(context);
+		returnLabel->instructionIdx = BucketArrayCount(&procedure->instructions) - 1;
+		returnLabelInst->type = IRINSTRUCTIONTYPE_LABEL;
+		returnLabelInst->label = returnLabel;
+
+		// Return
+		IRInstruction returnInst;
+		returnInst.type = IRINSTRUCTIONTYPE_RETURN;
+		*AddInstruction(context) = returnInst;
+	}
+
+	PopIRProcedure(context);
+}
+
 IRValue IRGenFromExpression(Context *context, ASTExpression *expression)
 {
 	IRValue result = {};
@@ -1412,45 +1457,12 @@ IRValue IRGenFromExpression(Context *context, ASTExpression *expression)
 	case ASTNODETYPE_PROCEDURE_DECLARATION:
 	{
 		s32 procedureIdx = expression->procedureDeclaration.procedureIdx;
-		Procedure *procedure = GetProcedure(context, procedureIdx);
-		BucketArrayInit(&procedure->instructions);
-
-		IRProcedureScope *currentProc = PushIRProcedure(context, expression->any.loc,
-				procedureIdx);
-		IRLabel *returnLabel = NewLabel(context, "return"_s);
-		currentProc->returnLabel = returnLabel;
-
-		for (int i = 0; i < procedure->parameterValues.size; ++i)
-		{
-			s32 paramValueIdx = procedure->parameterValues[i];
-			IRPushValueIntoStack(context, paramValueIdx);
-		}
-
-		s32 returnValueIdx = procedure->returnValueIdx;
-		Value *returnValue = &context->values[returnValueIdx];
-		if (IRShouldPassByCopy(context, returnValue->typeTableIdx))
-		{
-			returnValue->flags |= VALUEFLAGS_PARAMETER_BY_COPY;
-			returnValue->typeTableIdx = GetTypeInfoPointerOf(context, returnValue->typeTableIdx);
-		}
-		IRPushValueIntoStack(context, returnValueIdx);
-
-		if (procedure->astProcedureDeclaration->astBody)
-		{
-			IRGenFromExpression(context, procedure->astProcedureDeclaration->astBody);
-
-			IRInstruction *returnLabelInst = AddInstruction(context);
-			returnLabel->instructionIdx = BucketArrayCount(&procedure->instructions) - 1;
-			returnLabelInst->type = IRINSTRUCTIONTYPE_LABEL;
-			returnLabelInst->label = returnLabel;
-
-			// Return
-			IRInstruction returnInst;
-			returnInst.type = IRINSTRUCTIONTYPE_RETURN;
-			*AddInstruction(context) = returnInst;
-		}
-
-		PopIRProcedure(context);
+		IRGenProcedure(context, procedureIdx, expression->any.loc);
+	} break;
+	case ASTNODETYPE_OPERATOR_OVERLOAD:
+	{
+		s32 procedureIdx = expression->operatorOverload.procedureIdx;
+		IRGenProcedure(context, procedureIdx, expression->any.loc);
 	} break;
 	case ASTNODETYPE_BLOCK:
 	{
@@ -1628,7 +1640,8 @@ IRValue IRGenFromExpression(Context *context, ASTExpression *expression)
 			case STATICDEFINITIONTYPE_CONSTANT:
 			{
 				Constant constant = expression->identifier.staticDefinition->constant;
-				TypeCategory typeCat = context->typeTable[expression->typeTableIdx].typeCategory;
+				s64 typeTableIdx = StripAllAliases(context, expression->typeTableIdx);
+				TypeCategory typeCat = context->typeTable[typeTableIdx].typeCategory;
 				if (typeCat == TYPECATEGORY_FLOATING)
 				{
 					f64 f;
@@ -1948,7 +1961,8 @@ skipGeneratingVarargsArray:
 		{
 		case LITERALTYPE_INTEGER:
 		{
-			TypeCategory typeCat = context->typeTable[expression->typeTableIdx].typeCategory;
+			s64 typeTableIdx = StripAllAliases(context, expression->typeTableIdx);
+			TypeCategory typeCat = context->typeTable[typeTableIdx].typeCategory;
 			if (typeCat == TYPECATEGORY_FLOATING)
 				result = IRValueImmediateFloat(context, (f64)expression->literal.integer,
 						expression->typeTableIdx);

@@ -126,6 +126,7 @@ struct InterferenceGraph
 struct TCJob;
 struct Procedure;
 struct TypeInfo;
+struct OperatorOverload;
 struct StaticDefinition;
 struct TCScope;
 struct BasicBlock;
@@ -137,7 +138,7 @@ struct Context
 	DynamicArray<SourceFile, HeapAllocator> sourceFiles;
 	DynamicArray<String, HeapAllocator> libsToLink;
 
-	// Parsing
+	// Parsing -----
 	BucketArray<Token, HeapAllocator, 1024> tokens;
 	u64 currentTokenIdx;
 	Token *token;
@@ -146,19 +147,23 @@ struct Context
 	BucketArray<ASTType, HeapAllocator, 1024> astTypeNodes;
 	BucketArray<String, HeapAllocator, 1024> stringLiterals;
 
-	// Type check
+	// Type check -----
 	DynamicArray<TCJob, PhaseAllocator> tcJobs;
 	s32 currentTCJob;
 	BucketArray<Value, HeapAllocator, 2048> values;
 	BucketArray<Procedure, HeapAllocator, 512> procedures;
 	BucketArray<Procedure, HeapAllocator, 128> externalProcedures;
+	DynamicArray<OperatorOverload, HeapAllocator> operatorOverloads;
 	BucketArray<StaticDefinition, HeapAllocator, 512> staticDefinitions;
+
+	/* Don't add types to the type table by hand without checking what AddType() does! */
 	BucketArray<const TypeInfo, HeapAllocator, 1024> typeTable;
+
 	TCScope *tcGlobalScope;
 	s64 tcCurrentReturnType;
 	s64 tcCurrentForLoopArrayType;
 
-	// IR
+	// IR -----
 	DynamicArray<IRStaticVariable, HeapAllocator> irStaticVariables;
 	DynamicArray<u32, HeapAllocator> irExternalVariables;
 	DynamicArray<IRScope, PhaseAllocator> irStack;
@@ -172,7 +177,7 @@ struct Context
 		IRValue indexValue;
 	} irCurrentForLoopInfo;
 
-	// Backend
+	// Backend -----
 	BucketArray<u8, PhaseAllocator, OUTPUT_BUFFER_BUCKET_SIZE> outputBuffer;
 	BucketArray<BasicBlock, PhaseAllocator, 512> beBasicBlocks;
 	DynamicArray<BasicBlock *, PhaseAllocator> beLeafBasicBlocks;
@@ -301,10 +306,13 @@ const String TokenTypeToString(s32 type)
 // @Speed: pass token by copy?
 const String TokenToString(Token *token)
 {
+#if 0
 	if (token->type >= TOKEN_KEYWORD_Begin && token->type <= TOKEN_KEYWORD_End)
 		return token->string;
 
 	return TokenTypeToString(token->type);
+#endif
+	return TPrintF("<%S>", token->string);
 }
 
 void Log(Context *context, SourceLocation loc, String str)
@@ -362,8 +370,7 @@ void AssertToken(Context *context, Token *token, int type)
 
 void UnexpectedTokenError(Context *context, Token *token)
 {
-	const String tokenType = TokenTypeToString(token->type);
-	const String errorStr = TPrintF("Unexpected token of type %S", tokenType);
+	String errorStr = TPrintF("Unexpected token %S", TokenToString(token));
 	LogError(context, token->loc, errorStr);
 }
 

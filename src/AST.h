@@ -99,19 +99,10 @@ struct ASTStructMemberDeclaration : ASTBase
 
 	s64 typeTableIdx;
 };
-struct ASTOperatorOverload : ASTBase
-{
-	enum TokenType op;
-	String name;
-
-	// Type check
-	s32 procedureIdx;
-};
 struct ASTStructDeclaration : ASTBase
 {
 	bool isUnion;
 	DynamicArray<ASTStructMemberDeclaration, FrameAllocator> members;
-	DynamicArray<ASTOperatorOverload, FrameAllocator> overloads;
 };
 
 struct ASTEnumMember
@@ -216,6 +207,19 @@ struct ASTProcedureDeclaration : ASTBase
 	bool checkedPrototype;
 };
 
+struct ASTOperatorOverload : ASTBase
+{
+	ASTProcedurePrototype prototype;
+	enum TokenType op;
+	bool isInline;
+	ASTExpression *astBody;
+
+	// Type check
+	s32 procedureIdx;
+	bool overloadRegistered;
+	bool checkedPrototype;
+};
+
 struct ASTStaticDefinition : ASTBase
 {
 	String name;
@@ -316,6 +320,7 @@ enum ASTNodeType
 	ASTNODETYPE_IDENTIFIER,
 	ASTNODETYPE_LITERAL,
 	ASTNODETYPE_TYPE,
+	ASTNODETYPE_ALIAS,
 	ASTNODETYPE_BLOCK,
 	ASTNODETYPE_UNARY_OPERATION,
 	ASTNODETYPE_BINARY_OPERATION,
@@ -324,6 +329,7 @@ enum ASTNodeType
 	ASTNODETYPE_STRUCT_DECLARATION,
 	ASTNODETYPE_ENUM_DECLARATION,
 	ASTNODETYPE_STATIC_DEFINITION,
+	ASTNODETYPE_OPERATOR_OVERLOAD,
 	ASTNODETYPE_PROCEDURE_CALL,
 	ASTNODETYPE_INTRINSIC,
 	ASTNODETYPE_IF,
@@ -357,6 +363,7 @@ struct ASTExpression
 		ASTStructDeclaration structDeclaration;
 		ASTEnumDeclaration enumDeclaration;
 		ASTStaticDefinition staticDefinition;
+		ASTOperatorOverload operatorOverload;
 		ASTProcedureCall procedureCall;
 		ASTIntrinsic intrinsic;
 		ASTIf ifNode;

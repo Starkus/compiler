@@ -59,6 +59,7 @@ enum TypeCategory
 	TYPECATEGORY_POINTER,
 	TYPECATEGORY_ARRAY,
 	TYPECATEGORY_PROCEDURE,
+	TYPECATEGORY_ALIAS
 };
 
 struct TypeInfo;
@@ -75,16 +76,10 @@ struct StructMember
 	bool isUsing;
 	u64 offset;
 };
-struct OperatorOverload
-{
-	enum TokenType op;
-	s32 procedureIdx;
-};
 struct TypeInfoStruct
 {
 	String name;
 	Array<StructMember, FrameAllocator> members;
-	Array<OperatorOverload, FrameAllocator> overloads;
 };
 
 struct TypeInfoEnum
@@ -119,6 +114,12 @@ struct TypeInfoProcedure
 	bool isVarargs;
 };
 
+struct TypeInfoAlias
+{
+	s64 aliasedTypeIdx;
+	bool doesImplicitlyCast;
+};
+
 struct TypeInfo
 {
 	TypeCategory typeCategory;
@@ -132,6 +133,7 @@ struct TypeInfo
 		TypeInfoPointer pointerInfo;
 		TypeInfoArray arrayInfo;
 		TypeInfoProcedure procedureInfo;
+		TypeInfoAlias aliasInfo;
 	};
 };
 
@@ -151,6 +153,12 @@ struct StaticDefinition
 		s32 procedureIdx;
 		Constant constant;
 	};
+};
+
+struct OperatorOverload
+{
+	enum TokenType op;
+	s32 procedureIdx;
 };
 
 struct TCScopeName
@@ -181,7 +189,8 @@ struct Procedure
 {
 	String name;
 	DynamicArray<u32, FrameAllocator> parameterValues;
-	ASTProcedureDeclaration *astProcedureDeclaration;
+	ASTExpression *astBody;
+	ASTProcedurePrototype astPrototype;
 	bool isInline;
 	bool isBodyTypeChecked;
 	u32 returnValueIdx;
@@ -351,18 +360,12 @@ String TypeInfoToString(Context *context, s64 typeTableIdx)
 	switch (typeInfo.typeCategory)
 	{
 	case TYPECATEGORY_STRUCT:
-	{
-		StaticDefinition *staticDef = FindStaticDefinitionByTypeTableIdx(context, typeTableIdx);
-		if (staticDef != nullptr)
-			return staticDef->name;
-		return "<struct>"_s;
-	}
 	case TYPECATEGORY_UNION:
 	{
-		StaticDefinition *staticDef = FindStaticDefinitionByTypeTableIdx(context, typeTableIdx);
-		if (staticDef != nullptr)
-			return staticDef->name;
-		return "<union>"_s;
+		String name = typeInfo.structInfo.name;
+		if (name.size)
+			return name;
+		return typeInfo.typeCategory == TYPECATEGORY_UNION ? "<union>"_s : "<struct>"_s;
 	}
 	case TYPECATEGORY_ENUM:
 	{
@@ -370,6 +373,14 @@ String TypeInfoToString(Context *context, s64 typeTableIdx)
 		if (staticDef != nullptr)
 			return staticDef->name;
 		return "<enum>"_s;
+	}
+	case TYPECATEGORY_ALIAS:
+	{
+		StaticDefinition *staticDef = FindStaticDefinitionByTypeTableIdx(context, typeTableIdx);
+		String nameOfAliased = TypeInfoToString(context, typeInfo.aliasInfo.aliasedTypeIdx);
+		if (staticDef != nullptr)
+			return TPrintF("%S (alias of %S)", staticDef->name, nameOfAliased);
+		return TPrintF("<alias of %S>", nameOfAliased);
 	}
 	case TYPECATEGORY_POINTER:
 		return StringConcat("^"_s, TypeInfoToString(context, typeInfo.pointerInfo.pointedTypeTableIdx));
@@ -581,6 +592,29 @@ void ReportTypeCheckError(Context *context, TypeCheckErrorCode errorCode, Source
 	}
 }
 
+inline s64 StripImplicitlyCastAliases(Context *context, s64 typeTableIdx)
+{
+	TypeInfo typeInfo = context->typeTable[typeTableIdx];
+	while (typeInfo.typeCategory == TYPECATEGORY_ALIAS &&
+		   typeInfo.aliasInfo.doesImplicitlyCast)
+	{
+		typeTableIdx = typeInfo.aliasInfo.aliasedTypeIdx;
+		typeInfo = context->typeTable[typeTableIdx];
+	}
+	return typeTableIdx;
+}
+
+inline s64 StripAllAliases(Context *context, s64 typeTableIdx)
+{
+	TypeInfo typeInfo = context->typeTable[typeTableIdx];
+	while (typeInfo.typeCategory == TYPECATEGORY_ALIAS)
+	{
+		typeTableIdx = typeInfo.aliasInfo.aliasedTypeIdx;
+		typeInfo = context->typeTable[typeTableIdx];
+	}
+	return typeTableIdx;
+}
+
 s64 GetTypeInfoPointerOf(Context *context, s64 inType);
 TypeCheckErrorCode CheckTypesMatch(Context *context, s64 leftTableIdx, s64 rightTableIdx)
 {
@@ -596,6 +630,10 @@ TypeCheckErrorCode CheckTypesMatch(Context *context, s64 leftTableIdx, s64 right
 	if (leftTableIdx == TYPETABLEIDX_ANY_STRUCT || rightTableIdx == TYPETABLEIDX_ANY_STRUCT)
 		return TYPECHECK_COOL;
 
+	// Get rid of implicitly cast aliases
+	leftTableIdx  = StripImplicitlyCastAliases(context, leftTableIdx);
+	rightTableIdx = StripImplicitlyCastAliases(context, rightTableIdx);
+
 	TypeInfo left  = context->typeTable[leftTableIdx];
 	TypeInfo right = context->typeTable[rightTableIdx];
 
@@ -610,8 +648,21 @@ TypeCheckErrorCode CheckTypesMatch(Context *context, s64 leftTableIdx, s64 right
 	if (rightTableIdx == TYPETABLEIDX_INTEGER)
 	{
 		if (left.typeCategory == TYPECATEGORY_INTEGER ||
+			left.typeCategory == TYPECATEGORY_POINTER || // @Check: Allow ptr = int? Confusing.
 			left.typeCategory == TYPECATEGORY_FLOATING)
 			return TYPECHECK_COOL;
+
+		// Allow implicit cast of <number> to <alias of number type>
+		if (left.typeCategory == TYPECATEGORY_ALIAS)
+		{
+			s64 leftTableIdxStripped = StripAllAliases(context, leftTableIdx);
+			TypeCategory strippedTypeCategory =
+				context->typeTable[leftTableIdxStripped].typeCategory;
+			if (strippedTypeCategory == TYPECATEGORY_INTEGER ||
+				strippedTypeCategory == TYPECATEGORY_FLOATING)
+				return TYPECHECK_COOL;
+		}
+
 		return TYPECHECK_TYPE_CATEGORY_MISMATCH;
 	}
 	else if (rightTableIdx == TYPETABLEIDX_FLOATING)
@@ -680,7 +731,10 @@ TypeCheckErrorCode CheckTypesMatch(Context *context, s64 leftTableIdx, s64 right
 			left.pointerInfo.pointedTypeTableIdx);
 		}
 
-		return TYPECHECK_POINTED_TYPE_MISMATCH;
+		// Check pointed types
+		TypeCheckErrorCode pointedTypesError = CheckTypesMatch(context,
+				left.pointerInfo.pointedTypeTableIdx, right.pointerInfo.pointedTypeTableIdx);
+		return pointedTypesError == TYPECHECK_COOL ? TYPECHECK_COOL : pointedTypesError;
 	} break;
 	case TYPECATEGORY_ARRAY:
 	{
@@ -754,6 +808,12 @@ TypeCheckResult CheckTypesMatchAndSpecialize(Context *context, s64 leftTableIdx,
 
 	ASSERT(leftTableIdx  != TYPETABLEIDX_UNSET);
 	ASSERT(rightTableIdx != TYPETABLEIDX_UNSET);
+
+	// Get rid of aliases
+	if (leftTableIdx > 0)
+		leftTableIdx  = StripImplicitlyCastAliases(context, leftTableIdx);
+	if (rightTableIdx > 0)
+		rightTableIdx = StripImplicitlyCastAliases(context, rightTableIdx);
 
 	TypeCheckResult result = { TYPECHECK_COOL, leftTableIdx, rightTableIdx };
 
@@ -906,28 +966,32 @@ TypeCheckResult CheckTypesMatchAndSpecialize(Context *context, s64 leftTableIdx,
 		return result;
 	}
 
-	TypeCategory leftTypeCat  = context->typeTable[leftTableIdx].typeCategory;
-	TypeCategory rightTypeCat = context->typeTable[rightTableIdx].typeCategory;
+	s64 strippedLeftTypeIdx  = StripAllAliases(context, leftTableIdx);
+	s64 strippedRightTypeIdx = StripAllAliases(context, rightTableIdx);
+	TypeCategory strippedLeftTypeCat  = context->typeTable[strippedLeftTypeIdx].typeCategory;
+	TypeCategory strippedRightTypeCat = context->typeTable[strippedRightTypeIdx].typeCategory;
 
-	if (leftTableIdx == TYPETABLEIDX_INTEGER && (rightTypeCat == TYPECATEGORY_INTEGER ||
-		rightTypeCat == TYPECATEGORY_POINTER || rightTypeCat == TYPECATEGORY_FLOATING))
+	if (leftTableIdx == TYPETABLEIDX_INTEGER && (strippedRightTypeCat == TYPECATEGORY_INTEGER ||
+		strippedRightTypeCat == TYPECATEGORY_POINTER || strippedRightTypeCat == TYPECATEGORY_FLOATING ||
+		strippedRightTypeCat == TYPECATEGORY_ALIAS))
 	{
 		result.leftTableIdx = rightTableIdx;
 		return result;
 	}
-	if (rightTableIdx == TYPETABLEIDX_INTEGER && (leftTypeCat == TYPECATEGORY_INTEGER ||
-				leftTypeCat == TYPECATEGORY_POINTER || leftTypeCat == TYPECATEGORY_FLOATING))
+	if (rightTableIdx == TYPETABLEIDX_INTEGER && (strippedLeftTypeCat == TYPECATEGORY_INTEGER ||
+		strippedLeftTypeCat == TYPECATEGORY_POINTER || strippedLeftTypeCat == TYPECATEGORY_FLOATING ||
+		strippedLeftTypeCat == TYPECATEGORY_ALIAS))
 	{
 		result.rightTableIdx = leftTableIdx;
 		return result;
 	}
 
-	if (leftTableIdx == TYPETABLEIDX_FLOATING && rightTypeCat == TYPECATEGORY_FLOATING)
+	if (leftTableIdx == TYPETABLEIDX_FLOATING && strippedRightTypeCat == TYPECATEGORY_FLOATING)
 	{
 		result.leftTableIdx = rightTableIdx;
 		return result;
 	}
-	if (rightTableIdx == TYPETABLEIDX_FLOATING && leftTypeCat == TYPECATEGORY_FLOATING)
+	if (rightTableIdx == TYPETABLEIDX_FLOATING && strippedLeftTypeCat == TYPECATEGORY_FLOATING)
 	{
 		result.rightTableIdx = leftTableIdx;
 		return result;
@@ -997,6 +1061,12 @@ bool AreTypeInfosEqual(Context *context, TypeInfo a, TypeInfo b)
 				return false;
 		}
 		return true;
+	}
+	case TYPECATEGORY_ALIAS:
+	{
+		if (!a.aliasInfo.doesImplicitlyCast || !b.aliasInfo.doesImplicitlyCast)
+			return false;
+		return a.aliasInfo.aliasedTypeIdx == b.aliasInfo.aliasedTypeIdx;
 	}
 	case TYPECATEGORY_INVALID:
 		return b.typeCategory == TYPECATEGORY_INVALID;
@@ -1076,27 +1146,6 @@ TypeCheckStructResult TypeCheckStructDeclaration(Context *context, String name, 
 			astMember->typeTableIdx = checkResult.typeTableIdx;
 	}
 
-	for (int overloadIdx = 0; overloadIdx < astStructDecl.overloads.size; ++overloadIdx)
-	{
-		ASTOperatorOverload *overload = &astStructDecl.overloads[overloadIdx];
-
-		TCScopeName *scopeName = FindScopeName(context, overload->name);
-		if (scopeName == nullptr)
-		{
-			TCYieldInfo yieldInfo = {};
-			yieldInfo.cause = TCYIELDCAUSE_MISSING_NAME;
-			yieldInfo.name = overload->name;
-			yieldInfo.loc = overload->loc;
-			return { false, yieldInfo };
-		}
-
-		if (scopeName->type == NAMETYPE_STATIC_DEFINITION &&
-			scopeName->staticDefinition->definitionType == STATICDEFINITIONTYPE_PROCEDURE)
-			overload->procedureIdx = scopeName->staticDefinition->procedureIdx;
-		else
-			LogError(context, overload->loc, "Identifier in operator overload is not a procedure"_s);
-	}
-
 	TypeInfo t = {};
 	t.typeCategory = astStructDecl.isUnion ? TYPECATEGORY_UNION : TYPECATEGORY_STRUCT;
 	t.structInfo.name = name;
@@ -1145,19 +1194,6 @@ TypeCheckStructResult TypeCheckStructDeclaration(Context *context, String name, 
 #if DEBUG_BUILD
 	t.structInfo.members._capacity = structMembers.capacity;
 #endif
-
-	if (astStructDecl.overloads.size > 0)
-	{
-		ArrayInit(&t.structInfo.overloads, astStructDecl.overloads.size);
-		for (int overloadIdx = 0; overloadIdx < astStructDecl.overloads.size; ++overloadIdx)
-		{
-			ASTOperatorOverload astOverload = astStructDecl.overloads[overloadIdx];
-			OperatorOverload overload;
-			overload.op = astOverload.op;
-			overload.procedureIdx = astOverload.procedureIdx;
-			*ArrayAdd(&t.structInfo.overloads) = overload;
-		}
-	}
 
 	s64 typeTableIdx;
 	if (StringEquals(name, "String"_s))
@@ -2371,6 +2407,22 @@ void TCAddParametersToScope(Context *context, ASTProcedurePrototype prototype)
 	}
 }
 
+s32 NewProcedure(Context *context, Procedure p, bool isExternal)
+{
+	s32 procedureIdx;
+	if (isExternal)
+	{
+		procedureIdx = -(s32)BucketArrayCount(&context->externalProcedures);
+		*BucketArrayAdd(&context->externalProcedures) = p;
+	}
+	else
+	{
+		procedureIdx = (s32)BucketArrayCount(&context->procedures);
+		*BucketArrayAdd(&context->procedures) = p;
+	}
+	return procedureIdx;
+}
+
 String OperatorToString(s32 op);
 TypeCheckExpressionResult TryTypeCheckExpression(Context *context, ASTExpression *expression)
 {
@@ -2496,30 +2548,21 @@ TypeCheckExpressionResult TryTypeCheckExpression(Context *context, ASTExpression
 			{
 				newStaticDef->definitionType = STATICDEFINITIONTYPE_PROCEDURE;
 				ASTProcedureDeclaration *procDecl = &astStaticDef->expression->procedureDeclaration;
-				Procedure *procedure;
-				if (procDecl->isExternal)
-				{
-					newStaticDef->procedureIdx = -(s32)BucketArrayCount(&context->externalProcedures);
-					procedure = BucketArrayAdd(&context->externalProcedures);
-				}
-				else
-				{
-					newStaticDef->procedureIdx = (s32)BucketArrayCount(&context->procedures);
-					procedure = BucketArrayAdd(&context->procedures);
-				}
-				procDecl->procedureIdx = newStaticDef->procedureIdx;
+
 				Procedure p = {};
 				p.typeTableIdx = TYPETABLEIDX_UNSET;
-				p.returnValueIdx = U32_MAX;
 				p.name = procDecl->name;
+				p.returnValueIdx = U32_MAX;
+				p.astBody = procDecl->astBody;
 				p.isInline = procDecl->isInline;
-				p.astProcedureDeclaration = procDecl;
+				p.astPrototype = procDecl->prototype;
 				DynamicArrayInit(&p.parameterValues, 8);
-				*procedure = p;
+				newStaticDef->procedureIdx = NewProcedure(context, p, procDecl->isExternal);
 
 				PushTCScope(context);
 			}
-			else if (astStaticDef->expression->nodeType == ASTNODETYPE_TYPE)
+			else if (astStaticDef->expression->nodeType == ASTNODETYPE_TYPE ||
+					 astStaticDef->expression->nodeType == ASTNODETYPE_TYPE)
 				newStaticDef->definitionType = STATICDEFINITIONTYPE_TYPE;
 			else
 				newStaticDef->definitionType = STATICDEFINITIONTYPE_CONSTANT;
@@ -2578,14 +2621,13 @@ TypeCheckExpressionResult TryTypeCheckExpression(Context *context, ASTExpression
 
 			TypeInfo t = context->typeTable[procedure->typeTableIdx];
 
-			ASTProcedureDeclaration *astProcDecl = procedure->astProcedureDeclaration;
-			if (astProcDecl && astProcDecl->astBody)
+			if (procedure->astBody)
 			{
 				u64 previousReturnType = context->tcCurrentReturnType;
 				context->tcCurrentReturnType = t.procedureInfo.returnTypeTableIdx;
 
 				TypeCheckExpressionResult result =
-					TryTypeCheckExpression(context, astProcDecl->astBody);
+					TryTypeCheckExpression(context, procedure->astBody);
 
 				// Important to restore return type whether we yield or not
 				context->tcCurrentReturnType = previousReturnType;
@@ -2599,16 +2641,17 @@ TypeCheckExpressionResult TryTypeCheckExpression(Context *context, ASTExpression
 			PopTCScope(context);
 
 			// Check all paths return
-			if (astProcDecl->astBody && t.procedureInfo.returnTypeTableIdx != TYPETABLEIDX_VOID)
+			if (procedure->astBody && t.procedureInfo.returnTypeTableIdx != TYPETABLEIDX_VOID)
 			{
-				ReturnCheckResult result = CheckIfReturnsValue(context, astProcDecl->astBody);
+				ReturnCheckResult result = CheckIfReturnsValue(context, procedure->astBody);
 				if (result == RETURNCHECKRESULT_SOMETIMES)
 					LogError(context, expression->any.loc, "Procedure doesn't always return a value"_s);
 				else if (result == RETURNCHECKRESULT_NEVER)
 					LogError(context, expression->any.loc, "Procedure has to return a value"_s);
 			}
 		}
-		else if (astStaticDef->expression->nodeType == ASTNODETYPE_TYPE)
+		else if (astStaticDef->expression->nodeType == ASTNODETYPE_TYPE ||
+				 astStaticDef->expression->nodeType == ASTNODETYPE_ALIAS)
 		{
 			TypeCheckTypeResult result = TypeCheckType(context, astStaticDef->name, expression->any.loc,
 					&astStaticDef->expression->astType);
@@ -2616,9 +2659,26 @@ TypeCheckExpressionResult TryTypeCheckExpression(Context *context, ASTExpression
 				return { false, result.yieldInfo };
 			astStaticDef->expression->typeTableIdx = result.typeTableIdx;
 
+			s64 newTypeIdx;
+			if (astStaticDef->expression->astType.nodeType == ASTTYPENODETYPE_STRUCT_DECLARATION ||
+				astStaticDef->expression->astType.nodeType == ASTTYPENODETYPE_ENUM_DECLARATION)
+			{
+				newTypeIdx = result.typeTableIdx;
+			}
+			else
+			{
+				TypeInfo t;
+				t.typeCategory = TYPECATEGORY_ALIAS;
+				t.size = context->typeTable[result.typeTableIdx].size;
+				t.aliasInfo.aliasedTypeIdx = result.typeTableIdx;
+				t.aliasInfo.doesImplicitlyCast = astStaticDef->expression->nodeType ==
+					ASTNODETYPE_ALIAS;
+				newTypeIdx = FindOrAddTypeTableIdx(context, t);
+			}
+
 			staticDef->definitionType = STATICDEFINITIONTYPE_TYPE;
-			staticDef->typeTableIdx = astStaticDef->expression->typeTableIdx;
-			expression->typeTableIdx = astStaticDef->expression->typeTableIdx;
+			staticDef->typeTableIdx = newTypeIdx;
+			expression->typeTableIdx = newTypeIdx;
 		}
 		else
 		{
@@ -2925,10 +2985,10 @@ TypeCheckExpressionResult TryTypeCheckExpression(Context *context, ASTExpression
 			{
 				PushTCScope(context);
 
-				TCAddParametersToScope(context, proc->astProcedureDeclaration->prototype);
+				TCAddParametersToScope(context, proc->astPrototype);
 
 				ASTExpression *e = NewTreeNode(context);
-				*e = InlineProcedureCopyTreeBranch(context, proc->astProcedureDeclaration->astBody);
+				*e = InlineProcedureCopyTreeBranch(context, proc->astBody);
 				expression->procedureCall.astBodyInlineCopy = e;
 
 				PopTCScope(context);
@@ -2945,48 +3005,126 @@ TypeCheckExpressionResult TryTypeCheckExpression(Context *context, ASTExpression
 				return { false, result.yieldInfo };
 		}
 
-		u64 expressionType = input->typeTableIdx;
-		switch (expression->unaryOperation.op)
-		{
-		case TOKEN_OP_NOT:
-		{
-			TypeCheckErrorCode typeCheckResult = CheckTypesMatch(context, TYPETABLEIDX_BOOL,
-					expressionType);
-			if (typeCheckResult != TYPECHECK_COOL)
-				LogError(context, expression->any.loc, "Expression can't be cast to boolean"_s);
-			expression->typeTableIdx = TYPETABLEIDX_BOOL;
-		} break;
-		case TOKEN_OP_POINTER_TO:
-		{
-			// Forbid pointer to temporal values
-			if (IsTemporalValue(input))
-				LogError(context, expression->any.loc, "Trying to get pointer to temporal value"_s);
+		OperatorOverload overload = {};
+		bool foundOverload = false;
 
-			ASTExpression *e = input;
-			switch (e->nodeType)
+		for (int overloadIdx = 0; overloadIdx < context->operatorOverloads.size; ++overloadIdx)
+		{
+			OperatorOverload currentOverload = context->operatorOverloads[overloadIdx];
+
+			if (expression->unaryOperation.op != currentOverload.op)
+				continue;
+
+			Procedure *procedure = GetProcedure(context, currentOverload.procedureIdx);
+			TypeInfo procType = context->typeTable[procedure->typeTableIdx];
+			ASSERT(procType.typeCategory == TYPECATEGORY_PROCEDURE);
+
+			if (procType.procedureInfo.parameters.size != 1)
+				continue;
+
+			s64 paramTypeIdx  = procType.procedureInfo.parameters[0].typeTableIdx;
+
+			if (CheckTypesMatch(context, input->typeTableIdx, paramTypeIdx) == TYPECHECK_COOL)
 			{
-			case ASTNODETYPE_IDENTIFIER:
+				if (foundOverload)
+					LogError(context, expression->any.loc,
+							TPrintF("Multiple overloads found for operator %S with operand of "
+								"type %S",
+								OperatorToString(expression->unaryOperation.op),
+								TypeInfoToString(context, input->typeTableIdx)));
+				overload = currentOverload;
+				foundOverload = true;
+			}
+		}
+
+		TypeInfo inputTypeInfo = context->typeTable[input->typeTableIdx];
+
+		if (foundOverload)
+		{
+			// No type checking againts procedure prototype. We trust here that the overloads
+			// got type checked properly in the struct declaration.
+			Procedure *proc = GetProcedure(context, overload.procedureIdx);
+
+			TypeInfo procType = context->typeTable[proc->typeTableIdx];
+			ASSERT(procType.typeCategory == TYPECATEGORY_PROCEDURE);
+
+			if (proc->isInline && !proc->isBodyTypeChecked)
 			{
-				if (e->identifier.type == NAMETYPE_VARIABLE &&
-					e->identifier.tcValue.type == TCVALUETYPE_VALUE)
-					context->values[e->identifier.tcValue.valueIdx].flags |= VALUEFLAGS_FORCE_MEMORY;
-			} break;
+				TCYieldInfo yieldInfo = {};
+				yieldInfo.cause = TCYIELDCAUSE_NEED_TYPE_CHECKING;
+				yieldInfo.name = proc->name;
+				yieldInfo.loc = expression->any.loc;
+				return { false, yieldInfo };
 			}
 
-			expression->typeTableIdx = GetTypeInfoPointerOf(context, expressionType);
-		} break;
-		case TOKEN_OP_DEREFERENCE:
-		{
-			TypeInfo expressionTypeInfo = context->typeTable[expressionType];
-			if (expressionTypeInfo.typeCategory != TYPECATEGORY_POINTER)
-				LogError(context, expression->any.loc, "Trying to dereference a non pointer"_s);
-			expression->typeTableIdx = expressionTypeInfo.pointerInfo.pointedTypeTableIdx;
-		} break;
-		default:
-		{
-			expression->typeTableIdx = expressionType;
+			expression->typeTableIdx = procType.procedureInfo.returnTypeTableIdx;
+			expression->nodeType = ASTNODETYPE_PROCEDURE_CALL;
+			expression->procedureCall = {};
+			expression->procedureCall.callType = CALLTYPE_STATIC;
+			expression->procedureCall.procedureIdx = overload.procedureIdx;
+			DynamicArrayInit(&expression->procedureCall.arguments, 1);
+			*DynamicArrayAdd(&expression->procedureCall.arguments) = *input;
+
+			// Inline?
+			if (proc->isInline)
+			{
+				PushTCScope(context);
+
+				// Parameters
+				TCAddParametersToScope(context, proc->astPrototype);
+
+				ASTExpression *e = NewTreeNode(context);
+				*e = InlineProcedureCopyTreeBranch(context, proc->astBody);
+				expression->procedureCall.astBodyInlineCopy = e;
+
+				PopTCScope(context);
+			}
 		}
-		};
+		else
+		{
+			u64 expressionType = input->typeTableIdx;
+			switch (expression->unaryOperation.op)
+			{
+			case TOKEN_OP_NOT:
+			{
+				TypeCheckErrorCode typeCheckResult = CheckTypesMatch(context, TYPETABLEIDX_BOOL,
+						expressionType);
+				if (typeCheckResult != TYPECHECK_COOL)
+					LogError(context, expression->any.loc, "Expression can't be cast to boolean"_s);
+				expression->typeTableIdx = TYPETABLEIDX_BOOL;
+			} break;
+			case TOKEN_OP_POINTER_TO:
+			{
+				// Forbid pointer to temporal values
+				if (IsTemporalValue(input))
+					LogError(context, expression->any.loc, "Trying to get pointer to temporal value"_s);
+
+				ASTExpression *e = input;
+				switch (e->nodeType)
+				{
+				case ASTNODETYPE_IDENTIFIER:
+				{
+					if (e->identifier.type == NAMETYPE_VARIABLE &&
+						e->identifier.tcValue.type == TCVALUETYPE_VALUE)
+						context->values[e->identifier.tcValue.valueIdx].flags |= VALUEFLAGS_FORCE_MEMORY;
+				} break;
+				}
+
+				expression->typeTableIdx = GetTypeInfoPointerOf(context, expressionType);
+			} break;
+			case TOKEN_OP_DEREFERENCE:
+			{
+				TypeInfo expressionTypeInfo = context->typeTable[expressionType];
+				if (expressionTypeInfo.typeCategory != TYPECATEGORY_POINTER)
+					LogError(context, expression->any.loc, "Trying to dereference a non pointer"_s);
+				expression->typeTableIdx = expressionTypeInfo.pointerInfo.pointedTypeTableIdx;
+			} break;
+			default:
+			{
+				expression->typeTableIdx = expressionType;
+			}
+			};
+		}
 	} break;
 	case ASTNODETYPE_BINARY_OPERATION:
 	{
@@ -3010,7 +3148,11 @@ TypeCheckExpressionResult TryTypeCheckExpression(Context *context, ASTExpression
 
 			rightHand->identifier.type = NAMETYPE_STRUCT_MEMBER;
 
-			TypeInfo structTypeInfo = context->typeTable[leftHandTypeIdx];
+			// Get rid of aliases
+			s64 structTypeIdx = StripImplicitlyCastAliases(context, leftHandTypeIdx);
+
+			TypeInfo structTypeInfo = context->typeTable[structTypeIdx];
+
 			if (structTypeInfo.typeCategory == TYPECATEGORY_POINTER)
 			{
 				s64 pointedTypeIdx = structTypeInfo.pointerInfo.pointedTypeTableIdx;
@@ -3040,7 +3182,7 @@ TypeCheckExpressionResult TryTypeCheckExpression(Context *context, ASTExpression
 			}
 			else
 				LogError(context, expression->any.loc, TPrintF("\"%S\" is not a member of \"%S\"",
-						memberName, TypeInfoToString(context, leftHandTypeIdx)));
+						memberName, TypeInfoToString(context, structTypeIdx)));
 		}
 		else if (expression->binaryOperation.op == TOKEN_OP_ARRAY_ACCESS)
 		{
@@ -3095,47 +3237,54 @@ TypeCheckExpressionResult TryTypeCheckExpression(Context *context, ASTExpression
 					return { false, result.yieldInfo };
 			}
 
-			TypeCheckResult typeCheckResult = CheckTypesMatchAndSpecialize(context,
-					leftHand->typeTableIdx, rightHand);
-			if (typeCheckResult.errorCode != TYPECHECK_COOL)
+			OperatorOverload overload = {};
+			bool foundOverload = false;
+
+			for (int overloadIdx = 0; overloadIdx < context->operatorOverloads.size; ++overloadIdx)
 			{
-				// Ignore sign missmatches for shift operations.
-				if (typeCheckResult.errorCode != TYPECHECK_SIZE_MISMATCH ||
-					(expression->binaryOperation.op == TOKEN_OP_SHIFT_LEFT &&
-					 expression->binaryOperation.op == TOKEN_OP_SHIFT_RIGHT &&
-					 expression->binaryOperation.op == TOKEN_OP_ASSIGNMENT_SHIFT_LEFT &&
-					 expression->binaryOperation.op == TOKEN_OP_ASSIGNMENT_SHIFT_RIGHT))
+				OperatorOverload currentOverload = context->operatorOverloads[overloadIdx];
+
+				if (expression->binaryOperation.op != currentOverload.op)
+					continue;
+
+				Procedure *procedure = GetProcedure(context, currentOverload.procedureIdx);
+				TypeInfo procType = context->typeTable[procedure->typeTableIdx];
+				ASSERT(procType.typeCategory == TYPECATEGORY_PROCEDURE);
+
+				if (procType.procedureInfo.parameters.size != 2)
+					continue;
+
+				s64 leftHandTypeIdx  = procType.procedureInfo.parameters[0].typeTableIdx;
+				s64 rightHandTypeIdx = procType.procedureInfo.parameters[1].typeTableIdx;
+
+				if (CheckTypesMatch(context, leftHand->typeTableIdx, leftHandTypeIdx) ==
+						TYPECHECK_COOL &&
+					CheckTypesMatch(context, rightHand->typeTableIdx, rightHandTypeIdx) ==
+						TYPECHECK_COOL)
 				{
-					String leftStr =  TypeInfoToString(context, leftHand->typeTableIdx);
-					String rightStr = TypeInfoToString(context, rightHand->typeTableIdx);
-					LogError(context, expression->any.loc, TPrintF("Type mismatch! (%S and %S)",
-								leftStr, rightStr));
+					if (foundOverload)
+						LogError(context, expression->any.loc,
+								TPrintF("Multiple overloads found for operator %S with left hand "
+									"of type %S and right hand of type %S",
+									OperatorToString(expression->binaryOperation.op),
+									TypeInfoToString(context, leftHand->typeTableIdx),
+									TypeInfoToString(context, rightHand->typeTableIdx)));
+					overload = currentOverload;
+					foundOverload = true;
 				}
 			}
-			leftHand->typeTableIdx  = typeCheckResult.leftTableIdx;
-			rightHand->typeTableIdx = typeCheckResult.rightTableIdx;
 
-			OperatorOverload overload = {};
 			TypeInfo leftTypeInfo = context->typeTable[leftHand->typeTableIdx];
-			if (leftTypeInfo.typeCategory == TYPECATEGORY_STRUCT ||
-				leftTypeInfo.typeCategory == TYPECATEGORY_UNION)
+
+			if (foundOverload)
 			{
-				for (int i = 0; i < leftTypeInfo.structInfo.overloads.size; ++i)
-				{
-					overload = leftTypeInfo.structInfo.overloads[i];
-					if (overload.op == expression->binaryOperation.op)
-						goto skipNoOverloadError;
-				}
-				if (expression->binaryOperation.op == TOKEN_OP_ASSIGNMENT)
-					// This allows default 'overload'
-					goto skipOverload;
-				// Everyone else reports error
-				LogError(context, expression->any.loc, TPrintF("No overload for operator %S found in struct \"%S\"",
-						OperatorToString(expression->binaryOperation.op), leftTypeInfo.structInfo.name));
-	skipNoOverloadError:
 				// No type checking againts procedure prototype. We trust here that the overloads
 				// got type checked properly in the struct declaration.
 				Procedure *proc = GetProcedure(context, overload.procedureIdx);
+
+				TypeInfo procType = context->typeTable[proc->typeTableIdx];
+				ASSERT(procType.typeCategory == TYPECATEGORY_PROCEDURE);
+
 				if (proc->isInline && !proc->isBodyTypeChecked)
 				{
 					TCYieldInfo yieldInfo = {};
@@ -3144,28 +3293,8 @@ TypeCheckExpressionResult TryTypeCheckExpression(Context *context, ASTExpression
 					yieldInfo.loc = expression->any.loc;
 					return { false, yieldInfo };
 				}
-			}
-skipOverload:
 
-			switch (expression->binaryOperation.op)
-			{
-			case TOKEN_OP_AND:
-			case TOKEN_OP_OR:
-			case TOKEN_OP_EQUALS:
-			case TOKEN_OP_GREATER_THAN:
-			case TOKEN_OP_GREATER_THAN_OR_EQUAL:
-			case TOKEN_OP_LESS_THAN:
-			case TOKEN_OP_LESS_THAN_OR_EQUAL:
-				expression->typeTableIdx = TYPETABLEIDX_BOOL;
-				break;
-			default:
-				expression->typeTableIdx = leftHand->typeTableIdx;
-				break;
-			};
-
-			// Overloads!
-			if (overload.op != TOKEN_INVALID)
-			{
+				expression->typeTableIdx = procType.procedureInfo.returnTypeTableIdx;
 				expression->nodeType = ASTNODETYPE_PROCEDURE_CALL;
 				expression->procedureCall = {};
 				expression->procedureCall.callType = CALLTYPE_STATIC;
@@ -3173,21 +3302,163 @@ skipOverload:
 				DynamicArrayInit(&expression->procedureCall.arguments, 2);
 				*DynamicArrayAdd(&expression->procedureCall.arguments) = *leftHand;
 				*DynamicArrayAdd(&expression->procedureCall.arguments) = *rightHand;
+
 				// Inline?
-				Procedure *proc = GetProcedure(context, overload.procedureIdx);
 				if (proc->isInline)
 				{
 					PushTCScope(context);
 
 					// Parameters
-					TCAddParametersToScope(context, proc->astProcedureDeclaration->prototype);
+					TCAddParametersToScope(context, proc->astPrototype);
 
 					ASTExpression *e = NewTreeNode(context);
-					*e = InlineProcedureCopyTreeBranch(context, proc->astProcedureDeclaration->astBody);
+					*e = InlineProcedureCopyTreeBranch(context, proc->astBody);
 					expression->procedureCall.astBodyInlineCopy = e;
 
 					PopTCScope(context);
 				}
+			}
+			else
+			{
+				TypeCheckResult typeCheckResult = CheckTypesMatchAndSpecialize(context,
+						leftHand->typeTableIdx, rightHand);
+				leftHand->typeTableIdx  = typeCheckResult.leftTableIdx;
+				rightHand->typeTableIdx = typeCheckResult.rightTableIdx;
+
+				switch (expression->binaryOperation.op)
+				{
+				case TOKEN_OP_SHIFT_LEFT:
+				case TOKEN_OP_SHIFT_RIGHT:
+				case TOKEN_OP_ASSIGNMENT_SHIFT_LEFT:
+				case TOKEN_OP_ASSIGNMENT_SHIFT_RIGHT:
+				{
+					if (typeCheckResult.errorCode != TYPECHECK_COOL &&
+						typeCheckResult.errorCode != TYPECHECK_SIZE_MISMATCH &&
+						typeCheckResult.errorCode != TYPECHECK_SIGN_MISMATCH)
+					{
+						String leftStr =  TypeInfoToString(context, leftHand->typeTableIdx);
+						String rightStr = TypeInfoToString(context, rightHand->typeTableIdx);
+						LogError(context, expression->any.loc, TPrintF("Type mismatch on inputs of "
+									"operator %S (left hand is \"%S\" and right hand is \"%S\")",
+									OperatorToString(expression->binaryOperation.op),
+									leftStr, rightStr));
+					}
+				} break;
+				case TOKEN_OP_RANGE:
+				{
+					if (typeCheckResult.errorCode != TYPECHECK_COOL)
+					{
+						String leftStr =  TypeInfoToString(context, leftHand->typeTableIdx);
+						String rightStr = TypeInfoToString(context, rightHand->typeTableIdx);
+						LogError(context, expression->any.loc, TPrintF("Invalid types on inputs of "
+									"operator %S (left hand is \"%S\" and right hand is \"%S\")",
+									OperatorToString(expression->binaryOperation.op),
+									leftStr, rightStr));
+					}
+
+					// Both operands have to be integers
+					TypeCategory leftCat = context->typeTable[StripAllAliases(context,
+							leftHand->typeTableIdx)].typeCategory;
+					if (leftCat != TYPECATEGORY_INTEGER)
+						LogError(context, leftHand->any.loc, TPrintF("Left hand of .. operator "
+									"does not evaluate to an integer (%S)",
+									TypeInfoToString(context, leftHand->typeTableIdx)));
+
+					TypeCategory rightCat = context->typeTable[StripAllAliases(context,
+							rightHand->typeTableIdx)].typeCategory;
+					if (rightCat != TYPECATEGORY_INTEGER)
+						LogError(context, rightHand->any.loc, TPrintF("Right hand of .. operator "
+									"does not evaluate to an integer (%S)",
+									TypeInfoToString(context, typeCheckResult.rightTableIdx)));
+				} break;
+				case TOKEN_OP_ASSIGNMENT:
+				{
+					if (typeCheckResult.errorCode != TYPECHECK_COOL)
+					{
+						String leftStr =  TypeInfoToString(context, leftHand->typeTableIdx);
+						String rightStr = TypeInfoToString(context, rightHand->typeTableIdx);
+						LogError(context, expression->any.loc, TPrintF("Type mismatch on inputs of "
+									"operator %S (left hand is \"%S\" and right hand is \"%S\")",
+									OperatorToString(expression->binaryOperation.op),
+									leftStr, rightStr));
+					}
+				} break;
+				case TOKEN_OP_PLUS:
+				case TOKEN_OP_MINUS:
+				case TOKEN_OP_BITWISE_AND:
+				case TOKEN_OP_BITWISE_NOT:
+				case TOKEN_OP_BITWISE_OR:
+				case TOKEN_OP_BITWISE_XOR:
+				case TOKEN_OP_EQUALS:
+				case TOKEN_OP_LESS_THAN:
+				case TOKEN_OP_LESS_THAN_OR_EQUAL:
+				case TOKEN_OP_GREATER_THAN_OR_EQUAL:
+				case TOKEN_OP_GREATER_THAN:
+				case TOKEN_OP_ASSIGNMENT_PLUS:
+				case TOKEN_OP_ASSIGNMENT_MINUS:
+				case TOKEN_OP_ASSIGNMENT_BITWISE_AND:
+				case TOKEN_OP_ASSIGNMENT_BITWISE_OR:
+				case TOKEN_OP_ASSIGNMENT_BITWISE_XOR:
+				{
+					if (typeCheckResult.errorCode != TYPECHECK_COOL)
+					{
+						String leftStr =  TypeInfoToString(context, leftHand->typeTableIdx);
+						String rightStr = TypeInfoToString(context, rightHand->typeTableIdx);
+						LogError(context, expression->any.loc, TPrintF("Type mismatch on inputs of "
+									"operator %S (left hand is \"%S\" and right hand is \"%S\")",
+									OperatorToString(expression->binaryOperation.op),
+									leftStr, rightStr));
+					}
+
+					TypeCategory leftCat  = context->typeTable[StripAllAliases(context,
+							leftHand->typeTableIdx)].typeCategory;
+					if (leftCat != TYPECATEGORY_INTEGER &&
+						leftCat != TYPECATEGORY_FLOATING &&
+						leftCat != TYPECATEGORY_ENUM &&
+						leftCat != TYPECATEGORY_POINTER)
+						LogError(context, expression->any.loc, TPrintF("Invalid types on inputs of "
+									"operator %S (left hand is \"%S\"",
+									OperatorToString(expression->binaryOperation.op),
+									TypeInfoToString(context, leftHand->typeTableIdx)));
+				} break;
+				default:
+				{
+					if (typeCheckResult.errorCode != TYPECHECK_COOL)
+					{
+						String leftStr =  TypeInfoToString(context, leftHand->typeTableIdx);
+						String rightStr = TypeInfoToString(context, rightHand->typeTableIdx);
+						LogError(context, expression->any.loc, TPrintF("Type mismatch on inputs of "
+									"operator %S (left hand is \"%S\" and right hand is \"%S\")",
+									OperatorToString(expression->binaryOperation.op),
+									leftStr, rightStr));
+					}
+
+					TypeCategory leftCat  = context->typeTable[StripAllAliases(context,
+							leftHand->typeTableIdx)].typeCategory;
+					if (leftCat != TYPECATEGORY_INTEGER &&
+						leftCat != TYPECATEGORY_FLOATING)
+						LogError(context, expression->any.loc, TPrintF("Invalid types on inputs of "
+									"operator %S (left hand is \"%S\")",
+									OperatorToString(expression->binaryOperation.op),
+									TypeInfoToString(context, leftHand->typeTableIdx)));
+				}
+				}
+
+				switch (expression->binaryOperation.op)
+				{
+				case TOKEN_OP_AND:
+				case TOKEN_OP_OR:
+				case TOKEN_OP_EQUALS:
+				case TOKEN_OP_GREATER_THAN:
+				case TOKEN_OP_GREATER_THAN_OR_EQUAL:
+				case TOKEN_OP_LESS_THAN:
+				case TOKEN_OP_LESS_THAN_OR_EQUAL:
+					expression->typeTableIdx = TYPETABLEIDX_BOOL;
+					break;
+				default:
+					expression->typeTableIdx = leftHand->typeTableIdx;
+					break;
+				};
 			}
 		}
 	} break;
@@ -3376,6 +3647,7 @@ skipOverload:
 					"with a dynamic sized array as range"_s);
 	} break;
 	case ASTNODETYPE_TYPE:
+	case ASTNODETYPE_ALIAS:
 	{
 		TypeCheckTypeResult result = TypeCheckType(context, {}, expression->any.loc, &expression->astType);
 		if (!result.success)
@@ -3476,6 +3748,143 @@ skipOverload:
 		}
 		expression->typeTableIdx = TYPETABLEIDX_VOID;
 	} break;
+	case ASTNODETYPE_OPERATOR_OVERLOAD:
+	{
+		ASTOperatorOverload *astOverload = &expression->operatorOverload;
+
+		// This doesn't yield, this runs once.
+		if (!astOverload->overloadRegistered)
+		{
+			static u64 overloadUniqueId = 0;
+
+			OperatorOverload overload = {};
+			overload.op = astOverload->op;
+
+			Procedure p = {};
+			p.typeTableIdx = TYPETABLEIDX_UNSET;
+			p.name = TPrintF("__overload%d_%d", overload.op, overloadUniqueId++);
+			p.returnValueIdx = U32_MAX;
+			p.astBody = astOverload->astBody;
+			p.isInline = astOverload->isInline;
+			p.astPrototype = astOverload->prototype;
+			DynamicArrayInit(&p.parameterValues, 8);
+			overload.procedureIdx = NewProcedure(context, p, false);
+
+			*DynamicArrayAdd(&context->operatorOverloads) = overload;
+
+			astOverload->procedureIdx = overload.procedureIdx;
+			astOverload->overloadRegistered = true;
+
+			// Important to do this only ONCE per overload!
+			PushTCScope(context);
+		}
+
+		// This can yield
+		Procedure *procedure = GetProcedure(context, astOverload->procedureIdx);
+
+		if (!astOverload->checkedPrototype)
+		{
+			TypeCheckProcedurePrototypeResult result = TypeCheckProcedurePrototype(context,
+					&astOverload->prototype);
+			if (!result.success)
+				return { false, result.yieldInfo };
+			TypeInfo t = TypeInfoFromASTProcedurePrototype(context, astOverload->prototype);
+
+			// Parameters
+			u64 paramCount = astOverload->prototype.astParameters.size;
+			if (paramCount == 0)
+			{
+				LogError(context, expression->any.loc, TPrintF(
+						"No parameters provided on overload for operator %S.",
+						OperatorToString(astOverload->op)));
+			}
+			else if (paramCount == 1)
+			{
+				if (astOverload->op != TOKEN_OP_NOT &&
+					astOverload->op != TOKEN_OP_BITWISE_NOT &&
+					astOverload->op != TOKEN_OP_MINUS)
+					LogError(context, expression->any.loc, TPrintF(
+								"Only 1 parameter is present on overload for operator %S. "
+								"Expected 2.", OperatorToString(astOverload->op)));
+			}
+			else if (paramCount == 2)
+			{
+				if (astOverload->op == TOKEN_OP_NOT ||
+					astOverload->op == TOKEN_OP_BITWISE_NOT)
+					LogError(context, expression->any.loc, TPrintF(
+								"2 parameters found on overload for operator %S. "
+								"Expected 1.", OperatorToString(astOverload->op)));
+			}
+			else
+			{
+				LogError(context, expression->any.loc, TPrintF(
+						"Too many parameters provided on overload for operator %S.",
+						OperatorToString(astOverload->op)));
+			}
+
+			for (int i = 0; i < paramCount; ++i)
+			{
+				ASTProcedureParameter astParameter = astOverload->prototype.astParameters[i];
+				TCValue tcParamValue = { TCVALUETYPE_PARAMETER, (u32)i };
+				u32 paramValueIdx = NewValue(context, astParameter.name, astParameter.typeTableIdx, 0);
+				*DynamicArrayAdd(&procedure->parameterValues) = paramValueIdx;
+			}
+			// Varargs array
+			if (astOverload->prototype.isVarargs)
+			{
+				static s64 arrayTableIdx = GetTypeInfoArrayOf(context, TYPETABLEIDX_ANY_STRUCT, 0);
+
+				u32 valueIdx = NewValue(context, astOverload->prototype.varargsName, arrayTableIdx, 0);
+				*DynamicArrayAdd(&procedure->parameterValues) = valueIdx;
+			}
+			TCAddParametersToScope(context, astOverload->prototype);
+
+			s64 returnType = astOverload->prototype.returnTypeIdx;
+			t.procedureInfo.returnTypeTableIdx = returnType;
+			procedure->returnValueIdx = NewValue(context, "_returnValue"_s, returnType, 0);
+
+			s64 typeTableIdx = FindOrAddTypeTableIdx(context, t);
+			procedure->typeTableIdx = typeTableIdx;
+
+			astOverload->checkedPrototype = true;
+		}
+
+		TypeInfo t = context->typeTable[procedure->typeTableIdx];
+
+		if (astOverload->astBody)
+		{
+			u64 previousReturnType = context->tcCurrentReturnType;
+			context->tcCurrentReturnType = t.procedureInfo.returnTypeTableIdx;
+
+			TypeCheckExpressionResult result =
+				TryTypeCheckExpression(context, astOverload->astBody);
+
+			if (result.yieldInfo.cause == TCYIELDCAUSE_NEED_TYPE_CHECKING &&
+					StringEquals(result.yieldInfo.name, procedure->name))
+				LogError(context, result.yieldInfo.loc, TPrintF("Cyclic dependency on operator %S",
+							OperatorToString(astOverload->op)));
+
+			// Important to restore return type whether we yield or not
+			context->tcCurrentReturnType = previousReturnType;
+
+			if (!result.success)
+				return { false, result.yieldInfo };
+		}
+		procedure->isBodyTypeChecked = true;
+
+		expression->typeTableIdx = procedure->typeTableIdx;
+		PopTCScope(context);
+
+		// Check all paths return
+		if (astOverload->astBody && t.procedureInfo.returnTypeTableIdx != TYPETABLEIDX_VOID)
+		{
+			ReturnCheckResult result = CheckIfReturnsValue(context, astOverload->astBody);
+			if (result == RETURNCHECKRESULT_SOMETIMES)
+				LogError(context, expression->any.loc, "Procedure doesn't always return a value"_s);
+			else if (result == RETURNCHECKRESULT_NEVER)
+				LogError(context, expression->any.loc, "Procedure has to return a value"_s);
+		}
+	} break;
 	default:
 	{
 		LogError(context, expression->any.loc, "COMPILER ERROR! Unknown expression type on type checking"_s);
@@ -3510,6 +3919,12 @@ void GenerateTypeCheckJobs(Context *context, ASTExpression *expression)
 			DynamicArrayInit(&job.scopeStack, 16);
 		*DynamicArrayAdd(&context->tcJobs) = job;
 	} break;
+	case ASTNODETYPE_OPERATOR_OVERLOAD:
+	{
+		TCJob job = { expression };
+		DynamicArrayInit(&job.scopeStack, 16);
+		*DynamicArrayAdd(&context->tcJobs) = job;
+	} break;
 	case ASTNODETYPE_GARBAGE:
 	case ASTNODETYPE_RETURN:
 	case ASTNODETYPE_DEFER:
@@ -3529,14 +3944,14 @@ void GenerateTypeCheckJobs(Context *context, ASTExpression *expression)
 	case ASTNODETYPE_CAST:
 	case ASTNODETYPE_INTRINSIC:
 	{
-		LogError(context, expression->any.loc, "COMPILER ERROR! Invalid expression type found"
+		LogError(context, expression->any.loc, "COMPILER ERROR! Invalid expression type found "
 				"while generating type checking jobs"_s);
 	} break;
 	default:
 	{
-		LogError(context, expression->any.loc, "COMPILER ERROR! Unknown expression type found"
+		LogError(context, expression->any.loc, "COMPILER ERROR! Unknown expression type found "
 				"while generating type checking jobs"_s);
-	} break;
+	}
 	}
 }
 
@@ -3552,6 +3967,8 @@ void TypeCheckMain(Context *context)
 	// Procedure 0 is invalid
 	*BucketArrayAdd(&context->procedures) = {};
 	*BucketArrayAdd(&context->externalProcedures) = {};
+
+	DynamicArrayInit(&context->operatorOverloads, 32);
 
 	context->tcGlobalScope = ALLOC(malloc, TCScope);
 	DynamicArrayInit(&context->tcGlobalScope->names, 64);
@@ -3672,6 +4089,8 @@ void TypeCheckMain(Context *context)
 				{
 					TypeCheckExpressionResult result =
 						TryTypeCheckExpression(context, job->expression);
+					ASSERT(job->expression->typeTableIdx == TYPETABLEIDX_UNSET ||
+							result.yieldInfo.cause == TCYIELDCAUSE_DONE);
 					newYieldInfo = result.yieldInfo;
 				}
 			} break;
@@ -3680,6 +4099,8 @@ void TypeCheckMain(Context *context)
 			{
 				context->currentTCJob = jobIdx;
 				TypeCheckExpressionResult result = TryTypeCheckExpression(context, job->expression);
+				ASSERT(job->expression->typeTableIdx == TYPETABLEIDX_UNSET ||
+						result.yieldInfo.cause == TCYIELDCAUSE_DONE);
 				newYieldInfo = result.yieldInfo;
 			}
 			}
