@@ -87,7 +87,7 @@ void TimerSplit(String message)
 	f64 time = (f64)(newPerfCounter - g_firstPerfCounter) / (f64)g_perfFrequency;
 	f64 deltaTime = (f64)(newPerfCounter - g_lastPerfCounter) / (f64)g_perfFrequency;
 	g_lastPerfCounter = newPerfCounter;
-	//Print("%f - %f - %S\n", time, deltaTime, message);
+	Print("%f - %f - %S\n", time, deltaTime, message);
 }
 u64 CycleCountBegin()
 {
@@ -127,6 +127,7 @@ struct InterferenceGraph
 struct TCJob;
 struct Procedure;
 struct TypeInfo;
+struct OperatorOverload;
 struct StaticDefinition;
 struct TCScope;
 struct BasicBlock;
@@ -138,7 +139,7 @@ struct Context
 	DynamicArray<SourceFile, HeapAllocator> sourceFiles;
 	DynamicArray<String, HeapAllocator> libsToLink;
 
-	// Parsing
+	// Parsing -----
 	BucketArray<Token, HeapAllocator, 1024> tokens;
 	u64 currentTokenIdx;
 	Token *token;
@@ -147,19 +148,23 @@ struct Context
 	BucketArray<ASTType, HeapAllocator, 1024> astTypeNodes;
 	BucketArray<String, HeapAllocator, 1024> stringLiterals;
 
-	// Type check
+	// Type check -----
 	DynamicArray<TCJob, PhaseAllocator> tcJobs;
 	s32 currentTCJob;
 	BucketArray<Value, HeapAllocator, 2048> values;
 	BucketArray<Procedure, HeapAllocator, 512> procedures;
 	BucketArray<Procedure, HeapAllocator, 128> externalProcedures;
+	DynamicArray<OperatorOverload, HeapAllocator> operatorOverloads;
 	BucketArray<StaticDefinition, HeapAllocator, 512> staticDefinitions;
-	BucketArray<const TypeInfo, HeapAllocator, 1024> typeTable;
-	TCScope *tcGlobalScope;
-	s64 tcCurrentReturnType;
-	s64 tcCurrentForLoopArrayType;
 
-	// IR
+	/* Don't add types to the type table by hand without checking what AddType() does! */
+	BucketArray<const TypeInfo, HeapAllocator, 1024> typeTable;
+
+	TCScope *tcGlobalScope;
+	u32 tcCurrentReturnType;
+	u32 tcCurrentForLoopArrayType;
+
+	// IR -----
 	DynamicArray<IRStaticVariable, HeapAllocator> irStaticVariables;
 	DynamicArray<u32, HeapAllocator> irExternalVariables;
 	DynamicArray<IRScope, PhaseAllocator> irStack;
@@ -173,7 +178,7 @@ struct Context
 		IRValue indexValue;
 	} irCurrentForLoopInfo;
 
-	// Backend
+	// Backend -----
 	BucketArray<u8, PhaseAllocator, OUTPUT_BUFFER_BUCKET_SIZE> outputBuffer;
 	BucketArray<BasicBlock, PhaseAllocator, 512> beBasicBlocks;
 	DynamicArray<BasicBlock *, PhaseAllocator> beLeafBasicBlocks;
@@ -181,61 +186,7 @@ struct Context
 	BucketArray<BEInstruction, PhaseAllocator, 128> bePatchedInstructions;
 };
 
-struct FatSourceLocation
-{
-	const char *beginingOfLine;
-	u32 lineSize;
-	u32 size;
-	u32 line;
-	u32 character;
-};
-
-enum TokenType CalculateTokenType(Context *context, const Tokenizer *tokenizer);
-u32 CalculateTokenSize(Context *context, const Tokenizer *tokenizer, TokenType tokenType);
-FatSourceLocation ExpandSourceLocation(Context *context, SourceLocation loc)
-{
-	SourceFile sourceFile = context->sourceFiles[loc.fileIdx];
-
-	FatSourceLocation result;
-	result.beginingOfLine = (const char *)sourceFile.buffer;
-	result.lineSize = 0;
-	result.line = 1;
-	result.character = 0;
-
-	ASSERT(loc.character < sourceFile.size);
-
-	const char *scan = (const char *)sourceFile.buffer;
-	for (u32 charIdx = 0; charIdx < loc.character; ++charIdx)
-	{
-		if (*scan == '\n')
-		{
-			++result.line;
-			result.character = 0;
-			result.beginingOfLine = ++scan;
-		}
-		else
-		{
-			++result.character;
-			++scan;
-		}
-	}
-
-	Tokenizer tokenizer = {
-		scan,
-		(const char *)sourceFile.buffer + sourceFile.size,
-		result.line,
-		loc.fileIdx,
-		nullptr
-	};
-	TokenType tokenType = CalculateTokenType(context, &tokenizer);
-	result.size = CalculateTokenSize(context, &tokenizer, tokenType);
-
-	for (const char *lineScan = result.beginingOfLine; *lineScan && *lineScan != '\n'; ++lineScan)
-		++result.lineSize;
-
-	return result;
-}
-
+FatSourceLocation ExpandSourceLocation(Context *context, SourceLocation loc);
 void Log(Context *context, SourceLocation loc, String str)
 {
 	FatSourceLocation fatLoc = ExpandSourceLocation(context, loc);

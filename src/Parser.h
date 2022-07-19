@@ -7,7 +7,7 @@ struct Tokenizer
 	const char *beginningOfLine;
 };
 
-enum TokenType : u8
+enum TokenType
 {
 	TOKEN_INVALID			= 0,
 	TOKEN_IDENTIFIER		= 1,
@@ -29,19 +29,20 @@ enum TokenType : u8
 	TOKEN_KEYWORD_UNION		= 14,
 	TOKEN_KEYWORD_ENUM		= 15,
 	TOKEN_KEYWORD_TYPE		= 16,
-	TOKEN_KEYWORD_INLINE	= 17,
-	TOKEN_KEYWORD_EXTERNAL	= 18,
-	TOKEN_KEYWORD_CALLING_CONVENTION = 19,
-	TOKEN_KEYWORD_INTRINSIC	= 20,
-	TOKEN_KEYWORD_OPERATOR	= 21,
-	TOKEN_KEYWORD_DEFER		= 22,
-	TOKEN_KEYWORD_USING		= 23,
-	TOKEN_KEYWORD_TYPEOF	= 24,
-	TOKEN_KEYWORD_SIZEOF	= 25,
-	TOKEN_KEYWORD_CAST		= 26,
-	TOKEN_KEYWORD_INCLUDE	= 27,
-	TOKEN_KEYWORD_LINKLIB	= 28,
-	TOKEN_KEYWORD_End		= 29,
+	TOKEN_KEYWORD_ALIAS		= 17,
+	TOKEN_KEYWORD_INLINE	= 18,
+	TOKEN_KEYWORD_EXTERNAL	= 19,
+	TOKEN_KEYWORD_CALLING_CONVENTION = 20,
+	TOKEN_KEYWORD_INTRINSIC	= 21,
+	TOKEN_KEYWORD_OPERATOR	= 22,
+	TOKEN_KEYWORD_DEFER		= 23,
+	TOKEN_KEYWORD_USING		= 24,
+	TOKEN_KEYWORD_TYPEOF	= 25,
+	TOKEN_KEYWORD_SIZEOF	= 26,
+	TOKEN_KEYWORD_CAST		= 27,
+	TOKEN_KEYWORD_INCLUDE	= 28,
+	TOKEN_KEYWORD_LINKLIB	= 29,
+	TOKEN_KEYWORD_End		= 30,
 
 	TOKEN_ASCII_Begin		= '!', // 33
 	TOKEN_ASCII_End			= '~', // 126
@@ -102,6 +103,17 @@ enum TokenType : u8
 struct SourceLocation
 {
 	u32 fileIdx;
+	u32 line;
+	u32 character;
+	u32 size;
+};
+
+struct FatSourceLocation
+{
+	const char *beginingOfLine;
+	u32 lineSize;
+	u32 size;
+	u32 line;
 	u32 character;
 };
 
@@ -116,6 +128,15 @@ struct SourceFile
 struct Token
 {
 	enum TokenType type;
-	u32 size;
+	union
+	{
+		String string;
+		struct
+		{
+			u32 size;
+			const char *begin;
+		};
+	};
+
 	SourceLocation loc;
 };

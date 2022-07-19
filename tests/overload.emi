@@ -3,12 +3,17 @@ Vector :: struct
 	x : f32;
 	y : f32;
 	z : f32;
-	#operator(+, VectorAdd);
 };
 
-VectorAdd :: #inline (a : Vector, b : Vector) -> Vector
+#operator + :: #inline (a : Vector, b : Vector) -> Vector
 {
 	result : Vector = { a.x + b.x, a.y + b.y, a.z + b.z };
+	return result;
+}
+
+#operator - :: #inline (a : Vector) -> Vector
+{
+	result : Vector = { -a.x, -a.y, -a.z };
 	return result;
 }
 
@@ -18,6 +23,7 @@ Main :: () -> s64
 	b : Vector = { 0, 0, 1 };
 	c := a + b;
 	PrintF("% + % = %\n", a, b, c);
+	PrintF("-a: %\n", -a);
 
 	Print("Test ok\n");
 	return 0;

@@ -29,7 +29,8 @@ TypeKind :: enum : u8
 	TypeKind_Enum,
 	TypeKind_Pointer,
 	TypeKind_Array,
-	TypeKind_ProcedurePointer
+	TypeKind_ProcedurePointer,
+	TypeKind_Alias
 };
 TypeInfo :: struct
 {
@@ -84,6 +85,12 @@ TypeInfoProcedurePointer :: struct
 	using _typeInfo : TypeInfo;
 	parameters : [] ^TypeInfo;
 	isVarargs : bool;
+};
+
+TypeInfoAlias :: struct
+{
+	using _typeInfo : TypeInfo;
+	typeInfo : ^TypeInfo;
 };
 
 Any :: struct

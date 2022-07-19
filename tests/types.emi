@@ -1,7 +1,7 @@
-MyType :: #type s16;
-PointerType :: #type ^s64;
-Nested :: #type ^MyType;
-ProcType :: #type (s32, u64, bool) -> f32;
+MyType :: #alias s16;
+PointerType :: #alias ^s64;
+Nested :: #alias ^MyType;
+ProcType :: #alias (s32, u64, bool) -> f32;
 
 AProc :: (a : s32, b : u64, bool) -> f32
 {

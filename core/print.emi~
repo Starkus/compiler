@@ -2,23 +2,16 @@ PrintF :: (format : String, ..args)
 {
 	PrintArgument :: (arg : Any)
 	{
-		typeInfo := arg.typeInfo;
-		while typeInfo.typeKind == TypeKind_Alias
-		{
-			aliasInfo := cast(^TypeInfoAlias)typeInfo;
-			typeInfo = aliasInfo.typeInfo;
-		}
-
-		if typeInfo == typeof(String)
+		if arg.typeInfo == typeof(String)
 			Print(@ cast(^String) arg.data);
-		else if typeInfo == typeof(Any)
+		else if arg.typeInfo == typeof(Any)
 		{
 			any := cast(^Any) arg.data;
 			PrintArgument(@any);
 		}
-		else if typeInfo.typeKind == TypeKind_Integer
+		else if arg.typeInfo.typeKind == TypeKind_Integer
 		{
-			intInfo := cast(^TypeInfoInteger) typeInfo;
+			intInfo := cast(^TypeInfoInteger) arg.typeInfo;
 			num : u64;
 			isNegative : bool = false;
 
@@ -76,12 +69,12 @@ PrintF :: (format : String, ..args)
 			numStr.data = ^buffer[20 - count];
 			Print(numStr);
 		}
-		else if typeInfo.typeKind == TypeKind_Floating
+		else if arg.typeInfo.typeKind == TypeKind_Floating
 		{
 			f : f64 = ?;
-			if typeInfo.size == 4
+			if arg.typeInfo.size == 4
 				f = arg.asF32;
-			else if typeInfo.size == 8
+			else if arg.typeInfo.size == 8
 				f = arg.asF64;
 
 			// Cheat
@@ -130,9 +123,9 @@ PrintF :: (format : String, ..args)
 			numStr : String = { cast(u64) count, ^buffer[32 - count] };
 			Print(numStr);
 		}
-		else if typeInfo.typeKind == TypeKind_Struct
+		else if arg.typeInfo.typeKind == TypeKind_Struct
 		{
-			structInfo := cast(^TypeInfoStruct) typeInfo;
+			structInfo := cast(^TypeInfoStruct) arg.typeInfo;
 			Print("{ ");
 			for structInfo.members
 			{
@@ -165,10 +158,10 @@ PrintF :: (format : String, ..args)
 			}
 			Print(" }");
 		}
-		else if typeInfo.typeKind == TypeKind_Enum
+		else if arg.typeInfo.typeKind == TypeKind_Enum
 		{
-			enumInfo := cast(^TypeInfoEnum) typeInfo;
-			num := arg.asS64;
+			enumInfo := cast(^TypeInfoEnum) arg.typeInfo;
+			num := @ cast(^s64) arg.data;
 			for (enumInfo.values)
 			{
 				if @it == num
@@ -178,9 +171,9 @@ PrintF :: (format : String, ..args)
 				}
 			}
 		}
-		else if typeInfo.typeKind == TypeKind_Array
+		else if arg.typeInfo.typeKind == TypeKind_Array
 		{
-			arrayInfo := cast(^TypeInfoArray) typeInfo;
+			arrayInfo := cast(^TypeInfoArray) arg.typeInfo;
 			Print("{ ");
 			element : Any = ?;
 			element.typeInfo = arrayInfo.elementTypeInfo;
@@ -200,14 +193,14 @@ PrintF :: (format : String, ..args)
 			}
 			Print(" }");
 		}
-		else if typeInfo.typeKind == TypeKind_Pointer
+		else if arg.typeInfo.typeKind == TypeKind_Pointer
 		{
-			pointer : ^void = cast(^void) arg.asU64;
+			pointer : ^void = @ cast(^^void) arg.data;
 			if pointer == null
 				Print("null");
 			else
 			{
-				pointerInfo := cast(^TypeInfoPointer) typeInfo;
+				pointerInfo := cast(^TypeInfoPointer) arg.typeInfo;
 				Print("^");
 				pointedThing : Any = { pointerInfo.typeInfo, pointer };
 				PrintArgument(pointedThing);

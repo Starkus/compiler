@@ -141,7 +141,7 @@ u64 SYSGetFileSize(FileHandle file)
 	return (u64)fileSizeDword;
 }
 
-void SYSReadEntireFile(FileHandle file, u8 **fileBuffer, u64 *fileSize, void *(*allocFunc)(u64))
+void SYSReadEntireFile(FileHandle file, char **fileBuffer, u64 *fileSize, void *(*allocFunc)(u64))
 {
 	if (file == INVALID_HANDLE_VALUE)
 		*fileBuffer = nullptr;
@@ -152,7 +152,7 @@ void SYSReadEntireFile(FileHandle file, u8 **fileBuffer, u64 *fileSize, void *(*
 		DWORD error = GetLastError();
 		ASSERT(error == ERROR_SUCCESS);
 
-		*fileBuffer = (u8 *)allocFunc(*fileSize);
+		*fileBuffer = (char *)allocFunc(*fileSize);
 		DWORD bytesRead;
 		bool success = ReadFile(
 				file,

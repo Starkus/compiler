@@ -337,6 +337,7 @@ Token ParseNumber(Context *context, Tokenizer *tokenizer, Token baseToken)
 		}
 	}
 numberDone:
+	result.loc.size = result.size;
 	return result;
 }
 
@@ -411,6 +412,8 @@ enum TokenType CalculateTokenType(Context *context, const Tokenizer *tokenizer)
 				return TOKEN_KEYWORD_LINKLIB;
 			else if (StringEquals(directive, "#type"_s))
 				return TOKEN_KEYWORD_TYPE;
+			else if (StringEquals(directive, "#alias"_s))
+				return TOKEN_KEYWORD_ALIAS;
 			else if (StringEquals(directive, "#inline"_s))
 				return TOKEN_KEYWORD_INLINE;
 			else if (StringEquals(directive, "#external"_s))
@@ -572,7 +575,7 @@ enum TokenType CalculateTokenType(Context *context, const Tokenizer *tokenizer)
 		return TOKEN_INVALID;
 }
 
-u32 CalculateTokenSize(Context *context, const Tokenizer *tokenizer, TokenType tokenType)
+u32 CalculateTokenSize(Context *context, const Tokenizer *tokenizer, enum TokenType tokenType)
 {
 	const char *begin = tokenizer->cursor;
 
@@ -587,7 +590,8 @@ u32 CalculateTokenSize(Context *context, const Tokenizer *tokenizer, TokenType t
 				++scan;
 			++scan;
 		}
-		return 1 + scan - begin;
+		ASSERT((1 + scan - begin) <= U32_MAX);
+		return (u32)(1 + scan - begin);
 	}
 	case TOKEN_LITERAL_CHARACTER:
 	{
@@ -674,7 +678,8 @@ u32 CalculateTokenSize(Context *context, const Tokenizer *tokenizer, TokenType t
 			}
 		}
 	numberDone:
-		return scan - begin;
+		ASSERT(scan - begin <= U32_MAX);
+		return (u32)(scan - begin);
 	}
 	case TOKEN_END_OF_FILE:
 		return 0;
@@ -752,6 +757,51 @@ Token ReadNewToken(Context *context, Tokenizer *tokenizer, const char *fileBuffe
 	newToken.loc.character = (s32)(tokenizer->cursor - fileBuffer);
 	return newToken;
 }
+
+FatSourceLocation ExpandSourceLocation(Context *context, SourceLocation loc)
+{
+	SourceFile sourceFile = context->sourceFiles[loc.fileIdx];
+
+	FatSourceLocation result;
+	result.beginingOfLine = (const char *)sourceFile.buffer;
+	result.lineSize = 0;
+	result.line = 1;
+	result.character = 0;
+
+	ASSERT(loc.character < sourceFile.size);
+
+	const char *scan = (const char *)sourceFile.buffer;
+	for (u32 charIdx = 0; charIdx < loc.character; ++charIdx)
+	{
+		if (*scan == '\n')
+		{
+			++result.line;
+			result.character = 0;
+			result.beginingOfLine = ++scan;
+		}
+		else
+		{
+			++result.character;
+			++scan;
+		}
+	}
+
+	Tokenizer tokenizer = {
+		scan,
+		(const char *)sourceFile.buffer + sourceFile.size,
+		result.line,
+		loc.fileIdx,
+		nullptr
+	};
+	enum TokenType tokenType = CalculateTokenType(context, &tokenizer);
+	result.size = CalculateTokenSize(context, &tokenizer, tokenType);
+
+	for (const char *lineScan = result.beginingOfLine; *lineScan && *lineScan != '\n'; ++lineScan)
+		++result.lineSize;
+
+	return result;
+}
+
 
 void TokenizeFile(Context *context, int fileIdx)
 {

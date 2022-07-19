@@ -27,7 +27,7 @@ struct IRValue
 			s64 offset;
 		} value;
 	};
-	s64 typeTableIdx;
+	u32 typeTableIdx;
 };
 
 struct IRLabel

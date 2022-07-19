@@ -41,18 +41,13 @@ struct ASTBinaryOperation : ASTBase
 
 enum TCValueType
 {
-	TCVALUETYPE_INVALID,
 	TCVALUETYPE_VALUE,
 	TCVALUETYPE_PARAMETER,
 };
 struct TCValue
 {
-	TCValueType type;
-	union
-	{
-		u32 valueIdx;
-		u32 parameterIdx;
-	};
+	u32 type : 1;
+	u32 valueIdx : 31;
 };
 
 struct Value;
@@ -97,21 +92,12 @@ struct ASTStructMemberDeclaration : ASTBase
 	ASTExpression *value;
 	bool isUsing;
 
-	s64 typeTableIdx;
-};
-struct ASTOperatorOverload : ASTBase
-{
-	enum TokenType op;
-	String name;
-
-	// Type check
-	s32 procedureIdx;
+	u32 typeTableIdx;
 };
 struct ASTStructDeclaration : ASTBase
 {
 	bool isUnion;
 	DynamicArray<ASTStructMemberDeclaration, FrameAllocator> members;
-	DynamicArray<ASTOperatorOverload, FrameAllocator> overloads;
 };
 
 struct ASTEnumMember
@@ -145,7 +131,7 @@ struct ASTProcedurePrototype : ASTBase
 	SourceLocation varargsLoc;
 
 	// Type check
-	s64 returnTypeIdx;
+	u32 returnTypeIdx;
 };
 
 enum ASTTypeNodeType
@@ -188,7 +174,7 @@ struct ASTVariableDeclaration : ASTBase
 	// TypeCheck
 	bool addedScopeName;
 	u32 valueIdx;
-	s64 typeTableIdx;
+	u32 typeTableIdx;
 };
 
 struct ASTProcedureParameter : ASTBase
@@ -200,7 +186,7 @@ struct ASTProcedureParameter : ASTBase
 
 	// TypeCheck
 	u32 valueIdx;
-	s64 typeTableIdx;
+	u32 typeTableIdx;
 };
 
 struct ASTProcedureDeclaration : ASTBase
@@ -214,6 +200,19 @@ struct ASTProcedureDeclaration : ASTBase
 	// Type check
 	s32 procedureIdx;
 	bool checkedPrototype;
+};
+
+struct ASTOperatorOverload : ASTBase
+{
+	ASTProcedurePrototype prototype;
+	ASTExpression *astBody;
+	enum TokenType op;
+	bool isInline;
+
+	// Type check
+	bool overloadRegistered;
+	bool checkedPrototype;
+	s32 procedureIdx;
 };
 
 struct ASTStaticDefinition : ASTBase
@@ -237,7 +236,7 @@ struct ASTProcedureCall : ASTBase
 	DynamicArray<ASTExpression, FrameAllocator> arguments;
 
 	// Type check
-	s64 procedureTypeIdx;
+	u32 procedureTypeIdx;
 	ProcedureCallType callType;
 	bool procedureFound;
 	u32 parameterTypeCheckingIdx;
@@ -291,7 +290,7 @@ struct ASTFor : ASTBase
 	bool scopePushed;
 	u32 indexValueIdx;
 	u32 elementValueIdx;
-	s64 elementTypeTableIdx;
+	u32 elementTypeTableIdx;
 };
 
 struct ASTSimple : ASTBase
@@ -316,6 +315,7 @@ enum ASTNodeType
 	ASTNODETYPE_IDENTIFIER,
 	ASTNODETYPE_LITERAL,
 	ASTNODETYPE_TYPE,
+	ASTNODETYPE_ALIAS,
 	ASTNODETYPE_BLOCK,
 	ASTNODETYPE_UNARY_OPERATION,
 	ASTNODETYPE_BINARY_OPERATION,
@@ -324,6 +324,7 @@ enum ASTNodeType
 	ASTNODETYPE_STRUCT_DECLARATION,
 	ASTNODETYPE_ENUM_DECLARATION,
 	ASTNODETYPE_STATIC_DEFINITION,
+	ASTNODETYPE_OPERATOR_OVERLOAD,
 	ASTNODETYPE_PROCEDURE_CALL,
 	ASTNODETYPE_INTRINSIC,
 	ASTNODETYPE_IF,
@@ -357,6 +358,7 @@ struct ASTExpression
 		ASTStructDeclaration structDeclaration;
 		ASTEnumDeclaration enumDeclaration;
 		ASTStaticDefinition staticDefinition;
+		ASTOperatorOverload operatorOverload;
 		ASTProcedureCall procedureCall;
 		ASTIntrinsic intrinsic;
 		ASTIf ifNode;
@@ -371,16 +373,18 @@ struct ASTExpression
 	};
 
 	// Filled in during type checking
-	s64 typeTableIdx;
+	u32 typeTableIdx;
 };
 
-enum TypeTableIndices
+enum TypeTableIndices : u32
 {
-	TYPETABLEIDX_ANYTHING = -6,
-	TYPETABLEIDX_STRUCT_LITERAL = -5,
-	TYPETABLEIDX_UNSET = -1,
+	TYPETABLEIDX_ANYTHING = 1,
+	TYPETABLEIDX_STRUCT_LITERAL = 2,
+	TYPETABLEIDX_UNSET = 3,
 
-	TYPETABLEIDX_PRIMITIVE_BEGIN = 1,
+	TYPETABLEIDX_Begin = 10,
+	TYPETABLEIDX_PRIMITIVE_BEGIN = 10,
+
 	TYPETABLEIDX_S8 = TYPETABLEIDX_PRIMITIVE_BEGIN,
 	TYPETABLEIDX_S16,
 	TYPETABLEIDX_S32,
@@ -391,6 +395,7 @@ enum TypeTableIndices
 	TYPETABLEIDX_U64,
 	TYPETABLEIDX_F32,
 	TYPETABLEIDX_F64,
+
 	TYPETABLEIDX_PRIMITIVE_END = TYPETABLEIDX_F64,
 
 	TYPETABLEIDX_BOOL,
