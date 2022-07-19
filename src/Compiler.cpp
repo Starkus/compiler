@@ -160,8 +160,8 @@ struct Context
 	BucketArray<const TypeInfo, HeapAllocator, 1024> typeTable;
 
 	TCScope *tcGlobalScope;
-	s64 tcCurrentReturnType;
-	s64 tcCurrentForLoopArrayType;
+	u32 tcCurrentReturnType;
+	u32 tcCurrentForLoopArrayType;
 
 	// IR -----
 	DynamicArray<IRStaticVariable, HeapAllocator> irStaticVariables;

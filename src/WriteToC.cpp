@@ -182,11 +182,7 @@ String OperatorToStr(IRInstruction inst)
 
 String CProcedureToLabel(Context *context, Procedure *proc)
 {
-	StaticDefinition *staticDef = FindStaticDefinitionByProcedure(context, proc);
-	if (staticDef)
-		return staticDef->name;
-	else
-		return TPrintF("0x%X", proc);
+	return proc->name;
 }
 
 String CGetProcedureSignature(Context *context, Procedure *proc)
@@ -489,11 +485,7 @@ void WriteToC(Context *context)
 			{
 				String memberArrayName = TPrintF("_memberInfos%d", typeTableIdx);
 
-				String structName = ""_s;
-				StaticDefinition *staticDefStruct = FindStaticDefinitionByTypeTableIdx(context,
-						typeTableIdx);
-				if (staticDefStruct)
-					structName = staticDefStruct->name;
+				String structName = typeInfo->structInfo.name;
 
 				PrintOut(context, outputFile, "ProgramStructMemberInfo %S[] = { ", memberArrayName);
 				for (int memberIdx = 0; memberIdx < typeInfo->structInfo.members.size; ++memberIdx)
@@ -513,11 +505,7 @@ void WriteToC(Context *context)
 			} break;
 			case TYPECATEGORY_ENUM:
 			{
-				String enumName = ""_s;
-				StaticDefinition *staticDefStruct = FindStaticDefinitionByTypeTableIdx(context,
-						typeTableIdx);
-				if (staticDefStruct)
-					enumName = staticDefStruct->name;
+				String enumName = typeInfo->enumInfo.name;
 
 				PrintOut(context, outputFile, "ProgramTypeInfoEnum _typeInfo%lld = { 3, "
 						"%lld, %lld, \"%S\", &_typeInfo%lld };\n",

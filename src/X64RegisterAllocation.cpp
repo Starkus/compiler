@@ -698,7 +698,7 @@ void X64AllocateRegisters(Context *context, Array<X64Procedure, PhaseAllocator> 
 
 		for (int valueIdx = 0; valueIdx < valueCount; ++valueIdx)
 		{
-			s64 typeTableIdx = context->values[valueIdx].typeTableIdx;
+			u32 typeTableIdx = context->values[valueIdx].typeTableIdx;
 			if (typeTableIdx >= 0)
 			{
 				TypeInfo typeInfo = context->typeTable[StripAllAliases(context, typeTableIdx)];
