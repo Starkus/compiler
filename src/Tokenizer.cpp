@@ -128,20 +128,136 @@ void ProcessCComment(Tokenizer *tokenizer)
 	}
 }
 
-inline bool TokenIsStr(Token *token, const char *str)
+String TokenToString(Context *context, Token token)
 {
-	return token->type == TOKEN_IDENTIFIER &&
-		token->size == (s64)strlen(str) &&
-		strncmp(token->begin, str, token->size) == 0;
+	SourceFile sourceFile = context->sourceFiles[token.loc.fileIdx];
+	String result = { token.size, (const char *)sourceFile.buffer + token.loc.character };
+	if (token.type == TOKEN_LITERAL_STRING || token.type == TOKEN_LITERAL_CHARACTER)
+	{
+		result.size -= 2;
+		++result.data;
+	}
+	return result;
 }
 
-inline bool TokenIsEqual(Token *a, Token *b)
+String TokenTypeToString(s32 type)
 {
-	if (a->type != b->type)
+	switch (type)
+	{
+	case TOKEN_INVALID:
+		return "<Invalid>"_s;
+	case TOKEN_IDENTIFIER:
+		return "<Identifier>"_s;
+
+	case TOKEN_LITERAL_CHARACTER:
+		return "<Literal char>"_s;
+	case TOKEN_LITERAL_NUMBER:
+		return "<Literal number>"_s;
+	case TOKEN_LITERAL_STRING:
+		return "<Literal string>"_s;
+
+	case TOKEN_OP_ASSIGNMENT:
+		return "< = >"_s;
+	case TOKEN_OP_ASSIGNMENT_PLUS:
+		return "< += >"_s;
+	case TOKEN_OP_ASSIGNMENT_MINUS:
+		return "< -= >"_s;
+	case TOKEN_OP_ASSIGNMENT_MULTIPLY:
+		return "< *= >"_s;
+	case TOKEN_OP_ASSIGNMENT_DIVIDE:
+		return "< /= >"_s;
+	case TOKEN_OP_ASSIGNMENT_MODULO:
+		return "< %= >"_s;
+	case TOKEN_OP_ASSIGNMENT_SHIFT_LEFT:
+		return "< <<= >"_s;
+	case TOKEN_OP_ASSIGNMENT_SHIFT_RIGHT:
+		return "< >>= >"_s;
+	case TOKEN_OP_ASSIGNMENT_OR:
+		return "< ||= >"_s;
+	case TOKEN_OP_ASSIGNMENT_AND:
+		return "< &&= >"_s;
+	case TOKEN_OP_EQUALS:
+		return "< == >"_s;
+	case TOKEN_OP_GREATER_THAN:
+		return "< > >"_s;
+	case TOKEN_OP_GREATER_THAN_OR_EQUAL:
+		return "< >= >"_s;
+	case TOKEN_OP_LESS_THAN:
+		return "< < >"_s;
+	case TOKEN_OP_LESS_THAN_OR_EQUAL:
+		return "< <= >"_s;
+	case TOKEN_OP_PLUS:
+		return "< + >"_s;
+	case TOKEN_OP_MINUS:
+		return "< - >"_s;
+	case TOKEN_OP_MULTIPLY:
+		return "< * >"_s;
+	case TOKEN_OP_DIVIDE:
+		return "< / >"_s;
+	case TOKEN_OP_MODULO:
+		return "< % >"_s;
+	case TOKEN_OP_SHIFT_LEFT:
+		return "< << >"_s;
+	case TOKEN_OP_SHIFT_RIGHT:
+		return "< >> >"_s;
+	case TOKEN_OP_POINTER_TO:
+		return "< ^ >"_s;
+	case TOKEN_OP_DEREFERENCE:
+		return "< @ >"_s;
+	case TOKEN_OP_ARRAY_ACCESS:
+		return "< [] >"_s;
+	case TOKEN_OP_ARROW:
+		return "< -> >"_s;
+	case TOKEN_OP_VARIABLE_DECLARATION:
+		return "< : >"_s;
+	case TOKEN_OP_VARIABLE_DECLARATION_STATIC:
+		return "< :s >"_s;
+	case TOKEN_OP_STATIC_DEF:
+		return "< :: >"_s;
+	case TOKEN_OP_RANGE:
+		return "< .. >"_s;
+
+	case TOKEN_END_OF_FILE:
+		return "<EOF>"_s;
+	}
+
+	if (type >= TOKEN_KEYWORD_Begin && type <= TOKEN_KEYWORD_End)
+		return "<Keyword>"_s;
+	if (type >= TOKEN_OP_Begin && type <= TOKEN_OP_End)
+		return "<Operator>"_s;
+
+	char *str = (char *)FrameAllocator::Alloc(5);
+	strncpy(str, "<'~'>", 5);
+	str[2] = (char)type;
+	return { 5, str };
+}
+
+inline String TokenToStringOrType(Context *context, Token token)
+{
+	if (token.type >= TOKEN_KEYWORD_Begin && token.type <= TOKEN_KEYWORD_End)
+		return TokenToString(context, token);
+
+	return TokenTypeToString(token.type);
+}
+
+inline bool TokenIsStr(Context *context, Token token, String str)
+{
+	if (token.type != TOKEN_IDENTIFIER || token.size != str.size)
 		return false;
-	if (a->type == TOKEN_IDENTIFIER)
-		return a->size == b->size && strncmp(a->begin, b->begin, a->size) == 0;
-	return true;
+
+	String tokenStr = TokenToString(context, token);
+	return StringEquals(tokenStr, str);
+}
+
+inline bool TokenIsEqual(Context *context, Token a, Token b)
+{
+	if (a.type != b.type)
+		return false;
+	if (a.type != TOKEN_IDENTIFIER)
+		return true;
+	String aStr = TokenToString(context, a);
+	String bStr = TokenToString(context, b);
+	return StringEquals(aStr, bStr);
 }
 
 Token ParseNumber(Context *context, Tokenizer *tokenizer, Token baseToken)
@@ -224,407 +340,417 @@ numberDone:
 	return result;
 }
 
-void TokenizeFile(Context *context, int fileIdx);
-Token ReadTokenAndAdvance(Context *context, Tokenizer *tokenizer)
+enum TokenType CalculateTokenType(Context *context, const Tokenizer *tokenizer)
 {
-	Token result = {};
+	const char * const begin = tokenizer->cursor;
 
-	EatWhitespace(tokenizer);
-
-	while (*tokenizer->cursor == '/')
+	if (!*begin || begin >= tokenizer->end)
+		return TOKEN_END_OF_FILE;
+	else if (*begin == '"')
+		return TOKEN_LITERAL_STRING;
+	else if (*begin == '\'')
+		return TOKEN_LITERAL_CHARACTER;
+	else if (IsAlpha(*begin) || *begin == '_')
 	{
-		if (*(tokenizer->cursor + 1) == '/')
-		{
-			ProcessCppComment(tokenizer);
-			EatWhitespace(tokenizer);
-		}
-		else if (*(tokenizer->cursor + 1) == '*')
-		{
-			ProcessCComment(tokenizer);
-			EatWhitespace(tokenizer);
-		}
-		else
-			break;
-	}
-
-	const char *fileBuffer = (const char *)context->sourceFiles[tokenizer->fileIdx].buffer;
-	result.begin = tokenizer->cursor;
-	result.loc.fileIdx = tokenizer->fileIdx;
-	result.loc.character = (s32)(tokenizer->cursor - fileBuffer);
-
-	if (!*tokenizer->cursor || tokenizer->cursor >= tokenizer->end)
-	{
-		result.type = TOKEN_END_OF_FILE;
-		return result;
-	}
-
-	if (*tokenizer->cursor == '"')
-	{
-		result.type = TOKEN_LITERAL_STRING;
-		++tokenizer->cursor;
-		result.begin = tokenizer->cursor;
-
-		while (*tokenizer->cursor && *tokenizer->cursor != '"')
-		{
-			if (*tokenizer->cursor == '\\')
-			{
-				++result.size;
-				++tokenizer->cursor;
-			}
-			++result.size;
-			++tokenizer->cursor;
-			if (!*tokenizer->cursor || tokenizer->cursor >= tokenizer->end)
-				LogError(context, result.loc, "String literal never closed!"_s);
-		}
-		++tokenizer->cursor;
-	}
-	else if (*tokenizer->cursor == '\'')
-	{
-		result.type = TOKEN_LITERAL_CHARACTER;
-		result.size = 3;
-		result.begin = tokenizer->cursor;
-		++tokenizer->cursor;
-		if (*tokenizer->cursor == '\\')
-		{
-			++tokenizer->cursor;
-			++result.size;
-		}
-		++tokenizer->cursor;
-		ASSERT(*tokenizer->cursor == '\'');
-		++tokenizer->cursor;
-	}
-	else if (IsAlpha(*tokenizer->cursor) || *tokenizer->cursor == '_')
-	{
-		result.type = TOKEN_IDENTIFIER;
-		while (IsAlpha(*tokenizer->cursor) || IsNumeric(*tokenizer->cursor) || *tokenizer->cursor == '_')
-		{
-			++result.size;
-			++tokenizer->cursor;
-		}
+		String identifier = { 1, begin };
+		for (const char *scan = begin + 1; IsAlpha(*scan) || IsNumeric(*scan) || *scan == '_'; ++scan)
+			++identifier.size;
 
 		// Keywords
-		if (TokenIsStr(&result, "if"))
-			result.type = TOKEN_KEYWORD_IF;
-		else if (TokenIsStr(&result, "else"))
-			result.type = TOKEN_KEYWORD_ELSE;
-		else if (TokenIsStr(&result, "return"))
-			result.type = TOKEN_KEYWORD_RETURN;
-		else if (TokenIsStr(&result, "while"))
-			result.type = TOKEN_KEYWORD_WHILE;
-		else if (TokenIsStr(&result, "for"))
-			result.type = TOKEN_KEYWORD_FOR;
-		else if (TokenIsStr(&result, "break"))
-			result.type = TOKEN_KEYWORD_BREAK;
-		else if (TokenIsStr(&result, "continue"))
-			result.type = TOKEN_KEYWORD_CONTINUE;
-		else if (TokenIsStr(&result, "remove"))
-			result.type = TOKEN_KEYWORD_REMOVE;
-		else if (TokenIsStr(&result, "struct"))
-			result.type = TOKEN_KEYWORD_STRUCT;
-		else if (TokenIsStr(&result, "union"))
-			result.type = TOKEN_KEYWORD_UNION;
-		else if (TokenIsStr(&result, "enum"))
-			result.type = TOKEN_KEYWORD_ENUM;
-		else if (TokenIsStr(&result, "defer"))
-			result.type = TOKEN_KEYWORD_DEFER;
-		else if (TokenIsStr(&result, "using"))
-			result.type = TOKEN_KEYWORD_USING;
-		else if (TokenIsStr(&result, "typeof"))
-			result.type = TOKEN_KEYWORD_TYPEOF;
-		else if (TokenIsStr(&result, "sizeof"))
-			result.type = TOKEN_KEYWORD_SIZEOF;
-		else if (TokenIsStr(&result, "cast"))
-			result.type = TOKEN_KEYWORD_CAST;
+		if (StringEquals(identifier, "if"_s))
+			return TOKEN_KEYWORD_IF;
+		else if (StringEquals(identifier, "else"_s))
+			return TOKEN_KEYWORD_ELSE;
+		else if (StringEquals(identifier, "return"_s))
+			return TOKEN_KEYWORD_RETURN;
+		else if (StringEquals(identifier, "while"_s))
+			return TOKEN_KEYWORD_WHILE;
+		else if (StringEquals(identifier, "for"_s))
+			return TOKEN_KEYWORD_FOR;
+		else if (StringEquals(identifier, "break"_s))
+			return TOKEN_KEYWORD_BREAK;
+		else if (StringEquals(identifier, "continue"_s))
+			return TOKEN_KEYWORD_CONTINUE;
+		else if (StringEquals(identifier, "remove"_s))
+			return TOKEN_KEYWORD_REMOVE;
+		else if (StringEquals(identifier, "struct"_s))
+			return TOKEN_KEYWORD_STRUCT;
+		else if (StringEquals(identifier, "union"_s))
+			return TOKEN_KEYWORD_UNION;
+		else if (StringEquals(identifier, "enum"_s))
+			return TOKEN_KEYWORD_ENUM;
+		else if (StringEquals(identifier, "defer"_s))
+			return TOKEN_KEYWORD_DEFER;
+		else if (StringEquals(identifier, "using"_s))
+			return TOKEN_KEYWORD_USING;
+		else if (StringEquals(identifier, "typeof"_s))
+			return TOKEN_KEYWORD_TYPEOF;
+		else if (StringEquals(identifier, "sizeof"_s))
+			return TOKEN_KEYWORD_SIZEOF;
+		else if (StringEquals(identifier, "cast"_s))
+			return TOKEN_KEYWORD_CAST;
+
+		return TOKEN_IDENTIFIER;
 	}
-	else if (IsNumeric(*tokenizer->cursor))
+	else if (IsNumeric(*begin))
+		return TOKEN_LITERAL_NUMBER;
+	else if (*begin >= TOKEN_ASCII_Begin && *begin <= TOKEN_ASCII_End)
 	{
-		result = ParseNumber(context, tokenizer, result);
-	}
-	else if (*tokenizer->cursor >= TOKEN_ASCII_Begin && *tokenizer->cursor <= TOKEN_ASCII_End)
-	{
-		result.begin = tokenizer->cursor;
-		char next = *(tokenizer->cursor + 1);
-		switch (*tokenizer->cursor)
+		char next = *(begin + 1);
+		switch (*begin)
 		{
 		case '#':
 		{
-			do
-			{
-				++result.size;
-				++tokenizer->cursor;
-			}
-			while (IsAlpha(*tokenizer->cursor));
-			if (StringEquals(result.string, "#include"_s))
-			{
-				Token sourceFileToken = ReadTokenAndAdvance(context, tokenizer);
-				if (sourceFileToken.type != TOKEN_LITERAL_STRING)
-					LogError(context, sourceFileToken.loc, "ERROR! #include must be followed by string literal"_s);
+			String directive = { 1, begin };
+			for (const char *scan = begin + 1; IsAlpha(*scan); ++scan)
+				++directive.size;
 
-				CompilerAddSourceFile(context, sourceFileToken.string, sourceFileToken.loc);
-
-				return ReadTokenAndAdvance(context, tokenizer);
-			}
-			else if (StringEquals(result.string, "#linklib"_s))
-			{
-				Token libNameToken = ReadTokenAndAdvance(context, tokenizer);
-				if (libNameToken.type != TOKEN_LITERAL_STRING)
-					LogError(context, libNameToken.loc, "ERROR! #linklib must be followed by string literal"_s);
-
-				*DynamicArrayAdd(&context->libsToLink) = libNameToken.string;
-
-				return ReadTokenAndAdvance(context, tokenizer);
-			}
-			else if (StringEquals(result.string, "#type"_s))
-				result.type = TOKEN_KEYWORD_TYPE;
-			else if (StringEquals(result.string, "#inline"_s))
-				result.type = TOKEN_KEYWORD_INLINE;
-			else if (StringEquals(result.string, "#external"_s))
-				result.type = TOKEN_KEYWORD_EXTERNAL;
-			else if (StringEquals(result.string, "#convention"_s))
-				result.type = TOKEN_KEYWORD_CALLING_CONVENTION;
-			else if (StringEquals(result.string, "#intrinsic"_s))
-				result.type = TOKEN_KEYWORD_INTRINSIC;
-			else if (StringEquals(result.string, "#operator"_s))
-				result.type = TOKEN_KEYWORD_OPERATOR;
+			if (StringEquals(directive, "#include"_s))
+				return TOKEN_KEYWORD_INCLUDE;
+			else if (StringEquals(directive, "#linklib"_s))
+				return TOKEN_KEYWORD_LINKLIB;
+			else if (StringEquals(directive, "#type"_s))
+				return TOKEN_KEYWORD_TYPE;
+			else if (StringEquals(directive, "#inline"_s))
+				return TOKEN_KEYWORD_INLINE;
+			else if (StringEquals(directive, "#external"_s))
+				return TOKEN_KEYWORD_EXTERNAL;
+			else if (StringEquals(directive, "#convention"_s))
+				return TOKEN_KEYWORD_CALLING_CONVENTION;
+			else if (StringEquals(directive, "#intrinsic"_s))
+				return TOKEN_KEYWORD_INTRINSIC;
+			else if (StringEquals(directive, "#operator"_s))
+				return TOKEN_KEYWORD_OPERATOR;
 			else
-				LogError(context, result.loc, "Invalid parser directive"_s);
-			return result;
+				return TOKEN_INVALID_DIRECTIVE;
 		} break;
 		case '=':
 		{
 			if (next == '=')
-			{
-				result.type = TOKEN_OP_EQUALS;
-				++tokenizer->cursor;
-			}
+				return TOKEN_OP_EQUALS;
 			else
-				result.type = TOKEN_OP_ASSIGNMENT;
+				return TOKEN_OP_ASSIGNMENT;
 		} break;
 		case '<':
 		{
 			if (next == '=')
-			{
-				result.type = TOKEN_OP_LESS_THAN_OR_EQUAL;
-				++tokenizer->cursor;
-			}
+				return TOKEN_OP_LESS_THAN_OR_EQUAL;
 			else if (next == '<')
-			{
-				if (*(tokenizer->cursor + 2) == '=')
-				{
-					result.type = TOKEN_OP_ASSIGNMENT_SHIFT_LEFT;
-					tokenizer->cursor += 2;
-				}
+				if (*(begin + 2) == '=')
+					return TOKEN_OP_ASSIGNMENT_SHIFT_LEFT;
 				else
-				{
-					result.type = TOKEN_OP_SHIFT_LEFT;
-					++tokenizer->cursor;
-				}
-			}
+					return TOKEN_OP_SHIFT_LEFT;
 			else
-				result.type = TOKEN_OP_LESS_THAN;
+				return TOKEN_OP_LESS_THAN;
 		} break;
 		case '>':
 		{
 			if (next == '=')
-			{
-				result.type = TOKEN_OP_GREATER_THAN_OR_EQUAL;
-				++tokenizer->cursor;
-			}
+				return TOKEN_OP_GREATER_THAN_OR_EQUAL;
 			else if (next == '>')
-			{
-				if (*(tokenizer->cursor + 2) == '=')
-				{
-					result.type = TOKEN_OP_ASSIGNMENT_SHIFT_RIGHT;
-					tokenizer->cursor += 2;
-				}
+				if (*(begin + 2) == '=')
+					return TOKEN_OP_ASSIGNMENT_SHIFT_RIGHT;
 				else
-				{
-					result.type = TOKEN_OP_SHIFT_RIGHT;
-					++tokenizer->cursor;
-				}
-			}
+					return TOKEN_OP_SHIFT_RIGHT;
 			else
-				result.type = TOKEN_OP_GREATER_THAN;
+				return TOKEN_OP_GREATER_THAN;
 		} break;
 		case ':':
 		{
 			if (next == ':')
-			{
-				result.type = TOKEN_OP_STATIC_DEF;
-				++tokenizer->cursor;
-			}
+				return TOKEN_OP_STATIC_DEF;
 			else if (next == 's')
-			{
-				result.type = TOKEN_OP_VARIABLE_DECLARATION_STATIC;
-				++tokenizer->cursor;
-			}
+				return TOKEN_OP_VARIABLE_DECLARATION_STATIC;
 			else
-				result.type = TOKEN_OP_VARIABLE_DECLARATION;
+				return TOKEN_OP_VARIABLE_DECLARATION;
 		} break;
 		case '+':
 		{
 			if (next == '=')
-			{
-				result.type = TOKEN_OP_ASSIGNMENT_PLUS;
-				++tokenizer->cursor;
-			}
+				return TOKEN_OP_ASSIGNMENT_PLUS;
 			else
-				result.type = TOKEN_OP_PLUS;
+				return TOKEN_OP_PLUS;
 		} break;
 		case '-':
 		{
 			if (next == '=')
-			{
-				result.type = TOKEN_OP_ASSIGNMENT_MINUS;
-				++tokenizer->cursor;
-			}
+				return TOKEN_OP_ASSIGNMENT_MINUS;
 			else if (next == '>')
-			{
-				result.type = TOKEN_OP_ARROW;
-				++tokenizer->cursor;
-			}
+				return TOKEN_OP_ARROW;
 			else if (IsNumeric(next))
-				return ParseNumber(context, tokenizer, result);
+				return TOKEN_LITERAL_NUMBER;
 			else
-				result.type = TOKEN_OP_MINUS;
+				return TOKEN_OP_MINUS;
 		} break;
 		case '*':
 		{
 			if (next == '=')
-			{
-				result.type = TOKEN_OP_ASSIGNMENT_MULTIPLY;
-				++tokenizer->cursor;
-			}
+				return TOKEN_OP_ASSIGNMENT_MULTIPLY;
 			else
-				result.type = TOKEN_OP_MULTIPLY;
+				return TOKEN_OP_MULTIPLY;
 		} break;
 		case '/':
 		{
 			if (next == '=')
-			{
-				result.type = TOKEN_OP_ASSIGNMENT_DIVIDE;
-				++tokenizer->cursor;
-			}
+				return TOKEN_OP_ASSIGNMENT_DIVIDE;
 			else
-				result.type = TOKEN_OP_DIVIDE;
+				return TOKEN_OP_DIVIDE;
 		} break;
 		case '%':
 		{
 			if (next == '=')
-			{
-				result.type = TOKEN_OP_ASSIGNMENT_MODULO;
-				++tokenizer->cursor;
-			}
+				return TOKEN_OP_ASSIGNMENT_MODULO;
 			else
-				result.type = TOKEN_OP_MODULO;
+				return TOKEN_OP_MODULO;
 		} break;
 		case '|':
 		{
 			if (next == '|')
-			{
-				if (*(tokenizer->cursor + 2) == '=')
-				{
-					result.type = TOKEN_OP_ASSIGNMENT_OR;
-					tokenizer->cursor += 2;
-				}
+				if (*(begin + 2) == '=')
+					return TOKEN_OP_ASSIGNMENT_OR;
 				else
-				{
-					result.type = TOKEN_OP_OR;
-					++tokenizer->cursor;
-				}
-			}
+					return TOKEN_OP_OR;
 			else if (next == '=')
-			{
-				result.type = TOKEN_OP_ASSIGNMENT_BITWISE_OR;
-				++tokenizer->cursor;
-			}
+				return TOKEN_OP_ASSIGNMENT_BITWISE_OR;
 			else
-				result.type = TOKEN_OP_BITWISE_OR;
+				return TOKEN_OP_BITWISE_OR;
 		} break;
 		case '&':
 		{
 			if (next == '&')
-			{
-				if (*(tokenizer->cursor + 2) == '=')
-				{
-					result.type = TOKEN_OP_ASSIGNMENT_AND;
-					tokenizer->cursor += 2;
-				}
+				if (*(begin + 2) == '=')
+					return TOKEN_OP_ASSIGNMENT_AND;
 				else
-				{
-					result.type = TOKEN_OP_AND;
-					++tokenizer->cursor;
-				}
-			}
+					return TOKEN_OP_AND;
 			else if (next == '=')
-			{
-				result.type = TOKEN_OP_ASSIGNMENT_BITWISE_AND;
-				++tokenizer->cursor;
-			}
+				return TOKEN_OP_ASSIGNMENT_BITWISE_AND;
 			else
-				result.type = TOKEN_OP_BITWISE_AND;
+				return TOKEN_OP_BITWISE_AND;
 		} break;
 		case '^':
 		{
 			if (next == '=')
-			{
-				result.type = TOKEN_OP_ASSIGNMENT_BITWISE_XOR;
-				++tokenizer->cursor;
-			}
+				return TOKEN_OP_ASSIGNMENT_BITWISE_XOR;
 			else
-				result.type = TOKEN_OP_POINTER_TO;
+				return TOKEN_OP_POINTER_TO;
 		} break;
 		case '@':
 		{
-			result.type = TOKEN_OP_DEREFERENCE;
+			return TOKEN_OP_DEREFERENCE;
 		} break;
 		case '[':
 		{
-			result.type = TOKEN_OP_ARRAY_ACCESS;
+			return TOKEN_OP_ARRAY_ACCESS;
 		} break;
 		case '!':
 		{
 			if (next == '=')
-			{
-				result.type = TOKEN_OP_NOT_EQUALS;
-				++tokenizer->cursor;
-			}
+				return TOKEN_OP_NOT_EQUALS;
 			else
-				result.type = TOKEN_OP_NOT;
+				return TOKEN_OP_NOT;
 		} break;
 		case '~':
 		{
-			result.type = TOKEN_OP_BITWISE_NOT;
+			return TOKEN_OP_BITWISE_NOT;
 		} break;
 		case '.':
 		{
 			if (next == '.')
-			{
-				result.type = TOKEN_OP_RANGE;
-				++tokenizer->cursor;
-			}
+				return TOKEN_OP_RANGE;
 			else if (IsNumeric(next))
-				return ParseNumber(context, tokenizer, result);
+				return TOKEN_LITERAL_NUMBER;
 			else
-				result.type = TOKEN_OP_MEMBER_ACCESS;
+				return TOKEN_OP_MEMBER_ACCESS;
 		} break;
 		default:
 		{
-			result.type = (enum TokenType)*tokenizer->cursor;
+			return (enum TokenType)*begin;
 		}
 		};
-		++tokenizer->cursor;
-		result.size = (s32)(tokenizer->cursor - result.begin);
 	}
 	else
-	{
-		result.type = TOKEN_INVALID;
-		result.begin = tokenizer->cursor;
-		result.size = 1;
-		++tokenizer->cursor;
-	}
+		return TOKEN_INVALID;
+}
 
-	return result;
+u32 CalculateTokenSize(Context *context, const Tokenizer *tokenizer, TokenType tokenType)
+{
+	const char *begin = tokenizer->cursor;
+
+	switch (tokenType)
+	{
+	case TOKEN_LITERAL_STRING:
+	{
+		const char *scan = begin + 1;
+		while (scan < tokenizer->end && *scan && *scan != '"')
+		{
+			if (*scan == '\\')
+				++scan;
+			++scan;
+		}
+		return 1 + scan - begin;
+	}
+	case TOKEN_LITERAL_CHARACTER:
+	{
+		if (*(begin + 1) == '\\')
+			return 4;
+		return 3;
+	}
+	case TOKEN_IDENTIFIER:
+	{
+		u32 size = 0;
+		for (const char *scan = begin;
+				IsAlpha(*scan) || IsNumeric(*scan) || *scan == '_';
+				++scan)
+			++size;
+
+		return size;
+	}
+	case TOKEN_INVALID_DIRECTIVE:
+	{
+		ASSERT(*begin == '#');
+		u32 size = 1;
+		for (const char *scan = begin + 1;
+				IsAlpha(*scan) || IsNumeric(*scan) || *scan == '_';
+				++scan)
+			++size;
+
+		return size;
+	}
+	case TOKEN_LITERAL_NUMBER:
+	{
+		const char *scan = begin;
+		if (*scan == '-')
+			++scan;
+		if (*scan == '0')
+		{
+			++scan;
+			switch (*scan)
+			{
+			case 'x':
+			case 'X':
+			{
+				++scan;
+				while (IsNumericHex(*scan))
+					++scan;
+			} goto numberDone;
+			case 'b':
+			{
+				++scan;
+				while ((*scan & 0xFE) == '0') // 0 or 1
+					++scan;
+			} goto numberDone;
+			}
+		}
+		// Normal base parsing
+		{
+			bool foundADot = false;
+			bool foundAnE = false;
+			while (true)
+			{
+				if ((*scan & (~0x20)) == 'E') // E or e
+				{
+					if (foundAnE)
+						goto numberDone;
+					foundAnE = true;
+					++scan;
+					if (*scan == '-')
+						++scan;
+				}
+
+				if (*scan == '.')
+				{
+					if (foundADot)
+						goto numberDone;
+					else if (*(scan + 1) == '.')
+						// .. is an operator
+						goto numberDone;
+
+					foundADot = true;
+				}
+				else if (!IsNumeric(*scan))
+					goto numberDone;
+
+				++scan;
+			}
+		}
+	numberDone:
+		return scan - begin;
+	}
+	case TOKEN_END_OF_FILE:
+		return 0;
+	case TOKEN_KEYWORD_IF:
+	case TOKEN_OP_EQUALS:
+	case TOKEN_OP_SHIFT_LEFT:
+	case TOKEN_OP_LESS_THAN_OR_EQUAL:
+	case TOKEN_OP_GREATER_THAN_OR_EQUAL:
+	case TOKEN_OP_SHIFT_RIGHT:
+	case TOKEN_OP_STATIC_DEF:
+	case TOKEN_OP_VARIABLE_DECLARATION_STATIC:
+	case TOKEN_OP_ARROW:
+	case TOKEN_OP_ASSIGNMENT_PLUS:
+	case TOKEN_OP_ASSIGNMENT_MINUS:
+	case TOKEN_OP_ASSIGNMENT_MULTIPLY:
+	case TOKEN_OP_ASSIGNMENT_DIVIDE:
+	case TOKEN_OP_ASSIGNMENT_MODULO:
+	case TOKEN_OP_ASSIGNMENT_BITWISE_OR:
+	case TOKEN_OP_ASSIGNMENT_BITWISE_AND:
+	case TOKEN_OP_ASSIGNMENT_BITWISE_XOR:
+	case TOKEN_OP_OR:
+	case TOKEN_OP_AND:
+	case TOKEN_OP_NOT_EQUALS:
+	case TOKEN_OP_RANGE:
+		return 2;
+	case TOKEN_KEYWORD_FOR:
+	case TOKEN_OP_ASSIGNMENT_SHIFT_LEFT:
+	case TOKEN_OP_ASSIGNMENT_SHIFT_RIGHT:
+	case TOKEN_OP_ASSIGNMENT_OR:
+	case TOKEN_OP_ASSIGNMENT_AND:
+		return 3;
+	case TOKEN_KEYWORD_ELSE:
+	case TOKEN_KEYWORD_ENUM:
+	case TOKEN_KEYWORD_CAST:
+		return 4;
+	case TOKEN_KEYWORD_TYPE: //#
+	case TOKEN_KEYWORD_WHILE:
+	case TOKEN_KEYWORD_BREAK:
+	case TOKEN_KEYWORD_UNION:
+	case TOKEN_KEYWORD_DEFER:
+	case TOKEN_KEYWORD_USING:
+		return 5;
+	case TOKEN_KEYWORD_RETURN:
+	case TOKEN_KEYWORD_REMOVE:
+	case TOKEN_KEYWORD_STRUCT:
+	case TOKEN_KEYWORD_TYPEOF:
+	case TOKEN_KEYWORD_SIZEOF:
+		return 6;
+	case TOKEN_KEYWORD_INLINE: //#
+		return 7;
+	case TOKEN_KEYWORD_INCLUDE: //#
+	case TOKEN_KEYWORD_LINKLIB: //#
+	case TOKEN_KEYWORD_CONTINUE:
+		return 8;
+	case TOKEN_KEYWORD_EXTERNAL: //#
+	case TOKEN_KEYWORD_OPERATOR: //#
+		return 9;
+	case TOKEN_KEYWORD_INTRINSIC: //#
+		return 10;
+	case TOKEN_KEYWORD_CALLING_CONVENTION: //#
+		return 11;
+	default:
+		return 1;
+	}
+}
+
+Token ReadNewToken(Context *context, Tokenizer *tokenizer, const char *fileBuffer)
+{
+	EatWhitespace(tokenizer);
+
+	Token newToken;
+	newToken.type = CalculateTokenType(context, tokenizer);
+	newToken.size = CalculateTokenSize(context, tokenizer, newToken.type);
+	newToken.loc.fileIdx = tokenizer->fileIdx;
+	newToken.loc.character = (s32)(tokenizer->cursor - fileBuffer);
+	return newToken;
 }
 
 void TokenizeFile(Context *context, int fileIdx)
@@ -636,13 +762,68 @@ void TokenizeFile(Context *context, int fileIdx)
 	tokenizer.beginningOfLine = (char *)file.buffer;
 	tokenizer.end = (char *)(file.buffer + file.size);
 	tokenizer.line = 1; // Line numbers start at 1 not 0.
+
+	const char *fileBuffer = context->sourceFiles[fileIdx].buffer;
+
 	while (true)
 	{
-		Token newToken = ReadTokenAndAdvance(context, &tokenizer);
+		EatWhitespace(&tokenizer);
+
+		while (*tokenizer.cursor == '/')
+		{
+			if (*(tokenizer.cursor + 1) == '/')
+			{
+				ProcessCppComment(&tokenizer);
+				EatWhitespace(&tokenizer);
+			}
+			else if (*(tokenizer.cursor + 1) == '*')
+			{
+				ProcessCComment(&tokenizer);
+				EatWhitespace(&tokenizer);
+			}
+			else
+				break;
+		}
+
+		Token newToken = ReadNewToken(context, &tokenizer, fileBuffer);
 
 		if (newToken.type == TOKEN_END_OF_FILE)
 			break;
+		else if (newToken.type == TOKEN_INVALID_DIRECTIVE)
+			LogError(context, newToken.loc, "Invalid parser directive"_s);
+		else if (newToken.type == TOKEN_KEYWORD_INCLUDE)
+		{
+			tokenizer.cursor += newToken.size;
+
+			Token filenameToken = ReadNewToken(context, &tokenizer, fileBuffer);
+			if (filenameToken.type != TOKEN_LITERAL_STRING)
+				LogError(context, filenameToken.loc, "ERROR! #include must be followed by string literal"_s);
+
+			tokenizer.cursor += filenameToken.size;
+
+			String filename = TokenToString(context, filenameToken);
+			CompilerAddSourceFile(context, filename, filenameToken.loc);
+
+			continue;
+		}
+		else if (newToken.type == TOKEN_KEYWORD_LINKLIB)
+		{
+			tokenizer.cursor += newToken.size;
+			EatWhitespace(&tokenizer);
+
+			Token libnameToken = ReadNewToken(context, &tokenizer, fileBuffer);
+			if (libnameToken.type != TOKEN_LITERAL_STRING)
+				LogError(context, libnameToken.loc, "ERROR! #linklib must be followed by string literal"_s);
+
+			tokenizer.cursor += libnameToken.size;
+
+			*DynamicArrayAdd(&context->libsToLink) = TokenToString(context, libnameToken);
+
+			continue;
+		}
 
 		*BucketArrayAdd(&context->tokens) = newToken;
+
+		tokenizer.cursor += newToken.size;
 	}
 }

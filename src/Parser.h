@@ -2,8 +2,8 @@ struct Tokenizer
 {
 	const char *cursor;
 	const char *end;
-	s32 line;
-	s32 fileIdx;
+	u32 line;
+	u32 fileIdx;
 	const char *beginningOfLine;
 };
 
@@ -33,13 +33,15 @@ enum TokenType : u8
 	TOKEN_KEYWORD_EXTERNAL	= 18,
 	TOKEN_KEYWORD_CALLING_CONVENTION = 19,
 	TOKEN_KEYWORD_INTRINSIC	= 20,
-	TOKEN_KEYWORD_OPERATOR	= 22,
-	TOKEN_KEYWORD_DEFER		= 24,
-	TOKEN_KEYWORD_USING		= 26,
-	TOKEN_KEYWORD_TYPEOF	= 28,
-	TOKEN_KEYWORD_SIZEOF	= 30,
-	TOKEN_KEYWORD_CAST		= 32,
-	TOKEN_KEYWORD_End		= 33,
+	TOKEN_KEYWORD_OPERATOR	= 21,
+	TOKEN_KEYWORD_DEFER		= 22,
+	TOKEN_KEYWORD_USING		= 23,
+	TOKEN_KEYWORD_TYPEOF	= 24,
+	TOKEN_KEYWORD_SIZEOF	= 25,
+	TOKEN_KEYWORD_CAST		= 26,
+	TOKEN_KEYWORD_INCLUDE	= 27,
+	TOKEN_KEYWORD_LINKLIB	= 28,
+	TOKEN_KEYWORD_End		= 29,
 
 	TOKEN_ASCII_Begin		= '!', // 33
 	TOKEN_ASCII_End			= '~', // 126
@@ -92,6 +94,8 @@ enum TokenType : u8
 	TOKEN_OP_ARRAY_ACCESS	= 168,
 	TOKEN_OP_End			= 168,
 
+	TOKEN_INVALID_DIRECTIVE = 240,
+
 	TOKEN_END_OF_FILE		= 255
 };
 
@@ -105,7 +109,7 @@ struct SourceFile
 {
 	String name;
 	SourceLocation includeLoc;
-	u8 *buffer;
+	char *buffer;
 	u64 size;
 };
 
@@ -115,5 +119,3 @@ struct Token
 	u32 size;
 	SourceLocation loc;
 };
-static_assert(offsetof(Token, string.size) == offsetof(Token, size), "Token::size and Token::string::size should have same offset");
-static_assert(offsetof(Token, string.data) == offsetof(Token, begin), "Token::begin and Token::string::data should have same offset");

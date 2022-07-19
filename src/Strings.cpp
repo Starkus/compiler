@@ -71,7 +71,8 @@ done:
 
 inline bool IsAlpha(char c)
 {
-	return (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z');
+	char upper = c & (~0x20);
+	return upper >= 'A' && upper <= 'Z';
 }
 
 inline bool IsNumeric(char c)
@@ -81,9 +82,10 @@ inline bool IsNumeric(char c)
 
 inline bool IsNumericHex(char c)
 {
-	return (c >= '0' && c <= '9') ||
-		(c >= 'a' && c <= 'f') ||
-		(c >= 'A' && c <= 'F');
+	if (c >= '0' && c <= '9')
+		return true;
+	char upper = c & (~0x20);
+	return upper >= 'A' && upper <= 'F';
 }
 
 inline bool IsWhitespace(char c)

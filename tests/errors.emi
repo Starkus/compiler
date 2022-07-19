@@ -16,6 +16,9 @@ AProc :: (arg : s32) -> bool
 }
 */
 
+// Invalid directive
+#hello
+
 Main :: () -> s64
 {
 	bar : s64;

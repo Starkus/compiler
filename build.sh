@@ -1,0 +1,6 @@
+#/bin/bash
+
+echo Compiling...
+clang++ src/Compiler.cpp -o bin/Compiler -I src/ -I external/ -Wno-switch -Wno-assume -mavx2 -g -DDEBUG_BUILD=1 -O0 -fno-omit-frame-pointer -fno-exceptions -fno-rtti
+echo Generating tags...
+ctags -R .

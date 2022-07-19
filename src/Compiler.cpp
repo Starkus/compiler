@@ -87,7 +87,7 @@ void TimerSplit(String message)
 	f64 time = (f64)(newPerfCounter - g_firstPerfCounter) / (f64)g_perfFrequency;
 	f64 deltaTime = (f64)(newPerfCounter - g_lastPerfCounter) / (f64)g_perfFrequency;
 	g_lastPerfCounter = newPerfCounter;
-	Print("%f - %f - %S\n", time, deltaTime, message);
+	//Print("%f - %f - %S\n", time, deltaTime, message);
 }
 u64 CycleCountBegin()
 {
@@ -108,6 +108,7 @@ u64 CycleCountEnd(u64 begin)
 struct Config
 {
 	bool dontPromoteMemoryToRegisters;
+	bool dontCallAssembler;
 	bool logAST;
 	bool logIR;
 	bool logAllocationInfo;
@@ -180,106 +181,6 @@ struct Context
 	BucketArray<BEInstruction, PhaseAllocator, 128> bePatchedInstructions;
 };
 
-const String TokenTypeToString(s32 type)
-{
-	switch (type)
-	{
-	case TOKEN_INVALID:
-		return "<Invalid>"_s;
-	case TOKEN_IDENTIFIER:
-		return "<Identifier>"_s;
-
-	case TOKEN_LITERAL_CHARACTER:
-		return "<Literal char>"_s;
-	case TOKEN_LITERAL_NUMBER:
-		return "<Literal number>"_s;
-	case TOKEN_LITERAL_STRING:
-		return "<Literal string>"_s;
-
-	case TOKEN_OP_ASSIGNMENT:
-		return "< = >"_s;
-	case TOKEN_OP_ASSIGNMENT_PLUS:
-		return "< += >"_s;
-	case TOKEN_OP_ASSIGNMENT_MINUS:
-		return "< -= >"_s;
-	case TOKEN_OP_ASSIGNMENT_MULTIPLY:
-		return "< *= >"_s;
-	case TOKEN_OP_ASSIGNMENT_DIVIDE:
-		return "< /= >"_s;
-	case TOKEN_OP_ASSIGNMENT_MODULO:
-		return "< %= >"_s;
-	case TOKEN_OP_ASSIGNMENT_SHIFT_LEFT:
-		return "< <<= >"_s;
-	case TOKEN_OP_ASSIGNMENT_SHIFT_RIGHT:
-		return "< >>= >"_s;
-	case TOKEN_OP_ASSIGNMENT_OR:
-		return "< ||= >"_s;
-	case TOKEN_OP_ASSIGNMENT_AND:
-		return "< &&= >"_s;
-	case TOKEN_OP_EQUALS:
-		return "< == >"_s;
-	case TOKEN_OP_GREATER_THAN:
-		return "< > >"_s;
-	case TOKEN_OP_GREATER_THAN_OR_EQUAL:
-		return "< >= >"_s;
-	case TOKEN_OP_LESS_THAN:
-		return "< < >"_s;
-	case TOKEN_OP_LESS_THAN_OR_EQUAL:
-		return "< <= >"_s;
-	case TOKEN_OP_PLUS:
-		return "< + >"_s;
-	case TOKEN_OP_MINUS:
-		return "< - >"_s;
-	case TOKEN_OP_MULTIPLY:
-		return "< * >"_s;
-	case TOKEN_OP_DIVIDE:
-		return "< / >"_s;
-	case TOKEN_OP_MODULO:
-		return "< % >"_s;
-	case TOKEN_OP_SHIFT_LEFT:
-		return "< << >"_s;
-	case TOKEN_OP_SHIFT_RIGHT:
-		return "< >> >"_s;
-	case TOKEN_OP_POINTER_TO:
-		return "< ^ >"_s;
-	case TOKEN_OP_DEREFERENCE:
-		return "< @ >"_s;
-	case TOKEN_OP_ARRAY_ACCESS:
-		return "< [] >"_s;
-	case TOKEN_OP_ARROW:
-		return "< -> >"_s;
-	case TOKEN_OP_VARIABLE_DECLARATION:
-		return "< : >"_s;
-	case TOKEN_OP_VARIABLE_DECLARATION_STATIC:
-		return "< :s >"_s;
-	case TOKEN_OP_STATIC_DEF:
-		return "< :: >"_s;
-	case TOKEN_OP_RANGE:
-		return "< .. >"_s;
-
-	case TOKEN_END_OF_FILE:
-		return "<EOF>"_s;
-	}
-
-	if (type >= TOKEN_KEYWORD_Begin && type <= TOKEN_KEYWORD_End)
-		return "<Keyword>"_s;
-	if (type >= TOKEN_OP_Begin && type <= TOKEN_OP_End)
-		return "<Operator>"_s;
-
-	char *str = (char *)FrameAllocator::Alloc(5);
-	strncpy(str, "<'~'>", 5);
-	str[2] = (char)type;
-	return { 5, str };
-}
-
-String TokenToStringOrType(Token token)
-{
-	if (token->type >= TOKEN_KEYWORD_Begin && token->type <= TOKEN_KEYWORD_End)
-		return token->string;
-
-	return TokenTypeToString(token->type);
-}
-
 struct FatSourceLocation
 {
 	const char *beginingOfLine;
@@ -289,7 +190,8 @@ struct FatSourceLocation
 	u32 character;
 };
 
-Token ReadTokenAndAdvance(Context *context, Tokenizer *tokenizer);
+enum TokenType CalculateTokenType(Context *context, const Tokenizer *tokenizer);
+u32 CalculateTokenSize(Context *context, const Tokenizer *tokenizer, TokenType tokenType);
 FatSourceLocation ExpandSourceLocation(Context *context, SourceLocation loc)
 {
 	SourceFile sourceFile = context->sourceFiles[loc.fileIdx];
@@ -321,12 +223,12 @@ FatSourceLocation ExpandSourceLocation(Context *context, SourceLocation loc)
 	Tokenizer tokenizer = {
 		scan,
 		(const char *)sourceFile.buffer + sourceFile.size,
-		(s32)result.line,
-		(s32)loc.fileIdx,
+		result.line,
+		loc.fileIdx,
 		nullptr
 	};
-	Token t = ReadTokenAndAdvance(context, &tokenizer);
-	result.size = t.size;
+	TokenType tokenType = CalculateTokenType(context, &tokenizer);
+	result.size = CalculateTokenSize(context, &tokenizer, tokenType);
 
 	for (const char *lineScan = result.beginingOfLine; *lineScan && *lineScan != '\n'; ++lineScan)
 		++result.lineSize;
@@ -373,25 +275,6 @@ inline void LogWarning(Context *context, SourceLocation loc, String str)
 inline void LogNote(Context *context, SourceLocation loc, String str)
 {
 	Log(context, loc, StringConcat("NOTE: "_s, str));
-}
-
-void AssertToken(Context *context, Token *token, int type)
-{
-	if (token->type != type)
-	{
-		const String tokenTypeGot = TokenToStringOrType(token);
-		const String tokenTypeExp = TokenTypeToString(type);
-		const String errorStr = TPrintF("Expected token of type %S but got %S",
-				tokenTypeExp, tokenTypeGot);
-		LogError(context, token->loc, errorStr);
-	}
-}
-
-void UnexpectedTokenError(Context *context, Token *token)
-{
-	const String tokenType = TokenTypeToString(token->type);
-	const String errorStr = TPrintF("Unexpected token of type %S", tokenType);
-	LogError(context, token->loc, errorStr);
 }
 
 bool CompilerAddSourceFile(Context *context, String filename, SourceLocation loc)
@@ -478,6 +361,8 @@ int main(int argc, char **argv)
 		{
 			if (strcmp("-noPromote", arg) == 0)
 				context.config.dontPromoteMemoryToRegisters = true;
+			else if (strcmp("-noBuildExecutable", arg) == 0)
+				context.config.dontCallAssembler = true;
 			else if (strcmp("-logAST", arg) == 0)
 				context.config.logAST = true;
 			else if (strcmp("-logIR", arg) == 0)
@@ -526,7 +411,8 @@ int main(int argc, char **argv)
 
 	IRGenMain(&context);
 
-	PrintIRInstructions(&context);
+	if (context.config.logIR)
+		PrintIRInstructions(&context);
 
 	TimerSplit("IR generation"_s);
 	PhaseAllocator::Wipe();
@@ -534,5 +420,6 @@ int main(int argc, char **argv)
 	BackendMain(&context);
 
 	Print("Compilation success\n");
+
 	return 0;
 }

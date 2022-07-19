@@ -3689,7 +3689,8 @@ unalignedMovups:;
 	extraLinkerArguments = TPrintF("%S %S", extraLinkerArguments, subsystemArgument);
 #endif
 
-	SYSRunAssemblerAndLinker(outputPath, ""_s, extraLinkerArguments);
+	if (!context->config.dontCallAssembler)
+		SYSRunAssemblerAndLinker(outputPath, ""_s, extraLinkerArguments);
 
 	TimerSplit("Calling assembler and linker"_s);
 }

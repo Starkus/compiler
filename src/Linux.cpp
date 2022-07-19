@@ -73,7 +73,7 @@ u64 SYSGetFileSize(FileHandle file)
 	return fileStat.st_size;
 }
 
-void SYSReadEntireFile(FileHandle file, u8 **fileBuffer, u64 *fileSize, void *(*allocFunc)(u64))
+void SYSReadEntireFile(FileHandle file, char **fileBuffer, u64 *fileSize, void *(*allocFunc)(u64))
 {
 	if (file == SYS_INVALID_FILE_HANDLE)
 		*fileBuffer = nullptr;
@@ -81,7 +81,7 @@ void SYSReadEntireFile(FileHandle file, u8 **fileBuffer, u64 *fileSize, void *(*
 	{
 		*fileSize = SYSGetFileSize(file);
 		ASSERT(*fileSize);
-		*fileBuffer = (u8 *)allocFunc(*fileSize);
+		*fileBuffer = (char *)allocFunc(*fileSize);
 		u64 bytesRead = read(file, *fileBuffer, *fileSize);
 		ASSERT(bytesRead == *fileSize);
 	}

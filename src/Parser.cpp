@@ -2,11 +2,23 @@ ASTExpression ParseExpression(Context *context, s32 precedence);
 ASTExpression ParseStatement(Context *context);
 ASTVariableDeclaration ParseVariableDeclaration(Context *context);
 
-String TokenToString(Context *context, Token token)
+void AssertToken(Context *context, Token *token, int type)
 {
-	SourceFile sourceFile = context->sourceFiles[token.loc.fileIdx];
-	String result = { token.size, (const char *)sourceFile.buffer + token.loc.character };
-	return result;
+	if (token->type != type)
+	{
+		String tokenTypeGot = TokenToStringOrType(context, *token);
+		String tokenTypeExp = TokenTypeToString(type);
+		String errorStr = TPrintF("Expected token of type %S but got %S",
+				tokenTypeExp, tokenTypeGot);
+		LogError(context, token->loc, errorStr);
+	}
+}
+
+void UnexpectedTokenError(Context *context, Token *token)
+{
+	const String tokenType = TokenTypeToString(token->type);
+	const String errorStr = TPrintF("Unexpected token of type %S", tokenType);
+	LogError(context, token->loc, errorStr);
 }
 
 void Advance(Context *context)
@@ -758,7 +770,7 @@ ASTExpression ParseExpression(Context *context, s32 precedence)
 				{
 					if (context->token->type != ',')
 					{
-						String tokenTypeGot = TokenToStringOrType(*context->token);
+						String tokenTypeGot = TokenToStringOrType(context, *context->token);
 						String errorStr = TPrintF("Expected ')' or ',' but got %S",
 								tokenTypeGot);
 						LogError(context, context->token->loc, errorStr);
@@ -822,7 +834,7 @@ ASTExpression ParseExpression(Context *context, s32 precedence)
 		result.any.loc = context->token->loc;
 		result.nodeType = ASTNODETYPE_LITERAL;
 		result.literal.type = LITERALTYPE_CHARACTER;
-		result.literal.character = TokenToString(context, *context->token).data[1];
+		result.literal.character = TokenToString(context, *context->token).data[0];
 		Advance(context);
 	}
 	else if (context->token->type == TOKEN_LITERAL_STRING)
@@ -896,7 +908,7 @@ ASTExpression ParseExpression(Context *context, s32 precedence)
 				{
 					if (context->token->type != ',')
 					{
-						String tokenTypeGot = TokenToStringOrType(*context->token);
+						String tokenTypeGot = TokenToStringOrType(context, *context->token);
 						String errorStr = TPrintF("Expected ')' or ',' but got %S",
 								tokenTypeGot);
 						LogError(context, context->token->loc, errorStr);
