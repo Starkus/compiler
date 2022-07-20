@@ -721,6 +721,7 @@ u32 CalculateTokenSize(Context *context, const Tokenizer *tokenizer, enum TokenT
 	case TOKEN_KEYWORD_DEFER:
 	case TOKEN_KEYWORD_USING:
 		return 5;
+	case TOKEN_KEYWORD_ALIAS: //#
 	case TOKEN_KEYWORD_RETURN:
 	case TOKEN_KEYWORD_REMOVE:
 	case TOKEN_KEYWORD_STRUCT:
