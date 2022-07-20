@@ -56,7 +56,7 @@ ASTType ParseType(Context *context)
 		astType.arrayCount = 0;
 		if (context->token->type == TOKEN_LITERAL_NUMBER)
 		{
-			astType.arrayCount = IntFromString(context->token->string);
+			astType.arrayCount = IntFromString(TokenToString(context, *context->token));
 			Advance(context);
 		}
 		AssertToken(context, context->token, ']');
@@ -86,7 +86,7 @@ ASTType ParseType(Context *context)
 	else if (context->token->type == TOKEN_IDENTIFIER)
 	{
 		astType.nodeType = ASTTYPENODETYPE_IDENTIFIER;
-		astType.name = context->token->string;
+		astType.name = TokenToString(context, *context->token);
 		Advance(context);
 	}
 	else if (context->token->type == '(' ||
@@ -225,7 +225,7 @@ bool TryParseBinaryOperation(Context *context, ASTExpression leftHand, s32 prevP
 	} break;
 	default:
 	{
-		String opStr = TokenToString(context, *context->token);
+		String opStr = TokenTypeToString(context->token->type);
 		LogError(context, context->token->loc, TPrintF("Unexpected operator %S", opStr));
 	} break;
 	}
@@ -316,23 +316,23 @@ ASTFor ParseFor(Context *context)
 	Token *oldToken = context->token;
 	u64 oldTokenIdx = context->currentTokenIdx;
 
-	Token *first = context->token;
+	Token first = *context->token;
 	Advance(context);
 
 	if (context->token->type == TOKEN_OP_VARIABLE_DECLARATION)
 	{
 		Advance(context);
-		if (first->type != TOKEN_IDENTIFIER)
-			LogError(context, first->loc, "Expected name of index variable before ':' inside "
+		if (first.type != TOKEN_IDENTIFIER)
+			LogError(context, first.loc, "Expected name of index variable before ':' inside "
 					"for loop range"_s);
 		Advance(context);
 
-		forNode.indexVariableName = first->string;
+		forNode.indexVariableName = TokenToString(context, first);
 	}
 	else if (context->token->type == ',')
 	{
 		Advance(context);
-		Token *second = context->token;
+		Token second = *context->token;
 		Advance(context);
 		if (context->token->type == ',')
 			LogError(context, context->token->loc, "Too many names in for loop condition, only up "
@@ -340,15 +340,15 @@ ASTFor ParseFor(Context *context)
 		AssertToken(context, context->token, TOKEN_OP_VARIABLE_DECLARATION);
 		Advance(context);
 
-		if (first->type != TOKEN_IDENTIFIER)
-			LogError(context, first->loc, "Expected name of index variable before ',' inside "
+		if (first.type != TOKEN_IDENTIFIER)
+			LogError(context, first.loc, "Expected name of index variable before ',' inside "
 					"for loop range"_s);
-		if (second->type != TOKEN_IDENTIFIER)
-			LogError(context, first->loc, "Expected name of item variable before ':' inside "
+		if (second.type != TOKEN_IDENTIFIER)
+			LogError(context, first.loc, "Expected name of item variable before ':' inside "
 					"for loop range"_s);
 
-		forNode.indexVariableName = first->string;
-		forNode.itemVariableName  = second->string;
+		forNode.indexVariableName = TokenToString(context, first);
+		forNode.itemVariableName  = TokenToString(context, second);
 	}
 	else
 	{
@@ -389,7 +389,7 @@ ASTStructMemberDeclaration ParseStructMemberDeclaration(Context *context)
 	else
 	{
 		AssertToken(context, context->token, TOKEN_IDENTIFIER);
-		structMem.name = context->token->string;
+		structMem.name = TokenToString(context, *context->token);
 		Advance(context);
 
 		AssertToken(context, context->token, TOKEN_OP_VARIABLE_DECLARATION);
@@ -439,7 +439,7 @@ ASTEnumDeclaration ParseEnumDeclaration(Context *context)
 		ASTEnumMember enumMember = {};
 
 		AssertToken(context, context->token, TOKEN_IDENTIFIER);
-		enumMember.name = context->token->string;
+		enumMember.name = TokenToString(context, *context->token);
 		Advance(context);
 
 		if (context->token->type == TOKEN_OP_ASSIGNMENT)
@@ -529,7 +529,7 @@ ASTVariableDeclaration ParseVariableDeclaration(Context *context)
 	varDecl.loc = context->token->loc;
 
 	AssertToken(context, context->token, TOKEN_IDENTIFIER);
-	varDecl.name = context->token->string;
+	varDecl.name = TokenToString(context, *context->token);
 	Advance(context);
 
 	if (context->token->type == TOKEN_OP_VARIABLE_DECLARATION)
@@ -581,7 +581,7 @@ ASTProcedureParameter ParseProcedureParameter(Context *context)
 	u64 startTokenIdx = context->currentTokenIdx;
 
 	AssertToken(context, context->token, TOKEN_IDENTIFIER);
-	astParameter.name = context->token->string;
+	astParameter.name = TokenToString(context, *context->token);
 	Advance(context);
 
 	if (context->token->type == TOKEN_OP_VARIABLE_DECLARATION)
@@ -623,9 +623,10 @@ ASTProcedurePrototype ParseProcedurePrototype(Context *context)
 		Advance(context);
 
 		AssertToken(context, context->token, TOKEN_IDENTIFIER);
-		if (StringEquals(context->token->string, "win64"_s))
+		String tokenStr = TokenToString(context, *context->token);
+		if (StringEquals(tokenStr, "win64"_s))
 			prototype.callingConvention = CC_WIN64;
-		else if (StringEquals(context->token->string, "linux64"_s))
+		else if (StringEquals(tokenStr, "linux64"_s))
 			prototype.callingConvention = CC_LINUX64;
 		else
 			LogError(context, context->token->loc, "Invalid calling convention specified"_s);
@@ -649,7 +650,7 @@ ASTProcedurePrototype ParseProcedurePrototype(Context *context)
 
 			if (context->token->type == TOKEN_IDENTIFIER)
 			{
-				prototype.varargsName = context->token->string;
+				prototype.varargsName = TokenToString(context, *context->token);
 				Advance(context);
 			}
 			break;
@@ -720,7 +721,7 @@ ASTExpression ParseExpression(Context *context, s32 precedence)
 	else if (context->token->type == TOKEN_IDENTIFIER)
 	{
 		result.any.loc = context->token->loc;
-		String identifier = context->token->string;
+		String identifier = TokenToString(context, *context->token);
 		Advance(context);
 
 		if (context->token->type == '(')
@@ -762,17 +763,19 @@ ASTExpression ParseExpression(Context *context, s32 precedence)
 		result.any.loc = context->token->loc;
 		result.nodeType = ASTNODETYPE_LITERAL;
 
+		String tokenStr = TokenToString(context, *context->token);
+
 		bool isHex = false;
 		bool isFloating = false;
-		if (context->token->begin[0] == '0')
+		if (tokenStr.data[0] == '0')
 		{
-			if (context->token->begin[1] == 'x' || context->token->begin[1] == 'X')
+			if (tokenStr.data[1] == 'x' || tokenStr.data[1] == 'X')
 				isHex = true;
 		}
 
 		for (u32 i = 0; i < context->token->size; ++i)
 		{
-			if (context->token->begin[i] == '.')
+			if (tokenStr.data[i] == '.')
 			{
 				isFloating = true;
 				break;
@@ -783,20 +786,18 @@ ASTExpression ParseExpression(Context *context, s32 precedence)
 			result.literal.type = LITERALTYPE_INTEGER;
 			if (isHex)
 			{
-				String numbersOnly = context->token->string;
-				numbersOnly.size -= 2;
-				numbersOnly.data += 2;
+				String numbersOnly = { tokenStr.size - 2, tokenStr.data + 2 };
 				// @Todo: error reporting
 				result.literal.integer = IntFromStringHex(numbersOnly);
 			}
 			else
 				// @Todo: error reporting
-				result.literal.integer = IntFromString(context->token->string);
+				result.literal.integer = IntFromString(tokenStr);
 		}
 		else
 		{
 			result.literal.type = LITERALTYPE_FLOATING;
-			result.literal.floating = F64FromString(context->token->string);
+			result.literal.floating = F64FromString(tokenStr);
 		}
 		Advance(context);
 	}
@@ -813,7 +814,7 @@ ASTExpression ParseExpression(Context *context, s32 precedence)
 		result.any.loc = context->token->loc;
 		result.nodeType = ASTNODETYPE_LITERAL;
 		result.literal.type = LITERALTYPE_STRING;
-		result.literal.string = context->token->string;
+		result.literal.string = TokenToString(context, *context->token);
 		Advance(context);
 	}
 	else if (context->token->type == TOKEN_KEYWORD_TYPEOF)
@@ -862,7 +863,7 @@ ASTExpression ParseExpression(Context *context, s32 precedence)
 		Advance(context);
 
 		AssertToken(context, context->token, TOKEN_IDENTIFIER);
-		result.intrinsic.name = context->token->string;
+		result.intrinsic.name = TokenToString(context, *context->token);
 		Advance(context);
 
 		if (context->token->type == ',')
@@ -953,7 +954,7 @@ ASTStaticDefinition ParseStaticDefinition(Context *context)
 	ASTStaticDefinition result = {};
 
 	AssertToken(context, context->token, TOKEN_IDENTIFIER);
-	result.name = context->token->string;
+	result.name = TokenToString(context, *context->token);
 	Advance(context);
 
 	Advance(context);

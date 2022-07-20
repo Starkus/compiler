@@ -7,7 +7,7 @@ struct Tokenizer
 	const char *beginningOfLine;
 };
 
-enum TokenType
+enum TokenType : u8
 {
 	TOKEN_INVALID			= 0,
 	TOKEN_IDENTIFIER		= 1,
@@ -103,9 +103,7 @@ enum TokenType
 struct SourceLocation
 {
 	u32 fileIdx;
-	u32 line;
 	u32 character;
-	u32 size;
 };
 
 struct FatSourceLocation
@@ -128,15 +126,6 @@ struct SourceFile
 struct Token
 {
 	enum TokenType type;
-	union
-	{
-		String string;
-		struct
-		{
-			u32 size;
-			const char *begin;
-		};
-	};
-
+	u32 size;
 	SourceLocation loc;
 };

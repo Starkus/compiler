@@ -337,7 +337,6 @@ Token ParseNumber(Context *context, Tokenizer *tokenizer, Token baseToken)
 		}
 	}
 numberDone:
-	result.loc.size = result.size;
 	return result;
 }
 
@@ -801,7 +800,6 @@ FatSourceLocation ExpandSourceLocation(Context *context, SourceLocation loc)
 
 	return result;
 }
-
 
 void TokenizeFile(Context *context, int fileIdx)
 {
