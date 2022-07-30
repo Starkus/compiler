@@ -263,3 +263,105 @@ u64 BucketArrayCount(BucketArray<T, A, bucketSize> *bucketArray)
 	count += bucketArray->buckets[lastBucket].size;
 	return count;
 }
+
+template <typename K, typename V, typename A>
+struct HashMap
+{
+	u8 *bookkeepBitfield;
+	K *keys;
+	V *values;
+	u32 capacity;
+};
+
+template <typename K, typename V, typename A>
+void HashMapInit(HashMap<K,V,A> *hashMap, u32 capacity)
+{
+	u64 bookkeepSize = capacity / 8;
+	u64 keyMemorySize = capacity * sizeof(K);
+	u64 valueMemorySize = capacity * sizeof(V);
+	void *memory = A::Alloc(bookkeepSize + keyMemorySize + valueMemorySize);
+	hashMap->bookkeepBitfield = (u8 *)memory;
+	hashMap->keys = (K *)((u8 *)memory + bookkeepSize);
+	hashMap->values = (V *)((u8 *)memory + bookkeepSize + keyMemorySize);
+	hashMap->capacity = capacity;
+
+	memset(memory, 0, bookkeepSize);
+}
+
+template <typename K, typename V, typename A>
+V *HashMapGet(HashMap<K,V,A> hashMap, K key)
+{
+	ASSERT(IsPowerOf2(hashMap.capacity));
+	u32 mask = hashMap.capacity - 1;
+	u32 hash = Hash(key) & mask;
+	K foundKey;
+	for (u32 iterations = 0; iterations < hashMap.capacity; ++iterations)
+	{
+		bool occupied = hashMap.bookkeepBitfield[hash / 8] & (1 << hash % 8);
+		if (!occupied)
+			break;
+		foundKey = hashMap.keys[hash];
+		if (foundKey == key)
+			return &hashMap.values[hash];
+		hash = (hash + 1) & mask;
+	}
+	return nullptr;
+}
+
+template <typename K, typename V, typename A>
+void HashMapRehash(HashMap<K,V,A> *hashMap)
+{
+	u32 oldCapacity = hashMap->capacity;
+	u8 *oldBookkeep = hashMap->bookkeepBitfield;
+	K *oldKeys = hashMap->keys;
+	V *oldValues = hashMap->values;
+
+	hashMap->capacity = oldCapacity << 1;
+
+	u32 capacity = hashMap->capacity;
+	u64 bookkeepSize = capacity / 8;
+	u64 keyMemorySize = capacity * sizeof(K);
+	u64 valueMemorySize = capacity * sizeof(V);
+	void *memory = A::Alloc(bookkeepSize + keyMemorySize + valueMemorySize);
+	hashMap->bookkeepBitfield = (u8 *)memory;
+	hashMap->keys = (K *)((u8 *)memory + bookkeepSize);
+	hashMap->values = (V *)((u8 *)memory + bookkeepSize + keyMemorySize);
+
+	for (u32 i = 0; i < oldCapacity; ++i)
+		if (oldBookkeep[i / 8] & (1 << (1 % 8)))
+			*HashMapGetOrAdd(hashMap, oldKeys[i]) = oldValues[i];
+}
+
+template <typename K, typename V, typename A>
+V *HashMapGetOrAdd(HashMap<K,V,A> *hashMap, K key)
+{
+	ASSERT(IsPowerOf2(hashMap->capacity));
+	u32 mask = hashMap->capacity - 1;
+	u32 hash = Hash(key) & mask;
+	K foundKey;
+	for (u32 iterations = 0; iterations < hashMap->capacity; ++iterations)
+	{
+		bool occupied = hashMap->bookkeepBitfield[hash / 8] & (1 << (hash % 8));
+		if (!occupied)
+			goto add;
+		foundKey = hashMap->keys[hash];
+		if (foundKey == key)
+			return &hashMap->values[hash];
+		hash = (hash + 1) & mask;
+	}
+
+	// Full!
+	HashMapRehash(hashMap);
+	return HashMapGetOrAdd(hashMap, key);
+
+add:
+	// Add!
+	hashMap->bookkeepBitfield[hash / 8] |= (1 << (hash % 8));
+	hashMap->keys[hash] = key;
+	return &hashMap->values[hash];
+}
+
+u32 Hash(u32 value)
+{
+	return value;
+}

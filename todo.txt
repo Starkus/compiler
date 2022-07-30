@@ -1,3 +1,9 @@
+* Add current procedure to Context in x64.cpp instead of passing it around.
+* Maybe remove size from Token?
+* Include SourceLocations on IRInstructions and BackendInstructions to better track compiler errors.
+* Hash tables for register allocation lookups.
+* Maybe store local IRValues per procedure instead of all in a huge array. Should improve register
+    allocation performance and reduce cache misses in general.
 * Proper error handling when the wrong kind of thing is fed to operators (example: dividing by a type).
 * Reduce moving things from one register to another unnecessarily
 * Verify small structs are passed properly through parameters

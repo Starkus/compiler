@@ -75,6 +75,32 @@ bool IRShouldPassByCopy(Context *context, u32 typeTableIdx)
 			typeInfo.size != 8);
 }
 
+inline s32 IRCurrentProcedureIdx(Context *context)
+{
+	return context->irProcedureStack[context->irProcedureStack.size - 1].procedureIdx;
+}
+
+inline u32 IRNewValue(Context *context, String name, u32 typeTableIdx, u32 flags, u32 immitateValueIdx = U32_MAX)
+{
+	ASSERT(context->currentCompilerStage == STAGE_IRGEN);
+	s32 procedureIdx = IRCurrentProcedureIdx(context);
+	return NewValue(context, procedureIdx, name, typeTableIdx, flags, immitateValueIdx);
+}
+
+inline u32 IRNewValue(Context *context, u32 typeTableIdx, u32 flags, u32 immitateValueIdx = U32_MAX)
+{
+	ASSERT(context->currentCompilerStage == STAGE_IRGEN);
+	s32 procedureIdx = IRCurrentProcedureIdx(context);
+	return NewValue(context, procedureIdx, {}, typeTableIdx, flags, immitateValueIdx);
+}
+
+inline Value *IRGetValue(Context *context, u32 valueIdx)
+{
+	ASSERT(context->currentCompilerStage == STAGE_IRGEN);
+	return GetValue(context, valueIdx,
+			context->irProcedureStack[context->irProcedureStack.size - 1].procedureIdx);
+}
+
 IRValue IRValueValue(u32 valueIdx, u32 typeTableIdx, s64 offset = 0)
 {
 	IRValue result;
@@ -93,7 +119,7 @@ IRValue IRValueValue(Context *context, u32 valueIdx, s64 offset = 0)
 	result.value.valueIdx = valueIdx;
 	result.value.elementSize = 0;
 	result.value.offset = offset;
-	result.typeTableIdx = context->values[valueIdx].typeTableIdx;
+	result.typeTableIdx = IRGetValue(context, valueIdx)->typeTableIdx;
 	return result;
 }
 
@@ -104,14 +130,14 @@ IRValue IRValueTCValue(Context *context, TCValue tcValue)
 	if (tcValue.type == TCVALUETYPE_VALUE)
 	{
 		result.value = { tcValue.valueIdx };
-		result.typeTableIdx = context->values[tcValue.valueIdx].typeTableIdx;
+		result.typeTableIdx = IRGetValue(context, tcValue.valueIdx)->typeTableIdx;
 	}
 	else
 	{
 		u32 procIdx = context->irProcedureStack[context->irProcedureStack.size - 1].procedureIdx;
 		u32 paramValueIdx = GetProcedure(context, procIdx)->parameterValues[tcValue.valueIdx];
 		result.value = { paramValueIdx };
-		result.typeTableIdx = context->values[paramValueIdx].typeTableIdx;
+		result.typeTableIdx = IRGetValue(context, paramValueIdx)->typeTableIdx;
 	}
 	return result;
 }
@@ -184,7 +210,7 @@ IRValue IRValueImmediateFloat(Context *context, f64 f, u32 typeTableIdx = TYPETA
 	}
 
 	IRStaticVariable newStaticVar = {};
-	newStaticVar.valueIdx = NewValue(context,
+	newStaticVar.valueIdx = IRNewValue(context,
 			TPrintF("_staticFloat%d", floatStaticVarUniqueID++), typeTableIdx,
 			VALUEFLAGS_ON_STATIC_STORAGE);
 	newStaticVar.initialValue.valueType = IRVALUETYPE_IMMEDIATE_FLOAT;
@@ -206,7 +232,7 @@ IRValue IRValueProcedure(Context *context, s32 procedureIdx)
 
 IRValue IRValueNewValue(Context *context, u32 typeTableIdx, u32 flags, u32 immitateValueIdx = 0)
 {
-	u32 newValue = NewValue(context, typeTableIdx, flags, immitateValueIdx);
+	u32 newValue = IRNewValue(context, typeTableIdx, flags, immitateValueIdx);
 
 	IRValue result = {};
 	result.valueType = IRVALUETYPE_VALUE;
@@ -218,7 +244,7 @@ IRValue IRValueNewValue(Context *context, u32 typeTableIdx, u32 flags, u32 immit
 IRValue IRValueNewValue(Context *context, String name, u32 typeTableIdx, u32 flags,
 		u32 immitateValueIdx = 0)
 {
-	u32 newValueIdx = NewValue(context, name, typeTableIdx, flags, immitateValueIdx);
+	u32 newValueIdx = IRNewValue(context, name, typeTableIdx, flags, immitateValueIdx);
 
 	IRValue result = {};
 	result.valueType = IRVALUETYPE_VALUE;
@@ -259,8 +285,8 @@ IRValue IRDereferenceValue(Context *context, IRValue in)
 		// then we can dereference that pointer once it's on a register:
 		//     mov out, [rax]
 
-		String name = TPrintF("_deref_forcereg_%S", context->values[in.value.valueIdx].name);
-		u32 tempValueIdx = NewValue(context, name, in.typeTableIdx, VALUEFLAGS_TRY_IMMITATE |
+		String name = TPrintF("_deref_forcereg_%S", IRGetValue(context, in.value.valueIdx)->name);
+		u32 tempValueIdx = IRNewValue(context, name, in.typeTableIdx, VALUEFLAGS_TRY_IMMITATE |
 				VALUEFLAGS_FORCE_REGISTER, in.value.valueIdx);
 		IRValue tmpValue = IRValueValue(tempValueIdx, in.typeTableIdx);
 
@@ -269,8 +295,8 @@ IRValue IRDereferenceValue(Context *context, IRValue in)
 		inst.assignment.src = in;
 		*AddInstruction(context) = inst;
 
-		name = TPrintF("_deref_%S", context->values[in.value.valueIdx].name);
-		u32 newValueIdx = NewValue(context, name, in.typeTableIdx, VALUEFLAGS_TRY_IMMITATE,
+		name = TPrintF("_deref_%S", IRGetValue(context, in.value.valueIdx)->name);
+		u32 newValueIdx = IRNewValue(context, name, in.typeTableIdx, VALUEFLAGS_TRY_IMMITATE,
 				in.value.valueIdx);
 		IRValue value = IRValueValue(newValueIdx, in.typeTableIdx);
 
@@ -308,7 +334,7 @@ IRValue IRDoMemberAccess(Context *context, IRValue structValue, StructMember str
 		   structValue.valueType == IRVALUETYPE_VALUE_DEREFERENCE);
 
 	IRAddComment(context, TPrintF("Accessing struct member \"%S.%S\"",
-				context->values[structValue.value.valueIdx].name, structMember.name));
+				IRGetValue(context, structValue.value.valueIdx)->name, structMember.name));
 
 	s64 offset = structMember.offset + structValue.value.offset;
 	IRValue result = IRValueDereference(structValue.value.valueIdx, structMember.typeTableIdx,
@@ -361,7 +387,7 @@ IRValue IRDoArrayAccess(Context *context, IRValue arrayValue, IRValue indexValue
 				VALUEFLAGS_FORCE_REGISTER | VALUEFLAGS_TRY_IMMITATE, indexValue.value.valueIdx);
 		IRDoAssignment(context, indexForceReg, indexValue);
 
-		u32 flags = context->values[arrayValue.value.valueIdx].flags;
+		u32 flags = IRGetValue(context, arrayValue.value.valueIdx)->flags;
 		if (flags & VALUEFLAGS_ON_STATIC_STORAGE)
 		{
 			// @Improve: This is x64 specific. Move to x64 backend.
@@ -420,7 +446,7 @@ inline void IRPushValueIntoStack(Context *context, u32 valueIdx)
 
 u32 IRAddTempValue(Context *context, String name, u32 typeTableIdx, u8 flags)
 {
-	u32 valueIdx = NewValue(context, name, typeTableIdx, flags);
+	u32 valueIdx = IRNewValue(context, name, typeTableIdx, flags);
 	IRPushValueIntoStack(context, valueIdx);
 	return valueIdx;
 }
@@ -617,8 +643,8 @@ IRValue IRInstructionFromBinaryOperation(Context *context, ASTExpression *expres
 			structTypeInfo.typeCategory == TYPECATEGORY_POINTER)
 		{
 			// Dereference the pointer to the struct
-			String name = TPrintF("_derefstrctptr_%S", context->values[irValue.value.valueIdx].name);
-			u32 newValueIdx = NewValue(context, name, irValue.typeTableIdx,
+			String name = TPrintF("_derefstrctptr_%S", IRGetValue(context, irValue.value.valueIdx)->name);
+			u32 newValueIdx = IRNewValue(context, name, irValue.typeTableIdx,
 					VALUEFLAGS_FORCE_REGISTER);
 			IRValue newValue = IRValueValue(newValueIdx, irValue.typeTableIdx);
 
@@ -874,7 +900,7 @@ IRValue IRInstructionFromBinaryOperation(Context *context, ASTExpression *expres
 		if (outValue.valueType == IRVALUETYPE_VALUE &&
 			inst.binaryOperation.left.valueType == IRVALUETYPE_VALUE)
 		{
-			Value *v = &context->values[inst.binaryOperation.left.value.valueIdx];
+			Value *v = IRGetValue(context, inst.binaryOperation.left.value.valueIdx);
 			v->flags |= VALUEFLAGS_TRY_IMMITATE;
 			v->tryImmitateValueIdx = outValue.value.valueIdx;
 		}
@@ -1415,7 +1441,7 @@ void IRGenProcedure(Context *context, s32 procedureIdx, SourceLocation loc)
 	}
 
 	s32 returnValueIdx = procedure->returnValueIdx;
-	Value *returnValue = &context->values[returnValueIdx];
+	Value *returnValue = IRGetValue(context, returnValueIdx);
 	if (IRShouldPassByCopy(context, returnValue->typeTableIdx))
 	{
 		returnValue->flags |= VALUEFLAGS_PARAMETER_BY_COPY;
@@ -1507,7 +1533,7 @@ IRValue IRGenFromExpression(Context *context, ASTExpression *expression)
 		if (isThereCleanUpToDo)
 		{
 			if (stackTop.shouldReturnValueIdx == U32_MAX)
-				stackTop.shouldReturnValueIdx = NewValue(context, TYPETABLEIDX_U8, 0);
+				stackTop.shouldReturnValueIdx = IRNewValue(context, TYPETABLEIDX_U8, 0);
 
 			// Set should-return register to 0
 			IRValue shouldReturnRegister = IRValueValue(context, stackTop.shouldReturnValueIdx);
@@ -1685,7 +1711,7 @@ IRValue IRGenFromExpression(Context *context, ASTExpression *expression)
 			TCValue tcValue = expression->identifier.tcValue;
 			result = IRValueTCValue(context, tcValue);
 			if (tcValue.type == TCVALUETYPE_PARAMETER &&
-				context->values[result.value.valueIdx].flags & VALUEFLAGS_PARAMETER_BY_COPY)
+				IRGetValue(context, result.value.valueIdx)->flags & VALUEFLAGS_PARAMETER_BY_COPY)
 				result = IRDereferenceValue(context, result);
 		} break;
 		default:
@@ -1990,7 +2016,7 @@ skipGeneratingVarargsArray:
 			static u64 stringStaticVarUniqueID = 0;
 
 			IRStaticVariable newStaticVar = {};
-			newStaticVar.valueIdx = NewValue(context,
+			newStaticVar.valueIdx = IRNewValue(context,
 					TPrintF("staticString%d", stringStaticVarUniqueID++),
 					TYPETABLEIDX_STRING_STRUCT, VALUEFLAGS_ON_STATIC_STORAGE);
 			newStaticVar.initialValue = IRValueImmediateString(context, expression->literal.string);
@@ -2263,7 +2289,7 @@ skipGeneratingVarargsArray:
 		if (isThereCleanUpToDo)
 		{
 			if (stackTop->shouldReturnValueIdx == U32_MAX)
-				stackTop->shouldReturnValueIdx = NewValue(context, TYPETABLEIDX_U8, 0);
+				stackTop->shouldReturnValueIdx = IRNewValue(context, TYPETABLEIDX_U8, 0);
 
 			// Set should return to one
 			IRValue shouldReturnRegister = IRValueValue(stackTop->shouldReturnValueIdx,

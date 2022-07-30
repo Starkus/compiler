@@ -123,6 +123,15 @@ struct InterferenceGraph
 	DynamicArray<u32, PhaseAllocator> *edges; // @Improve: eugh
 };
 
+enum CompilerStage
+{
+	STAGE_TOKENIZE,
+	STAGE_PARSE,
+	STAGE_TYPECHECK,
+	STAGE_IRGEN,
+	STAGE_BACKEND
+};
+
 #define OUTPUT_BUFFER_BUCKET_SIZE 8192
 struct TCJob;
 struct Procedure;
@@ -131,10 +140,13 @@ struct OperatorOverload;
 struct StaticDefinition;
 struct TCScope;
 struct BasicBlock;
+struct BEProcedure;
 struct BEInstruction;
 struct Context
 {
 	Config config;
+
+	CompilerStage currentCompilerStage;
 
 	DynamicArray<SourceFile, HeapAllocator> sourceFiles;
 	DynamicArray<String, HeapAllocator> libsToLink;
@@ -151,7 +163,8 @@ struct Context
 	// Type check -----
 	DynamicArray<TCJob, PhaseAllocator> tcJobs;
 	s32 currentTCJob;
-	BucketArray<Value, HeapAllocator, 2048> values;
+	BucketArray<Value, HeapAllocator, 512> values;
+	BucketArray<Value, HeapAllocator, 512> globalValues;
 	BucketArray<Procedure, HeapAllocator, 512> procedures;
 	BucketArray<Procedure, HeapAllocator, 128> externalProcedures;
 	DynamicArray<OperatorOverload, HeapAllocator> operatorOverloads;
@@ -179,6 +192,8 @@ struct Context
 	} irCurrentForLoopInfo;
 
 	// Backend -----
+	Array<BEProcedure, PhaseAllocator> beProcedures;
+	s32 beCurrentProcedureIdx;
 	BucketArray<u8, PhaseAllocator, OUTPUT_BUFFER_BUCKET_SIZE> outputBuffer;
 	BucketArray<BasicBlock, PhaseAllocator, 512> beBasicBlocks;
 	DynamicArray<BasicBlock *, PhaseAllocator> beLeafBasicBlocks;
@@ -290,6 +305,20 @@ int main(int argc, char **argv)
 	memory.phaseMem = SYSAlloc(Memory::phaseSize);
 	MemoryInit(&memory);
 
+#if 0
+	HashMap<u32, u32, FrameAllocator> hashMap;
+	HashMapInit(&hashMap, 32);
+	u32 *valueInMap = HashMapGetOrAdd(&hashMap, (u32)8);
+	*valueInMap = 16;
+	u32 valueInMap2 = *HashMapGet(hashMap, (u32)8);
+	ASSERT(*valueInMap == valueInMap2);
+	for (u32 i = 0; i < 48; ++i)
+	{
+		*HashMapGetOrAdd(&hashMap, (u32)i) = i * 2;
+		ASSERT(*HashMapGet(hashMap, (u32)i) == i * 2);
+	}
+#endif
+
 	Context context = {};
 
 	DynamicArrayInit(&context.sourceFiles, 16);
@@ -331,6 +360,7 @@ int main(int argc, char **argv)
 	ASSERT(inputFiles.size > 2);
 
 	TimerSplit("Initialization"_s);
+	context.currentCompilerStage = STAGE_TOKENIZE;
 
 	for (int i = 0; i < inputFiles.size; ++i)
 		CompilerAddSourceFile(&context, inputFiles[i], {});
@@ -343,6 +373,7 @@ int main(int argc, char **argv)
 
 	TimerSplit("Tokenizer"_s);
 	PhaseAllocator::Wipe();
+	context.currentCompilerStage = STAGE_PARSE;
 
 	GenerateSyntaxTree(&context);
 
@@ -351,6 +382,7 @@ int main(int argc, char **argv)
 
 	TimerSplit("Generating AST"_s);
 	PhaseAllocator::Wipe();
+	context.currentCompilerStage = STAGE_TYPECHECK;
 
 	TypeCheckMain(&context);
 
@@ -359,6 +391,7 @@ int main(int argc, char **argv)
 
 	TimerSplit("Type checking"_s);
 	PhaseAllocator::Wipe();
+	context.currentCompilerStage = STAGE_IRGEN;
 
 	IRGenMain(&context);
 
@@ -367,6 +400,7 @@ int main(int argc, char **argv)
 
 	TimerSplit("IR generation"_s);
 	PhaseAllocator::Wipe();
+	context.currentCompilerStage = STAGE_BACKEND;
 
 	BackendMain(&context);
 

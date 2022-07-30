@@ -16,7 +16,7 @@ Array<u64, PhaseAllocator> valueIsXmmBits;
 
 struct BasicBlock
 {
-	X64Procedure *procedure;
+	u32 procedureIdx;
 	s64 beginIdx;
 	s64 endIdx;
 	bool livenessAnalizedOnce;
@@ -45,18 +45,18 @@ BasicBlock *PushBasicBlock(BasicBlock *currentBasicBlock,
 		BucketArray<BasicBlock, PhaseAllocator, 512> *basicBlocks)
 {
 
-	X64Procedure *procedure = nullptr;
+	u32 procedureIdx = 0;
 	s64 endOfLastBlock = -1;
 	if (currentBasicBlock)
 	{
-		procedure = currentBasicBlock->procedure;
+		procedureIdx = currentBasicBlock->procedureIdx;
 		endOfLastBlock = currentBasicBlock->endIdx;
 	}
 
 	BasicBlock *result = BucketArrayAdd(basicBlocks);
 	*result = {};
 
-	result->procedure = procedure;
+	result->procedureIdx = procedureIdx;
 	result->beginIdx = endOfLastBlock + 1;
 	DynamicArrayInit(&result->inputs, 4);
 	DynamicArrayInit(&result->outputs, 4);
@@ -145,12 +145,14 @@ inline void RemoveIfValue(Context *context, IRValue irValue, X64Procedure *proc,
 void DoLivenessAnalisisOnInstruction(Context *context, BasicBlock *basicBlock, X64Instruction *inst,
 		DynamicArray<u32, PhaseAllocator> *liveValues)
 {
+	X64Procedure *proc = &context->beProcedures[basicBlock->procedureIdx];
 	if (context->config.logAllocationInfo)
 	{
+		s32 procedureIdx = proc->procedureIdx;
 		if (inst->type != X64_Patch && inst->type != X64_Patch_Many)
 		{
 			Print("\t");
-			s64 s = Print("%S", X64InstructionToStr(context, *inst));
+			s64 s = Print("%S", X64InstructionToStr(context, procedureIdx, *inst));
 			if (s < 40)
 			{
 				char buffer[40];
@@ -159,7 +161,7 @@ void DoLivenessAnalisisOnInstruction(Context *context, BasicBlock *basicBlock, X
 				Print("%s", buffer + s);
 			}
 			for (int i = 0; i < liveValues->size; ++i)
-				Print("%S, ", X64IRValueToStr(context, IRValueValue(context, (*liveValues)[i])));
+				Print("%S, ", X64IRValueToStr(context, procedureIdx, IRValueValue(context, (*liveValues)[i])));
 			Print("\n");
 		}
 	}
@@ -176,7 +178,7 @@ void DoLivenessAnalisisOnInstruction(Context *context, BasicBlock *basicBlock, X
 
 		u64 totalParameters = inst->parameterValues.size;
 		for (int paramIdx = 0; paramIdx < totalParameters; ++paramIdx)
-			AddValue(context, inst->parameterValues[paramIdx], basicBlock->procedure, liveValues);
+			AddValue(context, inst->parameterValues[paramIdx], proc, liveValues);
 	} break;
 	case X64_CALL_Indirect:
 	{
@@ -185,19 +187,19 @@ void DoLivenessAnalisisOnInstruction(Context *context, BasicBlock *basicBlock, X
 		for (int i = 0; i < liveValues->size; ++i)
 			inst->liveValues[i] = (*liveValues)[i];
 
-		AddIfValue(context, inst->dst, basicBlock->procedure, liveValues);
+		AddIfValue(context, inst->dst, proc, liveValues);
 
 		u64 totalParameters = inst->parameterValues.size;
 		for (int paramIdx = 0; paramIdx < totalParameters; ++paramIdx)
-			AddValue(context, inst->parameterValues[paramIdx], basicBlock->procedure, liveValues);
+			AddValue(context, inst->parameterValues[paramIdx], proc, liveValues);
 	} break;
 	case X64_DIV:
 	case X64_IDIV:
 	case X64_MUL:
 	{
-		AddValue(context, RAX.value.valueIdx, basicBlock->procedure, liveValues);
-		AddValue(context, RDX.value.valueIdx, basicBlock->procedure, liveValues);
-		AddIfValue(context, inst->dst, basicBlock->procedure, liveValues);
+		AddValue(context, RAX.value.valueIdx, proc, liveValues);
+		AddValue(context, RDX.value.valueIdx, proc, liveValues);
+		AddIfValue(context, inst->dst, proc, liveValues);
 	} break;
 	case X64_CQO:
 	{
@@ -215,11 +217,11 @@ void DoLivenessAnalisisOnInstruction(Context *context, BasicBlock *basicBlock, X
 		// Detect xors of same thing (zero-ing)
 		if (inst->src.valueType != IRVALUETYPE_IMMEDIATE_INTEGER &&
 			memcmp(&inst->dst.value, &inst->src.value, sizeof(inst->src.value)) == 0)
-			RemoveIfValue(context, inst->dst, basicBlock->procedure, liveValues);
+			RemoveIfValue(context, inst->dst, proc, liveValues);
 		else
 		{
-			AddIfValue(context, inst->dst, basicBlock->procedure, liveValues);
-			AddIfValue(context, inst->src, basicBlock->procedure, liveValues);
+			AddIfValue(context, inst->dst, proc, liveValues);
+			AddIfValue(context, inst->src, proc, liveValues);
 		}
 	} break;
 	case X64_Push_Value:
@@ -236,14 +238,14 @@ void DoLivenessAnalisisOnInstruction(Context *context, BasicBlock *basicBlock, X
 	{
 		X64InstructionInfo instInfo = x64InstructionInfos[inst->type];
 		if (instInfo.operandAccessLeft & OPERANDACCESS_READ)
-			AddIfValue   (context, inst->dst, basicBlock->procedure, liveValues);
+			AddIfValue   (context, inst->dst, proc, liveValues);
 		else if (instInfo.operandAccessLeft & OPERANDACCESS_WRITE)
-			RemoveIfValue(context, inst->dst, basicBlock->procedure, liveValues);
+			RemoveIfValue(context, inst->dst, proc, liveValues);
 
 		if (instInfo.operandAccessRight & OPERANDACCESS_READ)
-			AddIfValue   (context, inst->src, basicBlock->procedure, liveValues);
+			AddIfValue   (context, inst->src, proc, liveValues);
 		else if (instInfo.operandAccessRight & OPERANDACCESS_WRITE)
-			RemoveIfValue(context, inst->src, basicBlock->procedure, liveValues);
+			RemoveIfValue(context, inst->src, proc, liveValues);
 	}
 	}
 
@@ -363,8 +365,9 @@ alreadyExists:
 void DoLivenessAnalisis(Context *context, BasicBlock *basicBlock,
 		DynamicArray<u32, PhaseAllocator> *liveValues)
 {
+	X64Procedure *proc = &context->beProcedures[basicBlock->procedureIdx];
 	if (context->config.logAllocationInfo)
-		Print("Doing liveness analisis on block %S %d-%d\n", basicBlock->procedure->name,
+		Print("Doing liveness analisis on block %S %d-%d\n", proc->name,
 				basicBlock->beginIdx, basicBlock->endIdx);
 
 	for (int i = 0; i < basicBlock->liveValuesAtOutput.size; ++i)
@@ -373,15 +376,15 @@ void DoLivenessAnalisis(Context *context, BasicBlock *basicBlock,
 	for (int i = 0; i < liveValues->size; ++i)
 		DynamicArrayAddUnique(&basicBlock->liveValuesAtOutput, (*liveValues)[i]);
 
-	if (basicBlock->procedure->returnValueIdx != U32_MAX)
-		AddValue(context, basicBlock->procedure->returnValueIdx, basicBlock->procedure,
+	if (proc->returnValueIdx != U32_MAX)
+		AddValue(context, proc->returnValueIdx, proc,
 				liveValues);
 
 	// Check all basic block instructions
 	for (s64 instructionIdx = basicBlock->endIdx; instructionIdx >= basicBlock->beginIdx;
 			--instructionIdx)
 	{
-		X64Instruction *inst = &basicBlock->procedure->instructions[instructionIdx];
+		X64Instruction *inst = &proc->instructions[instructionIdx];
 		DoLivenessAnalisisOnInstruction(context, basicBlock, inst, liveValues);
 	}
 
@@ -408,11 +411,11 @@ void DoLivenessAnalisis(Context *context, BasicBlock *basicBlock,
 	}
 }
 
-void GenerateBasicBlocks(Context *context, Array<X64Procedure, PhaseAllocator> x64Procedures)
+void GenerateBasicBlocks(Context *context)
 {
-	for (int procedureIdx = 1; procedureIdx < x64Procedures.size; ++procedureIdx)
+	for (int procedureIdx = 1; procedureIdx < context->beProcedures.size; ++procedureIdx)
 	{
-		X64Procedure *proc = &x64Procedures[procedureIdx];
+		X64Procedure *proc = &context->beProcedures[procedureIdx];
 
 		if (context->config.logAllocationInfo)
 		{
@@ -420,7 +423,7 @@ void GenerateBasicBlocks(Context *context, Array<X64Procedure, PhaseAllocator> x
 		}
 
 		BasicBlock *currentBasicBlock = PushBasicBlock(nullptr, &context->beBasicBlocks);
-		currentBasicBlock->procedure = proc;
+		currentBasicBlock->procedureIdx = procedureIdx;
 
 		u64 instructionCount = BucketArrayCount(&proc->instructions);
 		for (int instructionIdx = 0; instructionIdx < instructionCount; ++instructionIdx)
@@ -428,7 +431,7 @@ void GenerateBasicBlocks(Context *context, Array<X64Procedure, PhaseAllocator> x
 			X64Instruction inst = proc->instructions[instructionIdx];
 
 			if (context->config.logAllocationInfo)
-				Print("\t%S\n", X64InstructionToStr(context, inst));
+				Print("\t%S\n", X64InstructionToStr(context, procedureIdx, inst));
 
 			if (inst.type >= X64_Jump_Begin && inst.type <= X64_Jump_End)
 			{
@@ -478,7 +481,8 @@ void GenerateBasicBlocks(Context *context, Array<X64Procedure, PhaseAllocator> x
 		BasicBlock *jumpBlock = &context->beBasicBlocks[i];
 
 		IRLabel *label = nullptr;
-		X64Instruction endInstruction = jumpBlock->procedure->instructions[jumpBlock->endIdx];
+		X64Procedure *jumpBlockProc = &context->beProcedures[jumpBlock->procedureIdx];
+		X64Instruction endInstruction = jumpBlockProc->instructions[jumpBlock->endIdx];
 		if (endInstruction.type >= X64_Jump_Begin && endInstruction.type <= X64_Jump_End)
 			label = endInstruction.label;
 		else
@@ -488,7 +492,7 @@ void GenerateBasicBlocks(Context *context, Array<X64Procedure, PhaseAllocator> x
 		{
 			BasicBlock *labelBlock = &context->beBasicBlocks[j];
 			X64Instruction beginInstruction =
-				labelBlock->procedure->instructions[labelBlock->beginIdx];
+				jumpBlockProc->instructions[labelBlock->beginIdx];
 
 			if (beginInstruction.type == X64_Label &&
 					beginInstruction.label == label)
@@ -504,14 +508,14 @@ foundBlock:
 	}
 }
 
-void ResolveStackOffsets(Context *context, Array<X64Procedure, PhaseAllocator> x64Procedures)
+void ResolveStackOffsets(Context *context)
 {
 	DynamicArray<s64, PhaseAllocator> stack;
 	DynamicArrayInit(&stack, 16);
 
-	for (int procedureIdx = 1; procedureIdx < x64Procedures.size; ++procedureIdx)
+	for (int procedureIdx = 1; procedureIdx < context->beProcedures.size; ++procedureIdx)
 	{
-		X64Procedure *proc = &x64Procedures[procedureIdx];
+		X64Procedure *proc = &context->beProcedures[procedureIdx];
 		s64 stackCursor = 0;
 
 		// Allocate space for the parameters we pass on the stack to procedures we call.
@@ -609,7 +613,8 @@ inline u64 BitIfRegister(Context *context, IRValue irValue)
 	return 0;
 }
 
-inline u64 RegisterSavingInstruction(Context *context, X64Instruction *inst, u64 usedRegisters)
+inline u64 RegisterSavingInstruction(Context *context, s32 procedureIdx, X64Instruction *inst,
+		u64 usedRegisters)
 {
 	switch(inst->type)
 	{
@@ -636,7 +641,7 @@ inline u64 RegisterSavingInstruction(Context *context, X64Instruction *inst, u64
 		{
 			if (usedCalleeSaveRegisters & ((u64)1 << i))
 			{
-				u32 newValueIdx = NewValue(context, "_save_reg"_s, TYPETABLEIDX_S64,
+				u32 newValueIdx = NewValue(context, procedureIdx, "_save_reg"_s, TYPETABLEIDX_S64,
 						VALUEFLAGS_IS_USED | VALUEFLAGS_FORCE_MEMORY |
 						VALUEFLAGS_HAS_PUSH_INSTRUCTION);
 
@@ -671,7 +676,7 @@ inline u64 RegisterSavingInstruction(Context *context, X64Instruction *inst, u64
 	return usedRegisters;
 }
 
-void X64AllocateRegisters(Context *context, Array<X64Procedure, PhaseAllocator> x64Procedures)
+void X64AllocateRegisters(Context *context)
 {
 	BucketArrayInit(&context->beBasicBlocks);
 	DynamicArrayInit(&context->beLeafBasicBlocks, 128);
@@ -709,7 +714,7 @@ void X64AllocateRegisters(Context *context, Array<X64Procedure, PhaseAllocator> 
 		}
 	}
 
-	GenerateBasicBlocks(context, x64Procedures);
+	GenerateBasicBlocks(context);
 
 	int availableRegisters = sizeof(x64ScratchRegisters) / sizeof(x64ScratchRegisters[0]);
 	int availableRegistersFP = 16;
@@ -719,7 +724,10 @@ void X64AllocateRegisters(Context *context, Array<X64Procedure, PhaseAllocator> 
 	{
 		BasicBlock *currentLeafBlock = context->beLeafBasicBlocks[leafIdx];
 
-		String procName = currentLeafBlock->procedure->name;
+		context->beCurrentProcedureIdx = currentLeafBlock->procedureIdx;
+
+		X64Procedure *proc = &context->beProcedures[currentLeafBlock->procedureIdx];
+		String procName = proc->name;
 
 #if USE_PROFILER_API
 		performanceAPI.BeginEvent("Liveness analisis", StringToCStr(procName, PhaseAllocator::Alloc), PERFORMANCEAPI_DEFAULT_COLOR);
@@ -740,14 +748,15 @@ void X64AllocateRegisters(Context *context, Array<X64Procedure, PhaseAllocator> 
 
 		if (context->config.logAllocationInfo)
 		{
+			s32 procedureIdx = currentLeafBlock->procedureIdx;
 			for (u32 nodeIdx = 0; nodeIdx < interferenceGraph.count; ++nodeIdx)
 			{
 				u32 currentNodeValueIdx = interferenceGraph.valueIndices[nodeIdx];
 				DynamicArray<u32, PhaseAllocator> currentNodeEdges = interferenceGraph.edges[nodeIdx];
-				Print("Value %S coexists with: ", X64IRValueToStr(context,
+				Print("Value %S coexists with: ", X64IRValueToStr(context, procedureIdx,
 							IRValueValue(context, currentNodeValueIdx)));
 				for (int i = 0; i < currentNodeEdges.size; ++i)
-					Print("%S, ", X64IRValueToStr(context, IRValueValue(context, currentNodeEdges[i])));
+					Print("%S, ", X64IRValueToStr(context, procedureIdx, IRValueValue(context, currentNodeEdges[i])));
 				Print("\n");
 			}
 		}
@@ -929,22 +938,22 @@ skipImmitate:
 				}
 
 				// Spill!
-				*DynamicArrayAdd(&currentLeafBlock->procedure->spilledValues) = valueIdx;
+				*DynamicArrayAdd(&proc->spilledValues) = valueIdx;
 			}
 		}
 	}
 
 	// Do register saving
-	for (int procedureIdx = 1; procedureIdx < x64Procedures.size; ++procedureIdx)
+	for (int procedureIdx = 1; procedureIdx < context->beProcedures.size; ++procedureIdx)
 	{
-		X64Procedure *proc = &x64Procedures[procedureIdx];
+		X64Procedure *proc = &context->beProcedures[procedureIdx];
 
 		u64 usedRegisters = 0;
 		X64InstructionStream stream = X64InstructionStreamBegin(proc);
 		X64Instruction *inst = X64InstructionStreamAdvance(&stream);
 		while (inst)
 		{
-			usedRegisters = RegisterSavingInstruction(context, inst, usedRegisters);
+			usedRegisters = RegisterSavingInstruction(context, procedureIdx, inst, usedRegisters);
 			inst = X64InstructionStreamAdvance(&stream);
 		}
 
@@ -963,7 +972,7 @@ skipImmitate:
 		{
 			if (usedCallerSaveRegisters & ((u64)1 << i))
 			{
-				u32 newValueIdx = NewValue(context, "_save_reg"_s, TYPETABLEIDX_S64,
+				u32 newValueIdx = NewValue(context, procedureIdx, "_save_reg"_s, TYPETABLEIDX_S64,
 						VALUEFLAGS_IS_USED | VALUEFLAGS_FORCE_MEMORY);
 				*DynamicArrayAdd(&proc->spilledValues) = newValueIdx;
 
@@ -985,5 +994,5 @@ skipImmitate:
 		proc->instructions[instructionCount - 1] = patchBottom;
 	}
 
-	ResolveStackOffsets(context, x64Procedures);
+	ResolveStackOffsets(context);
 }

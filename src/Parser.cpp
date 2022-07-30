@@ -1297,7 +1297,6 @@ ASTRoot *GenerateSyntaxTree(Context *context)
 	DynamicArrayInit(&root->block.statements, 4096);
 	BucketArrayInit(&context->treeNodes);
 	BucketArrayInit(&context->astTypeNodes);
-	BucketArrayInit(&context->values);
 	BucketArrayInit(&context->externalProcedures);
 	BucketArrayInit(&context->stringLiterals);
 
