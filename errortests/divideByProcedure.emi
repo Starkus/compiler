@@ -1,0 +1,10 @@
+Main :: () -> s64
+{
+	// Invalid kind of operand
+	bar / MyProcedure;
+	return 0;
+}
+
+MyProcedure :: (myParam : s32)
+{
+}

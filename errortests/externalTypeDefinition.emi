@@ -1,0 +1,6 @@
+Main :: () -> s64
+{
+	// Inline or external specifiers in invalid contexts
+	myStaticDef2 :: #external #type s32;
+	return 0;
+}

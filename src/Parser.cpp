@@ -14,12 +14,11 @@ void AssertToken(Context *context, Token *token, int type)
 	}
 }
 
-void UnexpectedTokenError(Context *context, Token *token)
-{
-	const String tokenType = TokenTypeToString(token->type);
-	const String errorStr = TPrintF("Unexpected token of type %S", tokenType);
-	LogError(context, token->loc, errorStr);
-}
+#define UNEXPECTED_TOKEN_ERROR(CONTEXT, TOKEN) do { \
+	String tokenString = TokenTypeToString(TOKEN->type); \
+	LogError(CONTEXT, TOKEN->loc, TPrintF("Unexpected token of type %S", \
+			tokenString)); \
+	} while (0)
 
 void Advance(Context *context)
 {
@@ -106,7 +105,7 @@ ASTType ParseType(Context *context)
 
 bool TryParseUnaryOperation(Context *context, s32 prevPrecedence, ASTUnaryOperation *result)
 {
-	if (!IsTokenOperator(context->token))
+	if (!IsOperatorToken(context->token))
 		return false;
 
 	Token *oldToken = context->token;
@@ -143,7 +142,7 @@ bool TryParseUnaryOperation(Context *context, s32 prevPrecedence, ASTUnaryOperat
 bool TryParseBinaryOperation(Context *context, ASTExpression leftHand, s32 prevPrecedence,
 		ASTBinaryOperation *result)
 {
-	if (!IsTokenOperator(context->token))
+	if (!IsOperatorToken(context->token))
 		return false;
 
 	Token *oldToken = context->token;
@@ -237,7 +236,8 @@ bool TryParseBinaryOperation(Context *context, ASTExpression leftHand, s32 prevP
 
 ASTIf ParseIf(Context *context)
 {
-	ASSERT(context->token->type == TOKEN_KEYWORD_IF);
+	ASSERT(context->token->type == TOKEN_KEYWORD_IF ||
+		   context->token->type == TOKEN_KEYWORD_IF_STATIC);
 	Advance(context);
 
 	ASTIf ifNode = {};
@@ -540,7 +540,7 @@ ASTVariableDeclaration ParseVariableDeclaration(Context *context)
 		Advance(context);
 	}
 	else
-		UnexpectedTokenError(context, context->token);
+		UNEXPECTED_TOKEN_ERROR(context, context->token);
 
 	if (context->token->type == TOKEN_KEYWORD_EXTERNAL)
 	{
@@ -689,8 +689,10 @@ ASTExpression ParseExpression(Context *context, s32 precedence)
 	result.typeTableIdx = TYPETABLEIDX_UNSET;
 	result.any.loc = context->token->loc;
 
+	switch (context->token->type)
+	{
 	// Parenthesis
-	if (context->token->type == '(')
+	case '(':
 	{
 		Advance(context);
 
@@ -698,8 +700,8 @@ ASTExpression ParseExpression(Context *context, s32 precedence)
 
 		AssertToken(context, context->token, ')');
 		Advance(context);
-	}
-	else if (context->token->type == '{')
+	} break;
+	case '{':
 	{
 		Advance(context);
 
@@ -711,14 +713,14 @@ ASTExpression ParseExpression(Context *context, s32 precedence)
 
 		AssertToken(context, context->token, '}');
 		Advance(context);
-	}
-	else if (context->token->type == '?')
+	} break;
+	case '?':
 	{
 		result.any.loc = context->token->loc;
 		result.nodeType = ASTNODETYPE_GARBAGE;
 		Advance(context);
-	}
-	else if (context->token->type == TOKEN_IDENTIFIER)
+	} break;
+	case TOKEN_IDENTIFIER:
 	{
 		result.any.loc = context->token->loc;
 		String identifier = TokenToString(context, *context->token);
@@ -757,8 +759,8 @@ ASTExpression ParseExpression(Context *context, s32 precedence)
 			result.nodeType = ASTNODETYPE_IDENTIFIER;
 			result.identifier.string = identifier;
 		}
-	}
-	else if (context->token->type == TOKEN_LITERAL_NUMBER)
+	} break;
+	case TOKEN_LITERAL_NUMBER:
 	{
 		result.any.loc = context->token->loc;
 		result.nodeType = ASTNODETYPE_LITERAL;
@@ -800,24 +802,24 @@ ASTExpression ParseExpression(Context *context, s32 precedence)
 			result.literal.floating = F64FromString(tokenStr);
 		}
 		Advance(context);
-	}
-	else if (context->token->type == TOKEN_LITERAL_CHARACTER)
+	} break;
+	case TOKEN_LITERAL_CHARACTER:
 	{
 		result.any.loc = context->token->loc;
 		result.nodeType = ASTNODETYPE_LITERAL;
 		result.literal.type = LITERALTYPE_CHARACTER;
 		result.literal.character = TokenToString(context, *context->token).data[0];
 		Advance(context);
-	}
-	else if (context->token->type == TOKEN_LITERAL_STRING)
+	} break;
+	case TOKEN_LITERAL_STRING:
 	{
 		result.any.loc = context->token->loc;
 		result.nodeType = ASTNODETYPE_LITERAL;
 		result.literal.type = LITERALTYPE_STRING;
 		result.literal.string = TokenToString(context, *context->token);
 		Advance(context);
-	}
-	else if (context->token->type == TOKEN_KEYWORD_TYPEOF)
+	} break;
+	case TOKEN_KEYWORD_TYPEOF:
 	{
 		Advance(context);
 
@@ -825,8 +827,8 @@ ASTExpression ParseExpression(Context *context, s32 precedence)
 		result.nodeType = ASTNODETYPE_TYPEOF;
 		result.typeOfNode.expression = NewTreeNode(context);
 		*result.typeOfNode.expression = ParseExpression(context, -1);
-	}
-	else if (context->token->type == TOKEN_KEYWORD_SIZEOF)
+	} break;
+	case TOKEN_KEYWORD_SIZEOF:
 	{
 		Advance(context);
 
@@ -834,8 +836,8 @@ ASTExpression ParseExpression(Context *context, s32 precedence)
 		result.nodeType = ASTNODETYPE_SIZEOF;
 		result.sizeOfNode.expression = NewTreeNode(context);
 		*result.sizeOfNode.expression = ParseExpression(context, -1);
-	}
-	else if (context->token->type == TOKEN_KEYWORD_CAST)
+	} break;
+	case TOKEN_KEYWORD_CAST:
 	{
 		Advance(context);
 		result.any.loc = context->token->loc;
@@ -852,8 +854,8 @@ ASTExpression ParseExpression(Context *context, s32 precedence)
 		result.castNode.expression = NewTreeNode(context);
 		int castPrecedence = GetOperatorPrecedence(TOKEN_KEYWORD_CAST);
 		*result.castNode.expression = ParseExpression(context, castPrecedence);
-	}
-	else if (context->token->type == TOKEN_KEYWORD_INTRINSIC)
+	} break;
+	case TOKEN_KEYWORD_INTRINSIC:
 	{
 		Advance(context);
 		result.any.loc = context->token->loc;
@@ -892,37 +894,48 @@ ASTExpression ParseExpression(Context *context, s32 precedence)
 
 		AssertToken(context, context->token, ')');
 		Advance(context);
-	}
-	else if (context->token->type == TOKEN_KEYWORD_IF)
+	} break;
+	case TOKEN_KEYWORD_IF:
 	{
 		LogError(context, context->token->loc, "'if' only valid at statement level!"_s);
-	}
-	else if (context->token->type == TOKEN_KEYWORD_WHILE)
+	} break;
+	case TOKEN_KEYWORD_WHILE:
 	{
 		LogError(context, context->token->loc, "'while' only valid at statement level!"_s);
-	}
-	else if (context->token->type == TOKEN_KEYWORD_FOR)
+	} break;
+	case TOKEN_KEYWORD_FOR:
 	{
 		LogError(context, context->token->loc, "'for' only valid at statement level!"_s);
-	}
-	else if (context->token->type == TOKEN_KEYWORD_DEFER)
+	} break;
+	case TOKEN_KEYWORD_DEFER:
 	{
 		LogError(context, context->token->loc, "'defer' only valid at statement level!"_s);
-	}
-	else if (context->token->type == TOKEN_KEYWORD_RETURN)
+	} break;
+	case TOKEN_KEYWORD_RETURN:
 	{
 		LogError(context, context->token->loc, "'return' only valid at statement level!"_s);
-	}
-	else if (IsTokenOperator(context->token))
+	} break;
+	case TOKEN_KEYWORD_STRUCT:
 	{
-		// This is just to avoid falling into the else below. Operators will be handled by the
-		// binary expression loop at the bottom.
-	}
-	else
+		LogError(context, context->token->loc, "'struct' not valid on this context!"_s);
+	} break;
+	case TOKEN_KEYWORD_UNION:
 	{
-		UnexpectedTokenError(context, context->token);
+		LogError(context, context->token->loc, "'union' not valid on this context!"_s);
+	} break;
+	case TOKEN_KEYWORD_TYPE:
+	{
+		LogError(context, context->token->loc, "Not a valid type context!"_s);
+	} break;
+	default:
+	{
+		if (!IsOperatorToken(context->token))
+			UNEXPECTED_TOKEN_ERROR(context, context->token);
+		// Operators are handled in the loop below.
+	}
 	}
 
+	// Binary/unary operators loop
 	while (true)
 	{
 		if (result.nodeType == ASTNODETYPE_INVALID)
@@ -983,6 +996,7 @@ ASTStaticDefinition ParseStaticDefinition(Context *context)
 			break;
 	}
 
+	// Procedures!
 	if (context->token->type == '(' ||
 		context->token->type == TOKEN_KEYWORD_CALLING_CONVENTION)
 	{
@@ -1007,43 +1021,51 @@ ASTStaticDefinition ParseStaticDefinition(Context *context)
 
 		expression.procedureDeclaration = procDecl;
 	}
-	else switch (context->token->type)
+	else
 	{
-	case TOKEN_KEYWORD_STRUCT:
-	case TOKEN_KEYWORD_UNION:
-	case TOKEN_KEYWORD_ENUM:
-	{
-		expression.nodeType = ASTNODETYPE_TYPE;
-		expression.astType = ParseType(context);
+		if (isInline)
+			LogError(context, context->token->loc, "'inline' specified for a non-procedure!"_s);
+		if (isExternal)
+			LogError(context, context->token->loc, "'external' specified for a non-procedure!"_s);
 
-		AssertToken(context, context->token, ';');
-		Advance(context);
-	} break;
-	case TOKEN_KEYWORD_TYPE:
-	{
-		Advance(context);
-		expression.nodeType = ASTNODETYPE_TYPE;
-		expression.astType = ParseType(context);
+		switch (context->token->type)
+		{
+		case TOKEN_KEYWORD_STRUCT:
+		case TOKEN_KEYWORD_UNION:
+		case TOKEN_KEYWORD_ENUM:
+		{
+			expression.nodeType = ASTNODETYPE_TYPE;
+			expression.astType = ParseType(context);
 
-		AssertToken(context, context->token, ';');
-		Advance(context);
-	} break;
-	case TOKEN_KEYWORD_ALIAS:
-	{
-		Advance(context);
-		expression.nodeType = ASTNODETYPE_ALIAS;
-		expression.astType = ParseType(context);
+			AssertToken(context, context->token, ';');
+			Advance(context);
+		} break;
+		case TOKEN_KEYWORD_TYPE:
+		{
+			Advance(context);
+			expression.nodeType = ASTNODETYPE_TYPE;
+			expression.astType = ParseType(context);
 
-		AssertToken(context, context->token, ';');
-		Advance(context);
-	} break;
-	default:
-	{
-		expression = ParseExpression(context, -1);
+			AssertToken(context, context->token, ';');
+			Advance(context);
+		} break;
+		case TOKEN_KEYWORD_ALIAS:
+		{
+			Advance(context);
+			expression.nodeType = ASTNODETYPE_ALIAS;
+			expression.astType = ParseType(context);
 
-		AssertToken(context, context->token, ';');
-		Advance(context);
-	}
+			AssertToken(context, context->token, ';');
+			Advance(context);
+		} break;
+		default:
+		{
+			expression = ParseExpression(context, -1);
+
+			AssertToken(context, context->token, ';');
+			Advance(context);
+		}
+		}
 	}
 
 	result.expression = NewTreeNode(context);
@@ -1075,6 +1097,11 @@ ASTExpression ParseStatement(Context *context)
 	case TOKEN_KEYWORD_IF:
 	{
 		result.nodeType = ASTNODETYPE_IF;
+		result.ifNode = ParseIf(context);
+	} break;
+	case TOKEN_KEYWORD_IF_STATIC:
+	{
+		result.nodeType = ASTNODETYPE_IF_STATIC;
 		result.ifNode = ParseIf(context);
 	} break;
 	case TOKEN_KEYWORD_ELSE:
@@ -1230,13 +1257,18 @@ ASTExpression ParseStaticStatement(Context *context)
 		}
 		Advance(context);
 	} break;
+	case TOKEN_KEYWORD_IF_STATIC:
+	{
+		result.nodeType = ASTNODETYPE_IF_STATIC;
+		result.ifNode = ParseIf(context);
+	} break;
 	case TOKEN_KEYWORD_OPERATOR:
 	{
 		Advance(context);
 
 		enum TokenType op = context->token->type;
 		if (op < TOKEN_OP_Begin || op > TOKEN_OP_End)
-			UnexpectedTokenError(context, context->token);
+			UNEXPECTED_TOKEN_ERROR(context, context->token);
 		Advance(context);
 
 		AssertToken(context, context->token, TOKEN_OP_STATIC_DEF);

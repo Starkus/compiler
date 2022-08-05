@@ -1,0 +1,6 @@
+Main :: () -> s64
+{
+	// Inline or external specifiers in invalid contexts
+	myStaticDef1 :: #inline 3;
+	return 0;
+}

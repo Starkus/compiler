@@ -1,0 +1,7 @@
+Main :: () -> s64
+{
+	// Remove from statically sized array
+	array : [4] s32;
+	for array if i % 2 remove;
+	return 0;
+}

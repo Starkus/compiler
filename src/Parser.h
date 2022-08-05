@@ -42,7 +42,8 @@ enum TokenType : u8
 	TOKEN_KEYWORD_CAST		= 27,
 	TOKEN_KEYWORD_INCLUDE	= 28,
 	TOKEN_KEYWORD_LINKLIB	= 29,
-	TOKEN_KEYWORD_End		= 30,
+	TOKEN_KEYWORD_IF_STATIC	= 30,
+	TOKEN_KEYWORD_End		= 31,
 
 	TOKEN_ASCII_Begin		= '!', // 33
 	TOKEN_ASCII_End			= '~', // 126
@@ -119,7 +120,7 @@ struct SourceFile
 {
 	String name;
 	SourceLocation includeLoc;
-	char *buffer;
+	const char *buffer;
 	u64 size;
 };
 

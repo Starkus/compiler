@@ -1,0 +1,6 @@
+Main :: () -> s64
+{
+	// Grab return value from void-returning procedure
+	foo := Print("Something");
+	return 0;
+}

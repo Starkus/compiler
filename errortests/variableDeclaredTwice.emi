@@ -1,0 +1,7 @@
+Main :: () -> s64
+{
+	// Variable declared twice
+	bar : s64;  // First!
+	bar := 4.5; // Second!
+	return 0;
+}

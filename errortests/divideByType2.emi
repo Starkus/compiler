@@ -1,0 +1,7 @@
+Main :: () -> s64
+{
+	// Invalid kind of operand
+	myType :: #alias s64;
+	bar / myType;
+	return 0;
+}

@@ -1,0 +1,6 @@
+Main :: () -> s64
+{
+	// Random expression inside for
+	for 2 + 2 {}
+	return 0;
+}

@@ -8,6 +8,12 @@ Compiler_Subsystems :: enum
 	COMPILER_SUBSYSTEM_WINDOWS = 1
 };
 
+Compiler_Platforms :: enum
+{
+	COMPILER_PLATFORM_WINDOWS = 0,
+	COMPILER_PLATFORM_LINUX   = 1
+};
+
 // @Todo: replace?
 String :: struct
 {

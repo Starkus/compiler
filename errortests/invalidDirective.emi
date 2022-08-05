@@ -1,0 +1,6 @@
+#hello
+
+Main :: () -> s64
+{
+	return 0;
+}

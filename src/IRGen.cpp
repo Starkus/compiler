@@ -454,11 +454,11 @@ void IRDoAssignment(Context *context, IRValue dstValue, IRValue srcValue)
 		IRValue dataValue = srcValue;
 		TypeInfo dataTypeInfo = context->typeTable[srcValue.typeTableIdx];
 
+		// If data isn't in memory, copy to a variable
 		if (dataTypeInfo.typeCategory != TYPECATEGORY_STRUCT &&
 			dataTypeInfo.typeCategory != TYPECATEGORY_UNION &&
 			dataTypeInfo.typeCategory != TYPECATEGORY_ARRAY)
 		{
-			// If data isn't in memory, copy to a variable
 			if (IRShouldPassByCopy(context, dataValue.typeTableIdx))
 			{
 				static u64 tempVarForAnyUniqueID = 0;
@@ -1058,7 +1058,7 @@ IRValue IRDoInlineProcedureCall(Context *context, ASTProcedureCall astProcCall)
 		{
 			LogErrorNoCrash(context, astProcCall.loc, "Cyclic inlined procedure call"_s);
 			LogNote(context, context->irProcedureStack[i].definitionLoc, "First called here"_s);
-			CRASH;
+			ERROR;
 		}
 	}
 
@@ -1232,19 +1232,20 @@ skipGeneratingVarargsArray:
 IRValue IRValueFromConstant(Context *context, Constant constant)
 {
 	IRValue result = {};
-	result.typeTableIdx = constant.typeTableIdx;
 	switch (constant.type)
 	{
 	case CONSTANTTYPE_INTEGER:
-		result = IRValueImmediate(constant.valueAsInt);
+		result = IRValueImmediate(constant.valueAsInt, constant.typeTableIdx);
 		break;
 	case CONSTANTTYPE_FLOATING:
 		result.valueType = IRVALUETYPE_IMMEDIATE_FLOAT;
 		result.immediateFloat = constant.valueAsFloat;
+		result.typeTableIdx = constant.typeTableIdx;
 		break;
 	case CONSTANTTYPE_GROUP:
 	{
 		result.valueType = IRVALUETYPE_IMMEDIATE_GROUP;
+		result.typeTableIdx = constant.typeTableIdx;
 		u64 membersCount = constant.valueAsGroup.size;
 		ArrayInit(&result.immediateStructMembers, membersCount);
 		result.immediateStructMembers.size = membersCount;
@@ -1663,7 +1664,7 @@ IRValue IRGenFromExpression(Context *context, ASTExpression *expression)
 					result = IRValueImmediateFloat(context, f);
 				}
 				else
-					result = IRValueImmediate(constant.valueAsInt);
+					result = IRValueImmediate(constant.valueAsInt, constant.typeTableIdx);
 			} break;
 			case STATICDEFINITIONTYPE_PROCEDURE:
 			{
@@ -2039,6 +2040,13 @@ skipGeneratingVarargsArray:
 			IRInsertLabelInstruction(context, afterElseLabel);
 		}
 
+	} break;
+	case ASTNODETYPE_IF_STATIC:
+	{
+		if (expression->ifStaticNode.evaluatesToTrue)
+			IRGenFromExpression(context, expression->ifStaticNode.body);
+		else if (expression->ifStaticNode.elseBody)
+			IRGenFromExpression(context, expression->ifStaticNode.elseBody);
 	} break;
 	case ASTNODETYPE_WHILE:
 	{

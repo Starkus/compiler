@@ -140,7 +140,8 @@ PrintF :: (format : String, ..args)
 				member : Any = { it.typeInfo, memberPtr };
 				if it.typeInfo.typeKind == TypeKind_Integer ||
 				   it.typeInfo.typeKind == TypeKind_Floating ||
-				   it.typeInfo.typeKind == TypeKind_Enum
+				   it.typeInfo.typeKind == TypeKind_Enum ||
+				   it.typeInfo.typeKind == TypeKind_Pointer
 					member.asU64 = @cast(^u64)memberPtr;
 
 				buffer : [128] u8 = ?;
@@ -185,18 +186,35 @@ PrintF :: (format : String, ..args)
 			element : Any = ?;
 			element.typeInfo = arrayInfo.elementTypeInfo;
 			elementSize := arrayInfo.elementTypeInfo.size;
-			buffer : ^u8 = cast(^u8) arg.data;
+			buffer : ^u8 = cast(^u8)arg.data;
 			count : u64 = arrayInfo.count;
 			if count == 0
 			{
-				count = @ cast(^u64) arg.data;
-				buffer = @ (cast(^^u8) arg.data + 8);
+				count = @ cast(^u64) buffer;
+				buffer = @ (cast(^^u8) buffer + 8);
 			}
+			Print("[");
+			PrintArgument(count);
+			Print("] ");
 			for 0..count
 			{
 				if i > 0 Print(", ");
+
 				element.data = buffer + i * elementSize;
+				if (element.typeInfo.typeKind == TypeKind_Integer ||
+					element.typeInfo.typeKind == TypeKind_Floating ||
+					element.typeInfo.typeKind == TypeKind_Enum ||
+					element.typeInfo.typeKind == TypeKind_Pointer)
+				{
+					element.data = @cast(^u64)element.data;
+				}
+
 				PrintArgument(element);
+				if i > 32
+				{
+					Print("...");
+					break;
+				}
 			}
 			Print(" }");
 		}

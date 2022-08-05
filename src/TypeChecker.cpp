@@ -169,6 +169,7 @@ struct TCScopeName
 	SourceLocation loc;
 	union
 	{
+		u32 primitiveTypeTableIdx;
 		struct
 		{
 			TCValue tcValue;
@@ -417,7 +418,7 @@ void PopTCScope(Context *context)
 	--context->tcJobs[context->currentTCJob].scopeStack.size;
 }
 
-TCScopeName *FindScopeName(Context *context, String name)
+TCScopeName *TCFindScopeName(Context *context, String name)
 {
 	// Current stack
 	DynamicArray<TCScope, PhaseAllocator> scopeStack =
@@ -446,67 +447,78 @@ FindTypeResult FindTypeInStackByName(Context *context, SourceLocation loc, Strin
 {
 	u32 typeTableIdx = TYPETABLEIDX_UNSET;
 
-	if (StringEquals(name, "s8"_s))
-		typeTableIdx = TYPETABLEIDX_S8;
-	else if (StringEquals(name, "s16"_s))
-		typeTableIdx = TYPETABLEIDX_S16;
-	else if (StringEquals(name, "s32"_s))
-		typeTableIdx = TYPETABLEIDX_S32;
-	else if (StringEquals(name, "s64"_s))
-		typeTableIdx = TYPETABLEIDX_S64;
-	else if (StringEquals(name, "u8"_s))
-		typeTableIdx = TYPETABLEIDX_U8;
-	else if (StringEquals(name, "u16"_s))
-		typeTableIdx = TYPETABLEIDX_U16;
-	else if (StringEquals(name, "u32"_s))
-		typeTableIdx = TYPETABLEIDX_U32;
-	else if (StringEquals(name, "u64"_s))
-		typeTableIdx = TYPETABLEIDX_U64;
-	else if (StringEquals(name, "f32"_s))
-		typeTableIdx = TYPETABLEIDX_F32;
-	else if (StringEquals(name, "f64"_s))
-		typeTableIdx = TYPETABLEIDX_F64;
-	else if (StringEquals(name, "bool"_s))
-		typeTableIdx = TYPETABLEIDX_BOOL;
-	else if (StringEquals(name, "void"_s))
-		typeTableIdx = TYPETABLEIDX_VOID;
-	else
+	TCScopeName *scopeName = TCFindScopeName(context, name);
+
+	if (scopeName == nullptr)
 	{
-		TCScopeName *scopeName = FindScopeName(context, name);
-
-		if (scopeName == nullptr)
-		{
 #if PRINT_DEBUG_NOTES_UPON_YIELDING
-			LogNote(context, loc, TPrintF("Type \"%S\" not in scope!", name));
+		LogNote(context, loc, TPrintF("Type \"%S\" not in scope!", name));
 #endif
-			TCYieldInfo yieldInfo = {};
-			yieldInfo.cause = TCYIELDCAUSE_MISSING_NAME;
-			yieldInfo.name = name;
-			yieldInfo.loc = loc;
-			return { false, yieldInfo };
-		}
-		else if (scopeName->type != NAMETYPE_STATIC_DEFINITION)
-			LogError(context, loc, TPrintF("\"%S\" is not a type!",
-						name));
-		else if (scopeName->staticDefinition->definitionType != STATICDEFINITIONTYPE_TYPE)
-			LogError(context, loc, TPrintF("\"%S\" is not a type!", name));
+		TCYieldInfo yieldInfo = {};
+		yieldInfo.cause = TCYIELDCAUSE_MISSING_NAME;
+		yieldInfo.name = name;
+		yieldInfo.loc = loc;
+		return { false, yieldInfo };
+	}
+	else if (scopeName->type == NAMETYPE_PRIMITIVE)
+		return { true, {}, scopeName->primitiveTypeTableIdx };
+	else if (scopeName->type != NAMETYPE_STATIC_DEFINITION)
+		LogError(context, loc, TPrintF("\"%S\" is not a type!", name));
+	else if (scopeName->staticDefinition->definitionType != STATICDEFINITIONTYPE_TYPE)
+		LogError(context, loc, TPrintF("\"%S\" is not a type!", name));
 
-		if (scopeName->staticDefinition->typeTableIdx == TYPETABLEIDX_UNSET)
-		{
+	if (scopeName->staticDefinition->typeTableIdx == TYPETABLEIDX_UNSET)
+	{
 #if PRINT_DEBUG_NOTES_UPON_YIELDING
-			LogNote(context, loc, TPrintF("Type \"%S\" not yet type checked!", name));
+		LogNote(context, loc, TPrintF("Type \"%S\" not yet type checked!", name));
 #endif
-			TCYieldInfo yieldInfo = {};
-			yieldInfo.cause = TCYIELDCAUSE_NEED_TYPE_CHECKING;
-			yieldInfo.name = name;
-			yieldInfo.loc = loc;
-			return { false, yieldInfo };
-		}
-
-		typeTableIdx = scopeName->staticDefinition->typeTableIdx;
+		TCYieldInfo yieldInfo = {};
+		yieldInfo.cause = TCYIELDCAUSE_NEED_TYPE_CHECKING;
+		yieldInfo.name = name;
+		yieldInfo.loc = loc;
+		return { false, yieldInfo };
 	}
 
+	typeTableIdx = scopeName->staticDefinition->typeTableIdx;
+
 	return { true, {}, typeTableIdx };
+}
+
+inline void TCCheckIfNameAlreadyExists(Context *context, String name, SourceLocation loc)
+{
+	TCScopeName *scopeName = nullptr;
+	TCScope *stackTop = GetTopMostScope(context);
+	for (int i = 0; i < stackTop->names.size; ++i)
+	{
+		TCScopeName *currentName = &stackTop->names[i];
+		if (StringEquals(name, currentName->name))
+		{
+			scopeName = currentName;
+			break;
+		}
+	}
+	if (scopeName != nullptr)
+	{
+		if (scopeName->type == NAMETYPE_PRIMITIVE)
+			LogError(context, loc, TPrintF("Can not use name \"%S\", it is a language primitive",
+					name));
+		else
+		{
+			LogErrorNoCrash(context, loc, TPrintF("Duplicate static definition \"%S\"", name));
+			LogNote(context, scopeName->loc, "First defined here"_s);
+			ERROR;
+		}
+	}
+
+	// Primitives
+	// @Speed: maybe keep these in a separate array?
+	for (int i = 0; i < context->tcGlobalScope->names.size; ++i)
+	{
+		TCScopeName *currentName = &context->tcGlobalScope->names[i];
+		if (currentName->type == NAMETYPE_PRIMITIVE && StringEquals(name, currentName->name))
+			LogError(context, loc, TPrintF("Can not use name \"%S\", it is a language primitive",
+					name));
+	}
 }
 
 enum TypeCheckErrorCode
@@ -1425,6 +1437,46 @@ Constant TryEvaluateConstant(Context *context, ASTExpression *expression)
 			else
 				result.valueAsInt = leftValue.valueAsInt || rightValue.valueAsInt;
 		} break;
+		case TOKEN_OP_EQUALS:
+		{
+			result.type = CONSTANTTYPE_INTEGER;
+			if (isFloat)
+				result.valueAsInt = leftValue.valueAsFloat == rightValue.valueAsFloat;
+			else
+				result.valueAsInt = leftValue.valueAsInt == rightValue.valueAsInt;
+		} break;
+		case TOKEN_OP_LESS_THAN:
+		{
+			result.type = CONSTANTTYPE_INTEGER;
+			if (isFloat)
+				result.valueAsInt = leftValue.valueAsFloat < rightValue.valueAsFloat;
+			else
+				result.valueAsInt = leftValue.valueAsInt < rightValue.valueAsInt;
+		} break;
+		case TOKEN_OP_LESS_THAN_OR_EQUAL:
+		{
+			result.type = CONSTANTTYPE_INTEGER;
+			if (isFloat)
+				result.valueAsInt = leftValue.valueAsFloat <= rightValue.valueAsFloat;
+			else
+				result.valueAsInt = leftValue.valueAsInt <= rightValue.valueAsInt;
+		} break;
+		case TOKEN_OP_GREATER_THAN:
+		{
+			result.type = CONSTANTTYPE_INTEGER;
+			if (isFloat)
+				result.valueAsInt = leftValue.valueAsFloat > rightValue.valueAsFloat;
+			else
+				result.valueAsInt = leftValue.valueAsInt > rightValue.valueAsInt;
+		} break;
+		case TOKEN_OP_GREATER_THAN_OR_EQUAL:
+		{
+			result.type = CONSTANTTYPE_INTEGER;
+			if (isFloat)
+				result.valueAsInt = leftValue.valueAsFloat >= rightValue.valueAsFloat;
+			else
+				result.valueAsInt = leftValue.valueAsInt >= rightValue.valueAsInt;
+		} break;
 		case TOKEN_OP_BITWISE_AND:
 		{
 			ASSERT(!isFloat);
@@ -1461,8 +1513,9 @@ Constant TryEvaluateConstant(Context *context, ASTExpression *expression)
 	default:
 		goto error;
 	}
-error:
 	return result;
+error:
+	return { CONSTANTTYPE_INVALID };
 }
 
 TypeCheckExpressionResult TryTypeCheckExpression(Context *context, ASTExpression *expression);
@@ -1576,6 +1629,7 @@ TypeCheckTypeResult TypeCheckType(Context *context, String name, SourceLocation 
 			}
 			staticDefinition.constant.type = CONSTANTTYPE_INTEGER;
 			staticDefinition.constant.valueAsInt = currentValue;
+			staticDefinition.constant.typeTableIdx = typeTableIdx;
 
 			StaticDefinition *newStaticDef = BucketArrayAdd(&context->staticDefinitions);
 			*newStaticDef = staticDefinition;
@@ -1687,14 +1741,7 @@ void AddStructMembersToScope(Context *context, SourceLocation loc, ASTExpression
 
 		if (member->name.size && !member->isUsing)
 		{
-			// Check if name already exists
-			for (s64 i = 0; i < (s64)stackTop->names.size; ++i)
-			{
-				TCScopeName currentName = stackTop->names[i];
-				if (StringEquals(member->name, currentName.name))
-					LogError(context, loc, TPrintF("Failed to pull \"%S\" into scope because "
-								"the name is already used", member->name));
-			}
+			TCCheckIfNameAlreadyExists(context, member->name, loc);
 
 			TCScopeName newScopeName;
 			newScopeName.type = NAMETYPE_ASTEXPRESSION;
@@ -1714,20 +1761,7 @@ void AddStructMembersToScope(Context *context, SourceLocation loc, ASTExpression
 TypeCheckVariableResult TypeCheckVariableDeclaration(Context *context, ASTVariableDeclaration *varDecl)
 {
 	if (varDecl->name.size)
-	{
-		// Check if name already exists
-		TCScope *stackTop = GetTopMostScope(context);
-		for (int i = 0; i < stackTop->names.size; ++i)
-		{
-			TCScopeName *currentName = &stackTop->names[i];
-			if (StringEquals(varDecl->name, currentName->name))
-			{
-				LogErrorNoCrash(context, varDecl->loc, TPrintF("Duplicate name \"%S\" in scope", varDecl->name));
-				LogNote(context, currentName->loc, "First defined here"_s);
-				CRASH;
-			}
-		}
-	}
+		TCCheckIfNameAlreadyExists(context, varDecl->name, varDecl->loc);
 
 	if (varDecl->astType)
 	{
@@ -1775,20 +1809,7 @@ TypeCheckVariableResult TypeCheckVariableDeclaration(Context *context, ASTVariab
 TypeCheckVariableResult TypeCheckProcedureParameter(Context *context, ASTProcedureParameter *astParam)
 {
 	if (astParam->name.size)
-	{
-		// Check if name already exists
-		TCScope *stackTop = GetTopMostScope(context);
-		for (int i = 0; i < stackTop->names.size; ++i)
-		{
-			TCScopeName *currentName = &stackTop->names[i];
-			if (StringEquals(astParam->name, currentName->name))
-			{
-				LogErrorNoCrash(context, astParam->loc, TPrintF("Duplicate name \"%S\" in scope", astParam->name));
-				LogNote(context, currentName->loc, "First defined here"_s);
-				CRASH;
-			}
-		}
-	}
+		TCCheckIfNameAlreadyExists(context, astParam->name, astParam->loc);
 
 	if (astParam->astType)
 	{
@@ -2041,7 +2062,7 @@ ASTExpression InlineProcedureCopyTreeBranch(Context *context, const ASTExpressio
 	{
 		ASTIdentifier astIdentifier = expression->identifier;
 
-		TCScopeName *scopeName = FindScopeName(context, astIdentifier.string);
+		TCScopeName *scopeName = TCFindScopeName(context, astIdentifier.string);
 		ASSERT(scopeName);
 
 		astIdentifier.type = scopeName->type;
@@ -2141,14 +2162,14 @@ ASTExpression InlineProcedureCopyTreeBranch(Context *context, const ASTExpressio
 
 		if (astProcCall.callType == CALLTYPE_VALUE)
 		{
-			TCScopeName *scopeName = FindScopeName(context, astProcCall.name);
+			TCScopeName *scopeName = TCFindScopeName(context, astProcCall.name);
 			ASSERT(scopeName);
 			ASSERT(scopeName->type == NAMETYPE_VARIABLE);
 			astProcCall.tcValue = scopeName->variableInfo.tcValue;
 		}
 		else if (astProcCall.callType == CALLTYPE_ASTEXPRESSION)
 		{
-			TCScopeName *scopeName = FindScopeName(context, astProcCall.name);
+			TCScopeName *scopeName = TCFindScopeName(context, astProcCall.name);
 			ASSERT(scopeName);
 			ASSERT(scopeName->type == NAMETYPE_ASTEXPRESSION);
 			astProcCall.expression = scopeName->expression;
@@ -2399,6 +2420,30 @@ s32 NewProcedure(Context *context, Procedure p, bool isExternal)
 	return procedureIdx;
 }
 
+bool IsExpressionAType(Context *context, ASTExpression *expression)
+{
+	switch (expression->nodeType)
+	{
+	case ASTNODETYPE_TYPE:
+	case ASTNODETYPE_STRUCT_DECLARATION:
+		return true;
+	case ASTNODETYPE_IDENTIFIER:
+		switch (expression->identifier.type)
+		{
+		case NAMETYPE_STATIC_DEFINITION:
+			if (expression->identifier.staticDefinition->definitionType == STATICDEFINITIONTYPE_TYPE)
+				return true;
+			return false;
+		case NAMETYPE_PRIMITIVE:
+			return true;
+		default:
+			return false;
+		}
+	default:
+		return false;
+	}
+}
+
 String OperatorToString(s32 op);
 TypeCheckExpressionResult TryTypeCheckExpression(Context *context, ASTExpression *expression)
 {
@@ -2495,15 +2540,7 @@ TypeCheckExpressionResult TryTypeCheckExpression(Context *context, ASTExpression
 		{
 			StaticDefinition *newStaticDef;
 
-			// Check if already exists
-			TCScopeName *scopeName = FindScopeName(context, astStaticDef->name);
-			if (scopeName != nullptr)
-			{
-				LogErrorNoCrash(context, expression->any.loc,
-						TPrintF("Duplicate static definition \"%S\"", astStaticDef->name));
-				LogNote(context, scopeName->loc, "First defined here"_s);
-				CRASH;
-			}
+			TCCheckIfNameAlreadyExists(context, astStaticDef->name, astStaticDef->loc);
 
 			newStaticDef = BucketArrayAdd(&context->staticDefinitions);
 			*newStaticDef = {};
@@ -2669,7 +2706,8 @@ TypeCheckExpressionResult TryTypeCheckExpression(Context *context, ASTExpression
 				staticDef->definitionType = astStaticDef->expression->identifier.staticDefinition->definitionType;
 				ASSERT(astStaticDef->expression->typeTableIdx != TYPETABLEIDX_UNSET);
 				*staticDef = *astStaticDef->expression->identifier.staticDefinition;
-				expression->typeTableIdx = astStaticDef->expression->typeTableIdx;
+				staticDef->typeTableIdx = result.typeTableIdx;
+				expression->typeTableIdx = result.typeTableIdx;
 			}
 			else
 			{
@@ -2695,6 +2733,10 @@ TypeCheckExpressionResult TryTypeCheckExpression(Context *context, ASTExpression
 			TypeCheckExpressionResult result = TryTypeCheckExpression(context, returnExp);
 			if (!result.success)
 				return { false, result.yieldInfo };
+
+			if (IsExpressionAType(context, returnExp))
+				LogError(context, returnExp->any.loc, "Trying to return a type"_s);
+
 			TypeCheckResult typeCheckResult = CheckTypesMatchAndSpecialize(context,
 					context->tcCurrentReturnType, returnExp);
 			returnExp->typeTableIdx = typeCheckResult.rightTableIdx;
@@ -2719,7 +2761,7 @@ TypeCheckExpressionResult TryTypeCheckExpression(Context *context, ASTExpression
 	{
 		String string = expression->identifier.string;
 
-		TCScopeName *scopeName = FindScopeName(context, string);
+		TCScopeName *scopeName = TCFindScopeName(context, string);
 		if (scopeName == nullptr)
 		{
 #if PRINT_DEBUG_NOTES_UPON_YIELDING
@@ -2782,6 +2824,11 @@ TypeCheckExpressionResult TryTypeCheckExpression(Context *context, ASTExpression
 			}
 			expression->typeTableIdx = staticDefTypeIdx;
 		} break;
+		case NAMETYPE_PRIMITIVE:
+		{
+			LogError(context, expression->any.loc, TPrintF("Primitive type \"%S\" used as a "
+						"variable", string));
+		} break;
 		default:
 			ASSERT(false);
 		}
@@ -2822,7 +2869,7 @@ TypeCheckExpressionResult TryTypeCheckExpression(Context *context, ASTExpression
 			ASTExpression *astExpression = nullptr;
 			u32 procedureTypeIdx = TYPETABLEIDX_UNSET;
 
-			TCScopeName *scopeName = FindScopeName(context, procName);
+			TCScopeName *scopeName = TCFindScopeName(context, procName);
 			if (scopeName == nullptr)
 			{
 #if PRINT_DEBUG_NOTES_UPON_YIELDING
@@ -3519,6 +3566,47 @@ TypeCheckExpressionResult TryTypeCheckExpression(Context *context, ASTExpression
 				return { false, result.yieldInfo };
 		}
 	} break;
+	case ASTNODETYPE_IF_STATIC:
+	{
+		if (expression->ifStaticNode.condition->typeTableIdx == TYPETABLEIDX_UNSET)
+		{
+			TypeCheckExpressionResult result =
+				TryTypeCheckExpression(context, expression->ifStaticNode.condition);
+			if (!result.success)
+				return { false, result.yieldInfo };
+		}
+
+		u32 conditionType = expression->ifStaticNode.condition->typeTableIdx;
+		TypeCheckErrorCode typeCheckResult = CheckTypesMatch(context, TYPETABLEIDX_BOOL,
+				conditionType);
+		if (typeCheckResult != TYPECHECK_COOL)
+			LogError(context, expression->any.loc, "If condition doesn't evaluate to a boolean"_s);
+
+		Constant conditionResult = TryEvaluateConstant(context, expression->ifStaticNode.condition);
+		if (conditionResult.type == CONSTANTTYPE_INVALID)
+			LogError(context, expression->ifStaticNode.condition->any.loc,
+					"Failed to evaluate static if condition"_s);
+
+		bool evaluatesToTrue = conditionResult.valueAsInt != 0;
+		expression->ifStaticNode.evaluatesToTrue = evaluatesToTrue;
+
+		if (evaluatesToTrue && expression->ifStaticNode.body->typeTableIdx == TYPETABLEIDX_UNSET)
+		{
+			TypeCheckExpressionResult result =
+				TryTypeCheckExpression(context, expression->ifStaticNode.body);
+			if (!result.success)
+				return { false, result.yieldInfo };
+		}
+
+		if (!evaluatesToTrue && expression->ifStaticNode.elseBody &&
+			expression->ifStaticNode.elseBody->typeTableIdx == TYPETABLEIDX_UNSET)
+		{
+			TypeCheckExpressionResult result =
+				TryTypeCheckExpression(context, expression->ifStaticNode.elseBody);
+			if (!result.success)
+				return { false, result.yieldInfo };
+		}
+	} break;
 	case ASTNODETYPE_WHILE:
 	{
 		if (expression->whileNode.condition->typeTableIdx == TYPETABLEIDX_UNSET)
@@ -3896,6 +3984,7 @@ void GenerateTypeCheckJobs(Context *context, ASTExpression *expression)
 			DynamicArrayInit(&job.scopeStack, 16);
 		*DynamicArrayAdd(&context->tcJobs) = job;
 	} break;
+	case ASTNODETYPE_IF_STATIC:
 	case ASTNODETYPE_OPERATOR_OVERLOAD:
 	{
 		TCJob job = { expression };
@@ -4037,6 +4126,58 @@ void TypeCheckMain(Context *context)
 	for (int i = 0; i < TYPETABLEIDX_COUNT; ++i)
 		*DynamicArrayAdd(&context->tcGlobalScope->typeIndices) = i;
 
+	TCScopeName scopeNamePrimitive;
+	scopeNamePrimitive.type = NAMETYPE_PRIMITIVE;
+	scopeNamePrimitive.loc = {};
+
+	scopeNamePrimitive.name = "s8"_s;
+	scopeNamePrimitive.primitiveTypeTableIdx = TYPETABLEIDX_S8;
+	*DynamicArrayAdd(&context->tcGlobalScope->names) = scopeNamePrimitive;
+
+	scopeNamePrimitive.name = "s16"_s;
+	scopeNamePrimitive.primitiveTypeTableIdx = TYPETABLEIDX_S16;
+	*DynamicArrayAdd(&context->tcGlobalScope->names) = scopeNamePrimitive;
+
+	scopeNamePrimitive.name = "s32"_s;
+	scopeNamePrimitive.primitiveTypeTableIdx = TYPETABLEIDX_S32;
+	*DynamicArrayAdd(&context->tcGlobalScope->names) = scopeNamePrimitive;
+
+	scopeNamePrimitive.name = "s64"_s;
+	scopeNamePrimitive.primitiveTypeTableIdx = TYPETABLEIDX_S64;
+	*DynamicArrayAdd(&context->tcGlobalScope->names) = scopeNamePrimitive;
+
+	scopeNamePrimitive.name = "u8"_s;
+	scopeNamePrimitive.primitiveTypeTableIdx = TYPETABLEIDX_U8;
+	*DynamicArrayAdd(&context->tcGlobalScope->names) = scopeNamePrimitive;
+
+	scopeNamePrimitive.name = "u16"_s;
+	scopeNamePrimitive.primitiveTypeTableIdx = TYPETABLEIDX_U16;
+	*DynamicArrayAdd(&context->tcGlobalScope->names) = scopeNamePrimitive;
+
+	scopeNamePrimitive.name = "u32"_s;
+	scopeNamePrimitive.primitiveTypeTableIdx = TYPETABLEIDX_U32;
+	*DynamicArrayAdd(&context->tcGlobalScope->names) = scopeNamePrimitive;
+
+	scopeNamePrimitive.name = "u64"_s;
+	scopeNamePrimitive.primitiveTypeTableIdx = TYPETABLEIDX_U64;
+	*DynamicArrayAdd(&context->tcGlobalScope->names) = scopeNamePrimitive;
+
+	scopeNamePrimitive.name = "f32"_s;
+	scopeNamePrimitive.primitiveTypeTableIdx = TYPETABLEIDX_F32;
+	*DynamicArrayAdd(&context->tcGlobalScope->names) = scopeNamePrimitive;
+
+	scopeNamePrimitive.name = "f64"_s;
+	scopeNamePrimitive.primitiveTypeTableIdx = TYPETABLEIDX_F64;
+	*DynamicArrayAdd(&context->tcGlobalScope->names) = scopeNamePrimitive;
+
+	scopeNamePrimitive.name = "bool"_s;
+	scopeNamePrimitive.primitiveTypeTableIdx = TYPETABLEIDX_BOOL;
+	*DynamicArrayAdd(&context->tcGlobalScope->names) = scopeNamePrimitive;
+
+	scopeNamePrimitive.name = "void"_s;
+	scopeNamePrimitive.primitiveTypeTableIdx = TYPETABLEIDX_VOID;
+	*DynamicArrayAdd(&context->tcGlobalScope->names) = scopeNamePrimitive;
+
 	for (int statementIdx = 0; statementIdx < context->astRoot->block.statements.size; ++statementIdx)
 	{
 		ASTExpression *statement = &context->astRoot->block.statements[statementIdx];
@@ -4059,7 +4200,7 @@ void TypeCheckMain(Context *context)
 			{
 				context->currentTCJob = jobIdx;
 				// Check if name now exists
-				TCScopeName *scopeName = FindScopeName(context, job->yieldInfo.name);
+				TCScopeName *scopeName = TCFindScopeName(context, job->yieldInfo.name);
 				if (scopeName == nullptr)
 					continue;
 				else
@@ -4124,7 +4265,7 @@ void TypeCheckMain(Context *context)
 			}
 
 			Print("Compiler isn't making advancements. Stopping.\n");
-			CRASH;
+			ERROR;
 		}
 	}
 }

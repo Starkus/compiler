@@ -1,9 +1,13 @@
-OutputDebugStringA :: #external (message : ^u8);
+#if (COMPILER_PLATFORM == COMPILER_PLATFORM_WINDOWS)
+	OutputDebugStringA :: #external (message : ^u8);
 
 Main :: () -> s64
 {
-	message := "Hello, Sailor!\0";
-	OutputDebugStringA(message.data);
+	#if (COMPILER_PLATFORM == COMPILER_PLATFORM_WINDOWS)
+	{
+		message := "Hello, Sailor!\0";
+		OutputDebugStringA(message.data);
+	}
 
 	Print("Test ok\n");
 	return 0;

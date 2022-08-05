@@ -1,0 +1,6 @@
+Main :: () -> s64
+{
+	// Redefine primitive types
+	s64 :: 4;
+	return 0;
+}

@@ -1,0 +1,6 @@
+Main :: () -> s64
+{
+	// For as an expression
+	foo := for (1..10) {}
+	return 0;
+}

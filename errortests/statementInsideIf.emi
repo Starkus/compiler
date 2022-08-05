@@ -1,0 +1,6 @@
+Main :: () -> s64
+{
+	// Statement inside if
+	if (while 1 {}) {}
+	return 0;
+}

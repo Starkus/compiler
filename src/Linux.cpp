@@ -13,7 +13,14 @@ typedef int FileHandle;
 #define SYS_INVALID_FILE_HANDLE ((s64)-1)
 #define SYS_MAX_PATH PATH_MAX
 
+#if DEBUG_BUILD
 #define BREAK asm("int $3")
+#else
+#define BREAK
+#endif
+
+#define ERROR do { BREAK; exit(1); } while(0)
+
 #define ASSUME(expr) do { __builtin_assume(expr); (void)(expr); } while(0)
 
 String SYSExpandPathCompilerRelative(String relativePath)
@@ -73,7 +80,7 @@ u64 SYSGetFileSize(FileHandle file)
 	return fileStat.st_size;
 }
 
-void SYSReadEntireFile(FileHandle file, char **fileBuffer, u64 *fileSize, void *(*allocFunc)(u64))
+void SYSReadEntireFile(FileHandle file, const char **fileBuffer, u64 *fileSize, void *(*allocFunc)(u64))
 {
 	if (file == SYS_INVALID_FILE_HANDLE)
 		*fileBuffer = nullptr;
@@ -81,9 +88,10 @@ void SYSReadEntireFile(FileHandle file, char **fileBuffer, u64 *fileSize, void *
 	{
 		*fileSize = SYSGetFileSize(file);
 		ASSERT(*fileSize);
-		*fileBuffer = (char *)allocFunc(*fileSize);
-		u64 bytesRead = read(file, *fileBuffer, *fileSize);
+		char *buffer = (char *)allocFunc(*fileSize);
+		u64 bytesRead = read(file, buffer, *fileSize);
 		ASSERT(bytesRead == *fileSize);
+		*fileBuffer = buffer;
 	}
 }
 
@@ -137,7 +145,8 @@ void SYSRunAssemblerAndLinker(String outputPath, String extraAssemblerArguments,
 	int status = system(nasmCmd.data);
 	if (status)
 	{
-		Print("Error executing nasm!\n");
+		if (status > 255) status = 255;
+		Print("Error executing nasm! Error 0x%.2x\n", status);
 		exit(status);
 	}
 
@@ -147,7 +156,8 @@ void SYSRunAssemblerAndLinker(String outputPath, String extraAssemblerArguments,
 	status = system(ldCmd.data);
 	if (status)
 	{
-		Print("Error executing ld!\n");
+		if (status > 255) status = 255;
+		Print("Error executing ld! Error 0x%.2x\n", status);
 		exit(status);
 	}
 #else

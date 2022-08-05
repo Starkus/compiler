@@ -55,6 +55,7 @@ struct StructMember;
 struct StaticDefinition;
 enum NameType
 {
+	NAMETYPE_PRIMITIVE,
 	NAMETYPE_VARIABLE,
 	NAMETYPE_STRUCT_MEMBER,
 	NAMETYPE_ASTEXPRESSION,
@@ -273,6 +274,15 @@ struct ASTIf : ASTBase
 	SourceLocation elseLoc;
 };
 
+struct ASTIfStatic : ASTBase
+{
+	ASTExpression *condition;
+	ASTExpression *body;
+	ASTExpression *elseBody;
+	SourceLocation elseLoc;
+	bool evaluatesToTrue;
+};
+
 struct ASTWhile : ASTBase
 {
 	ASTExpression *condition;
@@ -328,6 +338,7 @@ enum ASTNodeType
 	ASTNODETYPE_PROCEDURE_CALL,
 	ASTNODETYPE_INTRINSIC,
 	ASTNODETYPE_IF,
+	ASTNODETYPE_IF_STATIC,
 	ASTNODETYPE_WHILE,
 	ASTNODETYPE_FOR,
 	ASTNODETYPE_CONTINUE,
@@ -362,6 +373,7 @@ struct ASTExpression
 		ASTProcedureCall procedureCall;
 		ASTIntrinsic intrinsic;
 		ASTIf ifNode;
+		ASTIfStatic ifStaticNode;
 		ASTWhile whileNode;
 		ASTFor forNode;
 		ASTSimple returnNode;

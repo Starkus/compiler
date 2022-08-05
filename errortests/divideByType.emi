@@ -1,0 +1,6 @@
+Main :: () -> s64
+{
+	// Invalid kind of operand
+	bar / s64;
+	return 0;
+}

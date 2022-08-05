@@ -187,7 +187,8 @@ struct Context
 };
 
 FatSourceLocation ExpandSourceLocation(Context *context, SourceLocation loc);
-void Log(Context *context, SourceLocation loc, String str)
+void __Log(Context *context, SourceLocation loc, String str, const char *inFile, const char *inFunc,
+		int inLine)
 {
 	FatSourceLocation fatLoc = ExpandSourceLocation(context, loc);
 
@@ -209,24 +210,26 @@ void Log(Context *context, SourceLocation loc, String str)
 	for (u32 i = 0; i < fatLoc.size; ++i)
 		Print("^");
 	Print("\n");
+
+#if DEBUG_BUILD
+	Print("~~~ In %s - %s:%d\n", inFunc, inFile, inLine);
+#endif
 }
 
-inline void LogErrorNoCrash(Context *context, SourceLocation loc, String errorStr)
-{
-	Log(context, loc, StringConcat("ERROR: "_s, errorStr));
-}
+#define Log(context, loc, str) \
+	do { __Log(context, loc, str, __FILE__, __func__, __LINE__); } while (0)
 
-#define LogError(context, loc, str) do { LogErrorNoCrash(context, loc, str); CRASH; } while(0)
+#define LogErrorNoCrash(context, loc, str) \
+	do { __Log(context, loc, StringConcat("ERROR: "_s, str), __FILE__, __func__, __LINE__); } while (0)
 
-inline void LogWarning(Context *context, SourceLocation loc, String str)
-{
-	Log(context, loc, StringConcat("WARNING: "_s, str));
-}
+#define LogError(context, loc, str) \
+	do { LogErrorNoCrash(context, loc, str); ERROR; } while(0)
 
-inline void LogNote(Context *context, SourceLocation loc, String str)
-{
-	Log(context, loc, StringConcat("NOTE: "_s, str));
-}
+#define LogWarning(context, loc, str) \
+	do { __Log(context, loc, StringConcat("WARNING: "_s, str), __FILE__, __func__, __LINE__); } while (0)
+
+#define LogNote(context, loc, str) \
+	do { __Log(context, loc, StringConcat("NOTE: "_s, str), __FILE__, __func__, __LINE__); } while (0)
 
 bool CompilerAddSourceFile(Context *context, String filename, SourceLocation loc)
 {
@@ -235,7 +238,8 @@ bool CompilerAddSourceFile(Context *context, String filename, SourceLocation loc
 		LogError(context, loc,
 				TPrintF("Included source file \"%S\" doesn't exist!", filename));
 
-	for (int i = 0; i < context->sourceFiles.size; ++i)
+	// First file is <builtin>
+	for (int i = 1; i < context->sourceFiles.size; ++i)
 	{
 		String currentFilename = context->sourceFiles[i].name;
 		FileHandle currentFile = SYSOpenFileRead(currentFilename);
@@ -280,15 +284,18 @@ int main(int argc, char **argv)
 	g_hStderr = fileno(stderr);
 #endif
 
-	if (argc < 2)
-		return 1;
-
 	// Allocate memory
 	Memory memory;
 	g_memory = &memory;
 	memory.frameMem = SYSAlloc(Memory::frameSize);
 	memory.phaseMem = SYSAlloc(Memory::phaseSize);
 	MemoryInit(&memory);
+
+	if (argc < 2)
+	{
+		Print("Usage: compiler [options] <source file>\n");
+		return 1;
+	}
 
 	Context context = {};
 
@@ -331,6 +338,15 @@ int main(int argc, char **argv)
 	ASSERT(inputFiles.size > 2);
 
 	TimerSplit("Initialization"_s);
+
+	// Builtin constants 'source file'
+	{
+		SourceFile builtinSourceFile = { "<builtin>"_s, {} };
+		String code = "COMPILER_PLATFORM :: COMPILER_PLATFORM_LINUX;"_s;
+		builtinSourceFile.buffer = code.data;
+		builtinSourceFile.size   = code.size;
+		*DynamicArrayAdd(&context.sourceFiles) = builtinSourceFile;
+	}
 
 	for (int i = 0; i < inputFiles.size; ++i)
 		CompilerAddSourceFile(&context, inputFiles[i], {});

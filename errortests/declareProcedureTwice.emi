@@ -1,0 +1,14 @@
+Main :: () -> s64
+{
+	return 0;
+}
+
+AProc :: (arg : s32) -> bool
+{
+	return true;
+}
+
+AProc :: (arg : s32) -> bool
+{
+	return true;
+}

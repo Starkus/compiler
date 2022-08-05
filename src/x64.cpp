@@ -801,7 +801,7 @@ String X64IRValueToStr(Context *context, IRValue value)
 
 	if (v.flags & (VALUEFLAGS_ON_STATIC_STORAGE | VALUEFLAGS_IS_EXTERNAL))
 	{
-		result = v.name;
+		result = StringConcat("g_"_s, v.name);
 		if (offset > 0)
 			result = TPrintF("%S+0%xh", result, offset);
 		else if (offset < 0)
@@ -1798,6 +1798,7 @@ void X64ConvertInstruction(Context *context, IRInstruction inst, X64Procedure *x
 		case X64FLOATINGTYPE_F32:
 			result.type = X64_XORPS;
 			result.src = IRValueImmediateFloat(context, -0.0, TYPETABLEIDX_F32);
+			result.src.typeTableIdx = TYPETABLEIDX_128;
 			break;
 		case X64FLOATINGTYPE_F64:
 			result.type = X64_XORPD;
@@ -2622,9 +2623,16 @@ void X64PrintInstructions(Context *context, Array<X64Procedure, PhaseAllocator> 
 	}
 }
 
-inline void X64StaticDataAlignTo(Context *context, s64 alignment)
+inline void X64StaticDataAlignTo(Context *context, s64 alignment, bool initialize)
 {
+#if _MSC_VER
 	PrintOut(context, "ALIGN %d\n", alignment);
+#else
+	if (initialize)
+		PrintOut(context, "ALIGN %d\n", alignment);
+	else
+		PrintOut(context, "ALIGNB %d\n", alignment);
+#endif
 }
 
 void X64PrintStaticData(Context *context, String name, IRValue value, u32 typeTableIdx,
@@ -2635,7 +2643,7 @@ void X64PrintStaticData(Context *context, String name, IRValue value, u32 typeTa
 	case IRVALUETYPE_IMMEDIATE_STRING:
 	{
 		int alignment = alignmentOverride < 0 ? 8 : alignmentOverride;
-		X64StaticDataAlignTo(context, alignment);
+		X64StaticDataAlignTo(context, alignment, true);
 
 		String str = context->stringLiterals[value.immediateStringIdx];
 		s64 size = str.size;
@@ -2652,7 +2660,7 @@ void X64PrintStaticData(Context *context, String name, IRValue value, u32 typeTa
 	{
 		TypeInfo typeInfo = context->typeTable[typeTableIdx];
 		int alignment = alignmentOverride < 0 ? (int)typeInfo.size : alignmentOverride;
-		X64StaticDataAlignTo(context, alignment);
+		X64StaticDataAlignTo(context, alignment, true);
 		switch (typeInfo.size)
 		{
 		case 4:
@@ -2671,7 +2679,7 @@ void X64PrintStaticData(Context *context, String name, IRValue value, u32 typeTa
 	case IRVALUETYPE_IMMEDIATE_GROUP:
 	{
 		int alignment = alignmentOverride < 0 ? 8 : alignmentOverride;
-		X64StaticDataAlignTo(context, alignment);
+		X64StaticDataAlignTo(context, alignment, true);
 
 		bool isArray = false;
 		u32 elementTypeIdx = TYPETABLEIDX_UNSET;
@@ -2695,24 +2703,27 @@ void X64PrintStaticData(Context *context, String name, IRValue value, u32 typeTa
 		// @Improve: We are kinda using this to mean 'this is a value in data section, just put the
 		// name in' which has nothing to do with 'VALUE_DEREFERENCE'...
 		int alignment = alignmentOverride < 0 ? 8 : alignmentOverride;
-		X64StaticDataAlignTo(context, alignment);
+		X64StaticDataAlignTo(context, alignment, true);
 
 		Value v = context->values[value.value.valueIdx];
 		ASSERT(v.flags & VALUEFLAGS_ON_STATIC_STORAGE);
 		ASSERT(v.name.size);
-		PrintOut(context, "%S DQ %S\n", name, v.name);
+		PrintOut(context, "%S DQ g_%S\n", name, v.name);
 	} break;
 	case IRVALUETYPE_INVALID:
 	{
 		TypeInfo typeInfo = context->typeTable[typeTableIdx];
-		PrintOut(context, "COMM %S:BYTE:0%llxH\n", name,
-				typeInfo.size);
+#if _MSC_VER
+		PrintOut(context, "COMM %S:BYTE:0%llxH\n", name, typeInfo.size);
+#else
+		PrintOut(context, "%S: RESB %llxH\n", name, typeInfo.size);
+#endif
 	} break;
 	default:
 	{
 		TypeInfo typeInfo = context->typeTable[typeTableIdx];
 		int alignment = alignmentOverride < 0 ? (int)typeInfo.size : alignmentOverride;
-		X64StaticDataAlignTo(context, alignment);
+		X64StaticDataAlignTo(context, alignment, true);
 		switch (typeInfo.size)
 		{
 		case 1:
@@ -2735,6 +2746,76 @@ void X64PrintStaticData(Context *context, String name, IRValue value, u32 typeTa
 			ASSERT(!"Invalid immediate size");
 		}
 	}
+	}
+}
+
+void X64PrintStaticDataUninitialized(Context *context, String name, IRValue value, u32 typeTableIdx,
+		int alignmentOverride = -1)
+{
+	switch (value.valueType)
+	{
+	case IRVALUETYPE_IMMEDIATE_STRING:
+	{
+		int alignment = alignmentOverride < 0 ? 8 : alignmentOverride;
+		X64StaticDataAlignTo(context, alignment, false);
+
+		String str = context->stringLiterals[value.immediateStringIdx];
+		ASSERT(str.size == 0);
+#if _MSC_VER
+		PrintOut(context, "COMM %S:QWORD:02H\n", name);
+#else
+		PrintOut(context, "%S: RESQ 02H\n", name);
+#endif
+	} break;
+	case IRVALUETYPE_IMMEDIATE_FLOAT:
+	{
+		ASSERT(value.immediateFloat == 0);
+		TypeInfo typeInfo = context->typeTable[typeTableIdx];
+		int alignment = alignmentOverride < 0 ? (int)typeInfo.size : alignmentOverride;
+		X64StaticDataAlignTo(context, alignment, false);
+#if _MSC_VER
+		PrintOut(context, "COMM %S:BYTE:0%llxH\n", name, typeInfo.size);
+#else
+		PrintOut(context, "%S: RESB 0%llxH\n", name, typeInfo.size);
+#endif
+	} break;
+	case IRVALUETYPE_IMMEDIATE_GROUP:
+	{
+		int alignment = alignmentOverride < 0 ? 8 : alignmentOverride;
+		X64StaticDataAlignTo(context, alignment, false);
+
+		bool isArray = false;
+		u32 elementTypeIdx = TYPETABLEIDX_UNSET;
+		if (typeTableIdx > 0)
+		{
+			TypeInfo typeInfo = context->typeTable[typeTableIdx];
+			isArray = typeInfo.typeCategory == TYPECATEGORY_ARRAY;
+			elementTypeIdx = typeInfo.arrayInfo.elementTypeTableIdx;
+		}
+
+		Array<IRValue, FrameAllocator> members = value.immediateStructMembers;
+		for (int memberIdx = 0; memberIdx < members.size; ++memberIdx)
+		{
+			String memberName = memberIdx ? "   "_s : name;
+			u32 memberTypeIdx = isArray ? elementTypeIdx : members[memberIdx].typeTableIdx;
+			X64PrintStaticDataUninitialized(context, memberName, members[memberIdx], memberTypeIdx);
+		}
+	} break;
+	case IRVALUETYPE_VALUE_DEREFERENCE:
+	{
+		ASSERT(!"Shouldn't be calling this with a dereference value");
+	} break;
+	case IRVALUETYPE_INVALID:
+	default:
+	{
+		ASSERT(value.immediate == 0);
+		TypeInfo typeInfo = context->typeTable[typeTableIdx];
+#if _MSC_VER
+		PrintOut(context, "COMM %S:BYTE:0%llxH\n", name, typeInfo.size);
+#else
+		PrintOut(context, "%S: RESB 0%llxH\n", name, typeInfo.size);
+#endif
+	} break;
 	}
 }
 
@@ -3192,6 +3273,16 @@ unalignedMovups:;
 			case X64_MOVSX:
 			case X64_MOVSXD:
 			case X64_LEA:
+			case X64_SETE:
+			case X64_SETNE:
+			case X64_SETL:
+			case X64_SETLE:
+			case X64_SETG:
+			case X64_SETGE:
+			case X64_SETA:
+			case X64_SETAE:
+			case X64_SETB:
+			case X64_SETBE:
 			case X64_CVTSI2SS:
 			case X64_CVTSI2SD:
 			case X64_CVTTSS2SI:
@@ -3597,19 +3688,45 @@ unalignedMovups:;
 		bytesWritten += size;
 	}
 
-	X64StaticDataAlignTo(context, 16);
+	X64StaticDataAlignTo(context, 16, true);
 
+	// Initialized
 	const u64 staticVariableCount = context->irStaticVariables.size;
 	for (int staticVariableIdx = 0; staticVariableIdx < staticVariableCount; ++staticVariableIdx)
 	{
 		IRStaticVariable staticVar = context->irStaticVariables[staticVariableIdx];
-		Value value = context->values[staticVar.valueIdx];
-		String name = value.name;
-		X64PrintStaticData(context, name, staticVar.initialValue, value.typeTableIdx, 16);
+		if (staticVar.initialValue.valueType != IRVALUETYPE_INVALID &&
+				staticVar.initialValue.immediate != 0)
+		{
+			Value value = context->values[staticVar.valueIdx];
+			X64PrintStaticData(context, StringConcat("g_"_s, value.name), staticVar.initialValue,
+					value.typeTableIdx, 16);
+		}
 	}
 
 #if _MSC_VER
 	PrintOut(context, "_DATA ENDS\n");
+	PrintOut(context, "_BSS SEGMENT\n");
+#else
+	PrintOut(context, "section .bss\n");
+#endif
+
+	// Uninitialized
+	// @Speed: don't iterate this twice...
+	for (int staticVariableIdx = 0; staticVariableIdx < staticVariableCount; ++staticVariableIdx)
+	{
+		IRStaticVariable staticVar = context->irStaticVariables[staticVariableIdx];
+		if (staticVar.initialValue.valueType == IRVALUETYPE_INVALID ||
+				staticVar.initialValue.immediate == 0)
+		{
+			Value value = context->values[staticVar.valueIdx];
+			X64PrintStaticDataUninitialized(context, StringConcat("g_"_s, value.name),
+					staticVar.initialValue, value.typeTableIdx, 16);
+		}
+	}
+
+#if _MSC_VER
+	PrintOut(context, "_BSS ENDS\n");
 #endif
 
 	for (int procedureIdx = 1; procedureIdx < procedureCount; ++procedureIdx)

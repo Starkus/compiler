@@ -1,0 +1,7 @@
+Main :: () -> s64
+{
+	// Non-array expression inside for
+	n := 1;
+	for n {}
+	return 0;
+}

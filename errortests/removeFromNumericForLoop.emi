@@ -1,0 +1,6 @@
+Main :: () -> s64
+{
+	// Remove from numeric for loop
+	for 0..4 if i % 2 remove;
+	return 0;
+}

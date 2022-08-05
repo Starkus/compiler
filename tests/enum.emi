@@ -9,6 +9,11 @@ Main :: () -> s64
 	color : Color = COLOR_RED;
 	PrintF("Color is %\n", color);
 
+	color2 :: COLOR_GREEN;
+	PrintF("Color is %\n", color2);
+
+	PrintF("Color is %\n", COLOR_BLUE);
+
 	enumTypeInfo := cast(^TypeInfoEnum) typeof(color);
 	for enumTypeInfo.names
 	{
