@@ -1,0 +1,6 @@
+compiler_output_type :: COMPILER_OUTPUT_LIBRARY;
+
+LibAddTwoNumbers :: #export (a : s64, b : s64) -> s64
+{
+	return a + b;
+}

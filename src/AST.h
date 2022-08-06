@@ -105,6 +105,7 @@ struct ASTEnumMember
 {
 	String name;
 	ASTExpression *value;
+	SourceLocation loc;
 };
 struct ASTEnumDeclaration : ASTBase
 {
@@ -196,6 +197,7 @@ struct ASTProcedureDeclaration : ASTBase
 	String name;
 	bool isInline;
 	bool isExternal;
+	bool isExported;
 	ASTExpression *astBody;
 
 	// Type check

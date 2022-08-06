@@ -1,6 +1,6 @@
 Main :: () -> s64
 {
-	PrintF("Platform: %\n", COMPILER_PLATFORM);
-	COMPILER_PLATFORM == COMPILER_PLATFORM_LINUX;
+	PrintF("Platform: %\n", compiler_platform);
+	compiler_platform == COMPILER_PLATFORM_LINUX;
 	return 0;
 }

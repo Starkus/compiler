@@ -14,10 +14,16 @@ Compiler_Platforms :: enum
 	COMPILER_PLATFORM_LINUX   = 1
 };
 
-#if (COMPILER_PLATFORM == COMPILER_PLATFORM_WINDOWS)
-	#include "core/basic_windows.emi"
+Compiler_Output_Types :: enum
+{
+	COMPILER_OUTPUT_EXECUTABLE = 0,
+	COMPILER_OUTPUT_LIBRARY    = 1
+};
+
+#if (compiler_platform == COMPILER_PLATFORM_WINDOWS)
+	#include "core/basic_windows.emi";
 else
-	#include "core/basic_linux.emi"
+	#include "core/basic_linux.emi";
 
 // @Todo: replace?
 String :: struct

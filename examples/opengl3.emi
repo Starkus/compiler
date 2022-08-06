@@ -1,8 +1,8 @@
-#include "core/windows.emi"
-#include "core/opengl.emi"
-#include "core/vector.emi"
-#include "core/math.emi"
-#linklib "opengl32.lib"
+#include "core/windows.emi";
+#include "core/opengl.emi";
+#include "core/vector.emi";
+#include "core/math.emi";
+#linklib "opengl32.lib";
 
 //compiler_subsystem :: COMPILER_SUBSYSTEM_WINDOWS;
 

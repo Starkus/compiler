@@ -1,4 +1,4 @@
-#include "core/math.emi"
+#include "core/math.emi";
 
 Main :: () -> s64
 {

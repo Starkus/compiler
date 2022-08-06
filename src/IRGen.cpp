@@ -2360,6 +2360,7 @@ skipGeneratingVarargsArray:
 	} break;
 	case ASTNODETYPE_ENUM_DECLARATION:
 	case ASTNODETYPE_INCLUDE:
+	case ASTNODETYPE_LINKLIB:
 	{
 	} break;
 	case ASTNODETYPE_GARBAGE:

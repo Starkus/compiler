@@ -334,10 +334,14 @@ int main(int argc, char **argv)
 
 	TimerSplit("Initialization"_s);
 
-	// Builtin constants 'source file'
+	// Platform constant
 	{
-		SourceFile builtinSourceFile = { "<builtin>"_s, {} };
-		String code = "COMPILER_PLATFORM :: COMPILER_PLATFORM_LINUX;"_s;
+#if _MSC_VER
+		String code = "compiler_platform :: COMPILER_PLATFORM_WINDOWS;"_s;
+#else
+		String code = "compiler_platform :: COMPILER_PLATFORM_LINUX;"_s;
+#endif
+		SourceFile builtinSourceFile = {};
 		builtinSourceFile.buffer = code.data;
 		builtinSourceFile.size   = code.size;
 		*DynamicArrayAdd(&context.sourceFiles) = builtinSourceFile;

@@ -412,6 +412,8 @@ enum TokenType CalculateTokenType(Context *context, const Tokenizer *tokenizer)
 				return TOKEN_KEYWORD_INLINE;
 			else if (StringEquals(directive, "#external"_s))
 				return TOKEN_KEYWORD_EXTERNAL;
+			else if (StringEquals(directive, "#export"_s))
+				return TOKEN_KEYWORD_EXPORT;
 			else if (StringEquals(directive, "#convention"_s))
 				return TOKEN_KEYWORD_CALLING_CONVENTION;
 			else if (StringEquals(directive, "#intrinsic"_s))
@@ -725,6 +727,7 @@ u32 CalculateTokenSize(Context *context, const Tokenizer *tokenizer, enum TokenT
 	case TOKEN_KEYWORD_SIZEOF:
 		return 6;
 	case TOKEN_KEYWORD_INLINE: //#
+	case TOKEN_KEYWORD_EXPORT: //#
 		return 7;
 	case TOKEN_KEYWORD_INCLUDE: //#
 	case TOKEN_KEYWORD_LINKLIB: //#

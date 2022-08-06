@@ -241,7 +241,6 @@ ASTIf ParseIf(Context *context, bool onStaticContext)
 {
 	ASSERT(context->token->type == TOKEN_KEYWORD_IF ||
 		   context->token->type == TOKEN_KEYWORD_IF_STATIC);
-	ASSERT((context->token->type == TOKEN_KEYWORD_IF_STATIC) == onStaticContext);
 	Advance(context);
 
 	ASTIf ifNode = {};
@@ -450,6 +449,7 @@ ASTEnumDeclaration ParseEnumDeclaration(Context *context)
 
 		AssertToken(context, context->token, TOKEN_IDENTIFIER);
 		enumMember.name = TokenToString(context, *context->token);
+		enumMember.loc = context->token->loc;
 		Advance(context);
 
 		if (context->token->type == TOKEN_OP_ASSIGNMENT)
@@ -978,6 +978,7 @@ ASTStaticDefinition ParseStaticDefinition(Context *context)
 
 	AssertToken(context, context->token, TOKEN_IDENTIFIER);
 	result.name = TokenToString(context, *context->token);
+	result.loc = context->token->loc;
 	Advance(context);
 
 	Advance(context);
@@ -988,6 +989,7 @@ ASTStaticDefinition ParseStaticDefinition(Context *context)
 
 	bool isInline = false;
 	bool isExternal = false;
+	bool isExported = false;
 	while (true)
 	{
 		if (context->token->type == TOKEN_KEYWORD_INLINE)
@@ -1000,6 +1002,12 @@ ASTStaticDefinition ParseStaticDefinition(Context *context)
 		{
 			if (isExternal) LogError(context, context->token->loc, "'external' used twice"_s);
 			isExternal = true;
+			Advance(context);
+		}
+		else if (context->token->type == TOKEN_KEYWORD_EXPORT)
+		{
+			if (isExported) LogError(context, context->token->loc, "'export' used twice"_s);
+			isExported = true;
 			Advance(context);
 		}
 		else
@@ -1017,6 +1025,7 @@ ASTStaticDefinition ParseStaticDefinition(Context *context)
 		procDecl.name = result.name;
 		procDecl.isInline = isInline;
 		procDecl.isExternal = isExternal;
+		procDecl.isExported = isExported;
 		procDecl.prototype = ParseProcedurePrototype(context);
 
 		if (context->token->type == ';')
@@ -1036,6 +1045,8 @@ ASTStaticDefinition ParseStaticDefinition(Context *context)
 		if (isInline)
 			LogError(context, context->token->loc, "'inline' specified for a non-procedure!"_s);
 		if (isExternal)
+			LogError(context, context->token->loc, "'external' specified for a non-procedure!"_s);
+		if (isExported)
 			LogError(context, context->token->loc, "'external' specified for a non-procedure!"_s);
 
 		switch (context->token->type)
@@ -1225,7 +1236,6 @@ ASTExpression ParseStatement(Context *context)
 		{
 			result.nodeType = ASTNODETYPE_STATIC_DEFINITION;
 			result.staticDefinition = ParseStaticDefinition(context);
-			result.any.loc = result.staticDefinition.expression->any.loc;
 		}
 		else if (next->type == TOKEN_OP_VARIABLE_DECLARATION ||
 				next->type == TOKEN_OP_VARIABLE_DECLARATION_STATIC)
@@ -1312,6 +1322,9 @@ ASTExpression ParseStaticStatement(Context *context)
 		AssertToken(context, context->token, TOKEN_LITERAL_STRING);
 		result.include.filename = TokenToString(context, *context->token);
 		Advance(context);
+
+		AssertToken(context, context->token, ';');
+		Advance(context);
 	} break;
 	case TOKEN_KEYWORD_LINKLIB:
 	{
@@ -1321,6 +1334,9 @@ ASTExpression ParseStaticStatement(Context *context)
 		AssertToken(context, context->token, TOKEN_LITERAL_STRING);
 		result.linklib.filename = TokenToString(context, *context->token);
 		Advance(context);
+
+		AssertToken(context, context->token, ';');
+		Advance(context);
 	} break;
 	default:
 	{
@@ -1329,7 +1345,6 @@ ASTExpression ParseStaticStatement(Context *context)
 		{
 			result.nodeType = ASTNODETYPE_STATIC_DEFINITION;
 			result.staticDefinition = ParseStaticDefinition(context);
-			result.any.loc = result.staticDefinition.expression->any.loc;
 		}
 		else if (next->type == TOKEN_OP_VARIABLE_DECLARATION ||
 				next->type == TOKEN_OP_VARIABLE_DECLARATION_STATIC)

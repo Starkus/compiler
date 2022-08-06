@@ -24,7 +24,8 @@ Print :: (string: String)
 	write(STDOUT, string.data, string.size);
 }
 
-__LinuxMain :: ()
+#if compiler_output_type == COMPILER_OUTPUT_EXECUTABLE
+__LinuxMain :: #export ()
 {
 	errorCode : s64 = Main();
 	exit_group(errorCode);

@@ -3732,11 +3732,14 @@ unalignedMovups:;
 	for (int procedureIdx = 1; procedureIdx < procedureCount; ++procedureIdx)
 	{
 		Procedure *proc = GetProcedure(context, procedureIdx);
+		if (proc->isExported)
+		{
 #if _MSC_VER
-		PrintOut(context, "PUBLIC %S\n", proc->name);
+			PrintOut(context, "PUBLIC %S\n", proc->name);
 #else
-		PrintOut(context, "GLOBAL %S\n", proc->name);
+			PrintOut(context, "GLOBAL %S\n", proc->name);
 #endif
+		}
 	}
 
 	for (int varIdx = 0; varIdx < context->irExternalVariables.size; ++varIdx)
@@ -3795,9 +3798,25 @@ unalignedMovups:;
 
 	TimerSplit("X64 output file write"_s);
 
+	bool makeLibrary = false;
+	{
+		u64 staticDefinitionCount = BucketArrayCount(&context->staticDefinitions);
+		for (u64 i = 0; i < staticDefinitionCount; ++i)
+		{
+			StaticDefinition *currentDef = &context->staticDefinitions[i];
+			if (StringEquals("compiler_output_type"_s, currentDef->name))
+			{
+				ASSERT(currentDef->definitionType == STATICDEFINITIONTYPE_CONSTANT);
+				ASSERT(currentDef->constant.type == CONSTANTTYPE_INTEGER);
+				makeLibrary = currentDef->constant.valueAsInt == 1;
+			}
+		}
+	}
+
 	String extraLinkerArguments = {};
 	for (int i = 0; i < context->libsToLink.size; ++i)
-		extraLinkerArguments = TPrintF("%S %S", extraLinkerArguments, context->libsToLink[i]);
+		extraLinkerArguments = TPrintF("%S %S", extraLinkerArguments,
+				SYSExpandPathWorkingDirectoryRelative(context->libsToLink[i]));
 
 #if _MSC_VER
 	bool useWindowsSubsystem = false;
@@ -3825,7 +3844,7 @@ unalignedMovups:;
 #endif
 
 	if (!context->config.dontCallAssembler)
-		SYSRunAssemblerAndLinker(outputPath, ""_s, extraLinkerArguments);
+		SYSRunAssemblerAndLinker(outputPath, makeLibrary, ""_s, extraLinkerArguments);
 
 	TimerSplit("Calling assembler and linker"_s);
 }

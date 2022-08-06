@@ -194,6 +194,7 @@ struct Procedure
 	ASTExpression *astBody;
 	ASTProcedurePrototype astPrototype;
 	bool isInline;
+	bool isExported;
 	bool isBodyTypeChecked;
 	u32 returnValueIdx;
 	u32 typeTableIdx; // Type of the procedure
@@ -1638,6 +1639,7 @@ TypeCheckTypeResult TypeCheckType(Context *context, String name, SourceLocation 
 			newName.type = NAMETYPE_STATIC_DEFINITION;
 			newName.name = astMember.name;
 			newName.staticDefinition = newStaticDef;
+			newName.loc = astMember.loc;
 			*DynamicArrayAdd(&stackTop->names) = newName;
 
 			*DynamicArrayAdd(&enumNames) = astMember.name;
@@ -2569,6 +2571,7 @@ TypeCheckExpressionResult TryTypeCheckExpression(Context *context, ASTExpression
 				p.returnValueIdx = U32_MAX;
 				p.astBody = procDecl->astBody;
 				p.isInline = procDecl->isInline;
+				p.isExported = procDecl->isExported;
 				p.astPrototype = procDecl->prototype;
 				DynamicArrayInit(&p.parameterValues, 8);
 				newStaticDef->procedureIdx = NewProcedure(context, p, procDecl->isExternal);
@@ -2707,6 +2710,7 @@ TypeCheckExpressionResult TryTypeCheckExpression(Context *context, ASTExpression
 				staticDef->definitionType = astStaticDef->expression->identifier.staticDefinition->definitionType;
 				ASSERT(astStaticDef->expression->typeTableIdx != TYPETABLEIDX_UNSET);
 				*staticDef = *astStaticDef->expression->identifier.staticDefinition;
+				staticDef->name = astStaticDef->name;
 				staticDef->typeTableIdx = result.typeTableIdx;
 				expression->typeTableIdx = result.typeTableIdx;
 			}
@@ -3960,13 +3964,8 @@ TypeCheckExpressionResult TryTypeCheckExpression(Context *context, ASTExpression
 			u64 tokenCount = BucketArrayCount(&context->tokens);
 			while (context->currentTokenIdx < tokenCount)
 			{
-#if 0
-				ASTExpression *statement = NewTreeNode(context);
-				*statement = ParseStaticStatement(context);
-#else
 				ASTExpression *statement = DynamicArrayAdd(&context->astRoot->block.statements);
 				*statement = ParseStaticStatement(context);
-#endif
 				GenerateTypeCheckJobs(context, statement);
 			}
 		}
@@ -4011,6 +4010,7 @@ void GenerateTypeCheckJobs(Context *context, ASTExpression *expression)
 		*DynamicArrayAdd(&context->tcJobs) = job;
 	} break;
 	case ASTNODETYPE_INCLUDE:
+	case ASTNODETYPE_LINKLIB:
 	case ASTNODETYPE_IF_STATIC:
 	case ASTNODETYPE_OPERATOR_OVERLOAD:
 	{
@@ -4045,6 +4045,23 @@ void GenerateTypeCheckJobs(Context *context, ASTExpression *expression)
 		LogError(context, expression->any.loc, "COMPILER ERROR! Unknown expression type found "
 				"while generating type checking jobs"_s);
 	}
+	}
+}
+
+void TCCompileString(Context *context, String code)
+{
+	SourceFile builtinSourceFile = {};
+	builtinSourceFile.buffer = code.data;
+	builtinSourceFile.size   = code.size;
+	*DynamicArrayAdd(&context->sourceFiles) = builtinSourceFile;
+
+	TokenizeFile(context, context->sourceFiles.size - 1);
+	u64 tokenCount = BucketArrayCount(&context->tokens);
+	while (context->currentTokenIdx < tokenCount)
+	{
+		ASTExpression *statement = DynamicArrayAdd(&context->astRoot->block.statements);
+		*statement = ParseStaticStatement(context);
+		GenerateTypeCheckJobs(context, statement);
 	}
 }
 
@@ -4250,7 +4267,7 @@ void TypeCheckMain(Context *context)
 			}
 			}
 			// !!! Update if TCYieldInfo is changed!
-			if (job->yieldInfo.cause != newYieldInfo.cause &&
+			if (job->yieldInfo.cause != newYieldInfo.cause ||
 				!StringEquals(job->yieldInfo.name, newYieldInfo.name))
 				anyJobMadeAdvancements = true;
 
@@ -4267,6 +4284,25 @@ void TypeCheckMain(Context *context)
 		}
 
 		if (context->tcJobs.size == 0) break;
+
+		// Add default values for compiler constants if needed
+		if (!anyJobMadeAdvancements)
+		{
+			for (int jobIdx = 0; jobIdx < context->tcJobs.size; ++jobIdx)
+			{
+				TCJob *job = &context->tcJobs[jobIdx];
+				if (job->yieldInfo.cause == TCYIELDCAUSE_MISSING_NAME)
+				{
+					if (StringEquals("compiler_output_type"_s, job->yieldInfo.name))
+					{
+						TCCompileString(context,
+								"compiler_output_type :: COMPILER_OUTPUT_EXECUTABLE;"_s);
+						anyJobMadeAdvancements = true;
+						break;
+					}
+				}
+			}
+		}
 
 		if (!anyJobMadeAdvancements)
 		{

@@ -136,7 +136,7 @@ void SYSCreateDirectory(String pathname)
 	mkdir(pathnameCStr, 0777);
 }
 
-void SYSRunAssemblerAndLinker(String outputPath, String extraAssemblerArguments,
+void SYSRunAssemblerAndLinker(String outputPath, bool makeLibrary, String extraAssemblerArguments,
 		String extraLinkerArguments)
 {
 #if 1
@@ -150,15 +150,32 @@ void SYSRunAssemblerAndLinker(String outputPath, String extraAssemblerArguments,
 		exit(status);
 	}
 
-	String ldCmd = TPrintF("ld %S -o %S -e __LinuxMain%c",
-		SYSExpandPathWorkingDirectoryRelative("output/out.o"_s),
-		SYSExpandPathWorkingDirectoryRelative("output/out"_s), 0);
-	status = system(ldCmd.data);
-	if (status)
+	if (makeLibrary)
 	{
-		if (status > 255) status = 255;
-		Print("Error executing ld! Error 0x%.2x\n", status);
-		exit(status);
+		String arCmd = TPrintF("ar rcs %S %S%c",
+			SYSExpandPathWorkingDirectoryRelative("output/out.a"_s),
+			SYSExpandPathWorkingDirectoryRelative("output/out.o"_s), 0);
+		status = system(arCmd.data);
+		if (status)
+		{
+			if (status > 255) status = 255;
+			Print("Error executing ar! Error 0x%.2x\n", status);
+			exit(status);
+		}
+	}
+	else
+	{
+		String ldCmd = TPrintF("ld %S %S -o %S -e __LinuxMain%c",
+			SYSExpandPathWorkingDirectoryRelative("output/out.o"_s),
+			extraLinkerArguments,
+			SYSExpandPathWorkingDirectoryRelative("output/out"_s), 0);
+		status = system(ldCmd.data);
+		if (status)
+		{
+			if (status > 255) status = 255;
+			Print("Error executing ld! Error 0x%.2x\n", status);
+			exit(status);
+		}
 	}
 #else
 	int status;
