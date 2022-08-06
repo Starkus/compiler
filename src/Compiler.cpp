@@ -307,11 +307,6 @@ int main(int argc, char **argv)
 	DynamicArrayInit(&inputFiles, 16);
 	*DynamicArrayAdd(&inputFiles) = "core/basic.emi"_s;
 	*DynamicArrayAdd(&inputFiles) = "core/print.emi"_s;
-#if _MSC_VER
-	*DynamicArrayAdd(&inputFiles) = "core/basic_windows.emi"_s;
-#else
-	*DynamicArrayAdd(&inputFiles) = "core/basic_linux.emi"_s;
-#endif
 	for (int argIdx = 1; argIdx < argc; ++argIdx)
 	{
 		char *arg = argv[argIdx];
@@ -353,9 +348,6 @@ int main(int argc, char **argv)
 
 	for (int i = 0; i < context.sourceFiles.size; ++i)
 		TokenizeFile(&context, i);
-
-	Token eofToken = { TOKEN_END_OF_FILE };
-	*BucketArrayAdd(&context.tokens) = eofToken;
 
 	TimerSplit("Tokenizer"_s);
 	PhaseAllocator::Wipe();

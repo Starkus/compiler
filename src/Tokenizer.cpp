@@ -8,7 +8,7 @@ inline bool IsOperatorToken(Token *token)
 	return token->type >= TOKEN_OP_Begin && token->type <= TOKEN_OP_End;
 }
 
-const int PRECEDENCE_UNARY_SUBTRACT = TOKEN_END_OF_FILE; // @Hack
+const int PRECEDENCE_UNARY_SUBTRACT = TOKEN_OP_End+1; // @Hack
 
 int GetOperatorPrecedence(s32 op)
 {
@@ -216,9 +216,6 @@ String TokenTypeToString(s32 type)
 		return "< :: >"_s;
 	case TOKEN_OP_RANGE:
 		return "< .. >"_s;
-
-	case TOKEN_END_OF_FILE:
-		return "<EOF>"_s;
 	}
 
 	if (type >= TOKEN_KEYWORD_Begin && type <= TOKEN_KEYWORD_End)
@@ -344,9 +341,7 @@ enum TokenType CalculateTokenType(Context *context, const Tokenizer *tokenizer)
 {
 	const char * const begin = tokenizer->cursor;
 
-	if (!*begin || begin >= tokenizer->end)
-		return TOKEN_END_OF_FILE;
-	else if (*begin == '"')
+	if (*begin == '"')
 		return TOKEN_LITERAL_STRING;
 	else if (*begin == '\'')
 		return TOKEN_LITERAL_CHARACTER;
@@ -682,8 +677,6 @@ u32 CalculateTokenSize(Context *context, const Tokenizer *tokenizer, enum TokenT
 		ASSERT(scan - begin <= U32_MAX);
 		return (u32)(scan - begin);
 	}
-	case TOKEN_END_OF_FILE:
-		return 0;
 	case TOKEN_KEYWORD_IF:
 	case TOKEN_OP_EQUALS:
 	case TOKEN_OP_SHIFT_LEFT:
@@ -837,42 +830,13 @@ void TokenizeFile(Context *context, int fileIdx)
 				break;
 		}
 
+		if (!*tokenizer.cursor || tokenizer.cursor >= tokenizer.end)
+			break;
+
 		Token newToken = ReadNewToken(context, &tokenizer, fileBuffer);
 
-		if (newToken.type == TOKEN_END_OF_FILE)
-			break;
-		else if (newToken.type == TOKEN_INVALID_DIRECTIVE)
+		if (newToken.type == TOKEN_INVALID_DIRECTIVE)
 			LogError(context, newToken.loc, "Invalid parser directive"_s);
-		else if (newToken.type == TOKEN_KEYWORD_INCLUDE)
-		{
-			tokenizer.cursor += newToken.size;
-
-			Token filenameToken = ReadNewToken(context, &tokenizer, fileBuffer);
-			if (filenameToken.type != TOKEN_LITERAL_STRING)
-				LogError(context, filenameToken.loc, "ERROR! #include must be followed by string literal"_s);
-
-			tokenizer.cursor += filenameToken.size;
-
-			String filename = TokenToString(context, filenameToken);
-			CompilerAddSourceFile(context, filename, filenameToken.loc);
-
-			continue;
-		}
-		else if (newToken.type == TOKEN_KEYWORD_LINKLIB)
-		{
-			tokenizer.cursor += newToken.size;
-			EatWhitespace(&tokenizer);
-
-			Token libnameToken = ReadNewToken(context, &tokenizer, fileBuffer);
-			if (libnameToken.type != TOKEN_LITERAL_STRING)
-				LogError(context, libnameToken.loc, "ERROR! #linklib must be followed by string literal"_s);
-
-			tokenizer.cursor += libnameToken.size;
-
-			*DynamicArrayAdd(&context->libsToLink) = TokenToString(context, libnameToken);
-
-			continue;
-		}
 
 		*BucketArrayAdd(&context->tokens) = newToken;
 

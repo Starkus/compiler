@@ -1,5 +1,6 @@
 ASTExpression ParseExpression(Context *context, s32 precedence);
 ASTExpression ParseStatement(Context *context);
+ASTExpression ParseStaticStatement(Context *context);
 ASTVariableDeclaration ParseVariableDeclaration(Context *context);
 
 void AssertToken(Context *context, Token *token, int type)
@@ -25,7 +26,9 @@ void Advance(Context *context)
 	ASSERT(context->token == &context->tokens[context->currentTokenIdx]);
 
 	++context->currentTokenIdx;
-	ASSERT(context->currentTokenIdx < BucketArrayCount(&context->tokens));
+	if (context->currentTokenIdx > BucketArrayCount(&context->tokens))
+		LogError(context, context->token->loc, "Unexpected end of file"_s);
+
 	context->token = &context->tokens[context->currentTokenIdx];
 }
 
@@ -234,10 +237,11 @@ bool TryParseBinaryOperation(Context *context, ASTExpression leftHand, s32 prevP
 	return false;
 }
 
-ASTIf ParseIf(Context *context)
+ASTIf ParseIf(Context *context, bool onStaticContext)
 {
 	ASSERT(context->token->type == TOKEN_KEYWORD_IF ||
 		   context->token->type == TOKEN_KEYWORD_IF_STATIC);
+	ASSERT((context->token->type == TOKEN_KEYWORD_IF_STATIC) == onStaticContext);
 	Advance(context);
 
 	ASTIf ifNode = {};
@@ -256,14 +260,20 @@ ASTIf ParseIf(Context *context)
 		*ifNode.condition = ParseExpression(context, -1);
 
 	ifNode.body = NewTreeNode(context);
-	*ifNode.body = ParseStatement(context);
+	if (onStaticContext)
+		*ifNode.body = ParseStaticStatement(context);
+	else
+		*ifNode.body = ParseStatement(context);
 
 	if (context->token->type == TOKEN_KEYWORD_ELSE)
 	{
 		ifNode.elseLoc = context->token->loc;
 		Advance(context);
 		ifNode.elseBody = NewTreeNode(context);
-		*ifNode.elseBody = ParseStatement(context);
+		if (onStaticContext)
+			*ifNode.elseBody = ParseStaticStatement(context);
+		else
+			*ifNode.elseBody = ParseStatement(context);
 	}
 	return ifNode;
 }
@@ -1097,12 +1107,12 @@ ASTExpression ParseStatement(Context *context)
 	case TOKEN_KEYWORD_IF:
 	{
 		result.nodeType = ASTNODETYPE_IF;
-		result.ifNode = ParseIf(context);
+		result.ifNode = ParseIf(context, false);
 	} break;
 	case TOKEN_KEYWORD_IF_STATIC:
 	{
 		result.nodeType = ASTNODETYPE_IF_STATIC;
-		result.ifNode = ParseIf(context);
+		result.ifNode = ParseIf(context, false);
 	} break;
 	case TOKEN_KEYWORD_ELSE:
 	{
@@ -1241,6 +1251,7 @@ ASTExpression ParseStatement(Context *context)
 ASTExpression ParseStaticStatement(Context *context)
 {
 	ASTExpression result = {};
+	result.any.loc = context->token->loc;
 	result.typeTableIdx = TYPETABLEIDX_UNSET;
 
 	switch (context->token->type)
@@ -1260,7 +1271,7 @@ ASTExpression ParseStaticStatement(Context *context)
 	case TOKEN_KEYWORD_IF_STATIC:
 	{
 		result.nodeType = ASTNODETYPE_IF_STATIC;
-		result.ifNode = ParseIf(context);
+		result.ifNode = ParseIf(context, true);
 	} break;
 	case TOKEN_KEYWORD_OPERATOR:
 	{
@@ -1292,6 +1303,24 @@ ASTExpression ParseStaticStatement(Context *context)
 
 		result.nodeType = ASTNODETYPE_OPERATOR_OVERLOAD;
 		result.operatorOverload = overload;
+	} break;
+	case TOKEN_KEYWORD_INCLUDE:
+	{
+		result.nodeType = ASTNODETYPE_INCLUDE;
+		Advance(context);
+
+		AssertToken(context, context->token, TOKEN_LITERAL_STRING);
+		result.include.filename = TokenToString(context, *context->token);
+		Advance(context);
+	} break;
+	case TOKEN_KEYWORD_LINKLIB:
+	{
+		result.nodeType = ASTNODETYPE_LINKLIB;
+		Advance(context);
+
+		AssertToken(context, context->token, TOKEN_LITERAL_STRING);
+		result.linklib.filename = TokenToString(context, *context->token);
+		Advance(context);
 	} break;
 	default:
 	{
@@ -1338,7 +1367,8 @@ ASTRoot *GenerateSyntaxTree(Context *context)
 
 	context->currentTokenIdx = 0;
 	context->token = &context->tokens[0];
-	while (context->token->type != TOKEN_END_OF_FILE)
+	u64 tokenCount = BucketArrayCount(&context->tokens);
+	while (context->currentTokenIdx < tokenCount)
 	{
 		*DynamicArrayAdd(&root->block.statements) = ParseStaticStatement(context);
 	}

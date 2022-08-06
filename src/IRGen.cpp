@@ -2359,6 +2359,7 @@ skipGeneratingVarargsArray:
 		IRGenFromExpression(context, expression->usingNode.expression);
 	} break;
 	case ASTNODETYPE_ENUM_DECLARATION:
+	case ASTNODETYPE_INCLUDE:
 	{
 	} break;
 	case ASTNODETYPE_GARBAGE:

@@ -44,7 +44,6 @@ void X64Patch(Context *context, X64Instruction *original, X64Instruction newInst
 BasicBlock *PushBasicBlock(BasicBlock *currentBasicBlock,
 		BucketArray<BasicBlock, PhaseAllocator, 512> *basicBlocks)
 {
-
 	X64Procedure *procedure = nullptr;
 	s64 endOfLastBlock = -1;
 	if (currentBasicBlock)
@@ -472,6 +471,7 @@ void GenerateBasicBlocks(Context *context, Array<X64Procedure, PhaseAllocator> x
 			Print("- End\n\n");
 	}
 
+	// Link basic blocks together
 	const u64 basicBlockCount = BucketArrayCount(&context->beBasicBlocks);
 	for (int i = 0; i < basicBlockCount; ++i)
 	{

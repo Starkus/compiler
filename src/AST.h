@@ -314,6 +314,11 @@ struct ASTCast : ASTBase
 	ASTExpression *expression;
 };
 
+struct ASTInclude : ASTBase
+{
+	String filename;
+};
+
 struct ASTRoot : ASTBase
 {
 	ASTBlock block;
@@ -327,6 +332,8 @@ enum ASTNodeType
 	ASTNODETYPE_TYPE,
 	ASTNODETYPE_ALIAS,
 	ASTNODETYPE_BLOCK,
+	ASTNODETYPE_INCLUDE,
+	ASTNODETYPE_LINKLIB,
 	ASTNODETYPE_UNARY_OPERATION,
 	ASTNODETYPE_BINARY_OPERATION,
 	ASTNODETYPE_VARIABLE_DECLARATION,
@@ -362,6 +369,8 @@ struct ASTExpression
 		ASTLiteral literal;
 		ASTType astType;
 		ASTBlock block;
+		ASTInclude include;
+		ASTInclude linklib;
 		ASTUnaryOperation unaryOperation;
 		ASTBinaryOperation binaryOperation;
 		ASTVariableDeclaration variableDeclaration;

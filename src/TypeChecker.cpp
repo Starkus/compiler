@@ -2445,6 +2445,7 @@ bool IsExpressionAType(Context *context, ASTExpression *expression)
 }
 
 String OperatorToString(s32 op);
+void GenerateTypeCheckJobs(Context *context, ASTExpression *expression);
 TypeCheckExpressionResult TryTypeCheckExpression(Context *context, ASTExpression *expression)
 {
 	ASSERT(expression->typeTableIdx == TYPETABLEIDX_UNSET);
@@ -3950,6 +3951,31 @@ TypeCheckExpressionResult TryTypeCheckExpression(Context *context, ASTExpression
 				LogError(context, expression->any.loc, "Procedure has to return a value"_s);
 		}
 	} break;
+	case ASTNODETYPE_INCLUDE:
+	{
+		String filename = expression->include.filename;
+		if (CompilerAddSourceFile(context, filename, expression->any.loc))
+		{
+			TokenizeFile(context, context->sourceFiles.size - 1);
+			u64 tokenCount = BucketArrayCount(&context->tokens);
+			while (context->currentTokenIdx < tokenCount)
+			{
+#if 0
+				ASTExpression *statement = NewTreeNode(context);
+				*statement = ParseStaticStatement(context);
+#else
+				ASTExpression *statement = DynamicArrayAdd(&context->astRoot->block.statements);
+				*statement = ParseStaticStatement(context);
+#endif
+				GenerateTypeCheckJobs(context, statement);
+			}
+		}
+	} break;
+	case ASTNODETYPE_LINKLIB:
+	{
+		String filename = expression->linklib.filename;
+		*DynamicArrayAdd(&context->libsToLink) = filename;
+	} break;
 	default:
 	{
 		LogError(context, expression->any.loc, "COMPILER ERROR! Unknown expression type on type checking"_s);
@@ -3984,6 +4010,7 @@ void GenerateTypeCheckJobs(Context *context, ASTExpression *expression)
 			DynamicArrayInit(&job.scopeStack, 16);
 		*DynamicArrayAdd(&context->tcJobs) = job;
 	} break;
+	case ASTNODETYPE_INCLUDE:
 	case ASTNODETYPE_IF_STATIC:
 	case ASTNODETYPE_OPERATOR_OVERLOAD:
 	{
