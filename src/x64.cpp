@@ -1180,12 +1180,26 @@ void X64MovNoTmp(Context *context, X64Procedure *x64Proc, IRValue dst, IRValue s
 			else if (srcType.size > dstType.size)
 				src.typeTableIdx = dst.typeTableIdx;
 		}
-		else if (srcType.size == 4)
-			result.type = X64_CVTTSS2SI;
 		else
 		{
-			ASSERT(srcType.size == 8);
-			result.type = X64_CVTTSD2SI;
+			// X64_CVTTSD2SI and CVTTSD2SI are R-RM
+			ASSERT(dst.valueType == IRVALUETYPE_VALUE ||
+				   dst.valueType == IRVALUETYPE_VALUE_DEREFERENCE);
+			IRValue newValue = IRValueNewValue(context, "_cvttsd2si_tmp"_s, dst.typeTableIdx,
+					VALUEFLAGS_FORCE_REGISTER | VALUEFLAGS_TRY_IMMITATE, dst.value.valueIdx);
+			X64InstructionType type;
+
+			if (srcType.size == 4)
+				type = X64_CVTTSS2SI;
+			else
+			{
+				ASSERT(srcType.size == 8);
+				type = X64_CVTTSD2SI;
+			}
+			*BucketArrayAdd(&x64Proc->instructions) = { type, newValue, src };
+
+			result.type = X64_MOV;
+			src = newValue;
 		}
 	}
 	else if (dstType.size == 4)
