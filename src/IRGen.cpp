@@ -97,25 +97,6 @@ IRValue IRValueValue(Context *context, u32 valueIdx, s64 offset = 0)
 	return result;
 }
 
-IRValue IRValueTCValue(Context *context, TCValue tcValue)
-{
-	IRValue result = {};
-	result.valueType = IRVALUETYPE_VALUE;
-	if (tcValue.type == TCVALUETYPE_VALUE)
-	{
-		result.value = { tcValue.valueIdx };
-		result.typeTableIdx = context->values[tcValue.valueIdx].typeTableIdx;
-	}
-	else
-	{
-		u32 procIdx = context->irProcedureStack[context->irProcedureStack.size - 1].procedureIdx;
-		u32 paramValueIdx = GetProcedure(context, procIdx)->parameterValues[tcValue.valueIdx];
-		result.value = { paramValueIdx };
-		result.typeTableIdx = context->values[paramValueIdx].typeTableIdx;
-	}
-	return result;
-}
-
 IRValue IRValueDereference(u32 valueIdx, u32 typeTableIdx, s64 offset = 0)
 {
 	IRValue result = {};
@@ -996,28 +977,6 @@ void IRConditionalJumpFromExpression(Context *context, ASTExpression *conditionE
 		*AddInstruction(context) = jump;
 		return;
 	}
-#if 0
-	// @Check: Don't remember why this wasn't working.
-	else if (conditionExp->nodeType == ASTNODETYPE_UNARY_OPERATION)
-	{
-		IRInstruction jump = {};
-		switch (conditionExp->unaryOperation.op)
-		{
-		case TOKEN_OP_NOT:
-			jump.type = IRINSTRUCTIONTYPE_JUMP_IF_NOT_ZERO;
-			break;
-		default:
-			goto defaultConditionEvaluation;
-		}
-
-		IRValue conditionResult = IRGenFromExpression(context,
-				conditionExp->unaryOperation.expression);
-		jump.conditionalJump.label = label;
-		jump.conditionalJump.condition = conditionResult;
-		*AddInstruction(context) = jump;
-		return;
-	}
-#endif
 
 defaultConditionEvaluation:
 	{
@@ -1077,8 +1036,9 @@ IRValue IRDoInlineProcedureCall(Context *context, ASTProcedureCall astProcCall)
 		p.instructions = callingProcedure->instructions;
 		p.name = TPrintF("_%S_inline", procedure->name);
 		p.returnValueIdx = returnValue.value.valueIdx;
-		if (procedure->parameterValues.size)
-			DynamicArrayInit(&p.parameterValues, procedure->parameterValues.size);
+		p.parameterValues.data = astProcCall.inlineParameterValues.data;
+		p.parameterValues.size = astProcCall.inlineParameterValues.size;
+		p.parameterValues.capacity = astProcCall.inlineParameterValues.size;
 		*tempProc = p;
 	}
 
@@ -1093,15 +1053,11 @@ IRValue IRDoInlineProcedureCall(Context *context, ASTProcedureCall astProcCall)
 		ASTExpression *arg = &astProcCall.arguments[argIdx];
 		IRValue argValue = IRGenFromExpression(context, arg);
 
-		if (argValue.valueType == IRVALUETYPE_VALUE)
-			*DynamicArrayAdd(&tempProc->parameterValues) = argValue.value.valueIdx;
-		else
-		{
-			IRValue param = IRValueNewValue(context,
-					procTypeInfo.parameters[argIdx].typeTableIdx, 0);
-			IRDoAssignment(context, param, argValue);
-			*DynamicArrayAdd(&tempProc->parameterValues) = param.value.valueIdx;
-		}
+		u32 paramValueIdx = astProcCall.inlineParameterValues[argIdx];
+		IRPushValueIntoStack(context, paramValueIdx);
+		IRValue param = IRValueValue(context, paramValueIdx);
+
+		IRDoAssignment(context, param, argValue);
 	}
 
 	// Default parameters
@@ -1118,9 +1074,12 @@ IRValue IRDoInlineProcedureCall(Context *context, ASTProcedureCall astProcCall)
 					procParam.typeTableIdx);
 		else
 			ASSERT(!"Invalid constant type");
-		IRValue param = IRValueNewValue(context, procParam.typeTableIdx, 0);
+
+		u32 paramValueIdx = astProcCall.inlineParameterValues[argIdx];
+		IRPushValueIntoStack(context, paramValueIdx);
+		IRValue param = IRValueValue(context, paramValueIdx);
+
 		IRDoAssignment(context, param, arg);
-		*DynamicArrayAdd(&tempProc->parameterValues) = param.value.valueIdx;
 	}
 
 	// Varargs
@@ -1140,9 +1099,11 @@ IRValue IRDoInlineProcedureCall(Context *context, ASTProcedureCall astProcCall)
 
 				IRValue varargsArray = IRGenFromExpression(context, varargsArrayExp);
 
-				ASSERT(varargsArray.valueType == IRVALUETYPE_VALUE ||
-					   varargsArray.valueType == IRVALUETYPE_VALUE_DEREFERENCE);
-				*DynamicArrayAdd(&tempProc->parameterValues) = varargsArray.value.valueIdx;
+				u32 paramValueIdx = astProcCall.inlineParameterValues[procParamCount];
+				IRPushValueIntoStack(context, paramValueIdx);
+				IRValue param = IRValueValue(context, paramValueIdx);
+
+				IRDoAssignment(context, param, varargsArray);
 
 				goto skipGeneratingVarargsArray;
 			}
@@ -1203,7 +1164,11 @@ IRValue IRDoInlineProcedureCall(Context *context, ASTProcedureCall astProcCall)
 		}
 
 		// Pass array as parameter!
-		*DynamicArrayAdd(&tempProc->parameterValues) = arrayValueIdx;
+		u32 paramValueIdx = astProcCall.inlineParameterValues[procParamCount];
+		IRPushValueIntoStack(context, paramValueIdx);
+		IRValue param = IRValueValue(context, paramValueIdx);
+
+		IRDoAssignment(context, param, arrayIRValue);
 	}
 skipGeneratingVarargsArray:
 
@@ -1683,10 +1648,8 @@ IRValue IRGenFromExpression(Context *context, ASTExpression *expression)
 		} break;
 		case NAMETYPE_VARIABLE:
 		{
-			TCValue tcValue = expression->identifier.tcValue;
-			result = IRValueTCValue(context, tcValue);
-			if (tcValue.type == TCVALUETYPE_PARAMETER &&
-				context->values[result.value.valueIdx].flags & VALUEFLAGS_PARAMETER_BY_COPY)
+			result = IRValueValue(context, expression->identifier.valueIdx);
+			if (context->values[result.value.valueIdx].flags & VALUEFLAGS_PARAMETER_BY_COPY)
 				result = IRDereferenceValue(context, result);
 		} break;
 		default:
@@ -1713,7 +1676,7 @@ IRValue IRGenFromExpression(Context *context, ASTExpression *expression)
 		case CALLTYPE_VALUE:
 		{
 			procCallInst.type = IRINSTRUCTIONTYPE_PROCEDURE_CALL_INDIRECT;
-			IRValue irValue = IRValueTCValue(context, astProcCall->tcValue);
+			IRValue irValue = IRValueValue(context, astProcCall->valueIdx);
 			procCallInst.procedureCall.procIRValue = irValue;
 			procTypeIdx = irValue.typeTableIdx;
 		} break;

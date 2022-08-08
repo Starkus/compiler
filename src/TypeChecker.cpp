@@ -172,7 +172,7 @@ struct TCScopeName
 		u32 primitiveTypeTableIdx;
 		struct
 		{
-			TCValue tcValue;
+			u32 valueIdx;
 			u32 typeTableIdx;
 		} variableInfo;
 		const StructMember *structMember;
@@ -224,40 +224,13 @@ struct TCJob
 	DynamicArray<TCScope, PhaseAllocator> scopeStack;
 };
 
-struct TypeCheckTypeResult
-{
-	bool success;
-	TCYieldInfo yieldInfo;
-	u32 typeTableIdx;
-};
-
-struct FindTypeResult
-{
-	bool success;
-	TCYieldInfo yieldInfo;
-	u32 typeTableIdx;
-};
-
-struct TypeCheckStructResult
-{
-	bool success;
-	TCYieldInfo yieldInfo;
-	u32 typeTableIdx;
-};
-
-struct TypeCheckVariableResult
+struct TCResult
 {
 	bool success;
 	TCYieldInfo yieldInfo;
 };
 
-struct TypeCheckProcedurePrototypeResult
-{
-	bool success;
-	TCYieldInfo yieldInfo;
-};
-
-struct TypeCheckExpressionResult
+struct TCResultWithType
 {
 	bool success;
 	TCYieldInfo yieldInfo;
@@ -444,7 +417,7 @@ TCScopeName *TCFindScopeName(Context *context, String name)
 	return nullptr;
 }
 
-FindTypeResult FindTypeInStackByName(Context *context, SourceLocation loc, String name)
+TCResultWithType FindTypeInStackByName(Context *context, SourceLocation loc, String name)
 {
 	u32 typeTableIdx = TYPETABLEIDX_UNSET;
 
@@ -1110,9 +1083,9 @@ u32 GetTypeInfoArrayOf(Context *context, u32 inType, s64 count)
 	return FindOrAddTypeTableIdx(context, resultTypeInfo);
 }
 
-TypeCheckTypeResult TypeCheckType(Context *context, String name, SourceLocation loc, ASTType *astType);
+TCResultWithType TypeCheckType(Context *context, String name, SourceLocation loc, ASTType *astType);
 
-TypeCheckStructResult TypeCheckStructDeclaration(Context *context, String name, ASTStructDeclaration astStructDecl)
+TCResultWithType TypeCheckStructDeclaration(Context *context, String name, ASTStructDeclaration astStructDecl)
 {
 	for (int memberIdx = 0; memberIdx < astStructDecl.members.size; ++memberIdx)
 	{
@@ -1126,7 +1099,7 @@ TypeCheckStructResult TypeCheckStructDeclaration(Context *context, String name, 
 			LogWarning(context, astMember->value->any.loc, TPrintF("Default value found on member "
 						"\"%S\". This is not yet supported", astMember->name));
 
-		TypeCheckTypeResult checkResult = TypeCheckType(context, {}, astMember->loc, astMember->astType);
+		TCResultWithType checkResult = TypeCheckType(context, {}, astMember->loc, astMember->astType);
 		if (!checkResult.success)
 			return { false, checkResult.yieldInfo };
 		else
@@ -1519,16 +1492,16 @@ error:
 	return { CONSTANTTYPE_INVALID };
 }
 
-TypeCheckExpressionResult TryTypeCheckExpression(Context *context, ASTExpression *expression);
-TypeCheckProcedurePrototypeResult TypeCheckProcedurePrototype(Context *context, ASTProcedurePrototype *prototype);
+TCResultWithType TryTypeCheckExpression(Context *context, ASTExpression *expression);
+TCResult TypeCheckProcedurePrototype(Context *context, ASTProcedurePrototype *prototype);
 TypeInfo TypeInfoFromASTProcedurePrototype(Context *context, ASTProcedurePrototype prototype);
-TypeCheckTypeResult TypeCheckType(Context *context, String name, SourceLocation loc, ASTType *astType)
+TCResultWithType TypeCheckType(Context *context, String name, SourceLocation loc, ASTType *astType)
 {
 	switch (astType->nodeType)
 	{
 	case ASTTYPENODETYPE_IDENTIFIER:
 	{
-		FindTypeResult result = FindTypeInStackByName(context, astType->loc, astType->name);
+		TCResultWithType result = FindTypeInStackByName(context, astType->loc, astType->name);
 		if (!result.success)
 			return { false, result.yieldInfo };
 
@@ -1536,7 +1509,7 @@ TypeCheckTypeResult TypeCheckType(Context *context, String name, SourceLocation 
 	} break;
 	case ASTTYPENODETYPE_ARRAY:
 	{
-		TypeCheckTypeResult result = TypeCheckType(context, {}, loc, astType->arrayType);
+		TCResultWithType result = TypeCheckType(context, {}, loc, astType->arrayType);
 		if (!result.success)
 			return { false, result.yieldInfo };
 
@@ -1545,7 +1518,7 @@ TypeCheckTypeResult TypeCheckType(Context *context, String name, SourceLocation 
 	} break;
 	case ASTTYPENODETYPE_POINTER:
 	{
-		TypeCheckTypeResult result = TypeCheckType(context, {}, loc, astType->pointedType);
+		TCResultWithType result = TypeCheckType(context, {}, loc, astType->pointedType);
 		if (!result.success)
 			return { false, result.yieldInfo };
 
@@ -1554,7 +1527,7 @@ TypeCheckTypeResult TypeCheckType(Context *context, String name, SourceLocation 
 	} break;
 	case ASTTYPENODETYPE_STRUCT_DECLARATION:
 	{
-		TypeCheckStructResult result =
+		TCResultWithType result =
 			TypeCheckStructDeclaration(context, name, astType->structDeclaration);
 		if (!result.success)
 			return { false, result.yieldInfo };
@@ -1568,7 +1541,7 @@ TypeCheckTypeResult TypeCheckType(Context *context, String name, SourceLocation 
 		if (astType->enumDeclaration.astType)
 		{
 			SourceLocation astTypeLoc = astType->enumDeclaration.astType->loc;
-			TypeCheckTypeResult result = TypeCheckType(context, {}, astTypeLoc, astType->enumDeclaration.astType);
+			TCResultWithType result = TypeCheckType(context, {}, astTypeLoc, astType->enumDeclaration.astType);
 			if (!result.success)
 				return { false, result.yieldInfo };
 
@@ -1584,7 +1557,7 @@ TypeCheckTypeResult TypeCheckType(Context *context, String name, SourceLocation 
 			ASTExpression *memberValue = astType->enumDeclaration.members[memberIdx].value;
 			if (memberValue)
 			{
-				TypeCheckExpressionResult result = TryTypeCheckExpression(context, memberValue);
+				TCResultWithType result = TryTypeCheckExpression(context, memberValue);
 				if (!result.success)
 					return { false, result.yieldInfo };
 			}
@@ -1663,7 +1636,7 @@ TypeCheckTypeResult TypeCheckType(Context *context, String name, SourceLocation 
 	} break;
 	case ASTTYPENODETYPE_PROCEDURE:
 	{
-		TypeCheckProcedurePrototypeResult result = TypeCheckProcedurePrototype(context,
+		TCResult result = TypeCheckProcedurePrototype(context,
 				&astType->procedurePrototype);
 		if (!result.success)
 			return { false, result.yieldInfo };
@@ -1760,14 +1733,14 @@ void AddStructMembersToScope(Context *context, SourceLocation loc, ASTExpression
 	}
 }
 
-TypeCheckVariableResult TypeCheckVariableDeclaration(Context *context, ASTVariableDeclaration *varDecl)
+TCResult TypeCheckVariableDeclaration(Context *context, ASTVariableDeclaration *varDecl)
 {
 	if (varDecl->name.size)
 		TCCheckIfNameAlreadyExists(context, varDecl->name, varDecl->loc);
 
 	if (varDecl->astType)
 	{
-		TypeCheckTypeResult result = TypeCheckType(context, {}, varDecl->loc, varDecl->astType);
+		TCResultWithType result = TypeCheckType(context, {}, varDecl->loc, varDecl->astType);
 		if (!result.success)
 			return { false, result.yieldInfo };
 
@@ -1779,7 +1752,7 @@ TypeCheckVariableResult TypeCheckVariableDeclaration(Context *context, ASTVariab
 
 	if (varDecl->astInitialValue)
 	{
-		TypeCheckExpressionResult result = TryTypeCheckExpression(context, varDecl->astInitialValue);
+		TCResultWithType result = TryTypeCheckExpression(context, varDecl->astInitialValue);
 		if (!result.success)
 			return { false, result.yieldInfo };
 
@@ -1808,14 +1781,14 @@ TypeCheckVariableResult TypeCheckVariableDeclaration(Context *context, ASTVariab
 	return { true, {} };
 }
 
-TypeCheckVariableResult TypeCheckProcedureParameter(Context *context, ASTProcedureParameter *astParam)
+TCResult TypeCheckProcedureParameter(Context *context, ASTProcedureParameter *astParam)
 {
 	if (astParam->name.size)
 		TCCheckIfNameAlreadyExists(context, astParam->name, astParam->loc);
 
 	if (astParam->astType)
 	{
-		TypeCheckTypeResult result = TypeCheckType(context, {}, astParam->loc, astParam->astType);
+		TCResultWithType result = TypeCheckType(context, {}, astParam->loc, astParam->astType);
 		if (!result.success)
 			return { false, result.yieldInfo };
 		else
@@ -1829,7 +1802,7 @@ TypeCheckVariableResult TypeCheckProcedureParameter(Context *context, ASTProcedu
 
 	if (astParam->astInitialValue)
 	{
-		TypeCheckExpressionResult result = TryTypeCheckExpression(context, astParam->astInitialValue);
+		TCResultWithType result = TryTypeCheckExpression(context, astParam->astInitialValue);
 		if (!result.success)
 			return { false, result.yieldInfo };
 
@@ -1910,13 +1883,13 @@ ReturnCheckResult CheckIfReturnsValue(Context *context, ASTExpression *expressio
 	return RETURNCHECKRESULT_NEVER;
 }
 
-TypeCheckProcedurePrototypeResult TypeCheckProcedurePrototype(Context *context, ASTProcedurePrototype *prototype)
+TCResult TypeCheckProcedurePrototype(Context *context, ASTProcedurePrototype *prototype)
 {
 	// Parameters
 	bool beginOptionalParameters = false;
 	for (int i = 0; i < prototype->astParameters.size; ++i)
 	{
-		TypeCheckVariableResult result = TypeCheckProcedureParameter(context, &prototype->astParameters[i]);
+		TCResult result = TypeCheckProcedureParameter(context, &prototype->astParameters[i]);
 		if (!result.success)
 			return { false, result.yieldInfo };
 
@@ -1933,7 +1906,7 @@ TypeCheckProcedurePrototypeResult TypeCheckProcedurePrototype(Context *context, 
 	prototype->returnTypeIdx = TYPETABLEIDX_VOID;
 	if (prototype->astReturnType)
 	{
-		TypeCheckTypeResult result = TypeCheckType(context, {}, prototype->loc, prototype->astReturnType);
+		TCResultWithType result = TypeCheckType(context, {}, prototype->loc, prototype->astReturnType);
 		if (!result.success)
 			return { false, result.yieldInfo };
 		prototype->returnTypeIdx = result.typeTableIdx;
@@ -2017,18 +1990,15 @@ ASTExpression InlineProcedureCopyTreeBranch(Context *context, const ASTExpressio
 	{
 		ASTVariableDeclaration varDecl = expression->variableDeclaration;
 
-		TCValue tcValue = { TCVALUETYPE_VALUE };
-		tcValue.valueIdx = NewValue(context, varDecl.name, varDecl.typeTableIdx,
+		varDecl.valueIdx = NewValue(context, varDecl.name, varDecl.typeTableIdx,
 				context->values[varDecl.valueIdx].flags);
-
-		varDecl.valueIdx = tcValue.valueIdx;
 
 		if (varDecl.name.size)
 		{
 			TCScopeName newScopeName;
 			newScopeName.type = NAMETYPE_VARIABLE;
 			newScopeName.name = varDecl.name;
-			newScopeName.variableInfo.tcValue = tcValue;
+			newScopeName.variableInfo.valueIdx = varDecl.valueIdx;
 			newScopeName.variableInfo.typeTableIdx = varDecl.typeTableIdx;
 			newScopeName.loc = varDecl.loc;
 
@@ -2044,7 +2014,7 @@ ASTExpression InlineProcedureCopyTreeBranch(Context *context, const ASTExpressio
 				e.typeTableIdx = varDecl.typeTableIdx;
 				e.nodeType = ASTNODETYPE_IDENTIFIER;
 				e.identifier.type = NAMETYPE_VARIABLE;
-				e.identifier.tcValue = tcValue;
+				e.identifier.valueIdx = varDecl.valueIdx;
 				*varExp = e;
 			}
 			AddStructMembersToScope(context, varDecl.loc, varExp);
@@ -2072,8 +2042,7 @@ ASTExpression InlineProcedureCopyTreeBranch(Context *context, const ASTExpressio
 		{
 		case NAMETYPE_VARIABLE:
 		{
-			TCValue tcValue = scopeName->variableInfo.tcValue;
-			astIdentifier.tcValue = scopeName->variableInfo.tcValue;
+			astIdentifier.valueIdx = scopeName->variableInfo.valueIdx;
 		} break;
 		case NAMETYPE_STRUCT_MEMBER:
 		{
@@ -2139,7 +2108,7 @@ ASTExpression InlineProcedureCopyTreeBranch(Context *context, const ASTExpressio
 				e.typeTableIdx = usingExp->variableDeclaration.typeTableIdx;
 				e.nodeType = ASTNODETYPE_IDENTIFIER;
 				e.identifier.type = NAMETYPE_VARIABLE;
-				e.identifier.tcValue = { TCVALUETYPE_VALUE, usingExp->variableDeclaration.valueIdx };
+				e.identifier.valueIdx = usingExp->variableDeclaration.valueIdx;
 				*varExp = e;
 			}
 			AddStructMembersToScope(context, usingExp->any.loc, varExp);
@@ -2167,7 +2136,7 @@ ASTExpression InlineProcedureCopyTreeBranch(Context *context, const ASTExpressio
 			TCScopeName *scopeName = TCFindScopeName(context, astProcCall.name);
 			ASSERT(scopeName);
 			ASSERT(scopeName->type == NAMETYPE_VARIABLE);
-			astProcCall.tcValue = scopeName->variableInfo.tcValue;
+			astProcCall.valueIdx = scopeName->variableInfo.valueIdx;
 		}
 		else if (astProcCall.callType == CALLTYPE_ASTEXPRESSION)
 		{
@@ -2283,7 +2252,7 @@ ASTExpression InlineProcedureCopyTreeBranch(Context *context, const ASTExpressio
 		TCScopeName newScopeName;
 		newScopeName.type = NAMETYPE_VARIABLE;
 		newScopeName.name = indexValueName;
-		newScopeName.variableInfo.tcValue = { TCVALUETYPE_VALUE, indexValueIdx };
+		newScopeName.variableInfo.valueIdx = indexValueIdx;
 		newScopeName.variableInfo.typeTableIdx = TYPETABLEIDX_S64;
 		newScopeName.loc = expression->any.loc;
 		*DynamicArrayAdd(&stackTop->names) = newScopeName;
@@ -2301,7 +2270,7 @@ ASTExpression InlineProcedureCopyTreeBranch(Context *context, const ASTExpressio
 			astFor.elementValueIdx = elementValueIdx;
 
 			newScopeName.name = elementValueName;
-			newScopeName.variableInfo.tcValue = { TCVALUETYPE_VALUE, elementValueIdx };
+			newScopeName.variableInfo.valueIdx = elementValueIdx;
 			newScopeName.variableInfo.typeTableIdx = origValueTypeIdx;
 			newScopeName.loc = expression->any.loc;
 			*DynamicArrayAdd(&stackTop->names) = newScopeName;
@@ -2355,14 +2324,15 @@ ASTExpression InlineProcedureCopyTreeBranch(Context *context, const ASTExpressio
 	}
 }
 
-void TCAddParametersToScope(Context *context, ASTProcedurePrototype prototype)
+void TCAddParametersToScope(Context *context, ArrayView<u32> parameterValues,
+		ASTProcedurePrototype prototype)
 {
 	TCScope *stackTop = GetTopMostScope(context);
 
 	for (int i = 0; i < prototype.astParameters.size; ++i)
 	{
 		ASTProcedureParameter astParameter = prototype.astParameters[i];
-		TCValue tcParamValue = { TCVALUETYPE_PARAMETER, (u32)i };
+		u32 paramValueIdx = parameterValues[i];
 
 		if (astParameter.isUsing)
 		{
@@ -2372,7 +2342,7 @@ void TCAddParametersToScope(Context *context, ASTProcedurePrototype prototype)
 				e.typeTableIdx = astParameter.typeTableIdx;
 				e.nodeType = ASTNODETYPE_IDENTIFIER;
 				e.identifier.type = NAMETYPE_VARIABLE;
-				e.identifier.tcValue = tcParamValue;
+				e.identifier.valueIdx = paramValueIdx;
 				*varExp = e;
 			}
 			AddStructMembersToScope(context, astParameter.loc, varExp);
@@ -2381,7 +2351,7 @@ void TCAddParametersToScope(Context *context, ASTProcedurePrototype prototype)
 		TCScopeName newScopeName;
 		newScopeName.type = NAMETYPE_VARIABLE;
 		newScopeName.name = astParameter.name;
-		newScopeName.variableInfo.tcValue = tcParamValue;
+		newScopeName.variableInfo.valueIdx = paramValueIdx;
 		newScopeName.variableInfo.typeTableIdx = astParameter.typeTableIdx;
 		newScopeName.loc = astParameter.loc;
 		*DynamicArrayAdd(&stackTop->names) = newScopeName;
@@ -2392,14 +2362,12 @@ void TCAddParametersToScope(Context *context, ASTProcedurePrototype prototype)
 	{
 		static u32 arrayTableIdx = GetTypeInfoArrayOf(context, TYPETABLEIDX_ANY_STRUCT, 0);
 
-		TCValue tcParamValue;
-		tcParamValue.type = TCVALUETYPE_PARAMETER;
-		tcParamValue.valueIdx = (u32)prototype.astParameters.size;
+		u32 paramValueIdx = { parameterValues[prototype.astParameters.size] };
 
 		TCScopeName newScopeName;
 		newScopeName.type = NAMETYPE_VARIABLE;
 		newScopeName.name = prototype.varargsName;
-		newScopeName.variableInfo.tcValue = tcParamValue;
+		newScopeName.variableInfo.valueIdx = paramValueIdx;
 		newScopeName.variableInfo.typeTableIdx = arrayTableIdx;
 		newScopeName.loc = prototype.varargsLoc;
 		*DynamicArrayAdd(&stackTop->names) = newScopeName;
@@ -2446,9 +2414,166 @@ bool IsExpressionAType(Context *context, ASTExpression *expression)
 	}
 }
 
+bool TCPushParametersAndInlineProcedureCall(Context *context, ASTProcedureCall *astProcCall)
+{
+	if (astProcCall->callType != CALLTYPE_STATIC)
+		return false;
+
+	Procedure *proc = GetProcedure(context, astProcCall->procedureIdx);
+
+	if (!proc->isInline)
+		return false;
+
+	ASSERT(context->typeTable[proc->typeTableIdx].typeCategory == TYPECATEGORY_PROCEDURE);
+	TypeInfoProcedure procTypeInfo = context->typeTable[proc->typeTableIdx].procedureInfo;
+
+	PushTCScope(context);
+
+	s64 totalArguments = procTypeInfo.parameters.size;
+	ArrayInit(&astProcCall->inlineParameterValues, totalArguments + 1);
+
+	for (int argIdx = 0; argIdx < totalArguments; ++argIdx)
+	{
+		u32 paramTypeIdx = procTypeInfo.parameters[argIdx].typeTableIdx;
+		u32 newValueIdx = NewValue(context, TPrintF("_inlinearg%d", argIdx),
+				paramTypeIdx, 0);
+		*ArrayAdd(&astProcCall->inlineParameterValues) = newValueIdx;
+	}
+	if (procTypeInfo.isVarargs)
+	{
+		static u32 arrayTableIdx = GetTypeInfoArrayOf(context, TYPETABLEIDX_ANY_STRUCT, 0);
+		u32 newValueIdx = NewValue(context, "_inlinevarargs"_s, arrayTableIdx, 0);
+		*ArrayAdd(&astProcCall->inlineParameterValues) = newValueIdx;
+	}
+
+	TCAddParametersToScope(context, astProcCall->inlineParameterValues, proc->astPrototype);
+
+	ASTExpression *e = NewTreeNode(context);
+	*e = InlineProcedureCopyTreeBranch(context, proc->astBody);
+	astProcCall->astBodyInlineCopy = e;
+
+	PopTCScope(context);
+
+	return true;
+}
+
 String OperatorToString(s32 op);
+TCResult LookForOperatorOverload(Context *context, ASTExpression *expression)
+{
+	OperatorOverload overload = {};
+	bool foundOverload = false;
+
+	enum TokenType op;
+	int paramCount;
+	ASTExpression *leftHand = nullptr;
+	ASTExpression *rightHand = nullptr;
+	if (expression->nodeType == ASTNODETYPE_UNARY_OPERATION)
+	{
+		op = expression->unaryOperation.op;
+		paramCount = 1;
+		leftHand = expression->unaryOperation.expression;
+	}
+	else
+	{
+		op = expression->binaryOperation.op;
+		paramCount = 2;
+		leftHand = expression->binaryOperation.leftHand;
+		rightHand = expression->binaryOperation.rightHand;
+	}
+
+	for (int overloadIdx = 0; overloadIdx < context->operatorOverloads.size; ++overloadIdx)
+	{
+		OperatorOverload currentOverload = context->operatorOverloads[overloadIdx];
+
+		if (op != currentOverload.op)
+			continue;
+
+		Procedure *procedure = GetProcedure(context, currentOverload.procedureIdx);
+		TypeInfo procType = context->typeTable[procedure->typeTableIdx];
+		ASSERT(procType.typeCategory == TYPECATEGORY_PROCEDURE);
+
+		if (paramCount == 1)
+		{
+			if (procType.procedureInfo.parameters.size != 1)
+				continue;
+
+			u32 leftHandTypeIdx  = procType.procedureInfo.parameters[0].typeTableIdx;
+
+			if (CheckTypesMatch(context, leftHand->typeTableIdx, leftHandTypeIdx) == TYPECHECK_COOL)
+			{
+				if (foundOverload)
+					LogError(context, expression->any.loc,
+							TPrintF("Multiple overloads found for operator %S with operand of "
+								"type %S",
+								OperatorToString(op),
+								TypeInfoToString(context, leftHand->typeTableIdx)));
+				overload = currentOverload;
+				foundOverload = true;
+			}
+		}
+		else
+		{
+			if (procType.procedureInfo.parameters.size != 2)
+				continue;
+
+			u32 leftHandTypeIdx  = procType.procedureInfo.parameters[0].typeTableIdx;
+			u32 rightHandTypeIdx = procType.procedureInfo.parameters[1].typeTableIdx;
+
+			if (CheckTypesMatch(context, leftHand->typeTableIdx, leftHandTypeIdx) ==
+					TYPECHECK_COOL &&
+				CheckTypesMatch(context, rightHand->typeTableIdx, rightHandTypeIdx) ==
+					TYPECHECK_COOL)
+			{
+				if (foundOverload)
+					LogError(context, expression->any.loc,
+							TPrintF("Multiple overloads found for operator %S with left hand "
+								"of type %S and right hand of type %S",
+								OperatorToString(op),
+								TypeInfoToString(context, leftHand->typeTableIdx),
+								TypeInfoToString(context, rightHand->typeTableIdx)));
+				overload = currentOverload;
+				foundOverload = true;
+			}
+		}
+	}
+
+	TypeInfo leftTypeInfo = context->typeTable[leftHand->typeTableIdx];
+
+	if (foundOverload)
+	{
+		Procedure *proc = GetProcedure(context, overload.procedureIdx);
+
+		TypeInfo procTypeInfo = context->typeTable[proc->typeTableIdx];
+		ASSERT(procTypeInfo.typeCategory == TYPECATEGORY_PROCEDURE);
+
+		if (proc->isInline && !proc->isBodyTypeChecked)
+		{
+			TCYieldInfo yieldInfo = {};
+			yieldInfo.cause = TCYIELDCAUSE_NEED_TYPE_CHECKING;
+			yieldInfo.name = proc->name;
+			yieldInfo.loc = expression->any.loc;
+			return { false, yieldInfo };
+		}
+
+		expression->typeTableIdx = procTypeInfo.procedureInfo.returnTypeTableIdx;
+		expression->nodeType = ASTNODETYPE_PROCEDURE_CALL;
+		expression->procedureCall = {};
+		expression->procedureCall.callType = CALLTYPE_STATIC;
+		expression->procedureCall.procedureIdx = overload.procedureIdx;
+		DynamicArrayInit(&expression->procedureCall.arguments, paramCount);
+		*DynamicArrayAdd(&expression->procedureCall.arguments) = *leftHand;
+		if (paramCount > 1)
+			*DynamicArrayAdd(&expression->procedureCall.arguments) = *rightHand;
+
+		TCPushParametersAndInlineProcedureCall(context, &expression->procedureCall);
+
+		return { true };
+	}
+	return { false, { TCYIELDCAUSE_NONE } };
+}
+
 void GenerateTypeCheckJobs(Context *context, ASTExpression *expression);
-TypeCheckExpressionResult TryTypeCheckExpression(Context *context, ASTExpression *expression)
+TCResultWithType TryTypeCheckExpression(Context *context, ASTExpression *expression)
 {
 	ASSERT(expression->typeTableIdx == TYPETABLEIDX_UNSET);
 
@@ -2469,7 +2594,7 @@ TypeCheckExpressionResult TryTypeCheckExpression(Context *context, ASTExpression
 
 		while (astBlock->typeCheckingIdx < astBlock->statements.size)
 		{
-			TypeCheckExpressionResult result = TryTypeCheckExpression(context,
+			TCResultWithType result = TryTypeCheckExpression(context,
 					&astBlock->statements[astBlock->typeCheckingIdx]);
 			if (!result.success)
 				return { false, result.yieldInfo };
@@ -2486,7 +2611,7 @@ TypeCheckExpressionResult TryTypeCheckExpression(Context *context, ASTExpression
 	case ASTNODETYPE_VARIABLE_DECLARATION:
 	{
 		ASTVariableDeclaration *varDecl = &expression->variableDeclaration;
-		TypeCheckVariableResult result = TypeCheckVariableDeclaration(context, varDecl);
+		TCResult result = TypeCheckVariableDeclaration(context, varDecl);
 		if (!result.success)
 			return { false, result.yieldInfo };
 		expression->typeTableIdx = varDecl->typeTableIdx;
@@ -2494,11 +2619,10 @@ TypeCheckExpressionResult TryTypeCheckExpression(Context *context, ASTExpression
 		u32 forceMemoryFlag = context->config.dontPromoteMemoryToRegisters ? VALUEFLAGS_FORCE_MEMORY : 0;
 		u32 staticFlag      = varDecl->isStatic   ? VALUEFLAGS_ON_STATIC_STORAGE : 0;
 		u32 externalFlag    = varDecl->isExternal ? VALUEFLAGS_IS_EXTERNAL       : 0;
-		TCValue tcValue = { TCVALUETYPE_VALUE };
-		tcValue.valueIdx = NewValue(context, varDecl->name, varDecl->typeTableIdx,
+		u32 valueIdx = NewValue(context, varDecl->name, varDecl->typeTableIdx,
 				forceMemoryFlag | staticFlag | externalFlag);
 
-		varDecl->valueIdx = tcValue.valueIdx;
+		varDecl->valueIdx = valueIdx;
 
 		if (!varDecl->addedScopeName)
 		{
@@ -2507,7 +2631,7 @@ TypeCheckExpressionResult TryTypeCheckExpression(Context *context, ASTExpression
 				TCScopeName newScopeName;
 				newScopeName.type = NAMETYPE_VARIABLE;
 				newScopeName.name = varDecl->name;
-				newScopeName.variableInfo.tcValue = tcValue;
+				newScopeName.variableInfo.valueIdx = valueIdx;
 				newScopeName.variableInfo.typeTableIdx = varDecl->typeTableIdx;
 				newScopeName.loc = varDecl->loc;
 
@@ -2529,7 +2653,7 @@ TypeCheckExpressionResult TryTypeCheckExpression(Context *context, ASTExpression
 				e.typeTableIdx = varDecl->typeTableIdx;
 				e.nodeType = ASTNODETYPE_IDENTIFIER;
 				e.identifier.type = NAMETYPE_VARIABLE;
-				e.identifier.tcValue = tcValue;
+				e.identifier.valueIdx = valueIdx;
 				*varExp = e;
 			}
 			AddStructMembersToScope(context, varDecl->loc, varExp);
@@ -2599,7 +2723,7 @@ TypeCheckExpressionResult TryTypeCheckExpression(Context *context, ASTExpression
 
 			if (!procDecl->checkedPrototype)
 			{
-				TypeCheckProcedurePrototypeResult result = TypeCheckProcedurePrototype(context,
+				TCResult result = TypeCheckProcedurePrototype(context,
 						&procDecl->prototype);
 				if (!result.success)
 					return { false, result.yieldInfo };
@@ -2609,7 +2733,6 @@ TypeCheckExpressionResult TryTypeCheckExpression(Context *context, ASTExpression
 				for (int i = 0; i < procDecl->prototype.astParameters.size; ++i)
 				{
 					ASTProcedureParameter astParameter = procDecl->prototype.astParameters[i];
-					TCValue tcParamValue = { TCVALUETYPE_PARAMETER, (u32)i };
 					u32 paramValueIdx = NewValue(context, astParameter.name, astParameter.typeTableIdx, 0);
 					*DynamicArrayAdd(&procedure->parameterValues) = paramValueIdx;
 				}
@@ -2621,7 +2744,7 @@ TypeCheckExpressionResult TryTypeCheckExpression(Context *context, ASTExpression
 					u32 valueIdx = NewValue(context, procDecl->prototype.varargsName, arrayTableIdx, 0);
 					*DynamicArrayAdd(&procedure->parameterValues) = valueIdx;
 				}
-				TCAddParametersToScope(context, procDecl->prototype);
+				TCAddParametersToScope(context, procedure->parameterValues, procDecl->prototype);
 
 				u32 returnType = procDecl->prototype.returnTypeIdx;
 				t.procedureInfo.returnTypeTableIdx = returnType;
@@ -2643,7 +2766,7 @@ TypeCheckExpressionResult TryTypeCheckExpression(Context *context, ASTExpression
 				u32 previousReturnType = context->tcCurrentReturnType;
 				context->tcCurrentReturnType = t.procedureInfo.returnTypeTableIdx;
 
-				TypeCheckExpressionResult result =
+				TCResultWithType result =
 					TryTypeCheckExpression(context, procedure->astBody);
 
 				// Important to restore return type whether we yield or not
@@ -2670,7 +2793,7 @@ TypeCheckExpressionResult TryTypeCheckExpression(Context *context, ASTExpression
 		else if (astStaticDef->expression->nodeType == ASTNODETYPE_TYPE ||
 				 astStaticDef->expression->nodeType == ASTNODETYPE_ALIAS)
 		{
-			TypeCheckTypeResult result = TypeCheckType(context, astStaticDef->name, expression->any.loc,
+			TCResultWithType result = TypeCheckType(context, astStaticDef->name, expression->any.loc,
 					&astStaticDef->expression->astType);
 			if (!result.success)
 				return { false, result.yieldInfo };
@@ -2700,7 +2823,7 @@ TypeCheckExpressionResult TryTypeCheckExpression(Context *context, ASTExpression
 		}
 		else
 		{
-			TypeCheckExpressionResult result = TryTypeCheckExpression(context, astStaticDef->expression);
+			TCResultWithType result = TryTypeCheckExpression(context, astStaticDef->expression);
 			if (!result.success)
 				return { false, result.yieldInfo };
 
@@ -2735,7 +2858,7 @@ TypeCheckExpressionResult TryTypeCheckExpression(Context *context, ASTExpression
 		TypeCheckErrorCode errorCode;
 		if (returnExp != nullptr)
 		{
-			TypeCheckExpressionResult result = TryTypeCheckExpression(context, returnExp);
+			TCResultWithType result = TryTypeCheckExpression(context, returnExp);
 			if (!result.success)
 				return { false, result.yieldInfo };
 
@@ -2785,7 +2908,7 @@ TypeCheckExpressionResult TryTypeCheckExpression(Context *context, ASTExpression
 		{
 		case NAMETYPE_VARIABLE:
 		{
-			expression->identifier.tcValue = scopeName->variableInfo.tcValue;
+			expression->identifier.valueIdx = scopeName->variableInfo.valueIdx;
 			u32 variableTypeIdx = scopeName->variableInfo.typeTableIdx;
 			if (variableTypeIdx == TYPETABLEIDX_UNSET)
 			{
@@ -2841,7 +2964,7 @@ TypeCheckExpressionResult TryTypeCheckExpression(Context *context, ASTExpression
 	case ASTNODETYPE_USING:
 	{
 		ASTExpression *usingExp = expression->usingNode.expression;
-		TypeCheckExpressionResult result = TryTypeCheckExpression(context, usingExp);
+		TCResultWithType result = TryTypeCheckExpression(context, usingExp);
 		if (!result.success)
 			return { false, result.yieldInfo };
 
@@ -2853,7 +2976,7 @@ TypeCheckExpressionResult TryTypeCheckExpression(Context *context, ASTExpression
 				e.typeTableIdx = usingExp->variableDeclaration.typeTableIdx;
 				e.nodeType = ASTNODETYPE_IDENTIFIER;
 				e.identifier.type = NAMETYPE_VARIABLE;
-				e.identifier.tcValue = { TCVALUETYPE_VALUE, usingExp->variableDeclaration.valueIdx };
+				e.identifier.valueIdx = usingExp->variableDeclaration.valueIdx;
 				*varExp = e;
 			}
 			AddStructMembersToScope(context, usingExp->any.loc, varExp);
@@ -2870,7 +2993,7 @@ TypeCheckExpressionResult TryTypeCheckExpression(Context *context, ASTExpression
 		{
 			ProcedureCallType callType = CALLTYPE_STATIC;
 			s32 procedureIdx = S32_MIN;
-			TCValue tcValue = {};
+			u32 valueIdx = U32_MAX;
 			ASTExpression *astExpression = nullptr;
 			u32 procedureTypeIdx = TYPETABLEIDX_UNSET;
 
@@ -2891,7 +3014,7 @@ TypeCheckExpressionResult TryTypeCheckExpression(Context *context, ASTExpression
 			if (scopeName->type == NAMETYPE_VARIABLE)
 			{
 				callType = CALLTYPE_VALUE;
-				tcValue = scopeName->variableInfo.tcValue;
+				valueIdx = scopeName->variableInfo.valueIdx;
 				procedureTypeIdx = scopeName->variableInfo.typeTableIdx;
 			}
 			else if (scopeName->type == NAMETYPE_ASTEXPRESSION)
@@ -2934,14 +3057,14 @@ TypeCheckExpressionResult TryTypeCheckExpression(Context *context, ASTExpression
 			for (; *argIdx < givenArguments; ++*argIdx)
 			{
 				ASTExpression *arg = &expression->procedureCall.arguments[*argIdx];
-				TypeCheckExpressionResult result = TryTypeCheckExpression(context, arg);
+				TCResultWithType result = TryTypeCheckExpression(context, arg);
 				if (!result.success)
 					return { false, result.yieldInfo };
 			}
 
 			expression->procedureCall.callType = callType;
 			if (callType == CALLTYPE_VALUE)
-				expression->procedureCall.tcValue = tcValue;
+				expression->procedureCall.valueIdx = valueIdx;
 			else if (callType == CALLTYPE_ASTEXPRESSION)
 				expression->procedureCall.expression = astExpression;
 			else
@@ -3007,109 +3130,23 @@ TypeCheckExpressionResult TryTypeCheckExpression(Context *context, ASTExpression
 			}
 		}
 
-		if (expression->procedureCall.callType == CALLTYPE_STATIC)
-		{
-			Procedure *proc = GetProcedure(context, expression->procedureCall.procedureIdx);
-			if (proc->isInline)
-			{
-				PushTCScope(context);
-
-				TCAddParametersToScope(context, proc->astPrototype);
-
-				ASTExpression *e = NewTreeNode(context);
-				*e = InlineProcedureCopyTreeBranch(context, proc->astBody);
-				expression->procedureCall.astBodyInlineCopy = e;
-
-				PopTCScope(context);
-			}
-		}
+		TCPushParametersAndInlineProcedureCall(context, &expression->procedureCall);
 	} break;
 	case ASTNODETYPE_UNARY_OPERATION:
 	{
 		ASTExpression *input = expression->unaryOperation.expression;
 		if (input->typeTableIdx == TYPETABLEIDX_UNSET)
 		{
-			TypeCheckExpressionResult result = TryTypeCheckExpression(context, input);
+			TCResultWithType result = TryTypeCheckExpression(context, input);
 			if (!result.success)
 				return { false, result.yieldInfo };
 		}
 
-		OperatorOverload overload = {};
-		bool foundOverload = false;
+		TCResult lookForOverloadResult = LookForOperatorOverload(context, expression);
+		if (lookForOverloadResult.yieldInfo.cause != TCYIELDCAUSE_NONE)
+			return { false, lookForOverloadResult.yieldInfo };
 
-		for (int overloadIdx = 0; overloadIdx < context->operatorOverloads.size; ++overloadIdx)
-		{
-			OperatorOverload currentOverload = context->operatorOverloads[overloadIdx];
-
-			if (expression->unaryOperation.op != currentOverload.op)
-				continue;
-
-			Procedure *procedure = GetProcedure(context, currentOverload.procedureIdx);
-			TypeInfo procType = context->typeTable[procedure->typeTableIdx];
-			ASSERT(procType.typeCategory == TYPECATEGORY_PROCEDURE);
-
-			if (procType.procedureInfo.parameters.size != 1)
-				continue;
-
-			u32 paramTypeIdx  = procType.procedureInfo.parameters[0].typeTableIdx;
-
-			if (CheckTypesMatch(context, input->typeTableIdx, paramTypeIdx) == TYPECHECK_COOL)
-			{
-				if (foundOverload)
-					LogError(context, expression->any.loc,
-							TPrintF("Multiple overloads found for operator %S with operand of "
-								"type %S",
-								OperatorToString(expression->unaryOperation.op),
-								TypeInfoToString(context, input->typeTableIdx)));
-				overload = currentOverload;
-				foundOverload = true;
-			}
-		}
-
-		TypeInfo inputTypeInfo = context->typeTable[input->typeTableIdx];
-
-		if (foundOverload)
-		{
-			// No type checking againts procedure prototype. We trust here that the overloads
-			// got type checked properly in the struct declaration.
-			Procedure *proc = GetProcedure(context, overload.procedureIdx);
-
-			TypeInfo procType = context->typeTable[proc->typeTableIdx];
-			ASSERT(procType.typeCategory == TYPECATEGORY_PROCEDURE);
-
-			if (proc->isInline && !proc->isBodyTypeChecked)
-			{
-				TCYieldInfo yieldInfo = {};
-				yieldInfo.cause = TCYIELDCAUSE_NEED_TYPE_CHECKING;
-				yieldInfo.name = proc->name;
-				yieldInfo.loc = expression->any.loc;
-				return { false, yieldInfo };
-			}
-
-			expression->typeTableIdx = procType.procedureInfo.returnTypeTableIdx;
-			expression->nodeType = ASTNODETYPE_PROCEDURE_CALL;
-			expression->procedureCall = {};
-			expression->procedureCall.callType = CALLTYPE_STATIC;
-			expression->procedureCall.procedureIdx = overload.procedureIdx;
-			DynamicArrayInit(&expression->procedureCall.arguments, 1);
-			*DynamicArrayAdd(&expression->procedureCall.arguments) = *input;
-
-			// Inline?
-			if (proc->isInline)
-			{
-				PushTCScope(context);
-
-				// Parameters
-				TCAddParametersToScope(context, proc->astPrototype);
-
-				ASTExpression *e = NewTreeNode(context);
-				*e = InlineProcedureCopyTreeBranch(context, proc->astBody);
-				expression->procedureCall.astBodyInlineCopy = e;
-
-				PopTCScope(context);
-			}
-		}
-		else
+		if (!lookForOverloadResult.success)
 		{
 			u32 expressionType = input->typeTableIdx;
 			switch (expression->unaryOperation.op)
@@ -3133,9 +3170,8 @@ TypeCheckExpressionResult TryTypeCheckExpression(Context *context, ASTExpression
 				{
 				case ASTNODETYPE_IDENTIFIER:
 				{
-					if (e->identifier.type == NAMETYPE_VARIABLE &&
-						e->identifier.tcValue.type == TCVALUETYPE_VALUE)
-						context->values[e->identifier.tcValue.valueIdx].flags |= VALUEFLAGS_FORCE_MEMORY;
+					if (e->identifier.type == NAMETYPE_VARIABLE)
+						context->values[e->identifier.valueIdx].flags |= VALUEFLAGS_FORCE_MEMORY;
 				} break;
 				}
 
@@ -3164,7 +3200,7 @@ TypeCheckExpressionResult TryTypeCheckExpression(Context *context, ASTExpression
 		{
 			if (leftHand->typeTableIdx == TYPETABLEIDX_UNSET)
 			{
-				TypeCheckExpressionResult result = TryTypeCheckExpression(context, leftHand);
+				TCResultWithType result = TryTypeCheckExpression(context, leftHand);
 				if (!result.success)
 					return { false, result.yieldInfo };
 			}
@@ -3215,7 +3251,7 @@ TypeCheckExpressionResult TryTypeCheckExpression(Context *context, ASTExpression
 		}
 		else if (expression->binaryOperation.op == TOKEN_OP_ARRAY_ACCESS)
 		{
-			TypeCheckExpressionResult result;
+			TCResultWithType result;
 			if (leftHand->typeTableIdx == TYPETABLEIDX_UNSET)
 			{
 				result = TryTypeCheckExpression(context, leftHand);
@@ -3252,7 +3288,7 @@ TypeCheckExpressionResult TryTypeCheckExpression(Context *context, ASTExpression
 		}
 		else
 		{
-			TypeCheckExpressionResult result;
+			TCResultWithType result;
 			if (leftHand->typeTableIdx == TYPETABLEIDX_UNSET)
 			{
 				result = TryTypeCheckExpression(context, leftHand);
@@ -3266,88 +3302,11 @@ TypeCheckExpressionResult TryTypeCheckExpression(Context *context, ASTExpression
 					return { false, result.yieldInfo };
 			}
 
-			OperatorOverload overload = {};
-			bool foundOverload = false;
+			TCResult lookForOverloadResult = LookForOperatorOverload(context, expression);
+			if (lookForOverloadResult.yieldInfo.cause != TCYIELDCAUSE_NONE)
+				return { false, lookForOverloadResult.yieldInfo };
 
-			for (int overloadIdx = 0; overloadIdx < context->operatorOverloads.size; ++overloadIdx)
-			{
-				OperatorOverload currentOverload = context->operatorOverloads[overloadIdx];
-
-				if (expression->binaryOperation.op != currentOverload.op)
-					continue;
-
-				Procedure *procedure = GetProcedure(context, currentOverload.procedureIdx);
-				TypeInfo procType = context->typeTable[procedure->typeTableIdx];
-				ASSERT(procType.typeCategory == TYPECATEGORY_PROCEDURE);
-
-				if (procType.procedureInfo.parameters.size != 2)
-					continue;
-
-				u32 leftHandTypeIdx  = procType.procedureInfo.parameters[0].typeTableIdx;
-				u32 rightHandTypeIdx = procType.procedureInfo.parameters[1].typeTableIdx;
-
-				if (CheckTypesMatch(context, leftHand->typeTableIdx, leftHandTypeIdx) ==
-						TYPECHECK_COOL &&
-					CheckTypesMatch(context, rightHand->typeTableIdx, rightHandTypeIdx) ==
-						TYPECHECK_COOL)
-				{
-					if (foundOverload)
-						LogError(context, expression->any.loc,
-								TPrintF("Multiple overloads found for operator %S with left hand "
-									"of type %S and right hand of type %S",
-									OperatorToString(expression->binaryOperation.op),
-									TypeInfoToString(context, leftHand->typeTableIdx),
-									TypeInfoToString(context, rightHand->typeTableIdx)));
-					overload = currentOverload;
-					foundOverload = true;
-				}
-			}
-
-			TypeInfo leftTypeInfo = context->typeTable[leftHand->typeTableIdx];
-
-			if (foundOverload)
-			{
-				// No type checking againts procedure prototype. We trust here that the overloads
-				// got type checked properly in the struct declaration.
-				Procedure *proc = GetProcedure(context, overload.procedureIdx);
-
-				TypeInfo procType = context->typeTable[proc->typeTableIdx];
-				ASSERT(procType.typeCategory == TYPECATEGORY_PROCEDURE);
-
-				if (proc->isInline && !proc->isBodyTypeChecked)
-				{
-					TCYieldInfo yieldInfo = {};
-					yieldInfo.cause = TCYIELDCAUSE_NEED_TYPE_CHECKING;
-					yieldInfo.name = proc->name;
-					yieldInfo.loc = expression->any.loc;
-					return { false, yieldInfo };
-				}
-
-				expression->typeTableIdx = procType.procedureInfo.returnTypeTableIdx;
-				expression->nodeType = ASTNODETYPE_PROCEDURE_CALL;
-				expression->procedureCall = {};
-				expression->procedureCall.callType = CALLTYPE_STATIC;
-				expression->procedureCall.procedureIdx = overload.procedureIdx;
-				DynamicArrayInit(&expression->procedureCall.arguments, 2);
-				*DynamicArrayAdd(&expression->procedureCall.arguments) = *leftHand;
-				*DynamicArrayAdd(&expression->procedureCall.arguments) = *rightHand;
-
-				// Inline?
-				if (proc->isInline)
-				{
-					PushTCScope(context);
-
-					// Parameters
-					TCAddParametersToScope(context, proc->astPrototype);
-
-					ASTExpression *e = NewTreeNode(context);
-					*e = InlineProcedureCopyTreeBranch(context, proc->astBody);
-					expression->procedureCall.astBodyInlineCopy = e;
-
-					PopTCScope(context);
-				}
-			}
-			else
+			if (!lookForOverloadResult.success)
 			{
 				TypeCheckResult typeCheckResult = CheckTypesMatchAndSpecialize(context,
 						leftHand->typeTableIdx, rightHand);
@@ -3521,13 +3480,13 @@ TypeCheckExpressionResult TryTypeCheckExpression(Context *context, ASTExpression
 					if (leftExp->nodeType != ASTNODETYPE_IDENTIFIER)
 						LogError(context, leftExp->any.loc, "Expected identifier before '='"_s);
 
-					TypeCheckExpressionResult result = TryTypeCheckExpression(context, rightExp);
+					TCResultWithType result = TryTypeCheckExpression(context, rightExp);
 					if (!result.success)
 						return { false, result.yieldInfo };
 				}
 				else
 				{
-					TypeCheckExpressionResult result = TryTypeCheckExpression(context, memberExp);
+					TCResultWithType result = TryTypeCheckExpression(context, memberExp);
 					if (!result.success)
 						return { false, result.yieldInfo };
 				}
@@ -3542,7 +3501,7 @@ TypeCheckExpressionResult TryTypeCheckExpression(Context *context, ASTExpression
 	{
 		if (expression->ifNode.condition->typeTableIdx == TYPETABLEIDX_UNSET)
 		{
-			TypeCheckExpressionResult result =
+			TCResultWithType result =
 				TryTypeCheckExpression(context, expression->ifNode.condition);
 			if (!result.success)
 				return { false, result.yieldInfo };
@@ -3556,7 +3515,7 @@ TypeCheckExpressionResult TryTypeCheckExpression(Context *context, ASTExpression
 
 		if (expression->ifNode.body->typeTableIdx == TYPETABLEIDX_UNSET)
 		{
-			TypeCheckExpressionResult result =
+			TCResultWithType result =
 				TryTypeCheckExpression(context, expression->ifNode.body);
 			if (!result.success)
 				return { false, result.yieldInfo };
@@ -3565,7 +3524,7 @@ TypeCheckExpressionResult TryTypeCheckExpression(Context *context, ASTExpression
 		if (expression->ifNode.elseBody &&
 			expression->ifNode.elseBody->typeTableIdx == TYPETABLEIDX_UNSET)
 		{
-			TypeCheckExpressionResult result =
+			TCResultWithType result =
 				TryTypeCheckExpression(context, expression->ifNode.elseBody);
 			if (!result.success)
 				return { false, result.yieldInfo };
@@ -3575,7 +3534,7 @@ TypeCheckExpressionResult TryTypeCheckExpression(Context *context, ASTExpression
 	{
 		if (expression->ifStaticNode.condition->typeTableIdx == TYPETABLEIDX_UNSET)
 		{
-			TypeCheckExpressionResult result =
+			TCResultWithType result =
 				TryTypeCheckExpression(context, expression->ifStaticNode.condition);
 			if (!result.success)
 				return { false, result.yieldInfo };
@@ -3597,7 +3556,7 @@ TypeCheckExpressionResult TryTypeCheckExpression(Context *context, ASTExpression
 
 		if (evaluatesToTrue && expression->ifStaticNode.body->typeTableIdx == TYPETABLEIDX_UNSET)
 		{
-			TypeCheckExpressionResult result =
+			TCResultWithType result =
 				TryTypeCheckExpression(context, expression->ifStaticNode.body);
 			if (!result.success)
 				return { false, result.yieldInfo };
@@ -3606,7 +3565,7 @@ TypeCheckExpressionResult TryTypeCheckExpression(Context *context, ASTExpression
 		if (!evaluatesToTrue && expression->ifStaticNode.elseBody &&
 			expression->ifStaticNode.elseBody->typeTableIdx == TYPETABLEIDX_UNSET)
 		{
-			TypeCheckExpressionResult result =
+			TCResultWithType result =
 				TryTypeCheckExpression(context, expression->ifStaticNode.elseBody);
 			if (!result.success)
 				return { false, result.yieldInfo };
@@ -3616,7 +3575,7 @@ TypeCheckExpressionResult TryTypeCheckExpression(Context *context, ASTExpression
 	{
 		if (expression->whileNode.condition->typeTableIdx == TYPETABLEIDX_UNSET)
 		{
-			TypeCheckExpressionResult result = TryTypeCheckExpression(context, expression->whileNode.condition);
+			TCResultWithType result = TryTypeCheckExpression(context, expression->whileNode.condition);
 			if (!result.success)
 				return { false, result.yieldInfo };
 		}
@@ -3627,7 +3586,7 @@ TypeCheckExpressionResult TryTypeCheckExpression(Context *context, ASTExpression
 		if (typeCheckResult != TYPECHECK_COOL)
 			LogError(context, expression->any.loc, "While condition doesn't evaluate to a boolean"_s);
 
-		TypeCheckExpressionResult result = TryTypeCheckExpression(context, expression->whileNode.body);
+		TCResultWithType result = TryTypeCheckExpression(context, expression->whileNode.body);
 		if (!result.success)
 			return { false, result.yieldInfo };
 	} break;
@@ -3635,7 +3594,7 @@ TypeCheckExpressionResult TryTypeCheckExpression(Context *context, ASTExpression
 	{
 		if (expression->forNode.range->typeTableIdx == TYPETABLEIDX_UNSET)
 		{
-			TypeCheckExpressionResult result = TryTypeCheckExpression(context, expression->forNode.range);
+			TCResultWithType result = TryTypeCheckExpression(context, expression->forNode.range);
 			if (!result.success)
 				return { false, result.yieldInfo };
 		}
@@ -3652,7 +3611,7 @@ TypeCheckExpressionResult TryTypeCheckExpression(Context *context, ASTExpression
 			TCScopeName newScopeName;
 			newScopeName.type = NAMETYPE_VARIABLE;
 			newScopeName.name = expression->forNode.indexVariableName;
-			newScopeName.variableInfo.tcValue = { TCVALUETYPE_VALUE, indexValueIdx };
+			newScopeName.variableInfo.valueIdx = indexValueIdx;
 			newScopeName.variableInfo.typeTableIdx = TYPETABLEIDX_S64;
 			newScopeName.loc = expression->any.loc;
 			*DynamicArrayAdd(&stackTop->names) = newScopeName;
@@ -3683,7 +3642,7 @@ TypeCheckExpressionResult TryTypeCheckExpression(Context *context, ASTExpression
 				expression->forNode.elementValueIdx = elementValueIdx;
 
 				newScopeName.name = expression->forNode.itemVariableName;
-				newScopeName.variableInfo.tcValue = { TCVALUETYPE_VALUE, elementValueIdx };
+				newScopeName.variableInfo.valueIdx = elementValueIdx;
 				newScopeName.variableInfo.typeTableIdx = pointerToElementTypeTableIdx;
 				newScopeName.loc = expression->any.loc;
 				*DynamicArrayAdd(&stackTop->names) = newScopeName;
@@ -3695,7 +3654,7 @@ TypeCheckExpressionResult TryTypeCheckExpression(Context *context, ASTExpression
 		u32 oldForArray = context->tcCurrentForLoopArrayType;
 		context->tcCurrentForLoopArrayType = expression->forNode.range->typeTableIdx;
 
-		TypeCheckExpressionResult result = TryTypeCheckExpression(context, expression->forNode.body);
+		TCResultWithType result = TryTypeCheckExpression(context, expression->forNode.body);
 
 		// Important to restore whether we yield or not!
 		context->tcCurrentForLoopArrayType = oldForArray;
@@ -3719,14 +3678,14 @@ TypeCheckExpressionResult TryTypeCheckExpression(Context *context, ASTExpression
 	case ASTNODETYPE_TYPE:
 	case ASTNODETYPE_ALIAS:
 	{
-		TypeCheckTypeResult result = TypeCheckType(context, {}, expression->any.loc, &expression->astType);
+		TCResultWithType result = TypeCheckType(context, {}, expression->any.loc, &expression->astType);
 		if (!result.success)
 			return { false, result.yieldInfo };
 		expression->typeTableIdx = result.typeTableIdx;
 	} break;
 	case ASTNODETYPE_TYPEOF:
 	{
-		TypeCheckExpressionResult result = TryTypeCheckExpression(context, expression->typeOfNode.expression);
+		TCResultWithType result = TryTypeCheckExpression(context, expression->typeOfNode.expression);
 		if (!result.success)
 			return { false, result.yieldInfo };
 
@@ -3735,19 +3694,19 @@ TypeCheckExpressionResult TryTypeCheckExpression(Context *context, ASTExpression
 	} break;
 	case ASTNODETYPE_SIZEOF:
 	{
-		TypeCheckExpressionResult result = TryTypeCheckExpression(context, expression->sizeOfNode.expression);
+		TCResultWithType result = TryTypeCheckExpression(context, expression->sizeOfNode.expression);
 		if (!result.success)
 			return { false, result.yieldInfo };
 		expression->typeTableIdx = TYPETABLEIDX_S64;
 	} break;
 	case ASTNODETYPE_CAST:
 	{
-		TypeCheckExpressionResult result = TryTypeCheckExpression(context,
+		TCResultWithType result = TryTypeCheckExpression(context,
 				expression->castNode.expression);
 		if (!result.success)
 			return { false, result.yieldInfo };
 
-		TypeCheckTypeResult typeCheckResult = TypeCheckType(context, {}, expression->any.loc,
+		TCResultWithType typeCheckResult = TypeCheckType(context, {}, expression->any.loc,
 				&expression->castNode.astType);
 		if (!typeCheckResult.success)
 			return { false, typeCheckResult.yieldInfo };
@@ -3800,7 +3759,7 @@ TypeCheckExpressionResult TryTypeCheckExpression(Context *context, ASTExpression
 		for (int argIdx = 0; argIdx < expression->intrinsic.arguments.size; ++argIdx)
 		{
 			ASTExpression *arg = &expression->intrinsic.arguments[argIdx];
-			TypeCheckExpressionResult result = TryTypeCheckExpression(context, arg);
+			TCResultWithType result = TryTypeCheckExpression(context, arg);
 			if (!result.success)
 				return { false, result.yieldInfo };
 			TypeCheckResult typeCheckResult = CheckTypesMatchAndSpecialize(context,
@@ -3854,7 +3813,7 @@ TypeCheckExpressionResult TryTypeCheckExpression(Context *context, ASTExpression
 
 		if (!astOverload->checkedPrototype)
 		{
-			TypeCheckProcedurePrototypeResult result = TypeCheckProcedurePrototype(context,
+			TCResult result = TypeCheckProcedurePrototype(context,
 					&astOverload->prototype);
 			if (!result.success)
 				return { false, result.yieldInfo };
@@ -3895,7 +3854,6 @@ TypeCheckExpressionResult TryTypeCheckExpression(Context *context, ASTExpression
 			for (int i = 0; i < paramCount; ++i)
 			{
 				ASTProcedureParameter astParameter = astOverload->prototype.astParameters[i];
-				TCValue tcParamValue = { TCVALUETYPE_PARAMETER, (u32)i };
 				u32 paramValueIdx = NewValue(context, astParameter.name, astParameter.typeTableIdx, 0);
 				*DynamicArrayAdd(&procedure->parameterValues) = paramValueIdx;
 			}
@@ -3907,7 +3865,7 @@ TypeCheckExpressionResult TryTypeCheckExpression(Context *context, ASTExpression
 				u32 valueIdx = NewValue(context, astOverload->prototype.varargsName, arrayTableIdx, 0);
 				*DynamicArrayAdd(&procedure->parameterValues) = valueIdx;
 			}
-			TCAddParametersToScope(context, astOverload->prototype);
+			TCAddParametersToScope(context, procedure->parameterValues, astOverload->prototype);
 
 			u32 returnType = astOverload->prototype.returnTypeIdx;
 			t.procedureInfo.returnTypeTableIdx = returnType;
@@ -3926,7 +3884,7 @@ TypeCheckExpressionResult TryTypeCheckExpression(Context *context, ASTExpression
 			u32 previousReturnType = context->tcCurrentReturnType;
 			context->tcCurrentReturnType = t.procedureInfo.returnTypeTableIdx;
 
-			TypeCheckExpressionResult result =
+			TCResultWithType result =
 				TryTypeCheckExpression(context, astOverload->astBody);
 
 			if (result.yieldInfo.cause == TCYIELDCAUSE_NEED_TYPE_CHECKING &&
@@ -4249,7 +4207,7 @@ void TypeCheckMain(Context *context)
 					continue;
 				else
 				{
-					TypeCheckExpressionResult result =
+					TCResultWithType result =
 						TryTypeCheckExpression(context, job->expression);
 					ASSERT(job->expression->typeTableIdx == TYPETABLEIDX_UNSET ||
 							result.yieldInfo.cause == TCYIELDCAUSE_DONE);
@@ -4260,7 +4218,7 @@ void TypeCheckMain(Context *context)
 			default:
 			{
 				context->currentTCJob = jobIdx;
-				TypeCheckExpressionResult result = TryTypeCheckExpression(context, job->expression);
+				TCResultWithType result = TryTypeCheckExpression(context, job->expression);
 				ASSERT(job->expression->typeTableIdx == TYPETABLEIDX_UNSET ||
 						result.yieldInfo.cause == TCYIELDCAUSE_DONE);
 				newYieldInfo = result.yieldInfo;

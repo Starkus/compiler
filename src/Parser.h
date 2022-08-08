@@ -126,6 +126,6 @@ struct SourceFile
 struct Token
 {
 	enum TokenType type;
-	u32 size;
+	u16 size;
 	SourceLocation loc;
 };

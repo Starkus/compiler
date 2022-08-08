@@ -39,17 +39,6 @@ struct ASTBinaryOperation : ASTBase
 	ASTExpression *rightHand;
 };
 
-enum TCValueType
-{
-	TCVALUETYPE_VALUE,
-	TCVALUETYPE_PARAMETER,
-};
-struct TCValue
-{
-	u32 type : 1;
-	u32 valueIdx : 31;
-};
-
 struct Value;
 struct StructMember;
 struct StaticDefinition;
@@ -69,7 +58,7 @@ struct ASTIdentifier : ASTBase
 	NameType type;
 	union
 	{
-		TCValue tcValue;
+		u32 valueIdx;
 		const StructMember *structMember;
 		ASTExpression *expression;
 		StaticDefinition *staticDefinition;
@@ -195,14 +184,14 @@ struct ASTProcedureDeclaration : ASTBase
 {
 	ASTProcedurePrototype prototype;
 	String name;
+	ASTExpression *astBody;
 	bool isInline;
 	bool isExternal;
 	bool isExported;
-	ASTExpression *astBody;
 
 	// Type check
-	s32 procedureIdx;
 	bool checkedPrototype;
+	s32 procedureIdx;
 };
 
 struct ASTOperatorOverload : ASTBase
@@ -246,10 +235,11 @@ struct ASTProcedureCall : ASTBase
 	union
 	{
 		s32 procedureIdx;
-		TCValue tcValue;
+		u32 valueIdx;
 		ASTExpression *expression;
 	};
 	ASTExpression *astBodyInlineCopy;
+	Array<u32, FrameAllocator> inlineParameterValues;
 };
 
 enum IntrinsicType

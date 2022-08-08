@@ -42,6 +42,68 @@ ASTType *NewASTType(Context *context)
 	return BucketArrayAdd(&context->astTypeNodes);
 }
 
+inline s64 ParseInt(Context *context, String str)
+{
+	bool isHex = false;
+	if (str.data[0] == '0')
+	{
+		if (str.data[1] == 'x' || str.data[1] == 'X')
+			isHex = true;
+	}
+
+	ParseNumberResult parseResult;
+	if (isHex)
+	{
+		String numbersOnly = { str.size - 2, str.data + 2 };
+		parseResult = IntFromStringHex(numbersOnly);
+	}
+	else
+		parseResult = IntFromString(str);
+
+	if (parseResult.error)
+	{
+		switch (parseResult.error)
+		{
+		case PARSENUMBERRROR_OVERFLOW:
+			LogError(context, context->token->loc, "Integer literal too big!"_s);
+			break;
+		case PARSENUMBERRROR_UNDERFLOW:
+			LogError(context, context->token->loc, "Integer literal too negative!"_s);
+			break;
+		case PARSENUMBERRROR_INVALID_CHARACTER:
+			LogError(context, context->token->loc,
+					"Integer literal contains invalid characters"_s);
+			break;
+		}
+	}
+	return parseResult.number;
+}
+
+inline f64 ParseFloat(Context *context, String str)
+{
+	ParseFloatResult parseResult = F64FromString(str);
+	if (parseResult.error)
+	{
+		switch (parseResult.error)
+		{
+		case PARSENUMBERRROR_OVERFLOW:
+			LogError(context, context->token->loc, "Floating point literal too big!"_s);
+			break;
+		case PARSENUMBERRROR_UNDERFLOW:
+			LogError(context, context->token->loc, "Floating point literal too small!"_s);
+			break;
+		case PARSENUMBERRROR_INVALID_CHARACTER:
+			LogError(context, context->token->loc,
+					"Floating point literal contains invalid characters"_s);
+		case PARSENUMBERRROR_INVALID_EXPONENT:
+			LogError(context, context->token->loc,
+					"Could not parse exponent in scientific notation"_s);
+			break;
+		}
+	}
+	return parseResult.number;
+}
+
 ASTStructDeclaration ParseStructOrUnion(Context *context);
 ASTEnumDeclaration ParseEnumDeclaration(Context *context);
 ASTProcedurePrototype ParseProcedurePrototype(Context *context);
@@ -58,7 +120,7 @@ ASTType ParseType(Context *context)
 		astType.arrayCount = 0;
 		if (context->token->type == TOKEN_LITERAL_NUMBER)
 		{
-			astType.arrayCount = IntFromString(TokenToString(context, *context->token));
+			astType.arrayCount = ParseInt(context, TokenToString(context, *context->token));
 			Advance(context);
 		}
 		AssertToken(context, context->token, ']');
@@ -796,20 +858,12 @@ ASTExpression ParseExpression(Context *context, s32 precedence)
 		if (!isFloating)
 		{
 			result.literal.type = LITERALTYPE_INTEGER;
-			if (isHex)
-			{
-				String numbersOnly = { tokenStr.size - 2, tokenStr.data + 2 };
-				// @Todo: error reporting
-				result.literal.integer = IntFromStringHex(numbersOnly);
-			}
-			else
-				// @Todo: error reporting
-				result.literal.integer = IntFromString(tokenStr);
+			result.literal.integer = ParseInt(context, tokenStr);
 		}
 		else
 		{
 			result.literal.type = LITERALTYPE_FLOATING;
-			result.literal.floating = F64FromString(tokenStr);
+			result.literal.floating = ParseFloat(context, tokenStr);
 		}
 		Advance(context);
 	} break;

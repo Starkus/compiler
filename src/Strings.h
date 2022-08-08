@@ -9,6 +9,25 @@ struct String
 	}
 };
 
+enum ParseNumberErrorCode
+{
+	PARSENUMBERRROR_OK,
+	PARSENUMBERRROR_INVALID_CHARACTER,
+	PARSENUMBERRROR_OVERFLOW,
+	PARSENUMBERRROR_UNDERFLOW,
+	PARSENUMBERRROR_INVALID_EXPONENT
+};
+struct ParseNumberResult
+{
+	ParseNumberErrorCode error;
+	s64 number;
+};
+struct ParseFloatResult
+{
+	ParseNumberErrorCode error;
+	f64 number;
+};
+
 inline String operator""_s(const char *str, u64 size);
 
 inline String StringConcat(String a, String b);
@@ -20,6 +39,6 @@ inline bool IsAlpha(char c);
 inline bool IsNumeric(char c);
 inline bool IsNumericHex(char c);
 inline bool IsWhitespace(char c);
-s64 IntFromString(String string);
-s64 IntFromStringHex(String string);
-f64 F64FromString(String string);
+ParseNumberResult IntFromString(String string);
+ParseNumberResult IntFromStringHex(String string);
+ParseFloatResult F64FromString(String string);

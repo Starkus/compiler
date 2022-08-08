@@ -96,7 +96,7 @@ inline bool IsWhitespace(char c)
 		c == '\r';
 }
 
-s64 IntFromString(String string)
+ParseNumberResult IntFromString(String string)
 {
 	u64 resultU = 0;
 	int i = 0;
@@ -111,28 +111,32 @@ s64 IntFromString(String string)
 	for (; i < string.size; ++i)
 	{
 		char c = *scan++;
-		ASSERT(IsNumeric(c));
+		if (!IsNumeric(c))
+			return { PARSENUMBERRROR_INVALID_CHARACTER };
 		s64 digit = c - '0';
 		u64 moveLeft = resultU * 10;
-		// Greater or equal because resultU can be 0
-		ASSERT(moveLeft / 10 == resultU && moveLeft + digit >= resultU);
-		resultU = moveLeft + digit;
+		u64 newResultU = moveLeft + digit;
+		if (newResultU < resultU)
+			return { PARSENUMBERRROR_OVERFLOW };
+		resultU = newResultU;
 	}
 	s64 result;
 	if (isNegative)
 	{
-		ASSERT(resultU < -S64_MIN);
+		if (resultU >= -S64_MIN)
+			return { PARSENUMBERRROR_UNDERFLOW };
 		result = -(s64)resultU;
 	}
 	else
 	{
-		ASSERT(resultU < S64_MAX);
+		if (resultU >= S64_MAX)
+			return { PARSENUMBERRROR_OVERFLOW };
 		result = (s64)resultU;
 	}
-	return result;
+	return { PARSENUMBERRROR_OK, result };
 }
 
-s64 IntFromStringHex(String string)
+ParseNumberResult IntFromStringHex(String string)
 {
 	s64 result = 0;
 	int i = 0;
@@ -147,23 +151,27 @@ s64 IntFromStringHex(String string)
 	for (; i < string.size; ++i)
 	{
 		char c = *scan++;
+		char upper = c & ~0x20;
 
+		// This code doesn't produce branches inside the loop, only cmovs (only on clang, of course...)
 		s64 digit = -1;
-		digit = c - '0' * (c >= '0' && c <= '9');
-		digit += (0xA - 'a') * (c >= 'a' && c <= 'f');
-		digit += (0xA - 'A') * (c >= 'A' && c <= 'F');
-		ASSERT(digit >= 0);
+		if (c >= '0' && c <= '9') digit = c - '0';
+		if (upper >= 'A' && upper <= 'F') digit = upper + 0xA - 'A';
 
-		ASSERT(!(result & 0xF000000000000000));
+		if(digit < 0)
+			return { PARSENUMBERRROR_INVALID_CHARACTER };
+
+		if (result & 0xF000000000000000)
+			return { PARSENUMBERRROR_OVERFLOW };
 		result = result << 4;
 		result += digit;
 	}
 	if (isNegative)
 		result = -result;
-	return result;
+	return { PARSENUMBERRROR_OK, result };
 }
 
-f64 F64FromString(String string)
+ParseFloatResult F64FromString(String string)
 {
 	bool isNegative = false;
 	if (string.data[0] == '-')
@@ -191,13 +199,20 @@ f64 F64FromString(String string)
 				foundDot = true;
 			else if (*scan == 'e' || *scan == 'E')
 			{
-				sciNot = (int)IntFromString({ string.size - i - 1, scan + 1 });
-				ASSERT(-32 <= sciNot && sciNot <= 32);
+				ParseNumberResult parseResult = IntFromString({ string.size - i - 1, scan + 1 });
+				if (parseResult.error)
+					return { PARSENUMBERRROR_INVALID_EXPONENT };
+				sciNot = (int)parseResult.number;
+				if (sciNot < -32)
+					return { PARSENUMBERRROR_UNDERFLOW };
+				if (sciNot > 32)
+					return { PARSENUMBERRROR_OVERFLOW };
 				break;
 			}
 			else
 			{
-				ASSERT(IsNumeric(*scan));
+				if (!IsNumeric(*scan))
+					return { PARSENUMBERRROR_INVALID_CHARACTER };
 				*cursor++ = *scan - '0';
 				foundDot ? ++rightCount : ++leftCount;
 				++totalCount;
@@ -222,7 +237,8 @@ f64 F64FromString(String string)
 			}
 			u64 digit = *scan++;
 			u64 moveLeft = mantissa * 10;
-			ASSERT(moveLeft + digit >= mantissa);
+			if (moveLeft + digit < mantissa)
+				return { PARSENUMBERRROR_OVERFLOW };
 			mantissa = moveLeft + digit;
 			if (mantissa > 0)
 				++totalDigits;
@@ -253,7 +269,7 @@ f64 F64FromString(String string)
 
 	// Special case: 0
 	if (mantissa == 0 && fraction == 0)
-		return isNegative ? -0.0 : 0.0;
+		return { PARSENUMBERRROR_OK, isNegative ? -0.0 : 0.0 };
 
 	int exponent = 0;
 	// We will shift mantissa until the first leading 1 is on bit 53. The effect is that we
@@ -352,5 +368,5 @@ f64 F64FromString(String string)
 	else if (correctionExp < 0)
 		result /= divTable[-correctionExp];
 
-	return result;
+	return { PARSENUMBERRROR_OK, result };
 }
