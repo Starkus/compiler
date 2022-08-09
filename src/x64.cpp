@@ -783,12 +783,6 @@ String X64IRValueToStr(Context *context, IRValue value)
 		return result;
 	}
 
-	if (value.valueType == IRVALUETYPE_PROCEDURE)
-	{
-		result = TPrintF("%S", context->procedures[value.procedureIdx].name);
-		return result;
-	}
-
 	u64 size = 0;
 	TypeInfo typeInfo = context->typeTable[StripAllAliases(context, value.typeTableIdx)];
 	bool isXMM;
@@ -819,7 +813,12 @@ String X64IRValueToStr(Context *context, IRValue value)
 
 	isXMM = typeInfo.size > 8 || typeInfo.typeCategory == TYPECATEGORY_FLOATING;
 
-	if (v.flags & VALUEFLAGS_IS_ALLOCATED)
+	if (value.valueType == IRVALUETYPE_PROCEDURE)
+	{
+		result = context->procedures[value.procedureIdx].name;
+		//return result;
+	}
+	else if (v.flags & VALUEFLAGS_IS_ALLOCATED)
 	{
 		if (v.flags & VALUEFLAGS_IS_MEMORY)
 		{
