@@ -3204,9 +3204,11 @@ void BackendMain(Context *context)
 		}
 	}
 
+#if DEBUG_BUILD
 	BucketArrayInit(&context->outputBuffer);
 	X64PrintInstructions(context, x64Procedures);
 	WriteOutOutputBuffer(context, "output/x64_before_allocation.txt"_s);
+#endif
 
 	TimerSplit("X64 generation"_s);
 
@@ -3787,7 +3789,7 @@ unalignedMovups:;
 #if _MSC_VER
 		PrintOut(context, "EXTRN %S:proc\n", procName);
 #else
-		PrintOut(context, "EXTERN %S:proc\n", procName);
+		PrintOut(context, "EXTERN %S\n", procName);
 #endif
 	}
 
@@ -3858,7 +3860,11 @@ unalignedMovups:;
 #endif
 
 	if (!context->config.dontCallAssembler)
-		SYSRunAssemblerAndLinker(outputPath, makeLibrary, ""_s, extraLinkerArguments);
+	{
+		SYSRunAssembler(outputPath, ""_s);
+		TimerSplit("Calling assembler"_s);
 
-	TimerSplit("Calling assembler and linker"_s);
+		SYSRunLinker(outputPath, makeLibrary, extraLinkerArguments);
+		TimerSplit("Calling linker"_s);
+	}
 }

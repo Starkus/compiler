@@ -136,26 +136,53 @@ void SYSCreateDirectory(String pathname)
 	mkdir(pathnameCStr, 0777);
 }
 
-void SYSRunAssemblerAndLinker(String outputPath, bool makeLibrary, String extraAssemblerArguments,
-		String extraLinkerArguments)
+void SYSRunAssembler(String outputPath, String extraArguments)
 {
 #if 1
-	String nasmCmd = TPrintF("nasm -f elf64 -F dwarf -g %S%c",
+	String yasmCmd = TPrintF("yasm -f elf64 -g dwarf2 %S %S%c",
+			extraArguments,
 			SYSExpandPathWorkingDirectoryRelative("output/out.asm"_s), 0);
-	int status = system(nasmCmd.data);
+	int status = system(yasmCmd.data);
 	if (status)
 	{
 		if (status > 255) status = 255;
-		Print("Error executing nasm! Error 0x%.2x\n", status);
+		Print("Error executing yasm! Error 0x%.2x\n", status);
 		exit(status);
 	}
+#else
+	int status;
+	pid_t pid = fork();
 
+	if (pid == 0)
+	{
+		const char *yasmArgs[] =
+		{
+			"yasm",
+			"-f elf64",
+			"-F dwarf",
+			"-g",
+			SYSExpandPathWorkingDirectoryRelative("output/out.asm"_s).data,
+			0
+		};
+		if (execvp("yasm", (char **)yasmArgs) == -1)
+		{
+			Print("Error executing yasm!\n");
+			exit(1);
+		}
+	}
+#endif
+}
+
+void SYSRunLinker(String outputPath, bool makeLibrary, String extraArguments)
+{
+#if 1
 	if (makeLibrary)
 	{
-		String arCmd = TPrintF("ar rcs %S %S%c",
+		String arCmd = TPrintF("ar rcs %S %S %S%c",
+			extraArguments,
 			SYSExpandPathWorkingDirectoryRelative("output/out.a"_s),
 			SYSExpandPathWorkingDirectoryRelative("output/out.o"_s), 0);
-		status = system(arCmd.data);
+		int status = system(arCmd.data);
 		if (status)
 		{
 			if (status > 255) status = 255;
@@ -165,15 +192,15 @@ void SYSRunAssemblerAndLinker(String outputPath, bool makeLibrary, String extraA
 	}
 	else
 	{
-		String ldCmd = TPrintF("ld %S %S -o %S -e __LinuxMain%c",
+		String moldCmd = TPrintF("mold %S %S -o %S -e __LinuxMain%c",
 			SYSExpandPathWorkingDirectoryRelative("output/out.o"_s),
-			extraLinkerArguments,
+			extraArguments,
 			SYSExpandPathWorkingDirectoryRelative("output/out"_s), 0);
-		status = system(ldCmd.data);
+		int status = system(moldCmd.data);
 		if (status)
 		{
 			if (status > 255) status = 255;
-			Print("Error executing ld! Error 0x%.2x\n", status);
+			Print("Error executing mold! Error 0x%.2x\n", status);
 			exit(status);
 		}
 	}
@@ -183,39 +210,19 @@ void SYSRunAssemblerAndLinker(String outputPath, bool makeLibrary, String extraA
 
 	if (pid == 0)
 	{
-		const char *nasmArgs[] =
-		{
-			"nasm",
-			"-f elf64",
-			"-F dwarf",
-			"-g",
-			SYSExpandPathWorkingDirectoryRelative("output/out.asm"_s).data,
-			0
-		};
-		if (execvp("nasm", (char **)nasmArgs) == -1)
-		{
-			Print("Error executing nasm!\n");
-			exit(1);
-		}
-	}
-	else
-	{
-		while (waitpid(pid, &status, WNOHANG) == 0)
-			sleep(1);
-
 		String outputArg = TPrintF("-o %S%c", SYSExpandPathWorkingDirectoryRelative("output/out"_s),
 				0);
-		const char *ldArgs[] =
+		const char *moldArgs[] =
 		{
-			"ld",
+			"mold",
 			SYSExpandPathWorkingDirectoryRelative("output/out.o"_s).data,
 			outputArg.data,
 			"-e __LinuxMain",
 			0
 		};
-		if (execvp("ld", (char **)ldArgs) == -1)
+		if (execvp("mold", (char **)moldArgs) == -1)
 		{
-			Print("Error executing ld!\n");
+			Print("Error executing mold!\n");
 			exit(1);
 		}
 	}

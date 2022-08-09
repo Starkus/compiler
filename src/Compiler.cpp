@@ -350,6 +350,8 @@ int main(int argc, char **argv)
 	for (int i = 0; i < inputFiles.size; ++i)
 		CompilerAddSourceFile(&context, inputFiles[i], {});
 
+	TimerSplit("Read input files"_s);
+
 	for (int i = 0; i < context.sourceFiles.size; ++i)
 		TokenizeFile(&context, i);
 

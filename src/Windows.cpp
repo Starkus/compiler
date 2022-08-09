@@ -224,10 +224,12 @@ void SYSCreateDirectory(String pathname)
 	CreateDirectoryA(pathnameCStr, nullptr);
 }
 
-void SYSRunAssemblerAndLinker(String outputPath, String extraAssemblerArguments,
-		String extraLinkerArguments)
+String msvcPath;
+String windowsSDKPath;
+String windowsSDKVersion;
+
+void Win32FindVSAndWindowsSDK()
 {
-	// Run MASM
 	PWSTR programFilesPathWstr;
 	SHGetKnownFolderPath(FOLDERID_ProgramFilesX86, 0, NULL, &programFilesPathWstr);
 	String programFilesPath = StupidStrToString(programFilesPathWstr, PhaseAllocator::Alloc);
@@ -253,7 +255,7 @@ void SYSRunAssemblerAndLinker(String outputPath, String extraAssemblerArguments,
 		visualStudioPath = TPrintF("%S\\%s", visualStudioPath, newestVersionStr);
 	}
 
-	String msvcPath = {};
+	// MSVC path
 	{
 		String buildToolsPath = TPrintF("%S\\BuildTools", visualStudioPath);
 		String enterprisePath = TPrintF("%S\\Enterprise", visualStudioPath);
@@ -280,8 +282,8 @@ void SYSRunAssemblerAndLinker(String outputPath, String extraAssemblerArguments,
 		}
 	}
 
-	String windowsSDKPath = TPrintF("%S\\Windows Kits\\10", programFilesPath);
-	String windowsSDKVersion = {};
+	windowsSDKPath = TPrintF("%S\\Windows Kits\\10", programFilesPath);
+	windowsSDKVersion = {};
 	{
 		String wildcard = TPrintF("%S\\include\\10.*", windowsSDKPath);
 		WIN32_FIND_DATAA foundData = {};
@@ -321,7 +323,14 @@ nextTuple:
 		}
 		windowsSDKVersion = CStrToString(latestVersionName);
 	}
+}
 
+void SYSRunAssembler(String outputPath, String extraArguments)
+{
+	if (!msvcPath.size)
+		Win32FindVSAndWindowsSDK();
+
+	// Run MASM
 	String commandLine = TPrintF(
 			"%S\\bin\\Hostx64\\x64\\ml64.exe " // msvcPath
 			"out.asm "
@@ -329,10 +338,10 @@ nextTuple:
 			"/Zd "
 			"/Zi "
 			"/Fm "
-			"%S " // extraAssemblerArguments
+			"%S " // extraArguments
 			"%c",
 			msvcPath,
-			extraAssemblerArguments,
+			extraArguments,
 			0
 			);
 
@@ -366,8 +375,14 @@ nextTuple:
 	}
 	CloseHandle(processInformation.hProcess);
 	CloseHandle(processInformation.hThread);
+}
 
-	commandLine = TPrintF(
+void SYSRunLinker(String outputPath, String extraArguments)
+{
+	if (!msvcPath.size)
+		Win32FindVSAndWindowsSDK();
+
+	String commandLine = TPrintF(
 			"%S\\bin\\Hostx64\\x64\\link.exe " // msvcPath
 			"out.obj "
 			"/nologo "
@@ -381,21 +396,21 @@ nextTuple:
 			"/opt:ref "
 			"/incremental:no "
 			"/dynamicbase:no "
-			"%S " // extraLinkerArguments
+			"%S " // extraArguments
 			"/libpath:\"%S\\lib\\x64\" " // msvcPath
 			"/libpath:\"%S\\lib\\%S\\ucrt\\x64\" " // windowsSDKPath, windowsSDKVersion
 			"/libpath:\"%S\\lib\\%S\\um\\x64\" " // windowsSDKPath, windowsSDKVersion
 			"/out:out.exe%c",
 			msvcPath,
-			extraLinkerArguments,
+			extraArguments,
 			msvcPath,
 			windowsSDKPath, windowsSDKVersion,
 			windowsSDKPath, windowsSDKVersion,
 			0
 			);
 
-	startupInfo = {};
-	processInformation = {};
+	STARTUPINFO startupInfo = {};
+	PROCESS_INFORMATION processInformation = {};
 	startupInfo.cb = sizeof(STARTUPINFO);
 	if (!CreateProcessA(
 			NULL,
