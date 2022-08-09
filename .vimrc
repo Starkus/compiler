@@ -1,15 +1,27 @@
-let g:build_command = "build.bat"
-let g:build_release_command = "build.bat -r"
-let g:run_command =  "bin\\Compiler.exe"
-let g:debug_command =  "remedybg.exe compiler.rdbg"
+let g:build_command = "./build.sh"
+let g:build_release_command = "./build.sh -r"
+let g:run_command =  "bin/Compiler"
 
 command! CompileC :call term_sendkeys("terminal", "compileCOutput.bat\<CR>") | call ShowTerminal()
 command! Assemble :call term_sendkeys("terminal", "assembleOutput.bat\<CR>") | call ShowTerminal()
-command! Test :call term_sendkeys("terminal", "output\\out.exe\<CR>") | call ShowTerminal()
+command! Test :!output/out
 
 " Ignore build folder in wildcards
 set wildignore+=*/build/*
 set wildignore+=*/bin/*
 
-call StartTerminal()
-call HideTerminal()
+let g:termdebug_wide = 163
+highlight clear debugPC
+highlight debugPC ctermbg=237
+
+function SetUpDebugger()
+	delcommand Run
+	Termdebug bin/Compiler
+	3wincmd l
+	wincmd H
+endfunction
+
+packadd termdebug
+command! Debug :call SetUpDebugger()
+
+au User TermdebugStopPost command! -nargs=* -complete=file Run :execute "!" . g:run_command . " <args>"
