@@ -320,9 +320,10 @@ void PrintExpression(Context *context, ASTExpression *e)
 		Indent();
 		Print("Parameters:\n");
 		++indentLevels;
-		for (int i = 0; i < e->procedureDeclaration.prototype.astParameters.size; ++i)
+		ASTProcedurePrototype *prototype = &e->procedureDeclaration.prototype;
+		for (int i = 0; i < prototype->astParameters.size; ++i)
 		{
-			ASTProcedureParameter astParam = e->procedureDeclaration.prototype.astParameters[i];
+			ASTProcedureParameter astParam = prototype->astParameters[i];
 			Indent();
 			Print("Parameter #%d ", i);
 			String typeStr = ASTTypeToString(astParam.astType);
@@ -500,30 +501,6 @@ void PrintExpression(Context *context, ASTExpression *e)
 	case ASTNODETYPE_CONTINUE:
 	{
 		Print("Continue\n");
-	} break;
-	case ASTNODETYPE_STRUCT_DECLARATION:
-	{
-		Print("Struct\n");
-		++indentLevels;
-		for (int i = 0; i < e->structDeclaration.members.size; ++i)
-		{
-			ASTStructMemberDeclaration *member = &e->structDeclaration.members[i];
-
-			Print("Struct member ");
-			String typeStr = ASTTypeToString(member->astType);
-			Print("\"%S\" of type \"%S\"", member->name, typeStr);
-
-			PrintSourceLocation(context, e->any.loc);
-			Print("\n");
-
-			if (member->value)
-			{
-				++indentLevels;
-				PrintExpression(context, member->value);
-				--indentLevels;
-			}
-		}
-		--indentLevels;
 	} break;
 	case ASTNODETYPE_STATIC_DEFINITION:
 	{

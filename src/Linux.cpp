@@ -139,9 +139,10 @@ void SYSCreateDirectory(String pathname)
 void SYSRunAssembler(String outputPath, String extraArguments)
 {
 #if 1
-	String yasmCmd = TPrintF("yasm -f elf64 -g dwarf2 %S %S%c",
+	String yasmCmd = TPrintF("yasm -f elf64 -g dwarf2 %S %S -o %S%c",
 			extraArguments,
-			SYSExpandPathWorkingDirectoryRelative("output/out.asm"_s), 0);
+			SYSExpandPathWorkingDirectoryRelative("output/out.asm"_s),
+			SYSExpandPathWorkingDirectoryRelative("output/out.o"_s), 0);
 	int status = system(yasmCmd.data);
 	if (status)
 	{

@@ -2039,7 +2039,9 @@ skipGeneratingVarargsArray:
 	{
 		PushIRScope(context);
 
-		u32 indexValueIdx = expression->forNode.indexValueIdx;
+		ASTFor *astFor = &expression->forNode;
+
+		u32 indexValueIdx = astFor->indexValueIdx;
 		IRPushValueIntoStack(context, indexValueIdx);
 		IRValue indexValue = IRValueValue(context, indexValueIdx);
 
@@ -2047,10 +2049,10 @@ skipGeneratingVarargsArray:
 		u32 elementTypeIdx = TYPETABLEIDX_UNSET;
 
 		IRValue from = {}, to = {}, arrayValue = {};
-		if (expression->forNode.range->nodeType == ASTNODETYPE_BINARY_OPERATION &&
-			expression->forNode.range->binaryOperation.op == TOKEN_OP_RANGE)
+		if (astFor->range->nodeType == ASTNODETYPE_BINARY_OPERATION &&
+			astFor->range->binaryOperation.op == TOKEN_OP_RANGE)
 		{
-			ASTBinaryOperation binaryOp = expression->forNode.range->binaryOperation;
+			ASTBinaryOperation binaryOp = astFor->range->binaryOperation;
 
 			from = IRGenFromExpression(context, binaryOp.leftHand);
 			to =   IRGenFromExpression(context, binaryOp.rightHand);
@@ -2061,7 +2063,7 @@ skipGeneratingVarargsArray:
 		}
 		else
 		{
-			arrayValue = IRGenFromExpression(context, expression->forNode.range);
+			arrayValue = IRGenFromExpression(context, astFor->range);
 
 			TypeInfo rangeTypeInfo = context->typeTable[arrayValue.typeTableIdx];
 			if (rangeTypeInfo.typeCategory == TYPECATEGORY_POINTER)
@@ -2074,7 +2076,7 @@ skipGeneratingVarargsArray:
 				   rangeTypeInfo.typeCategory == TYPECATEGORY_ARRAY);
 
 			isThereItVariable = true;
-			u32 elementValueIdx = expression->forNode.elementValueIdx;
+			u32 elementValueIdx = astFor->elementValueIdx;
 			// Allocate 'it' variable
 			IRPushValueIntoStack(context, elementValueIdx);
 
@@ -2129,7 +2131,7 @@ skipGeneratingVarargsArray:
 		context->irCurrentForLoopInfo.arrayValue = arrayValue;
 		context->irCurrentForLoopInfo.indexValue = indexValue;
 
-		IRGenFromExpression(context, expression->forNode.body);
+		IRGenFromExpression(context, astFor->body);
 
 		IRInsertLabelInstruction(context, continueLabel);
 
@@ -2144,7 +2146,7 @@ skipGeneratingVarargsArray:
 		if (isThereItVariable)
 		{
 			// Update 'it'
-			u32 elementValueIdx = expression->forNode.elementValueIdx;
+			u32 elementValueIdx = astFor->elementValueIdx;
 			IRValue elementVarValue = IRValueValue(context, elementValueIdx);
 			IRValue elementValue = IRDoArrayAccess(context, arrayValue, indexValue, elementTypeIdx);
 			elementValue = IRPointerToValue(context, elementValue);
@@ -2321,7 +2323,6 @@ skipGeneratingVarargsArray:
 		// @Check: only for variable declarations?
 		IRGenFromExpression(context, expression->usingNode.expression);
 	} break;
-	case ASTNODETYPE_ENUM_DECLARATION:
 	case ASTNODETYPE_INCLUDE:
 	case ASTNODETYPE_LINKLIB:
 	{

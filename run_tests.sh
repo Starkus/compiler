@@ -14,7 +14,7 @@ do
 	else
 		printf "${RED}FAILED!${NOCOLOR}\n"
 		cat ./output/test_output_compilation.txt
-		break
+		exit
 	fi
 
 	echo -n Running... 
@@ -25,7 +25,7 @@ do
 	else
 		printf "${RED}FAILED!${NOCOLOR}\n"
 		cat ./output/test_output_run.txt
-		break
+		exit
 	fi
 done
 

@@ -793,7 +793,12 @@ String X64IRValueToStr(Context *context, IRValue value)
 	if (value.valueType == IRVALUETYPE_VALUE || value.valueType == IRVALUETYPE_VALUE_DEREFERENCE)
 		offset = value.value.offset;
 
-	if (v.flags & (VALUEFLAGS_ON_STATIC_STORAGE | VALUEFLAGS_IS_EXTERNAL))
+	if (value.valueType == IRVALUETYPE_PROCEDURE)
+	{
+		result = context->procedures[value.procedureIdx].name;
+		goto decoratePtr;
+	}
+	else if (v.flags & (VALUEFLAGS_ON_STATIC_STORAGE | VALUEFLAGS_IS_EXTERNAL))
 	{
 		result = StringConcat("g_"_s, v.name);
 		if (offset > 0)
@@ -813,12 +818,7 @@ String X64IRValueToStr(Context *context, IRValue value)
 
 	isXMM = typeInfo.size > 8 || typeInfo.typeCategory == TYPECATEGORY_FLOATING;
 
-	if (value.valueType == IRVALUETYPE_PROCEDURE)
-	{
-		result = context->procedures[value.procedureIdx].name;
-		//return result;
-	}
-	else if (v.flags & VALUEFLAGS_IS_ALLOCATED)
+	if (v.flags & VALUEFLAGS_IS_ALLOCATED)
 	{
 		if (v.flags & VALUEFLAGS_IS_MEMORY)
 		{

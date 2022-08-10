@@ -86,7 +86,6 @@ struct ASTStructMemberDeclaration : ASTBase
 };
 struct ASTStructDeclaration : ASTBase
 {
-	bool isUnion;
 	DynamicArray<ASTStructMemberDeclaration, FrameAllocator> members;
 };
 
@@ -102,7 +101,7 @@ struct ASTEnumDeclaration : ASTBase
 	DynamicArray<ASTEnumMember, FrameAllocator> members;
 };
 
-enum CallingConvention
+enum CallingConvention : u8
 {
 	CC_DEFAULT,
 	CC_WIN64,
@@ -116,10 +115,10 @@ struct ASTProcedurePrototype : ASTBase
 	DynamicArray<ASTProcedureParameter, FrameAllocator> astParameters;
 	ASTType *astReturnType;
 
-	CallingConvention callingConvention;
-	bool isVarargs;
 	String varargsName;
 	SourceLocation varargsLoc;
+	bool isVarargs;
+	CallingConvention callingConvention;
 
 	// Type check
 	u32 returnTypeIdx;
@@ -131,6 +130,7 @@ enum ASTTypeNodeType
 	ASTTYPENODETYPE_IDENTIFIER,
 	ASTTYPENODETYPE_POINTER,
 	ASTTYPENODETYPE_STRUCT_DECLARATION,
+	ASTTYPENODETYPE_UNION_DECLARATION,
 	ASTTYPENODETYPE_ENUM_DECLARATION,
 	ASTTYPENODETYPE_ARRAY,
 	ASTTYPENODETYPE_PROCEDURE
@@ -316,7 +316,7 @@ struct ASTRoot : ASTBase
 	ASTBlock block;
 };
 
-enum ASTNodeType
+enum ASTNodeType : u8
 {
 	ASTNODETYPE_INVALID,
 	ASTNODETYPE_IDENTIFIER,
@@ -330,8 +330,6 @@ enum ASTNodeType
 	ASTNODETYPE_BINARY_OPERATION,
 	ASTNODETYPE_VARIABLE_DECLARATION,
 	ASTNODETYPE_PROCEDURE_DECLARATION,
-	ASTNODETYPE_STRUCT_DECLARATION,
-	ASTNODETYPE_ENUM_DECLARATION,
 	ASTNODETYPE_STATIC_DEFINITION,
 	ASTNODETYPE_OPERATOR_OVERLOAD,
 	ASTNODETYPE_PROCEDURE_CALL,
@@ -354,6 +352,10 @@ enum ASTNodeType
 struct ASTExpression
 {
 	ASTNodeType nodeType;
+
+	// Filled in during type checking
+	u32 typeTableIdx;
+
 	union
 	{
 		ASTBase any;
@@ -367,8 +369,6 @@ struct ASTExpression
 		ASTBinaryOperation binaryOperation;
 		ASTVariableDeclaration variableDeclaration;
 		ASTProcedureDeclaration procedureDeclaration;
-		ASTStructDeclaration structDeclaration;
-		ASTEnumDeclaration enumDeclaration;
 		ASTStaticDefinition staticDefinition;
 		ASTOperatorOverload operatorOverload;
 		ASTProcedureCall procedureCall;
@@ -384,9 +384,6 @@ struct ASTExpression
 		ASTSimple sizeOfNode;
 		ASTCast castNode;
 	};
-
-	// Filled in during type checking
-	u32 typeTableIdx;
 };
 
 enum TypeTableIndices : u32

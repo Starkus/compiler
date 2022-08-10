@@ -32,12 +32,12 @@ void Advance(Context *context)
 	context->token = &context->tokens[context->currentTokenIdx];
 }
 
-ASTExpression *NewTreeNode(Context *context)
+inline ASTExpression *NewTreeNode(Context *context)
 {
 	return BucketArrayAdd(&context->treeNodes);
 }
 
-ASTType *NewASTType(Context *context)
+inline ASTType *NewASTType(Context *context)
 {
 	return BucketArrayAdd(&context->astTypeNodes);
 }
@@ -136,10 +136,14 @@ ASTType ParseType(Context *context)
 		astType.pointedType = NewASTType(context);
 		*astType.pointedType = ParseType(context);
 	}
-	else if (context->token->type == TOKEN_KEYWORD_STRUCT ||
-			 context->token->type == TOKEN_KEYWORD_UNION)
+	else if (context->token->type == TOKEN_KEYWORD_STRUCT)
 	{
 		astType.nodeType = ASTTYPENODETYPE_STRUCT_DECLARATION;
+		astType.structDeclaration = ParseStructOrUnion(context);
+	}
+	else if (context->token->type == TOKEN_KEYWORD_UNION)
+	{
+		astType.nodeType = ASTTYPENODETYPE_UNION_DECLARATION;
 		astType.structDeclaration = ParseStructOrUnion(context);
 	}
 	else if (context->token->type == TOKEN_KEYWORD_ENUM)
@@ -540,12 +544,10 @@ ASTStructDeclaration ParseStructOrUnion(Context *context)
 
 	ASSERT(context->token->type == TOKEN_KEYWORD_STRUCT ||
 			context->token->type == TOKEN_KEYWORD_UNION);
-	bool isUnion = context->token->type == TOKEN_KEYWORD_UNION;
 	Advance(context);
 
 	ASTStructDeclaration structDeclaration = {};
 	structDeclaration.loc = loc;
-	structDeclaration.isUnion = isUnion;
 	DynamicArrayInit(&structDeclaration.members, 16);
 
 	AssertToken(context, context->token, '{');
@@ -803,6 +805,8 @@ ASTExpression ParseExpression(Context *context, s32 precedence)
 			// Procedure call
 			result.nodeType = ASTNODETYPE_PROCEDURE_CALL;
 			result.procedureCall.name = identifier;
+			result.procedureCall.procedureFound = false;
+			result.procedureCall.parameterTypeCheckingIdx = 0;
 			DynamicArrayInit(&result.procedureCall.arguments, 4);
 
 			// Parse arguments
@@ -1267,12 +1271,6 @@ ASTExpression ParseStatement(Context *context)
 
 		AssertToken(context, context->token, ';');
 		Advance(context);
-	} break;
-	case TOKEN_KEYWORD_ENUM:
-	{
-		result.any.loc = context->token->loc;
-		result.nodeType = ASTNODETYPE_ENUM_DECLARATION;
-		result.enumDeclaration = ParseEnumDeclaration(context);
 	} break;
 	case TOKEN_KEYWORD_USING:
 	{
