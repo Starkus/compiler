@@ -120,7 +120,9 @@ struct InterferenceGraph
 	u32 capacity;
 	u32 *valueIndices;
 	u8 *removed;
-	DynamicArray<u32, PhaseAllocator> *edges; // @Improve: eugh
+	HashSet<u32, PhaseAllocator> *edges; // @Improve?
+
+	HashMap<u32, u32, PhaseAllocator> valueToNodeMap;
 };
 
 #define OUTPUT_BUFFER_BUCKET_SIZE 8192

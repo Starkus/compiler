@@ -264,6 +264,76 @@ u64 BucketArrayCount(BucketArray<T, A, bucketSize> *bucketArray)
 	return count;
 }
 
+template <typename T>
+inline bool BitfieldGetBit(T array, int index)
+{
+	ASSERT(IsPowerOf2(sizeof(array[0])));
+	constexpr u8 shiftAmm = Ntz64(sizeof(array[0]) * 8);
+	constexpr u8 bitIdx = (sizeof(array[0]) * 8) - 1;
+	return array[index >> shiftAmm] & (1ull << (index & bitIdx));
+}
+
+template <typename T>
+inline void BitfieldSetBit(T array, int index)
+{
+	ASSERT(IsPowerOf2(sizeof(array[0])));
+	constexpr u8 shiftAmm = Ntz64(sizeof(array[0]) * 8);
+	constexpr u8 bitIdx = (sizeof(array[0]) * 8) - 1;
+	array[index >> shiftAmm] |= (1ull << (index & bitIdx));
+}
+
+template <typename T>
+inline void BitfieldClearBit(T array, int index)
+{
+	ASSERT(IsPowerOf2(sizeof(array[0])));
+	constexpr u8 shiftAmm = Ntz64(sizeof(array[0]) * 8);
+	constexpr u8 bitIdx = (sizeof(array[0]) * 8) - 1;
+	array[index >> shiftAmm] &= ~(1ull << (index & bitIdx));
+}
+
+template <typename T>
+inline u64 BitfieldCount(T *array, u64 size)
+{
+	ASSERT(sizeof(T) % sizeof(u32) == 0);
+	u64 count = 0;
+	T *end = array + size;
+	for (u32 *scan = (u32 *)array; scan < end; ++scan)
+		count += CountOnes(*scan);
+	return count;
+}
+
+// Specialization to use popcnt64
+inline u64 BitfieldCount(u64 *array, u64 size)
+{
+	u64 count = 0;
+	u64 *end = array + size;
+	for (u64 *scan = array; scan < end; ++scan)
+		count += CountOnes64(*scan);
+	return count;
+}
+
+template <typename T, typename A>
+inline u64 BitfieldCount(Array<T,A> array)
+{
+	ASSERT(sizeof(T) % sizeof(u32) == 0);
+	u64 count = 0;
+	T *end = array.data + array.size;
+	for (u32 *scan = (u32 *)array.data; scan < end; ++scan)
+		count += CountOnes(*scan);
+	return count;
+}
+
+// Specialization to use popcnt64
+template <typename A>
+inline u64 BitfieldCount(Array<u64,A> array, u64 size)
+{
+	u64 count = 0;
+	u64 *end = array.data + array.size;
+	for (u64 *scan = array.data; scan < end; ++scan)
+		count += CountOnes64(*scan);
+	return count;
+}
+
 // From https://stackoverflow.com/questions/664014/what-integer-hash-function-are-good-that-accepts-an-integer-hash-key
 u32 Hash(u32 value)
 {
@@ -288,28 +358,41 @@ u32 Hash(String value)
 template <typename K, typename A>
 struct HashSet
 {
-	u8 *bookkeepBitfield;
-	K *keys;
+	void *memory;
 	u32 capacity;
 };
 
 template <typename K, typename A>
-void HashSetInit(HashSet<K,A> *hashSet, u32 capacity)
+inline void HashSetClear(HashSet<K,A> hashSet)
 {
-	u64 bookkeepSize = capacity / 8;
+	memset(hashSet.memory, 0, hashSet.capacity >> 3);
+}
+
+template <typename K, typename A>
+inline void HashSetInit(HashSet<K,A> *hashSet, u32 capacity)
+{
+	ASSERT(IsPowerOf2(capacity) && capacity >= 32);
+
+	u64 bookkeepSize = capacity >> 3; // divide by 8
 	u64 keyMemorySize = capacity * sizeof(K);
-	void *memory = A::Alloc(bookkeepSize + keyMemorySize);
-	hashSet->bookkeepBitfield = (u8 *)memory;
-	hashSet->keys = (K *)((u8 *)memory + bookkeepSize);
+	hashSet->memory = A::Alloc(bookkeepSize + keyMemorySize);
 	hashSet->capacity = capacity;
 
-	memset(memory, 0, bookkeepSize);
+	HashSetClear(*hashSet);
+}
+
+template <typename K, typename A>
+inline K *HashSetKeys(HashSet<K,A> hashSet)
+{
+	u64 bookkeepSize = hashSet.capacity >> 3;
+	return (K *)((u8 *)hashSet.memory + bookkeepSize);
 }
 
 template <typename K, typename A>
 inline bool HashSetSlotOccupied(HashSet<K,A> hashSet, u32 slotIdx)
 {
-	return hashSet.bookkeepBitfield[slotIdx >> 3] & (1 << (slotIdx & 7));
+	u32 *bookkeep = (u32 *)hashSet.memory;
+	return BitfieldGetBit(bookkeep, slotIdx);
 }
 
 template <typename K, typename A>
@@ -317,40 +400,61 @@ bool HashSetHas(HashSet<K,A> hashSet, K key)
 {
 	ASSERT(IsPowerOf2(hashSet.capacity));
 	u32 mask = hashSet.capacity - 1;
-	u32 hash = Hash(key) & mask;
+	u32 slotIdx = Hash(key) & mask;
+
+	K *keys = HashSetKeys(hashSet);
+
 	K foundKey;
 	for (u32 iterations = 0; iterations < hashSet.capacity; ++iterations)
 	{
-		bool occupied = HashSetSlotOccupied(hashSet, hash);
-		if (!occupied)
-			break;
-		foundKey = hashSet.keys[hash];
+		if (!HashSetSlotOccupied(hashSet, slotIdx))
+			return false;
+		foundKey = keys[slotIdx];
 		if (foundKey == key)
 			return true;
-		hash = (hash + 1) & mask;
+		slotIdx = (slotIdx + 1) & mask;
 	}
 	return false;
+}
+
+template <typename K, typename A>
+bool HashSetCount(HashSet<K,A> hashSet)
+{
+	return BitfieldCount((u32 *)hashSet.memory, hashSet.capacity >> 5);
+}
+
+template <typename A>
+void HashSetPrint(HashSet<u32,A> hashSet)
+{
+	Print("{ ");
+	bool first = true;
+	for (u32 slotIdx = 0; slotIdx < hashSet.capacity; ++slotIdx)
+		if (HashSetSlotOccupied(hashSet, slotIdx))
+		{
+			if (!first)
+				Print(", ");
+			Print("%u", hashSet.keys[slotIdx]);
+			first = false;
+		}
+	Print(" }\n");
 }
 
 template <typename K, typename A>
 void HashSetRehash(HashSet<K,A> *hashSet)
 {
 	u32 oldCapacity = hashSet->capacity;
-	u8 *oldBookkeep = hashSet->bookkeepBitfield;
-	K *oldKeys = hashSet->keys;
+	u64 oldBookkeepSize = oldCapacity >> 5;
+	u64 oldKeyMemorySize = oldCapacity * sizeof(K);
+	u32 *oldBookkeep = (u32 *)hashSet->memory;
+	K *oldKeys = HashSetKeys(*hashSet);
 
-	hashSet->capacity = oldCapacity << 1;
+	HashSetInit(hashSet, oldCapacity << 1);
 
-	u32 capacity = hashSet->capacity;
-	u64 bookkeepSize = capacity / 8;
-	u64 keyMemorySize = capacity * sizeof(K);
-	void *memory = A::Alloc(bookkeepSize + keyMemorySize);
-	hashSet->bookkeepBitfield = (u8 *)memory;
-	hashSet->keys = (K *)((u8 *)memory + bookkeepSize);
+	for (u32 slotIdx = 0; slotIdx < oldCapacity; ++slotIdx)
+		if (BitfieldGetBit(oldBookkeep, slotIdx))
+			HashSetAdd(hashSet, oldKeys[slotIdx]);
 
-	for (u32 i = 0; i < oldCapacity; ++i)
-		if (oldBookkeep[i / 8] & (1 << (1 % 8)))
-			HashSetAdd(hashSet, oldKeys[i]);
+	A::Free(oldBookkeep);
 }
 
 template <typename K, typename A>
@@ -358,17 +462,20 @@ bool HashSetAdd(HashSet<K,A> *hashSet, K key)
 {
 	ASSERT(IsPowerOf2(hashSet->capacity));
 	u32 mask = hashSet->capacity - 1;
-	u32 hash = Hash(key) & mask;
+	u32 slotIdx = Hash(key) & mask;
+
+	K *keys = HashSetKeys(*hashSet);
+
 	K foundKey;
-	for (u32 iterations = 0; iterations < hashSet->capacity; ++iterations)
+	u32 maxIterations = Max(Sqrt(hashSet->capacity), 1);
+	for (u32 iteration = 0; iteration < maxIterations; ++iteration)
 	{
-		bool occupied = HashSetSlotOccupied(*hashSet, hash);
-		if (!occupied)
+		if (!HashSetSlotOccupied(*hashSet, slotIdx))
 			goto add;
-		foundKey = hashSet->keys[hash];
+		foundKey = keys[slotIdx];
 		if (foundKey == key)
 			return false;
-		hash = (hash + 1) & mask;
+		slotIdx = (slotIdx + 1) & mask;
 	}
 
 	// Full!
@@ -378,8 +485,9 @@ bool HashSetAdd(HashSet<K,A> *hashSet, K key)
 
 add:
 	// Add!
-	hashSet->bookkeepBitfield[hash / 8] |= (1 << (hash % 8));
-	hashSet->keys[hash] = key;
+	u32 *bookkeep = (u32 *)hashSet->memory;
+	BitfieldSetBit(bookkeep, slotIdx);
+	keys[slotIdx] = key;
 	return true;
 }
 
@@ -388,21 +496,24 @@ bool HashSetRemove(HashSet<K,A> *hashSet, K key)
 {
 	ASSERT(IsPowerOf2(hashSet->capacity));
 	u32 mask = hashSet->capacity - 1;
-	u32 hash = Hash(key) & mask;
+	u32 slotIdx = Hash(key) & mask;
+
+	K *keys = HashSetKeys(*hashSet);
+
 	K foundKey;
 	for (u32 iterations = 0; iterations < hashSet->capacity; ++iterations)
 	{
-		bool occupied = hashSet->bookkeepBitfield[hash / 8] & (1 << (hash % 8));
-		if (!occupied)
+		if (!HashSetSlotOccupied(*hashSet, slotIdx))
 			return false;
-		foundKey = hashSet->keys[hash];
+		foundKey = keys[slotIdx];
 		if (foundKey == key)
 		{
 			// Remove
-			hashSet->bookkeepBitfield[hash / 8] &= (~(1 << (hash % 8)));
+			u32 *bookkeep = (u32 *)hashSet->memory;
+			BitfieldClearBit(bookkeep, slotIdx);
 			return true;
 		}
-		hash = (hash + 1) & mask;
+		slotIdx = (slotIdx + 1) & mask;
 	}
 	return false;
 }
@@ -410,25 +521,50 @@ bool HashSetRemove(HashSet<K,A> *hashSet, K key)
 template <typename K, typename V, typename A>
 struct HashMap
 {
-	u8 *bookkeepBitfield;
-	K *keys;
-	V *values;
+	void *memory;
 	u32 capacity;
 };
 
 template <typename K, typename V, typename A>
-void HashMapInit(HashMap<K,V,A> *hashMap, u32 capacity)
+inline void HashMapClear(HashMap<K,V,A> hashMap)
 {
-	u64 bookkeepSize = capacity / 8;
+	memset(hashMap.memory, 0, hashMap.capacity >> 3);
+}
+
+template <typename K, typename V, typename A>
+inline void HashMapInit(HashMap<K,V,A> *hashMap, u32 capacity)
+{
+	ASSERT(IsPowerOf2(capacity) && capacity >= 32);
+
+	u64 bookkeepSize = capacity >> 3;
 	u64 keyMemorySize = capacity * sizeof(K);
 	u64 valueMemorySize = capacity * sizeof(V);
-	void *memory = A::Alloc(bookkeepSize + keyMemorySize + valueMemorySize);
-	hashMap->bookkeepBitfield = (u8 *)memory;
-	hashMap->keys = (K *)((u8 *)memory + bookkeepSize);
-	hashMap->values = (V *)((u8 *)memory + bookkeepSize + keyMemorySize);
+	hashMap->memory = A::Alloc(bookkeepSize + keyMemorySize + valueMemorySize);
 	hashMap->capacity = capacity;
 
-	memset(memory, 0, bookkeepSize);
+	HashMapClear(*hashMap);
+}
+
+template <typename K, typename V, typename A>
+inline K *HashMapKeys(HashMap<K,V,A> hashMap)
+{
+	u64 bookkeepSize = hashMap.capacity >> 3;
+	return (K *)((u8 *)hashMap.memory + bookkeepSize);
+}
+
+template <typename K, typename V, typename A>
+inline V *HashMapValues(HashMap<K,V,A> hashMap)
+{
+	u64 bookkeepSize = hashMap.capacity >> 3;
+	u64 keyMemorySize = hashMap.capacity * sizeof(K);
+	return (V *)((u8 *)hashMap.memory + bookkeepSize + keyMemorySize);
+}
+
+template <typename K, typename V, typename A>
+inline bool HashMapSlotOccupied(HashMap<K,V,A> hashMap, u32 slotIdx)
+{
+	u32 *bookkeep = (u32 *)hashMap.memory;
+	return BitfieldGetBit(bookkeep, slotIdx);
 }
 
 template <typename K, typename V, typename A>
@@ -436,17 +572,20 @@ V *HashMapGet(HashMap<K,V,A> hashMap, K key)
 {
 	ASSERT(IsPowerOf2(hashMap.capacity));
 	u32 mask = hashMap.capacity - 1;
-	u32 hash = Hash(key) & mask;
+	u32 slotIdx = Hash(key) & mask;
+
+	K *keys = HashMapKeys(hashMap);
+	V *values = HashMapValues(hashMap);
+
 	K foundKey;
 	for (u32 iterations = 0; iterations < hashMap.capacity; ++iterations)
 	{
-		bool occupied = hashMap.bookkeepBitfield[hash / 8] & (1 << hash % 8);
-		if (!occupied)
+		if (!HashMapSlotOccupied(hashMap, slotIdx))
 			break;
-		foundKey = hashMap.keys[hash];
+		foundKey = keys[slotIdx];
 		if (foundKey == key)
-			return &hashMap.values[hash];
-		hash = (hash + 1) & mask;
+			return &values[slotIdx];
+		slotIdx = (slotIdx + 1) & mask;
 	}
 	return nullptr;
 }
@@ -455,24 +594,17 @@ template <typename K, typename V, typename A>
 void HashMapRehash(HashMap<K,V,A> *hashMap)
 {
 	u32 oldCapacity = hashMap->capacity;
-	u8 *oldBookkeep = hashMap->bookkeepBitfield;
-	K *oldKeys = hashMap->keys;
-	V *oldValues = hashMap->values;
+	u32 *oldBookkeep = (u32 *)hashMap->memory;
+	K *oldKeys = HashMapKeys(*hashMap);
+	V *oldValues = HashMapValues(*hashMap);
 
-	hashMap->capacity = oldCapacity << 1;
-
-	u32 capacity = hashMap->capacity;
-	u64 bookkeepSize = capacity / 8;
-	u64 keyMemorySize = capacity * sizeof(K);
-	u64 valueMemorySize = capacity * sizeof(V);
-	void *memory = A::Alloc(bookkeepSize + keyMemorySize + valueMemorySize);
-	hashMap->bookkeepBitfield = (u8 *)memory;
-	hashMap->keys = (K *)((u8 *)memory + bookkeepSize);
-	hashMap->values = (V *)((u8 *)memory + bookkeepSize + keyMemorySize);
+	HashMapInit(hashMap, oldCapacity << 1);
 
 	for (u32 i = 0; i < oldCapacity; ++i)
-		if (oldBookkeep[i / 8] & (1 << (1 % 8)))
+		if (BitfieldGetBit(oldBookkeep, i))
 			*HashMapGetOrAdd(hashMap, oldKeys[i]) = oldValues[i];
+
+	A::Free(oldBookkeep);
 }
 
 template <typename K, typename V, typename A>
@@ -480,17 +612,21 @@ V *HashMapGetOrAdd(HashMap<K,V,A> *hashMap, K key)
 {
 	ASSERT(IsPowerOf2(hashMap->capacity));
 	u32 mask = hashMap->capacity - 1;
-	u32 hash = Hash(key) & mask;
+	u32 slotIdx = Hash(key) & mask;
+
+	K *keys = HashMapKeys(*hashMap);
+	V *values = HashMapValues(*hashMap);
+
 	K foundKey;
-	for (u32 iterations = 0; iterations < hashMap->capacity; ++iterations)
+	u32 maxIterations = Max(Sqrt(hashMap->capacity), 1);
+	for (u32 iteration = 0; iteration < maxIterations; ++iteration)
 	{
-		bool occupied = hashMap->bookkeepBitfield[hash / 8] & (1 << (hash % 8));
-		if (!occupied)
+		if (!HashMapSlotOccupied(*hashMap, slotIdx))
 			goto add;
-		foundKey = hashMap->keys[hash];
+		foundKey = keys[slotIdx];
 		if (foundKey == key)
-			return &hashMap->values[hash];
-		hash = (hash + 1) & mask;
+			return &values[slotIdx];
+		slotIdx = (slotIdx + 1) & mask;
 	}
 
 	// Full!
@@ -499,7 +635,46 @@ V *HashMapGetOrAdd(HashMap<K,V,A> *hashMap, K key)
 
 add:
 	// Add!
-	hashMap->bookkeepBitfield[hash / 8] |= (1 << (hash % 8));
-	hashMap->keys[hash] = key;
-	return &hashMap->values[hash];
+	u32 *bookkeep = (u32 *)hashMap->memory;
+	BitfieldSetBit(bookkeep, slotIdx);
+	keys[slotIdx] = key;
+	return &values[slotIdx];
+}
+
+bool PresentInBigArray(u32 *buffer, u64 count, u32 item)
+{
+	__m256i itemX8 = _mm256_set1_epi32(item);
+	u32 currentIdx = 0;
+	// Align to 32 bytes
+	while (((u64)&buffer[currentIdx] & 31) && currentIdx < count)
+	{
+		if (buffer[currentIdx] == item)
+		{
+			nodeIdx = currentIdx;
+			return true;
+		}
+		++currentIdx;
+	}
+	while (currentIdx + 8 <= count)
+	{
+		__m256i res = _mm256_cmpeq_epi32(itemX8, *(__m256i *)&buffer[currentIdx]);
+		u32 mask = _mm256_movemask_ps(_mm256_castsi256_ps(res));
+		if (mask)
+		{
+			nodeIdx = 31 - Nlz(mask) + currentIdx;
+			return true;
+		}
+		currentIdx += 8;
+	}
+	// Leftovers
+	while (currentIdx < count)
+	{
+		if (buffer[currentIdx] == item)
+		{
+			nodeIdx = currentIdx;
+			return true;
+		}
+		++currentIdx;
+	}
+	return false;
 }

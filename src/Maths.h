@@ -11,16 +11,7 @@ const f64 PI_64 = 3.1415926535897932384626433832795;
 const f64 HALFPI_64 = 1.5707963267948966192313216916398;
 const f64 PI2_64 = 6.283185307179586476925286766559;
 
-inline s64 CountOnes(s64 n)
-{
-#if _MSC_VER
-	return __popcnt64(n);
-#else
-	return __builtin_popcount(n);
-#endif
-}
-
-inline u8 Nlz(u32 x)
+inline constexpr u8 Nlz(u32 x)
 {
 #if _MSC_VER
 	unsigned long i;
@@ -32,7 +23,7 @@ inline u8 Nlz(u32 x)
 #endif
 }
 
-inline u8 Ntz(u32 n)
+inline constexpr u8 Ntz(u32 n)
 {
 #if _MSC_VER
 	unsigned long i;
@@ -43,17 +34,26 @@ inline u8 Ntz(u32 n)
 #endif
 }
 
-inline u32 NextPowerOf2(u32 n)
+inline constexpr u32 CountOnes(u32 n)
+{
+#if _MSC_VER
+	return __popcnt(n);
+#else
+	return __builtin_popcount(n);
+#endif
+}
+
+inline constexpr u32 NextPowerOf2(u32 n)
 {
 	return 0x80000000 >> (Nlz(n - 1) - 1);
 }
 
-inline u32 LastPowerOf2(u32 n)
+inline constexpr u32 LastPowerOf2(u32 n)
 {
 	return 0x80000000 >> Nlz(n);
 }
 
-inline u8 Nlz64(u64 x)
+inline constexpr u8 Nlz64(u64 x)
 {
 #if _MSC_VER
 	unsigned long i;
@@ -65,7 +65,7 @@ inline u8 Nlz64(u64 x)
 #endif
 }
 
-inline u8 Ntz64(u64 n)
+inline constexpr u8 Ntz64(u64 n)
 {
 #if _MSC_VER
 	unsigned long i;
@@ -73,6 +73,15 @@ inline u8 Ntz64(u64 n)
 	return (u8)i;
 #else
 	return __builtin_ctzll(n);
+#endif
+}
+
+inline constexpr u64 CountOnes64(u64 n)
+{
+#if _MSC_VER
+	return __popcnt64(n);
+#else
+	return __builtin_popcountll(n);
 #endif
 }
 

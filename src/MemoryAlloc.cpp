@@ -82,7 +82,7 @@ void *PhaseAllocator::Realloc(void *ptr, u64 newSize)
 	memcpy(newBlock, ptr, newSize);
 	return newBlock;
 }
-void Free(void *ptr)
+void PhaseAllocator::Free(void *ptr)
 {
 	(void) ptr;
 }

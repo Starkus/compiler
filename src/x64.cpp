@@ -229,7 +229,7 @@ enum X64Register
 	X64REGISTER_Count
 };
 
-s32 x64ScratchRegisters[] = {
+X64Register x64ScratchRegisters[] = {
 	RAX_idx, RBX_idx, RCX_idx, RDX_idx,
 	RSI_idx, RDI_idx, R8_idx,  R9_idx,
 	R10_idx, R11_idx, R12_idx, R13_idx,
