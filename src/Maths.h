@@ -11,7 +11,7 @@ const f64 PI_64 = 3.1415926535897932384626433832795;
 const f64 HALFPI_64 = 1.5707963267948966192313216916398;
 const f64 PI2_64 = 6.283185307179586476925286766559;
 
-inline constexpr u8 Nlz(u32 x)
+inline u8 Nlz(u32 x)
 {
 #if _MSC_VER
 	unsigned long i;
@@ -23,7 +23,7 @@ inline constexpr u8 Nlz(u32 x)
 #endif
 }
 
-inline constexpr u8 Ntz(u32 n)
+inline u8 Ntz(u32 n)
 {
 #if _MSC_VER
 	unsigned long i;
@@ -34,7 +34,7 @@ inline constexpr u8 Ntz(u32 n)
 #endif
 }
 
-inline constexpr u32 CountOnes(u32 n)
+inline u32 CountOnes(u32 n)
 {
 #if _MSC_VER
 	return __popcnt(n);
@@ -43,17 +43,17 @@ inline constexpr u32 CountOnes(u32 n)
 #endif
 }
 
-inline constexpr u32 NextPowerOf2(u32 n)
+inline u32 NextPowerOf2(u32 n)
 {
 	return 0x80000000 >> (Nlz(n - 1) - 1);
 }
 
-inline constexpr u32 LastPowerOf2(u32 n)
+inline u32 LastPowerOf2(u32 n)
 {
 	return 0x80000000 >> Nlz(n);
 }
 
-inline constexpr u8 Nlz64(u64 x)
+inline u8 Nlz64(u64 x)
 {
 #if _MSC_VER
 	unsigned long i;
@@ -65,7 +65,7 @@ inline constexpr u8 Nlz64(u64 x)
 #endif
 }
 
-inline constexpr u8 Ntz64(u64 n)
+inline  u8 Ntz64(u64 n)
 {
 #if _MSC_VER
 	unsigned long i;
@@ -76,7 +76,7 @@ inline constexpr u8 Ntz64(u64 n)
 #endif
 }
 
-inline constexpr u64 CountOnes64(u64 n)
+inline u64 CountOnes64(u64 n)
 {
 #if _MSC_VER
 	return __popcnt64(n);
@@ -95,14 +95,19 @@ inline u64 LastPowerOf264(u64 n)
 	return 0x8000000000000000 >> Nlz64(n);
 }
 
-inline bool IsPowerOf2(s64 n)
+inline bool IsPowerOf2(u32 n)
 {
 	return CountOnes(n) == 1;
 }
 
+inline bool IsPowerOf264(u64 n)
+{
+	return CountOnes64(n) == 1;
+}
+
 inline s64 AlignTo(s64 n, s64 alignment)
 {
-	ASSERT(IsPowerOf2(alignment));
+	ASSERT(IsPowerOf264(alignment));
 	s64 mask = alignment - 1;
 	if ((n & mask) != 0)
 		n = (n & ~mask) + alignment;
@@ -205,3 +210,82 @@ inline f32 Sqrt(f32 n)
 {
 	return sqrtf(n);
 }
+
+#if _MSC_VER
+// Retarded compiler
+inline constexpr u32 CountOnesConstexpr(u32 n)
+{
+	u32 count = 0;
+	u32 bit = 1;
+	for (int i = 0; i < 32; ++i)
+	{
+		if (n & bit) ++count;
+		n <<= 1;
+	}
+	return count;
+}
+
+inline constexpr u64 CountOnes64Constexpr(u64 n)
+{
+	u64 count = 0;
+	u64 bit = 1;
+	for (int i = 0; i < 64; ++i)
+	{
+		if (n & bit) ++count;
+		n <<= 1;
+	}
+	return count;
+}
+
+inline constexpr u8 NlzConstexpr(u32 n)
+{
+	u8 count = 0;
+	for (int i = 0; i < 32; ++i)
+	{
+		if (n & 0x80000000)
+			break;
+		n <<= 1;
+		++count;
+	}
+	return count;
+}
+
+inline constexpr u8 NtzConstexpr(u32 n)
+{
+	u8 count = 0;
+	for (int i = 0; i < 32; ++i)
+	{
+		if (n & 1)
+			break;
+		n >>= 1;
+		++count;
+	}
+	return count;
+}
+
+inline constexpr u8 Nlz64Constexpr(u64 n)
+{
+	u8 count = 0;
+	for (int i = 0; i < 64; ++i)
+	{
+		if (n & 0x8000000000000000)
+			break;
+		n <<= 1;
+		++count;
+	}
+	return count;
+}
+
+inline constexpr u8 Ntz64Constexpr(u64 n)
+{
+	u8 count = 0;
+	for (int i = 0; i < 64; ++i)
+	{
+		if (n & 1)
+			break;
+		n >>= 1;
+		++count;
+	}
+	return count;
+}
+#endif

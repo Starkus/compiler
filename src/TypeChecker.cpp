@@ -480,7 +480,7 @@ inline void TCCheckIfNameAlreadyExists(Context *context, String name, SourceLoca
 		{
 			LogErrorNoCrash(context, loc, TPrintF("Duplicate static definition \"%S\"", name));
 			LogNote(context, scopeName->loc, "First defined here"_s);
-			ERROR;
+			PANIC;
 		}
 	}
 
@@ -498,7 +498,7 @@ inline void TCCheckIfNameAlreadyExists(Context *context, String name, SourceLoca
 enum TypeCheckErrorCode
 {
 	TYPECHECK_COOL,
-	TYPECHECK_MISC_ERROR,
+	TYPECHECK_MISC_PANIC,
 	TYPECHECK_SIGN_MISMATCH,
 	TYPECHECK_SIZE_MISMATCH,
 	TYPECHECK_TYPE_CATEGORY_MISMATCH,
@@ -533,7 +533,7 @@ void ReportTypeCheckError(Context *context, TypeCheckErrorCode errorCode, Source
 	case TYPECHECK_STRUCT_MISMATCH:
 		LogError(context, sourceLoc, TPrintF(
 			"Expressions evaluate to different structs! (left is %S and right is %S)", leftStr, rightStr));
-	case TYPECHECK_MISC_ERROR:
+	case TYPECHECK_MISC_PANIC:
 		LogError(context, sourceLoc, TPrintF(
 			"Expression type mismatch! (left is %S and right is %S)", leftStr, rightStr));
 	default:
@@ -716,7 +716,7 @@ TypeCheckErrorCode CheckTypesMatch(Context *context, u32 leftTableIdx, u32 right
 	} break;
 	}
 
-	return TYPECHECK_MISC_ERROR;
+	return TYPECHECK_MISC_PANIC;
 }
 
 const StructMember *FindStructMemberByName(Context *context, TypeInfo structTypeInfo, String name)
@@ -3935,7 +3935,7 @@ TCResultWithType TryTypeCheckExpression(Context *context, ASTExpression *express
 		String filename = expression->include.filename;
 		if (CompilerAddSourceFile(context, filename, expression->any.loc))
 		{
-			TokenizeFile(context, context->sourceFiles.size - 1);
+			TokenizeFile(context, (int)context->sourceFiles.size - 1);
 			u64 tokenCount = BucketArrayCount(&context->tokens);
 			while (context->currentTokenIdx < tokenCount)
 			{
@@ -3952,7 +3952,7 @@ TCResultWithType TryTypeCheckExpression(Context *context, ASTExpression *express
 	} break;
 	default:
 	{
-		LogError(context, expression->any.loc, "COMPILER ERROR! Unknown expression type on type checking"_s);
+		LogError(context, expression->any.loc, "COMPILER PANIC! Unknown expression type on type checking"_s);
 	} break;
 	}
 
@@ -4012,12 +4012,12 @@ void GenerateTypeCheckJobs(Context *context, ASTExpression *expression)
 	case ASTNODETYPE_CAST:
 	case ASTNODETYPE_INTRINSIC:
 	{
-		LogError(context, expression->any.loc, "COMPILER ERROR! Invalid expression type found "
+		LogError(context, expression->any.loc, "COMPILER PANIC! Invalid expression type found "
 				"while generating type checking jobs"_s);
 	} break;
 	default:
 	{
-		LogError(context, expression->any.loc, "COMPILER ERROR! Unknown expression type found "
+		LogError(context, expression->any.loc, "COMPILER PANIC! Unknown expression type found "
 				"while generating type checking jobs"_s);
 	}
 	}
@@ -4030,7 +4030,7 @@ void TCCompileString(Context *context, String code)
 	builtinSourceFile.size   = code.size;
 	*DynamicArrayAdd(&context->sourceFiles) = builtinSourceFile;
 
-	TokenizeFile(context, context->sourceFiles.size - 1);
+	TokenizeFile(context, (int)context->sourceFiles.size - 1);
 	u64 tokenCount = BucketArrayCount(&context->tokens);
 	while (context->currentTokenIdx < tokenCount)
 	{
@@ -4260,6 +4260,7 @@ void TypeCheckMain(Context *context)
 
 		if (context->tcJobs.size == 0) break;
 
+#if 1
 		// Add default values for compiler constants if needed
 		if (!anyJobMadeAdvancements)
 		{
@@ -4278,6 +4279,7 @@ void TypeCheckMain(Context *context)
 				}
 			}
 		}
+#endif
 
 		if (!anyJobMadeAdvancements)
 		{
@@ -4303,7 +4305,7 @@ void TypeCheckMain(Context *context)
 			}
 
 			Print("Compiler isn't making advancements. Stopping.\n");
-			ERROR;
+			PANIC;
 		}
 	}
 }

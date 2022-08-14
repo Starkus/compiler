@@ -1844,7 +1844,7 @@ void X64ConvertInstruction(Context *context, IRInstruction inst, X64Procedure *x
 			IRValue out   = inst.binaryOperation.out;
 
 			if (left.valueType == IRVALUETYPE_IMMEDIATE_INTEGER && left.immediate > 0 &&
-					IsPowerOf2(left.immediate))
+					IsPowerOf264(left.immediate))
 			{
 				IRValue tmp = left;
 				left = right;
@@ -1852,7 +1852,7 @@ void X64ConvertInstruction(Context *context, IRInstruction inst, X64Procedure *x
 			}
 
 			if (right.valueType == IRVALUETYPE_IMMEDIATE_INTEGER && right.immediate > 0 &&
-					IsPowerOf2(right.immediate))
+					IsPowerOf264(right.immediate))
 			{
 				u32 immitateFlag = left.valueType == IRVALUETYPE_VALUE ? VALUEFLAGS_TRY_IMMITATE : 0;
 				IRValue tmp = IRValueNewValue(context, "_mulshfttmp"_s, left.typeTableIdx,
@@ -1912,7 +1912,7 @@ void X64ConvertInstruction(Context *context, IRInstruction inst, X64Procedure *x
 			IRValue right = inst.binaryOperation.right;
 			IRValue out   = inst.binaryOperation.out;
 
-			if (right.valueType == IRVALUETYPE_IMMEDIATE_INTEGER && IsPowerOf2(right.immediate))
+			if (right.valueType == IRVALUETYPE_IMMEDIATE_INTEGER && IsPowerOf264(right.immediate))
 			{
 				u32 immitateFlag = left.valueType == IRVALUETYPE_VALUE ? VALUEFLAGS_TRY_IMMITATE : 0;
 				IRValue tmp = IRValueNewValue(context, "_mulshfttmp"_s, left.typeTableIdx,
@@ -1966,7 +1966,7 @@ void X64ConvertInstruction(Context *context, IRInstruction inst, X64Procedure *x
 		IRValue right = inst.binaryOperation.right;
 		IRValue out   = inst.binaryOperation.out;
 
-		if (right.valueType == IRVALUETYPE_IMMEDIATE_INTEGER && IsPowerOf2(right.immediate))
+		if (right.valueType == IRVALUETYPE_IMMEDIATE_INTEGER && IsPowerOf264(right.immediate))
 		{
 			u32 immitateFlag = left.valueType == IRVALUETYPE_VALUE ? VALUEFLAGS_TRY_IMMITATE : 0;
 			IRValue tmp = IRValueNewValue(context, "_mulshfttmp"_s, left.typeTableIdx, immitateFlag,
@@ -2610,7 +2610,10 @@ void X64PrintInstructions(Context *context, Array<X64Procedure, PhaseAllocator> 
 		X64Procedure x64Proc = x64Procedures[procedureIdx];
 
 #if _MSC_VER
-		PrintOut(context, "\n%S PROC\n", x64Proc.name);
+		if (GetProcedure(context, procedureIdx)->isExported)
+			PrintOut(context, "\n%S PROC EXPORT\n", x64Proc.name);
+		else
+			PrintOut(context, "\n%S PROC PRIVATE\n", x64Proc.name);
 #else
 		PrintOut(context, "\n%S:\n", x64Proc.name);
 #endif
@@ -3744,18 +3747,14 @@ unalignedMovups:;
 	PrintOut(context, "_BSS ENDS\n");
 #endif
 
+#if !_MSC_VER
 	for (int procedureIdx = 1; procedureIdx < procedureCount; ++procedureIdx)
 	{
 		Procedure *proc = GetProcedure(context, procedureIdx);
 		if (proc->isExported)
-		{
-#if _MSC_VER
-			PrintOut(context, "PUBLIC %S\n", proc->name);
-#else
 			PrintOut(context, "GLOBAL %S\n", proc->name);
-#endif
-		}
 	}
+#endif
 
 	for (int varIdx = 0; varIdx < context->irExternalVariables.size; ++varIdx)
 	{

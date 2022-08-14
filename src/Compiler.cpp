@@ -225,7 +225,7 @@ void __Log(Context *context, SourceLocation loc, String str, const char *inFile,
 	do { __Log(context, loc, StringConcat("ERROR: "_s, str), __FILE__, __func__, __LINE__); } while (0)
 
 #define LogError(context, loc, str) \
-	do { LogErrorNoCrash(context, loc, str); ERROR; } while(0)
+	do { LogErrorNoCrash(context, loc, str); PANIC; } while(0)
 
 #define LogWarning(context, loc, str) \
 	do { __Log(context, loc, StringConcat("WARNING: "_s, str), __FILE__, __func__, __LINE__); } while (0)

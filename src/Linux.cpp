@@ -19,7 +19,7 @@ typedef int FileHandle;
 #define BREAK
 #endif
 
-#define ERROR do { BREAK; exit(1); } while(0)
+#define PANIC do { BREAK; exit(1); } while(0)
 
 #define ASSUME(expr) do { __builtin_assume(expr); (void)(expr); } while(0)
 

@@ -4,12 +4,6 @@ LibAddTwoNumbers :: #external (a : s64, b : s64) -> s64;
 
 Main :: () -> s64
 {
-	#if (compiler_platform == COMPILER_PLATFORM_WINDOWS)
-	{
-		message := "Hello, Sailor!\0";
-		OutputDebugStringA(message.data);
-	}
-
 	sum := LibAddTwoNumbers(1, 2);
 	PrintF("1 + 2 is %, says statically linked library.\n", sum);
 	if sum != 3 return 1;

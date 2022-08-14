@@ -268,7 +268,7 @@ template <typename T>
 inline bool BitfieldGetBit(T array, int index)
 {
 	ASSERT(IsPowerOf2(sizeof(array[0])));
-	constexpr u8 shiftAmm = Ntz64(sizeof(array[0]) * 8);
+	constexpr u8 shiftAmm = Ntz64Constexpr(sizeof(array[0]) * 8);
 	constexpr u8 bitIdx = (sizeof(array[0]) * 8) - 1;
 	return array[index >> shiftAmm] & (1ull << (index & bitIdx));
 }
@@ -277,7 +277,7 @@ template <typename T>
 inline void BitfieldSetBit(T array, int index)
 {
 	ASSERT(IsPowerOf2(sizeof(array[0])));
-	constexpr u8 shiftAmm = Ntz64(sizeof(array[0]) * 8);
+	constexpr u8 shiftAmm = Ntz64Constexpr(sizeof(array[0]) * 8);
 	constexpr u8 bitIdx = (sizeof(array[0]) * 8) - 1;
 	array[index >> shiftAmm] |= (1ull << (index & bitIdx));
 }
@@ -286,7 +286,7 @@ template <typename T>
 inline void BitfieldClearBit(T array, int index)
 {
 	ASSERT(IsPowerOf2(sizeof(array[0])));
-	constexpr u8 shiftAmm = Ntz64(sizeof(array[0]) * 8);
+	constexpr u8 shiftAmm = Ntz64Constexpr(sizeof(array[0]) * 8);
 	constexpr u8 bitIdx = (sizeof(array[0]) * 8) - 1;
 	array[index >> shiftAmm] &= ~(1ull << (index & bitIdx));
 }
@@ -294,7 +294,7 @@ inline void BitfieldClearBit(T array, int index)
 template <typename T>
 inline u64 BitfieldCount(T *array, u64 size)
 {
-	ASSERT(sizeof(T) % sizeof(u32) == 0);
+	ASSERTC(sizeof(T) % sizeof(u32) == 0);
 	u64 count = 0;
 	T *end = array + size;
 	for (u32 *scan = (u32 *)array; scan < end; ++scan)
@@ -418,7 +418,7 @@ bool HashSetHas(HashSet<K,A> hashSet, K key)
 }
 
 template <typename K, typename A>
-bool HashSetCount(HashSet<K,A> hashSet)
+u64 HashSetCount(HashSet<K,A> hashSet)
 {
 	return BitfieldCount((u32 *)hashSet.memory, hashSet.capacity >> 5);
 }
@@ -443,8 +443,6 @@ template <typename K, typename A>
 void HashSetRehash(HashSet<K,A> *hashSet)
 {
 	u32 oldCapacity = hashSet->capacity;
-	u64 oldBookkeepSize = oldCapacity >> 5;
-	u64 oldKeyMemorySize = oldCapacity * sizeof(K);
 	u32 *oldBookkeep = (u32 *)hashSet->memory;
 	K *oldKeys = HashSetKeys(*hashSet);
 
@@ -467,8 +465,8 @@ bool HashSetAdd(HashSet<K,A> *hashSet, K key)
 	K *keys = HashSetKeys(*hashSet);
 
 	K foundKey;
-	u32 maxIterations = Max(Sqrt(hashSet->capacity), 1);
-	for (u32 iteration = 0; iteration < maxIterations; ++iteration)
+	u32 maxIterationsSquared = hashSet->capacity;
+	for (u32 iteration = 0; iteration * iteration < maxIterationsSquared; ++iteration)
 	{
 		if (!HashSetSlotOccupied(*hashSet, slotIdx))
 			goto add;
@@ -618,8 +616,8 @@ V *HashMapGetOrAdd(HashMap<K,V,A> *hashMap, K key)
 	V *values = HashMapValues(*hashMap);
 
 	K foundKey;
-	u32 maxIterations = Max(Sqrt(hashMap->capacity), 1);
-	for (u32 iteration = 0; iteration < maxIterations; ++iteration)
+	u32 maxIterationsSquared = hashMap->capacity;
+	for (u32 iteration = 0; iteration * iteration < maxIterationsSquared; ++iteration)
 	{
 		if (!HashMapSlotOccupied(*hashMap, slotIdx))
 			goto add;
@@ -649,10 +647,7 @@ bool PresentInBigArray(u32 *buffer, u64 count, u32 item)
 	while (((u64)&buffer[currentIdx] & 31) && currentIdx < count)
 	{
 		if (buffer[currentIdx] == item)
-		{
-			nodeIdx = currentIdx;
 			return true;
-		}
 		++currentIdx;
 	}
 	while (currentIdx + 8 <= count)
@@ -660,21 +655,44 @@ bool PresentInBigArray(u32 *buffer, u64 count, u32 item)
 		__m256i res = _mm256_cmpeq_epi32(itemX8, *(__m256i *)&buffer[currentIdx]);
 		u32 mask = _mm256_movemask_ps(_mm256_castsi256_ps(res));
 		if (mask)
-		{
-			nodeIdx = 31 - Nlz(mask) + currentIdx;
 			return true;
-		}
 		currentIdx += 8;
 	}
 	// Leftovers
 	while (currentIdx < count)
 	{
 		if (buffer[currentIdx] == item)
-		{
-			nodeIdx = currentIdx;
 			return true;
-		}
 		++currentIdx;
 	}
 	return false;
+}
+
+u64 FindInBigArray(u32 *buffer, u64 count, u32 item)
+{
+	__m256i itemX8 = _mm256_set1_epi32(item);
+	u32 currentIdx = 0;
+	// Align to 32 bytes
+	while (((u64)&buffer[currentIdx] & 31) && currentIdx < count)
+	{
+		if (buffer[currentIdx] == item)
+			return currentIdx;
+		++currentIdx;
+	}
+	while (currentIdx + 8 <= count)
+	{
+		__m256i res = _mm256_cmpeq_epi32(itemX8, *(__m256i *)&buffer[currentIdx]);
+		u32 mask = _mm256_movemask_ps(_mm256_castsi256_ps(res));
+		if (mask)
+			return 31 - Nlz(mask) + currentIdx;
+		currentIdx += 8;
+	}
+	// Leftovers
+	while (currentIdx < count)
+	{
+		if (buffer[currentIdx] == item)
+			return currentIdx;
+		++currentIdx;
+	}
+	return U64_MAX;
 }

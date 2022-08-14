@@ -77,7 +77,7 @@ bool CanBeRegister(Context *context, u32 valueIdx)
 	if (typeInfo.typeCategory == TYPECATEGORY_STRUCT ||
 		typeInfo.typeCategory == TYPECATEGORY_UNION)
 		return false;
-	if (!IsPowerOf2(typeInfo.size) || typeInfo.size > 8)
+	if (!IsPowerOf264(typeInfo.size) || typeInfo.size > 8)
 		// @Improve: we could actually fit up to like 32/64 bytes with SIMD registers, but right now
 		// this helps find errors so it stays like this for now.
 		return false;
@@ -577,7 +577,7 @@ inline u64 RegisterSavingInstruction(Context *context, X64Instruction *inst, u64
 		}
 
 		u64 usedCalleeSaveRegisters = callerSaveRegisters & liveRegisterBits;
-		s64 callerSaveRegCount = CountOnes(usedCalleeSaveRegisters);
+		s64 callerSaveRegCount = CountOnes64(usedCalleeSaveRegisters);
 		X64Instruction patchInst = { X64_Patch_Many };
 		ArrayInit(&patchInst.patchInstructions, 1 + 3 * callerSaveRegCount);
 		patchInst.patchInstructions.size = 1 + 3 * callerSaveRegCount;
@@ -701,7 +701,7 @@ void X64AllocateRegisters(Context *context, Array<X64Procedure, PhaseAllocator> 
 							IRValueValue(context, currentNodeValueIdx)));
 
 				u32 *keys = HashSetKeys(currentNodeEdges);
-				for (int slotIdx = 0; slotIdx < currentNodeEdges.capacity; ++slotIdx)
+				for (u32 slotIdx = 0; slotIdx < currentNodeEdges.capacity; ++slotIdx)
 					if (HashSetSlotOccupied(currentNodeEdges, slotIdx))
 						Print("%S, ", X64IRValueToStr(context,
 									IRValueValue(context, keys[slotIdx])));
@@ -825,7 +825,7 @@ gotNodeToRemove:
 					if (HashSetHas(edges, immitateValueIdx))
 						goto skipImmitate;
 
-					for (int slotIdx = 0; slotIdx < edges.capacity; ++slotIdx)
+					for (u32 slotIdx = 0; slotIdx < edges.capacity; ++slotIdx)
 					{
 						if (!HashSetSlotOccupied(edges, slotIdx))
 							continue;
@@ -854,7 +854,7 @@ skipImmitate:
 
 			int max = isXMM ? availableRegistersFP : availableRegisters;
 			u64 usedRegisters = 0;
-			for (int slotIdx = 0; slotIdx < edges.capacity; ++slotIdx)
+			for (u32 slotIdx = 0; slotIdx < edges.capacity; ++slotIdx)
 			{
 				if (!HashSetSlotOccupied(edges, slotIdx))
 					continue;
@@ -908,7 +908,7 @@ skipImmitate:
 
 		// Callee save registers
 		u64 usedCallerSaveRegisters = calleeSaveRegisters & usedRegisters;
-		s64 calleeSaveRegCount = CountOnes(usedCallerSaveRegisters);
+		s64 calleeSaveRegCount = CountOnes64(usedCallerSaveRegisters);
 		X64Instruction patchTop =    { X64_Patch_Many };
 		X64Instruction patchBottom = { X64_Patch_Many };
 		ArrayInit(&patchTop.patchInstructions, 1 + calleeSaveRegCount);

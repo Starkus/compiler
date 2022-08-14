@@ -334,7 +334,7 @@ IRValue IRDoArrayAccess(Context *context, IRValue arrayValue, IRValue indexValue
 	}
 	else if ((indexValue.valueType == IRVALUETYPE_VALUE ||
 			indexValue.valueType == IRVALUETYPE_VALUE_DEREFERENCE) &&
-			CountOnes(elementSize) == 1 && elementSize <= 8)
+			CountOnes64(elementSize) == 1 && elementSize <= 8)
 	{
 		// @Todo: move x64 specifics like element size limitations and force to register to x64
 		// backend.
@@ -1017,7 +1017,7 @@ IRValue IRDoInlineProcedureCall(Context *context, ASTProcedureCall astProcCall)
 		{
 			LogErrorNoCrash(context, astProcCall.loc, "Cyclic inlined procedure call"_s);
 			LogNote(context, context->irProcedureStack[i].definitionLoc, "First called here"_s);
-			ERROR;
+			PANIC;
 		}
 	}
 

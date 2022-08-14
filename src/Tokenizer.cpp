@@ -573,7 +573,7 @@ enum TokenType CalculateTokenType(Context *context, const Tokenizer *tokenizer)
 		return TOKEN_INVALID;
 }
 
-u32 CalculateTokenSize(Context *context, const Tokenizer *tokenizer, enum TokenType tokenType)
+u16 CalculateTokenSize(Context *context, const Tokenizer *tokenizer, enum TokenType tokenType)
 {
 	const char *begin = tokenizer->cursor;
 
@@ -588,8 +588,8 @@ u32 CalculateTokenSize(Context *context, const Tokenizer *tokenizer, enum TokenT
 				++scan;
 			++scan;
 		}
-		ASSERT((1 + scan - begin) <= U32_MAX);
-		return (u32)(1 + scan - begin);
+		ASSERT((1 + scan - begin) <= U16_MAX);
+		return (u16)(1 + scan - begin);
 	}
 	case TOKEN_LITERAL_CHARACTER:
 	{
@@ -599,7 +599,7 @@ u32 CalculateTokenSize(Context *context, const Tokenizer *tokenizer, enum TokenT
 	}
 	case TOKEN_IDENTIFIER:
 	{
-		u32 size = 0;
+		u16 size = 0;
 		for (const char *scan = begin;
 				IsAlpha(*scan) || IsNumeric(*scan) || *scan == '_';
 				++scan)
@@ -610,7 +610,7 @@ u32 CalculateTokenSize(Context *context, const Tokenizer *tokenizer, enum TokenT
 	case TOKEN_INVALID_DIRECTIVE:
 	{
 		ASSERT(*begin == '#');
-		u32 size = 1;
+		u16 size = 1;
 		for (const char *scan = begin + 1;
 				IsAlpha(*scan) || IsNumeric(*scan) || *scan == '_';
 				++scan)
@@ -676,8 +676,8 @@ u32 CalculateTokenSize(Context *context, const Tokenizer *tokenizer, enum TokenT
 			}
 		}
 	numberDone:
-		ASSERT(scan - begin <= U32_MAX);
-		return (u32)(scan - begin);
+		ASSERT(scan - begin <= U16_MAX);
+		return (u16)(scan - begin);
 	}
 	case TOKEN_KEYWORD_IF:
 	case TOKEN_OP_EQUALS:

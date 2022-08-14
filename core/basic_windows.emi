@@ -11,7 +11,7 @@ Print :: (string: String)
 }
 
 #if compiler_output_type == COMPILER_OUTPUT_EXECUTABLE
-__WindowsMain :: ()
+__WindowsMain :: #export ()
 {
 	errorCode : s64 = Main();
 	ExitProcess(cast(u32)errorCode);

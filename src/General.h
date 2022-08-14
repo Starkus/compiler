@@ -46,9 +46,11 @@ s64 Print(const char *format, ...);
 #if DEBUG_BUILD
 #define ASSERT(expr) do { if (!(expr)) { Print("!!!ASSERT FAILED!!!\n>   Expression: { %s }\n> %s:%d\n", #expr, __FILE__, __LINE__); BREAK; } ASSUME(expr); } while (false)
 #define ASSERTF(expr, format, ...) do { if (!(expr)) { Print("!!!ASSERT FAILED!!!\n>   " format " { %s }\n> %s:%d\n", __VA_ARGS__, #expr, __FILE__, __LINE__); BREAK; } ASSUME(expr); } while (false)
+#define ASSERTC(expr) do { if constexpr (!(expr)) { Print("!!!ASSERT FAILED!!!\n>   Expression: { %s }\n> %s:%d\n", #expr, __FILE__, __LINE__); BREAK; } ASSUME(expr); } while (false)
 #else
 #define ASSERT(expr) do { ASSUME(expr); } while (false)
 #define ASSERTF(expr, ...) do { ASSUME(expr); } while (false)
+#define ASSERTC(expr) do { ASSUME(expr); } while (false)
 #endif
 
 #define NOMANGLE extern "C"

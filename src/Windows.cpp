@@ -3,11 +3,14 @@
 #include <shlobj_core.h>
 #include <Shlobj.h>
 
+#undef ERROR
+
 typedef HANDLE FileHandle;
 #define SYS_INVALID_FILE_HANDLE INVALID_HANDLE_VALUE
 #define SYS_MAX_PATH MAX_PATH
 #define BREAK __debugbreak()
 #define ASSUME(expr) __assume(expr)
+#define PANIC do { BREAK; exit(1); } while(0)
 
 String StupidStrToString(const wchar_t *wstr, void *(*allocFunc)(u64))
 {
@@ -141,7 +144,7 @@ u64 SYSGetFileSize(FileHandle file)
 	return (u64)fileSizeDword;
 }
 
-void SYSReadEntireFile(FileHandle file, char **fileBuffer, u64 *fileSize, void *(*allocFunc)(u64))
+void SYSReadEntireFile(FileHandle file, const char **fileBuffer, u64 *fileSize, void *(*allocFunc)(u64))
 {
 	if (file == INVALID_HANDLE_VALUE)
 		*fileBuffer = nullptr;
@@ -152,17 +155,18 @@ void SYSReadEntireFile(FileHandle file, char **fileBuffer, u64 *fileSize, void *
 		DWORD error = GetLastError();
 		ASSERT(error == ERROR_SUCCESS);
 
-		*fileBuffer = (char *)allocFunc(*fileSize);
+		char *buffer = (char *)allocFunc(*fileSize);
 		DWORD bytesRead;
 		bool success = ReadFile(
 				file,
-				*fileBuffer,
+				buffer,
 				(DWORD)*fileSize,
 				&bytesRead,
 				nullptr
 				);
 		ASSERT(success);
 		ASSERT(bytesRead == *fileSize);
+		*fileBuffer = buffer;
 	}
 }
 
@@ -224,9 +228,9 @@ void SYSCreateDirectory(String pathname)
 	CreateDirectoryA(pathnameCStr, nullptr);
 }
 
-String msvcPath;
-String windowsSDKPath;
-String windowsSDKVersion;
+String msvcPath = {};
+String windowsSDKPath = {};
+String windowsSDKVersion = {};
 
 void Win32FindVSAndWindowsSDK()
 {
@@ -300,7 +304,9 @@ void Win32FindVSAndWindowsSDK()
 			{
 				if (*scan == '.' || *scan == 0)
 				{
-					tuple[foundNumbers++] = IntFromString({ numDigits, scan - numDigits });
+					ParseNumberResult parseResult = IntFromString({ numDigits, scan - numDigits });
+					ASSERT(parseResult.error == PARSENUMBERRROR_OK);
+					tuple[foundNumbers++] = parseResult.number;
 					numDigits = 0;
 				}
 				else
@@ -321,7 +327,10 @@ void Win32FindVSAndWindowsSDK()
 nextTuple:
 			if (!FindNextFileA(findHandle, &foundData)) break;
 		}
-		windowsSDKVersion = CStrToString(latestVersionName);
+		windowsSDKVersion.size = strlen(latestVersionName);
+		char *buffer = (char *)FrameAllocator::Alloc(windowsSDKVersion.size);
+		memcpy(buffer, latestVersionName, windowsSDKVersion.size);
+		windowsSDKVersion.data = buffer;
 	}
 }
 
@@ -377,56 +386,97 @@ void SYSRunAssembler(String outputPath, String extraArguments)
 	CloseHandle(processInformation.hThread);
 }
 
-void SYSRunLinker(String outputPath, String extraArguments)
+void SYSRunLinker(String outputPath, bool makeLibrary, String extraArguments)
 {
 	if (!msvcPath.size)
 		Win32FindVSAndWindowsSDK();
 
-	String commandLine = TPrintF(
-			"%S\\bin\\Hostx64\\x64\\link.exe " // msvcPath
-			"out.obj "
-			"/nologo "
-			"kernel32.lib "
-			"user32.lib "
-			"gdi32.lib "
-			"winmm.lib "
-			"/nologo "
-			"/debug:full "
-			"/entry:__WindowsMain "
-			"/opt:ref "
-			"/incremental:no "
-			"/dynamicbase:no "
-			"%S " // extraArguments
-			"/libpath:\"%S\\lib\\x64\" " // msvcPath
-			"/libpath:\"%S\\lib\\%S\\ucrt\\x64\" " // windowsSDKPath, windowsSDKVersion
-			"/libpath:\"%S\\lib\\%S\\um\\x64\" " // windowsSDKPath, windowsSDKVersion
-			"/out:out.exe%c",
-			msvcPath,
-			extraArguments,
-			msvcPath,
-			windowsSDKPath, windowsSDKVersion,
-			windowsSDKPath, windowsSDKVersion,
-			0
-			);
-
-	STARTUPINFO startupInfo = {};
 	PROCESS_INFORMATION processInformation = {};
-	startupInfo.cb = sizeof(STARTUPINFO);
-	if (!CreateProcessA(
-			NULL,
-			(LPSTR)commandLine.data,
-			NULL,
-			NULL,
-			false,
-			0,
-			NULL,
-			outputPath.data,
-			&startupInfo,
-			&processInformation
-			))
+
+	if (!makeLibrary)
 	{
-		Print("Failed to call link.exe (%d)\n", GetLastError());
-		CRASH;
+		String commandLine = TPrintF(
+				"%S\\bin\\Hostx64\\x64\\link.exe " // msvcPath
+				"out.obj "
+				"/nologo "
+				"kernel32.lib "
+				"user32.lib "
+				"gdi32.lib "
+				"winmm.lib "
+				"/debug:full "
+				"/entry:__WindowsMain "
+				"/opt:ref "
+				"/incremental:no "
+				"/dynamicbase:no "
+				"%S " // extraArguments
+				"/libpath:\"%S\\lib\\x64\" " // msvcPath
+				"/libpath:\"%S\\lib\\%S\\ucrt\\x64\" " // windowsSDKPath, windowsSDKVersion
+				"/libpath:\"%S\\lib\\%S\\um\\x64\" " // windowsSDKPath, windowsSDKVersion
+				"/out:out.exe%c",
+				msvcPath,
+				extraArguments,
+				msvcPath,
+				windowsSDKPath, windowsSDKVersion,
+				windowsSDKPath, windowsSDKVersion,
+				0
+				);
+
+		STARTUPINFO startupInfo = {};
+		startupInfo.cb = sizeof(STARTUPINFO);
+		if (!CreateProcessA(
+				NULL,
+				(LPSTR)commandLine.data,
+				NULL,
+				NULL,
+				false,
+				0,
+				NULL,
+				outputPath.data,
+				&startupInfo,
+				&processInformation
+				))
+		{
+			Print("Failed to call link.exe (%d)\n", GetLastError());
+			CRASH;
+		}
+	}
+	else
+	{
+		String commandLine = TPrintF(
+				"%S\\bin\\Hostx64\\x64\\lib.exe " // msvcPath
+				"out.obj "
+				"/nologo "
+				"%S " // extraArguments
+				"/libpath:\"%S\\lib\\x64\" " // msvcPath
+				"/libpath:\"%S\\lib\\%S\\ucrt\\x64\" " // windowsSDKPath, windowsSDKVersion
+				"/libpath:\"%S\\lib\\%S\\um\\x64\" " // windowsSDKPath, windowsSDKVersion
+				"/out:out.a%c",
+				msvcPath,
+				extraArguments,
+				msvcPath,
+				windowsSDKPath, windowsSDKVersion,
+				windowsSDKPath, windowsSDKVersion,
+				0
+				);
+
+		STARTUPINFO startupInfo = {};
+		startupInfo.cb = sizeof(STARTUPINFO);
+		if (!CreateProcessA(
+				NULL,
+				(LPSTR)commandLine.data,
+				NULL,
+				NULL,
+				false,
+				0,
+				NULL,
+				outputPath.data,
+				&startupInfo,
+				&processInformation
+				))
+		{
+			Print("Failed to call lib.exe (%d)\n", GetLastError());
+			CRASH;
+		}
 	}
 	WaitForSingleObject(processInformation.hProcess, INFINITE);
 
