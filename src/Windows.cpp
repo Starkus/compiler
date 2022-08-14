@@ -398,8 +398,7 @@ void SYSRunLinker(String outputPath, bool makeLibrary, String extraArguments)
 	if (!makeLibrary)
 	{
 		String commandLine = TPrintF(
-				//"%S\\bin\\Hostx64\\x64\\link.exe " // msvcPath
-				"lld-link.exe " // msvcPath
+				"%S\\bin\\Hostx64\\x64\\link.exe " // msvcPath
 				"out.obj "
 				"/nologo "
 				"/ignore:4216 " // Warning about exporting entry point
@@ -417,7 +416,7 @@ void SYSRunLinker(String outputPath, bool makeLibrary, String extraArguments)
 				"/libpath:\"%S\\lib\\%S\\ucrt\\x64\" " // windowsSDKPath, windowsSDKVersion
 				"/libpath:\"%S\\lib\\%S\\um\\x64\" " // windowsSDKPath, windowsSDKVersion
 				"/out:out.exe%c",
-				//msvcPath,
+				msvcPath,
 				extraArguments,
 				msvcPath,
 				windowsSDKPath, windowsSDKVersion,
