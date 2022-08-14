@@ -3936,8 +3936,8 @@ TCResultWithType TryTypeCheckExpression(Context *context, ASTExpression *express
 		if (CompilerAddSourceFile(context, filename, expression->any.loc))
 		{
 			TokenizeFile(context, (int)context->sourceFiles.size - 1);
-			u64 tokenCount = BucketArrayCount(&context->tokens);
-			while (context->currentTokenIdx < tokenCount)
+
+			while (context->token->type != TOKEN_END_OF_FILE)
 			{
 				ASTExpression *statement = DynamicArrayAdd(&context->astRoot->block.statements);
 				*statement = ParseStaticStatement(context);
@@ -4031,8 +4031,7 @@ void TCCompileString(Context *context, String code)
 	*DynamicArrayAdd(&context->sourceFiles) = builtinSourceFile;
 
 	TokenizeFile(context, (int)context->sourceFiles.size - 1);
-	u64 tokenCount = BucketArrayCount(&context->tokens);
-	while (context->currentTokenIdx < tokenCount)
+	while (context->token->type != TOKEN_END_OF_FILE)
 	{
 		ASTExpression *statement = DynamicArrayAdd(&context->astRoot->block.statements);
 		*statement = ParseStaticStatement(context);
@@ -4260,7 +4259,6 @@ void TypeCheckMain(Context *context)
 
 		if (context->tcJobs.size == 0) break;
 
-#if 1
 		// Add default values for compiler constants if needed
 		if (!anyJobMadeAdvancements)
 		{
@@ -4279,7 +4277,6 @@ void TypeCheckMain(Context *context)
 				}
 			}
 		}
-#endif
 
 		if (!anyJobMadeAdvancements)
 		{

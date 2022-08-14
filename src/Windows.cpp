@@ -3,12 +3,14 @@
 #include <shlobj_core.h>
 #include <Shlobj.h>
 
-#undef ERROR
-
 typedef HANDLE FileHandle;
 #define SYS_INVALID_FILE_HANDLE INVALID_HANDLE_VALUE
 #define SYS_MAX_PATH MAX_PATH
+#if DEBUG_BUILD
 #define BREAK __debugbreak()
+#else
+#define BREAK
+#endif
 #define ASSUME(expr) __assume(expr)
 #define PANIC do { BREAK; exit(1); } while(0)
 
@@ -107,7 +109,7 @@ FileHandle SYSOpenFileRead(String filename)
 	if (error != ERROR_SUCCESS || file == INVALID_HANDLE_VALUE)
 	{
 		Print("Failed to read file \"%S\"", filename);
-		CRASH;
+		PANIC;
 	}
 
 	return file;
@@ -371,7 +373,7 @@ void SYSRunAssembler(String outputPath, String extraArguments)
 			))
 	{
 		Print("Failed to call ml64.exe (%d)\n", GetLastError());
-		CRASH;
+		PANIC;
 	}
 	WaitForSingleObject(processInformation.hProcess, INFINITE);
 
@@ -380,7 +382,7 @@ void SYSRunAssembler(String outputPath, String extraArguments)
 	if (exitCode != 0)
 	{
 		Print("ml64.exe returned an error (%d)\n", exitCode);
-		CRASH;
+		exit(exitCode);
 	}
 	CloseHandle(processInformation.hProcess);
 	CloseHandle(processInformation.hThread);
@@ -396,9 +398,11 @@ void SYSRunLinker(String outputPath, bool makeLibrary, String extraArguments)
 	if (!makeLibrary)
 	{
 		String commandLine = TPrintF(
-				"%S\\bin\\Hostx64\\x64\\link.exe " // msvcPath
+				//"%S\\bin\\Hostx64\\x64\\link.exe " // msvcPath
+				"lld-link.exe " // msvcPath
 				"out.obj "
 				"/nologo "
+				"/ignore:4216 " // Warning about exporting entry point
 				"kernel32.lib "
 				"user32.lib "
 				"gdi32.lib "
@@ -407,13 +411,13 @@ void SYSRunLinker(String outputPath, bool makeLibrary, String extraArguments)
 				"/entry:__WindowsMain "
 				"/opt:ref "
 				"/incremental:no "
-				"/dynamicbase:no "
+				"/dynamicbase:no " // @Todo: remove
 				"%S " // extraArguments
 				"/libpath:\"%S\\lib\\x64\" " // msvcPath
 				"/libpath:\"%S\\lib\\%S\\ucrt\\x64\" " // windowsSDKPath, windowsSDKVersion
 				"/libpath:\"%S\\lib\\%S\\um\\x64\" " // windowsSDKPath, windowsSDKVersion
 				"/out:out.exe%c",
-				msvcPath,
+				//msvcPath,
 				extraArguments,
 				msvcPath,
 				windowsSDKPath, windowsSDKVersion,
@@ -437,7 +441,14 @@ void SYSRunLinker(String outputPath, bool makeLibrary, String extraArguments)
 				))
 		{
 			Print("Failed to call link.exe (%d)\n", GetLastError());
-			CRASH;
+			PANIC;
+		}
+		DWORD exitCode;
+		GetExitCodeProcess(processInformation.hProcess, &exitCode);
+		if (exitCode != 0 && exitCode != ERROR_NO_MORE_ITEMS) // ??? wtf this error
+		{
+			Print("link.exe returned an error (%d)\n", exitCode);
+			exit(exitCode);
 		}
 	}
 	else
@@ -475,7 +486,14 @@ void SYSRunLinker(String outputPath, bool makeLibrary, String extraArguments)
 				))
 		{
 			Print("Failed to call lib.exe (%d)\n", GetLastError());
-			CRASH;
+			PANIC;
+		}
+		DWORD exitCode;
+		GetExitCodeProcess(processInformation.hProcess, &exitCode);
+		if (exitCode != 0 && exitCode != ERROR_NO_MORE_ITEMS) // ??? wtf this error
+		{
+			Print("lib.exe returned an error (%d)\n", exitCode);
+			exit(exitCode);
 		}
 	}
 	WaitForSingleObject(processInformation.hProcess, INFINITE);

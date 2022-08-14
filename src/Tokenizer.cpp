@@ -801,7 +801,7 @@ FatSourceLocation ExpandSourceLocation(Context *context, SourceLocation loc)
 	return result;
 }
 
-void TokenizeFile(Context *context, int fileIdx)
+void TokenizeFile(Context *context, u32 fileIdx)
 {
 	Tokenizer tokenizer = {};
 	SourceFile file = context->sourceFiles[fileIdx];
@@ -812,6 +812,14 @@ void TokenizeFile(Context *context, int fileIdx)
 	tokenizer.line = 1; // Line numbers start at 1 not 0.
 
 	const char *fileBuffer = context->sourceFiles[fileIdx].buffer;
+
+	u64 tokenCount = BucketArrayCount(&context->tokens);
+	if (tokenCount)
+	{
+		ASSERT(context->tokens[tokenCount - 1].type == TOKEN_END_OF_FILE);
+		// Remove!
+		--context->tokens.buckets[context->tokens.buckets.size - 1].size;
+	}
 
 	while (true)
 	{
@@ -845,4 +853,7 @@ void TokenizeFile(Context *context, int fileIdx)
 
 		tokenizer.cursor += newToken.size;
 	}
+
+	*BucketArrayAdd(&context->tokens) = { TOKEN_END_OF_FILE, 0,
+		{ fileIdx, (u32)(tokenizer.cursor - file.buffer)-1 } };
 }

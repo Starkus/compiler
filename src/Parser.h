@@ -98,6 +98,7 @@ enum TokenType : u8
 	TOKEN_OP_End			= 168,
 
 	TOKEN_INVALID_DIRECTIVE = 240,
+	TOKEN_END_OF_FILE		= 255,
 };
 
 struct SourceLocation

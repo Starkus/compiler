@@ -26,9 +26,9 @@ void Advance(Context *context)
 	ASSERT(context->token == &context->tokens[context->currentTokenIdx]);
 
 	++context->currentTokenIdx;
-	if (context->currentTokenIdx > BucketArrayCount(&context->tokens))
+	u64 tokenCount = BucketArrayCount(&context->tokens);
+	if (context->currentTokenIdx > tokenCount)
 		LogError(context, context->token->loc, "Unexpected end of file"_s);
-
 	context->token = &context->tokens[context->currentTokenIdx];
 }
 
@@ -1434,8 +1434,7 @@ ASTRoot *GenerateSyntaxTree(Context *context)
 
 	context->currentTokenIdx = 0;
 	context->token = &context->tokens[0];
-	u64 tokenCount = BucketArrayCount(&context->tokens);
-	while (context->currentTokenIdx < tokenCount)
+	while (context->token->type != TOKEN_END_OF_FILE)
 	{
 		*DynamicArrayAdd(&root->block.statements) = ParseStaticStatement(context);
 	}

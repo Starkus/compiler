@@ -2611,7 +2611,7 @@ void X64PrintInstructions(Context *context, Array<X64Procedure, PhaseAllocator> 
 
 #if _MSC_VER
 		if (GetProcedure(context, procedureIdx)->isExported)
-			PrintOut(context, "\n%S PROC EXPORT\n", x64Proc.name);
+			PrintOut(context, "\n%S PROC PUBLIC\n", x64Proc.name);
 		else
 			PrintOut(context, "\n%S PROC PRIVATE\n", x64Proc.name);
 #else
