@@ -220,6 +220,8 @@ String TokenTypeToString(s32 type)
 
 	if (type >= TOKEN_KEYWORD_Begin && type <= TOKEN_KEYWORD_End)
 		return "<Keyword>"_s;
+	if (type >= TOKEN_DIRECTIVE_Begin && type <= TOKEN_DIRECTIVE_End)
+		return "<Directive>"_s;
 	if (type >= TOKEN_OP_Begin && type <= TOKEN_OP_End)
 		return "<Operator>"_s;
 
@@ -401,27 +403,29 @@ enum TokenType CalculateTokenType(Context *context, const Tokenizer *tokenizer)
 				++directive.size;
 
 			if (StringEquals(directive, "#include"_s))
-				return TOKEN_KEYWORD_INCLUDE;
+				return TOKEN_DIRECTIVE_INCLUDE;
 			else if (StringEquals(directive, "#linklib"_s))
-				return TOKEN_KEYWORD_LINKLIB;
+				return TOKEN_DIRECTIVE_LINKLIB;
 			else if (StringEquals(directive, "#type"_s))
-				return TOKEN_KEYWORD_TYPE;
+				return TOKEN_DIRECTIVE_TYPE;
 			else if (StringEquals(directive, "#alias"_s))
-				return TOKEN_KEYWORD_ALIAS;
+				return TOKEN_DIRECTIVE_ALIAS;
 			else if (StringEquals(directive, "#inline"_s))
-				return TOKEN_KEYWORD_INLINE;
+				return TOKEN_DIRECTIVE_INLINE;
 			else if (StringEquals(directive, "#external"_s))
-				return TOKEN_KEYWORD_EXTERNAL;
+				return TOKEN_DIRECTIVE_EXTERNAL;
 			else if (StringEquals(directive, "#export"_s))
-				return TOKEN_KEYWORD_EXPORT;
+				return TOKEN_DIRECTIVE_EXPORT;
 			else if (StringEquals(directive, "#convention"_s))
-				return TOKEN_KEYWORD_CALLING_CONVENTION;
+				return TOKEN_DIRECTIVE_CALLING_CONVENTION;
 			else if (StringEquals(directive, "#intrinsic"_s))
-				return TOKEN_KEYWORD_INTRINSIC;
+				return TOKEN_DIRECTIVE_INTRINSIC;
 			else if (StringEquals(directive, "#operator"_s))
-				return TOKEN_KEYWORD_OPERATOR;
+				return TOKEN_DIRECTIVE_OPERATOR;
 			else if (StringEquals(directive, "#if"_s))
-				return TOKEN_KEYWORD_IF_STATIC;
+				return TOKEN_DIRECTIVE_IF;
+			else if (StringEquals(directive, "#defined"_s))
+				return TOKEN_DIRECTIVE_DEFINED;
 			else
 				return TOKEN_INVALID_DIRECTIVE;
 		} break;
@@ -701,7 +705,7 @@ u16 CalculateTokenSize(Context *context, const Tokenizer *tokenizer, enum TokenT
 	case TOKEN_OP_NOT_EQUALS:
 	case TOKEN_OP_RANGE:
 		return 2;
-	case TOKEN_KEYWORD_IF_STATIC: //#
+	case TOKEN_DIRECTIVE_IF:
 	case TOKEN_KEYWORD_FOR:
 	case TOKEN_OP_ASSIGNMENT_SHIFT_LEFT:
 	case TOKEN_OP_ASSIGNMENT_SHIFT_RIGHT:
@@ -712,33 +716,34 @@ u16 CalculateTokenSize(Context *context, const Tokenizer *tokenizer, enum TokenT
 	case TOKEN_KEYWORD_ENUM:
 	case TOKEN_KEYWORD_CAST:
 		return 4;
-	case TOKEN_KEYWORD_TYPE: //#
+	case TOKEN_DIRECTIVE_TYPE:
 	case TOKEN_KEYWORD_WHILE:
 	case TOKEN_KEYWORD_BREAK:
 	case TOKEN_KEYWORD_UNION:
 	case TOKEN_KEYWORD_DEFER:
 	case TOKEN_KEYWORD_USING:
 		return 5;
-	case TOKEN_KEYWORD_ALIAS: //#
+	case TOKEN_DIRECTIVE_ALIAS:
 	case TOKEN_KEYWORD_RETURN:
 	case TOKEN_KEYWORD_REMOVE:
 	case TOKEN_KEYWORD_STRUCT:
 	case TOKEN_KEYWORD_TYPEOF:
 	case TOKEN_KEYWORD_SIZEOF:
 		return 6;
-	case TOKEN_KEYWORD_INLINE: //#
-	case TOKEN_KEYWORD_EXPORT: //#
+	case TOKEN_DIRECTIVE_INLINE:
+	case TOKEN_DIRECTIVE_EXPORT:
 		return 7;
-	case TOKEN_KEYWORD_INCLUDE: //#
-	case TOKEN_KEYWORD_LINKLIB: //#
+	case TOKEN_DIRECTIVE_INCLUDE:
+	case TOKEN_DIRECTIVE_LINKLIB:
+	case TOKEN_DIRECTIVE_DEFINED:
 	case TOKEN_KEYWORD_CONTINUE:
 		return 8;
-	case TOKEN_KEYWORD_EXTERNAL: //#
-	case TOKEN_KEYWORD_OPERATOR: //#
+	case TOKEN_DIRECTIVE_EXTERNAL:
+	case TOKEN_DIRECTIVE_OPERATOR:
 		return 9;
-	case TOKEN_KEYWORD_INTRINSIC: //#
+	case TOKEN_DIRECTIVE_INTRINSIC:
 		return 10;
-	case TOKEN_KEYWORD_CALLING_CONVENTION: //#
+	case TOKEN_DIRECTIVE_CALLING_CONVENTION:
 		return 11;
 	default:
 		return 1;

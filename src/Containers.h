@@ -218,6 +218,14 @@ struct BucketArray
 
 		return buckets[bucketIdx][idx % bucketSize];
 	}
+
+	const T &operator[](s64 idx) const
+	{
+		s64 bucketIdx = idx / bucketSize;
+		ASSERT((u64)bucketIdx < buckets.size);
+
+		return buckets[bucketIdx][idx % bucketSize];
+	}
 };
 
 template <typename T, typename A, u64 bucketSize>
@@ -254,7 +262,7 @@ T *BucketArrayBack(BucketArray<T, A, bucketSize> *bucketArray)
 }
 
 template <typename T, typename A, u64 bucketSize>
-u64 BucketArrayCount(BucketArray<T, A, bucketSize> *bucketArray)
+u64 BucketArrayCount(const BucketArray<T, A, bucketSize> *bucketArray)
 {
 	if (bucketArray->buckets.size == 0)
 		return 0;

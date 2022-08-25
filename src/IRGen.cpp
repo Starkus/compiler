@@ -51,7 +51,7 @@ void PopIRProcedure(Context *context)
 inline IRInstruction *AddInstruction(Context *context)
 {
 	IRProcedureScope stackTop = context->irProcedureStack[context->irProcedureStack.size - 1];
-	return BucketArrayAdd(&GetProcedure(context, stackTop.procedureIdx)->instructions);
+	return BucketArrayAdd(&context->irProcedureInstructions[stackTop.procedureIdx]);
 }
 
 void IRAddComment(Context *context, String comment)
@@ -64,7 +64,7 @@ void IRAddComment(Context *context, String comment)
 
 bool IRShouldPassByCopy(Context *context, u32 typeTableIdx)
 {
-	TypeInfo typeInfo = context->typeTable[typeTableIdx];
+	TypeInfo typeInfo = GetTypeInfo(context, typeTableIdx);
 	// @Speed
 	return  typeInfo.typeCategory == TYPECATEGORY_ARRAY ||
 		  ((typeInfo.typeCategory == TYPECATEGORY_STRUCT ||
@@ -93,7 +93,7 @@ IRValue IRValueValue(Context *context, u32 valueIdx, s64 offset = 0)
 	result.value.valueIdx = valueIdx;
 	result.value.elementSize = 0;
 	result.value.offset = offset;
-	result.typeTableIdx = context->values[valueIdx].typeTableIdx;
+	result.typeTableIdx = GetValueRead(context, valueIdx).typeTableIdx;
 	return result;
 }
 
@@ -181,7 +181,7 @@ IRValue IRValueProcedure(Context *context, s32 procedureIdx)
 	IRValue result = {};
 	result.valueType = IRVALUETYPE_PROCEDURE;
 	result.procedureIdx = procedureIdx;
-	result.typeTableIdx = context->procedures[procedureIdx].typeTableIdx;
+	result.typeTableIdx = GetProcedureRead(context, procedureIdx).typeTableIdx;
 	return result;
 }
 
@@ -212,7 +212,7 @@ IRValue IRValueTypeOf(Context *context, u32 typeTableIdx)
 {
 	static u32 typeInfoPointerTypeIdx = GetTypeInfoPointerOf(context,
 			TYPETABLEIDX_TYPE_INFO_STRUCT);
-	u32 typeValueIdx = context->typeTable[typeTableIdx].valueIdx;
+	u32 typeValueIdx = GetTypeInfo(context, typeTableIdx).valueIdx;
 	return IRValueValue(typeValueIdx, typeInfoPointerTypeIdx);
 }
 
@@ -220,7 +220,7 @@ IRValue IRGenFromExpression(Context *context, ASTExpression *expression);
 
 IRValue IRDereferenceValue(Context *context, IRValue in)
 {
-	TypeInfo pointerTypeInfo = context->typeTable[in.typeTableIdx];
+	TypeInfo pointerTypeInfo = GetTypeInfo(context, in.typeTableIdx);
 	ASSERT(pointerTypeInfo.typeCategory == TYPECATEGORY_POINTER);
 	u32 pointedTypeIdx = pointerTypeInfo.pointerInfo.pointedTypeTableIdx;
 
@@ -240,7 +240,9 @@ IRValue IRDereferenceValue(Context *context, IRValue in)
 		// then we can dereference that pointer once it's on a register:
 		//     mov out, [rax]
 
-		String name = TPrintF("_deref_forcereg_%S", context->values[in.value.valueIdx].name);
+		String srcName = GetValueRead(context, in.value.valueIdx).name;
+
+		String name = TPrintF("_deref_forcereg_%S", srcName);
 		u32 tempValueIdx = NewValue(context, name, in.typeTableIdx, VALUEFLAGS_TRY_IMMITATE |
 				VALUEFLAGS_FORCE_REGISTER, in.value.valueIdx);
 		IRValue tmpValue = IRValueValue(tempValueIdx, in.typeTableIdx);
@@ -250,7 +252,7 @@ IRValue IRDereferenceValue(Context *context, IRValue in)
 		inst.assignment.src = in;
 		*AddInstruction(context) = inst;
 
-		name = TPrintF("_deref_%S", context->values[in.value.valueIdx].name);
+		name = TPrintF("_deref_%S", srcName);
 		u32 newValueIdx = NewValue(context, name, in.typeTableIdx, VALUEFLAGS_TRY_IMMITATE,
 				in.value.valueIdx);
 		IRValue value = IRValueValue(newValueIdx, in.typeTableIdx);
@@ -289,7 +291,7 @@ IRValue IRDoMemberAccess(Context *context, IRValue structValue, StructMember str
 		   structValue.valueType == IRVALUETYPE_VALUE_DEREFERENCE);
 
 	IRAddComment(context, TPrintF("Accessing struct member \"%S.%S\"",
-				context->values[structValue.value.valueIdx].name, structMember.name));
+				GetValueRead(context, structValue.value.valueIdx).name, structMember.name));
 
 	s64 offset = structMember.offset + structValue.value.offset;
 	IRValue result = IRValueDereference(structValue.value.valueIdx, structMember.typeTableIdx,
@@ -302,7 +304,7 @@ IRValue IRDoMemberAccess(Context *context, IRValue structValue, StructMember str
 
 IRValue IRDoArrayAccess(Context *context, IRValue arrayValue, IRValue indexValue, u32 elementTypeIdx)
 {
-	TypeInfo arrayTypeInfo = context->typeTable[arrayValue.typeTableIdx];
+	TypeInfo arrayTypeInfo = GetTypeInfo(context, arrayValue.typeTableIdx);
 	u32 pointerToElementTypeIdx = GetTypeInfoPointerOf(context, elementTypeIdx);
 
 	// arrayValue must be an array (or string). If it's a pointer, it should be dereferenced before
@@ -317,7 +319,7 @@ IRValue IRDoArrayAccess(Context *context, IRValue arrayValue, IRValue indexValue
 		// Access the 'data' pointer
 		IRAddComment(context, "Addressing dynamic array"_s);
 
-		TypeInfo arrayStructTypeInfo = context->typeTable[TYPETABLEIDX_ARRAY_STRUCT];
+		TypeInfo arrayStructTypeInfo = GetTypeInfo(context, TYPETABLEIDX_ARRAY_STRUCT);
 		StructMember dataMember = arrayStructTypeInfo.structInfo.members[1];
 
 		arrayValue = IRDoMemberAccess(context, arrayValue, dataMember);
@@ -325,7 +327,7 @@ IRValue IRDoArrayAccess(Context *context, IRValue arrayValue, IRValue indexValue
 		arrayValue.typeTableIdx = pointerToElementTypeIdx;
 	}
 
-	s64 elementSize = context->typeTable[elementTypeIdx].size;
+	s64 elementSize = GetTypeInfo(context, elementTypeIdx).size;
 
 	if (indexValue.valueType == IRVALUETYPE_IMMEDIATE_INTEGER)
 	{
@@ -342,7 +344,7 @@ IRValue IRDoArrayAccess(Context *context, IRValue arrayValue, IRValue indexValue
 				VALUEFLAGS_FORCE_REGISTER | VALUEFLAGS_TRY_IMMITATE, indexValue.value.valueIdx);
 		IRDoAssignment(context, indexForceReg, indexValue);
 
-		u32 flags = context->values[arrayValue.value.valueIdx].flags;
+		u32 flags = GetValueRead(context, arrayValue.value.valueIdx).flags;
 		if (flags & VALUEFLAGS_ON_STATIC_STORAGE)
 		{
 			// @Improve: This is x64 specific. Move to x64 backend.
@@ -413,7 +415,7 @@ void IRDoAssignment(Context *context, IRValue dstValue, IRValue srcValue)
 		srcValue.typeTableIdx != TYPETABLEIDX_ANY_STRUCT)
 	{
 		IRAddComment(context, "Wrapping in Any"_s);
-		TypeInfo anyTypeInfo = context->typeTable[TYPETABLEIDX_ANY_STRUCT];
+		TypeInfo anyTypeInfo = GetTypeInfo(context, TYPETABLEIDX_ANY_STRUCT);
 
 		// Access typeInfo member
 		IRValue typeInfoMember = IRDoMemberAccess(context, dstValue,
@@ -433,7 +435,7 @@ void IRDoAssignment(Context *context, IRValue dstValue, IRValue srcValue)
 		dataMember.typeTableIdx = voidPtrTypeIdx;
 
 		IRValue dataValue = srcValue;
-		TypeInfo dataTypeInfo = context->typeTable[srcValue.typeTableIdx];
+		TypeInfo dataTypeInfo = GetTypeInfo(context, srcValue.typeTableIdx);
 
 		// If data isn't in memory, copy to a variable
 		if (dataTypeInfo.typeCategory != TYPECATEGORY_STRUCT &&
@@ -491,14 +493,14 @@ void IRDoAssignment(Context *context, IRValue dstValue, IRValue srcValue)
 	srcValue.typeTableIdx = StripAllAliases(context, srcValue.typeTableIdx);
 
 	// Cast static array to dynamic array
-	TypeInfo dstTypeInfo = context->typeTable[dstValue.typeTableIdx];
-	TypeInfo srcTypeInfo = context->typeTable[srcValue.typeTableIdx];
+	TypeInfo dstTypeInfo = GetTypeInfo(context, dstValue.typeTableIdx);
+	TypeInfo srcTypeInfo = GetTypeInfo(context, srcValue.typeTableIdx);
 	if (dstTypeInfo.typeCategory  == TYPECATEGORY_ARRAY &&
 		srcTypeInfo.typeCategory == TYPECATEGORY_ARRAY &&
 		dstTypeInfo.arrayInfo.count  == 0 &&
 		srcTypeInfo.arrayInfo.count != 0)
 	{
-		TypeInfo dynamicArrayTypeInfo = context->typeTable[TYPETABLEIDX_ARRAY_STRUCT];
+		TypeInfo dynamicArrayTypeInfo = GetTypeInfo(context, TYPETABLEIDX_ARRAY_STRUCT);
 
 		// Size
 		StructMember sizeStructMember = dynamicArrayTypeInfo.structInfo.members[0];
@@ -524,7 +526,7 @@ void IRDoAssignment(Context *context, IRValue dstValue, IRValue srcValue)
 			   dstTypeInfo.typeCategory == TYPECATEGORY_UNION ||
 			   dstTypeInfo.typeCategory == TYPECATEGORY_ARRAY);
 
-		u64 size = context->typeTable[srcValue.typeTableIdx].size;
+		u64 size = GetTypeInfo(context, srcValue.typeTableIdx).size;
 		IRValue sizeValue = IRValueImmediate(size);
 
 		IRInstruction inst = {};
@@ -567,7 +569,7 @@ void IRDoAssignment(Context *context, IRValue dstValue, IRValue srcValue)
 
 void IRInsertLabelInstruction(Context *context, IRLabel *label)
 {
-	label->instructionIdx = BucketArrayCount(&GetProcedure(context, label->procedureIdx)->instructions);
+	label->instructionIdx = BucketArrayCount(&context->irProcedureInstructions[label->procedureIdx]);
 	IRInstruction result;
 	result.type = IRINSTRUCTIONTYPE_LABEL;
 	result.label = label;
@@ -593,12 +595,12 @@ IRValue IRInstructionFromBinaryOperation(Context *context, ASTExpression *expres
 	{
 		IRValue irValue = IRGenFromExpression(context, leftHand);
 
-		TypeInfo structTypeInfo = context->typeTable[irValue.typeTableIdx];
+		TypeInfo structTypeInfo = GetTypeInfo(context, irValue.typeTableIdx);
 		if (irValue.valueType == IRVALUETYPE_VALUE_DEREFERENCE &&
 			structTypeInfo.typeCategory == TYPECATEGORY_POINTER)
 		{
 			// Dereference the pointer to the struct
-			String name = TPrintF("_derefstrctptr_%S", context->values[irValue.value.valueIdx].name);
+			String name = TPrintF("_derefstrctptr_%S", GetValueRead(context, irValue.value.valueIdx).name);
 			u32 newValueIdx = NewValue(context, name, irValue.typeTableIdx,
 					VALUEFLAGS_FORCE_REGISTER);
 			IRValue newValue = IRValueValue(newValueIdx, irValue.typeTableIdx);
@@ -624,7 +626,7 @@ IRValue IRInstructionFromBinaryOperation(Context *context, ASTExpression *expres
 		IRValue arrayValue = IRGenFromExpression(context, leftHand);
 		IRValue indexValue = IRGenFromExpression(context, rightHand);
 
-		if (context->typeTable[arrayValue.typeTableIdx].typeCategory == TYPECATEGORY_POINTER)
+		if (GetTypeInfo(context, arrayValue.typeTableIdx).typeCategory == TYPECATEGORY_POINTER)
 		{
 			// Dereference the pointer to the array
 			arrayValue = IRDereferenceValue(context, arrayValue);
@@ -750,7 +752,7 @@ IRValue IRInstructionFromBinaryOperation(Context *context, ASTExpression *expres
 	else
 	{
 #if DEBUG_BUILD
-		TypeInfo leftTypeInfo = context->typeTable[leftHand->typeTableIdx];
+		TypeInfo leftTypeInfo = GetTypeInfo(context, leftHand->typeTableIdx);
 		ASSERT(leftTypeInfo.typeCategory != TYPECATEGORY_STRUCT &&
 			   leftTypeInfo.typeCategory != TYPECATEGORY_UNION);
 #endif
@@ -855,9 +857,10 @@ IRValue IRInstructionFromBinaryOperation(Context *context, ASTExpression *expres
 		if (outValue.valueType == IRVALUETYPE_VALUE &&
 			inst.binaryOperation.left.valueType == IRVALUETYPE_VALUE)
 		{
-			Value *v = &context->values[inst.binaryOperation.left.value.valueIdx];
+			Value *v = GetValueWrite(context, inst.binaryOperation.left.value.valueIdx);
 			v->flags |= VALUEFLAGS_TRY_IMMITATE;
 			v->tryImmitateValueIdx = outValue.value.valueIdx;
+			context->values.UnlockForWrite();
 		}
 
 		inst.binaryOperation.out = outValue;
@@ -1008,7 +1011,7 @@ insertSimpleJump:
 IRValue IRDoInlineProcedureCall(Context *context, ASTProcedureCall astProcCall)
 {
 	ASSERT(astProcCall.callType == CALLTYPE_STATIC);
-	Procedure *procedure = GetProcedure(context, astProcCall.procedureIdx);
+	Procedure procedure = GetProcedureRead(context, astProcCall.procedureIdx);
 
 	// Check for cyclic inline procedure calls
 	for (int i = 0; i < context->irProcedureStack.size; ++i)
@@ -1021,25 +1024,22 @@ IRValue IRDoInlineProcedureCall(Context *context, ASTProcedureCall astProcCall)
 		}
 	}
 
-	TypeInfoProcedure procTypeInfo = context->typeTable[procedure->typeTableIdx].procedureInfo;
+	TypeInfoProcedure procTypeInfo = GetTypeInfo(context, procedure.typeTableIdx).procedureInfo;
 	IRValue returnValue = IRValueNewValue(context, "_inline_return"_s, procTypeInfo.returnTypeTableIdx, 0);
 	IRPushValueIntoStack(context, returnValue.value.valueIdx);
 	bool isVarargs = procTypeInfo.isVarargs;
 
 	IRProcedureScope *stackTop = &context->irProcedureStack[context->irProcedureStack.size - 1];
-	Procedure *callingProcedure = GetProcedure(context, stackTop->procedureIdx);
+	Procedure oldProc = GetProcedureRead(context, stackTop->procedureIdx);
 
-	s32 tempProcIdx = (s32)BucketArrayCount(&context->procedures);
-	Procedure *tempProc = BucketArrayAdd(&context->procedures);
 	{
-		Procedure p = *procedure;
-		p.instructions = callingProcedure->instructions;
-		p.name = TPrintF("_%S_inline", procedure->name);
+		Procedure p = procedure;
+		p.name = TPrintF("_%S_inline", procedure.name);
 		p.returnValueIdx = returnValue.value.valueIdx;
 		p.parameterValues.data = astProcCall.inlineParameterValues.data;
 		p.parameterValues.size = astProcCall.inlineParameterValues.size;
 		p.parameterValues.capacity = astProcCall.inlineParameterValues.size;
-		*tempProc = p;
+		UpdateProcedure(context, stackTop->procedureIdx, &p);
 	}
 
 	// Support both varargs and default parameters here
@@ -1146,7 +1146,7 @@ IRValue IRDoInlineProcedureCall(Context *context, ASTProcedureCall astProcCall)
 				VALUEFLAGS_FORCE_MEMORY);
 		IRValue arrayIRValue = IRValueValue(context, arrayValueIdx);
 
-		TypeInfo dynamicArrayTypeInfo = context->typeTable[TYPETABLEIDX_ARRAY_STRUCT];
+		TypeInfo dynamicArrayTypeInfo = GetTypeInfo(context, TYPETABLEIDX_ARRAY_STRUCT);
 		// Size
 		{
 			StructMember sizeStructMember = dynamicArrayTypeInfo.structInfo.members[0];
@@ -1173,7 +1173,7 @@ IRValue IRDoInlineProcedureCall(Context *context, ASTProcedureCall astProcCall)
 skipGeneratingVarargsArray:
 
 	// IRGen
-	IRProcedureScope *newScope = PushIRProcedure(context, astProcCall.loc, tempProcIdx);
+	IRProcedureScope *newScope = PushIRProcedure(context, astProcCall.loc, stackTop->procedureIdx);
 	IRLabel *returnLabel = NewLabel(context, "inline_return"_s);
 	newScope->returnLabel = returnLabel;
 
@@ -1181,15 +1181,14 @@ skipGeneratingVarargsArray:
 	IRGenFromExpression(context, astProcCall.astBodyInlineCopy);
 
 	IRInstruction *returnLabelInst = AddInstruction(context);
-	returnLabel->instructionIdx = BucketArrayCount(&procedure->instructions) - 1;
+	returnLabel->instructionIdx =
+	BucketArrayCount(&context->irProcedureInstructions[stackTop->procedureIdx]) - 1;
 	returnLabelInst->type = IRINSTRUCTIONTYPE_LABEL;
 	returnLabelInst->label = returnLabel;
 
 	PopIRProcedure(context);
-	callingProcedure->instructions = tempProc->instructions;
 
-	// Remove temp procedure
-	--DynamicArrayBack(&context->procedures.buckets)->size;
+	UpdateProcedure(context, stackTop->procedureIdx, &oldProc);
 
 	return returnValue;
 }
@@ -1228,7 +1227,7 @@ void IRFillValueWithGroupLiteral(Context *context, IRValue value, ASTLiteral ast
 {
 	u32 groupTypeIdx = value.typeTableIdx;
 	ASSERT(groupTypeIdx >= TYPETABLEIDX_Begin);
-	TypeInfo groupTypeInfo = context->typeTable[groupTypeIdx];
+	TypeInfo groupTypeInfo = GetTypeInfo(context, groupTypeIdx);
 
 	if (groupTypeInfo.typeCategory == TYPECATEGORY_STRUCT ||
 		groupTypeInfo.typeCategory == TYPECATEGORY_UNION)
@@ -1279,7 +1278,7 @@ void IRFillValueWithGroupLiteral(Context *context, IRValue value, ASTLiteral ast
 		while (structStack.size > 0)
 		{
 			StructStackFrame currentFrame = structStack[structStack.size - 1];
-			TypeInfo currentStructTypeInfo = context->typeTable[currentFrame.structTypeIdx];
+			TypeInfo currentStructTypeInfo = GetTypeInfo(context, currentFrame.structTypeIdx);
 
 			if ((currentFrame.idx >= currentStructTypeInfo.structInfo.members.size) ||
 				(currentStructTypeInfo.typeCategory == TYPECATEGORY_UNION && currentFrame.idx > 0)) // Only first member for unions
@@ -1290,7 +1289,7 @@ void IRFillValueWithGroupLiteral(Context *context, IRValue value, ASTLiteral ast
 			}
 
 			StructMember currentMember = currentStructTypeInfo.structInfo.members[currentFrame.idx];
-			TypeCategory memberTypeCat = context->typeTable[currentMember.typeTableIdx].typeCategory;
+			TypeCategory memberTypeCat = GetTypeInfo(context, currentMember.typeTableIdx).typeCategory;
 
 			if (memberTypeCat == TYPECATEGORY_STRUCT || memberTypeCat == TYPECATEGORY_UNION)
 			{
@@ -1367,42 +1366,48 @@ void IRAssignmentFromExpression(Context *context, IRValue dstValue, ASTExpressio
 
 void IRGenProcedure(Context *context, s32 procedureIdx, SourceLocation loc)
 {
-	Procedure *procedure = GetProcedure(context, procedureIdx);
-	BucketArrayInit(&procedure->instructions);
+	Procedure procedure = GetProcedureRead(context, procedureIdx);
+
+	if (!procedure.astBody)
+		return;
+
+	if (context->irProcedureInstructions.size <= procedureIdx)
+		DynamicArrayAddMany(&context->irProcedureInstructions,
+				procedureIdx - context->irProcedureInstructions.size);
+	BucketArrayInit(&context->irProcedureInstructions[procedureIdx]);
 
 	IRProcedureScope *currentProc = PushIRProcedure(context, loc, procedureIdx);
 	IRLabel *returnLabel = NewLabel(context, "return"_s);
 	currentProc->returnLabel = returnLabel;
 
-	for (int i = 0; i < procedure->parameterValues.size; ++i)
+	for (int i = 0; i < procedure.parameterValues.size; ++i)
 	{
-		s32 paramValueIdx = procedure->parameterValues[i];
+		s32 paramValueIdx = procedure.parameterValues[i];
 		IRPushValueIntoStack(context, paramValueIdx);
 	}
 
-	s32 returnValueIdx = procedure->returnValueIdx;
-	Value *returnValue = &context->values[returnValueIdx];
+	s32 returnValueIdx = procedure.returnValueIdx;
+	Value *returnValue = GetValueWrite(context, returnValueIdx);
 	if (IRShouldPassByCopy(context, returnValue->typeTableIdx))
 	{
 		returnValue->flags |= VALUEFLAGS_PARAMETER_BY_COPY;
 		returnValue->typeTableIdx = GetTypeInfoPointerOf(context, returnValue->typeTableIdx);
 	}
+	context->values.UnlockForWrite();
 	IRPushValueIntoStack(context, returnValueIdx);
 
-	if (procedure->astBody)
-	{
-		IRGenFromExpression(context, procedure->astBody);
+	IRGenFromExpression(context, procedure.astBody);
 
-		IRInstruction *returnLabelInst = AddInstruction(context);
-		returnLabel->instructionIdx = BucketArrayCount(&procedure->instructions) - 1;
-		returnLabelInst->type = IRINSTRUCTIONTYPE_LABEL;
-		returnLabelInst->label = returnLabel;
+	IRInstruction *returnLabelInst = AddInstruction(context);
+	returnLabel->instructionIdx =
+		BucketArrayCount(&context->irProcedureInstructions[procedureIdx]) - 1;
+	returnLabelInst->type = IRINSTRUCTIONTYPE_LABEL;
+	returnLabelInst->label = returnLabel;
 
-		// Return
-		IRInstruction returnInst;
-		returnInst.type = IRINSTRUCTIONTYPE_RETURN;
-		*AddInstruction(context) = returnInst;
-	}
+	// Return
+	IRInstruction returnInst;
+	returnInst.type = IRINSTRUCTIONTYPE_RETURN;
+	*AddInstruction(context) = returnInst;
 
 	PopIRProcedure(context);
 }
@@ -1458,7 +1463,6 @@ IRValue IRGenFromExpression(Context *context, ASTExpression *expression)
 		*AddInstruction(context) = { IRINSTRUCTIONTYPE_POP_SCOPE };
 
 		IRProcedureScope stackTop = context->irProcedureStack[context->irProcedureStack.size - 1];
-		Procedure *currentProc = GetProcedure(context, stackTop.procedureIdx);
 		bool isThereCleanUpToDo = false;
 		for (s64 stackIdx = context->irStack.size - 1;
 				stackIdx >= stackTop.irStackBase; --stackIdx)
@@ -1519,7 +1523,8 @@ IRValue IRGenFromExpression(Context *context, ASTExpression *expression)
 				*AddInstruction(context) = jumpInst;
 
 				IRInstruction *skipLabelInst = AddInstruction(context);
-				skipLabel->instructionIdx = BucketArrayCount(&currentProc->instructions) - 1;
+				skipLabel->instructionIdx =
+					BucketArrayCount(&context->irProcedureInstructions[stackTop.procedureIdx]) - 1;
 				skipLabelInst->type = IRINSTRUCTIONTYPE_LABEL;
 				skipLabelInst->label = skipLabel;
 			}
@@ -1579,13 +1584,13 @@ IRValue IRGenFromExpression(Context *context, ASTExpression *expression)
 			}
 			else
 			{
-				TypeCategory dstTypeCat = context->typeTable[varDecl.typeTableIdx].typeCategory;
+				TypeCategory dstTypeCat = GetTypeInfo(context, varDecl.typeTableIdx).typeCategory;
 				if (dstTypeCat == TYPECATEGORY_STRUCT ||
 					dstTypeCat == TYPECATEGORY_UNION ||
 					dstTypeCat == TYPECATEGORY_ARRAY)
 				{
 					IRValue dstValue = IRValueValue(context, varDecl.valueIdx);
-					u64 size = context->typeTable[dstValue.typeTableIdx].size;
+					u64 size = GetTypeInfo(context, dstValue.typeTableIdx).size;
 					IRValue sizeValue = IRValueImmediate(size);
 
 					IRInstruction inst = {};
@@ -1610,13 +1615,15 @@ IRValue IRGenFromExpression(Context *context, ASTExpression *expression)
 		{
 		case NAMETYPE_STATIC_DEFINITION:
 		{
-			switch (expression->identifier.staticDefinition->definitionType)
+			StaticDefinition staticDefinition = GetStaticDefinition(context,
+					expression->identifier.staticDefinitionIdx);
+			switch (staticDefinition.definitionType)
 			{
 			case STATICDEFINITIONTYPE_CONSTANT:
 			{
-				Constant constant = expression->identifier.staticDefinition->constant;
+				Constant constant = staticDefinition.constant;
 				u32 typeTableIdx = StripAllAliases(context, expression->typeTableIdx);
-				TypeCategory typeCat = context->typeTable[typeTableIdx].typeCategory;
+				TypeCategory typeCat = GetTypeInfo(context, typeTableIdx).typeCategory;
 				if (typeCat == TYPECATEGORY_FLOATING)
 				{
 					f64 f;
@@ -1633,8 +1640,7 @@ IRValue IRGenFromExpression(Context *context, ASTExpression *expression)
 			} break;
 			case STATICDEFINITIONTYPE_PROCEDURE:
 			{
-				result = IRValueProcedure(context,
-						expression->identifier.staticDefinition->procedureIdx);
+				result = IRValueProcedure(context, staticDefinition.procedureIdx);
 			} break;
 			default:
 				ASSERT(!"Invalid static definition type found while generating IR");
@@ -1649,7 +1655,7 @@ IRValue IRGenFromExpression(Context *context, ASTExpression *expression)
 		case NAMETYPE_VARIABLE:
 		{
 			result = IRValueValue(context, expression->identifier.valueIdx);
-			if (context->values[result.value.valueIdx].flags & VALUEFLAGS_PARAMETER_BY_COPY)
+			if (GetValueRead(context, result.value.valueIdx).flags & VALUEFLAGS_PARAMETER_BY_COPY)
 				result = IRDereferenceValue(context, result);
 		} break;
 		default:
@@ -1665,13 +1671,13 @@ IRValue IRGenFromExpression(Context *context, ASTExpression *expression)
 		{
 		case CALLTYPE_STATIC:
 		{
-			Procedure *proc = GetProcedure(context, astProcCall->procedureIdx);
-			if (proc->isInline)
+			Procedure proc = GetProcedureRead(context, astProcCall->procedureIdx);
+			if (proc.isInline)
 				return IRDoInlineProcedureCall(context, *astProcCall);
 
 			procCallInst.type = IRINSTRUCTIONTYPE_PROCEDURE_CALL;
 			procCallInst.procedureCall.procedureIdx = astProcCall->procedureIdx;
-			procTypeIdx = proc->typeTableIdx;
+			procTypeIdx = proc.typeTableIdx;
 		} break;
 		case CALLTYPE_VALUE:
 		{
@@ -1693,8 +1699,8 @@ IRValue IRGenFromExpression(Context *context, ASTExpression *expression)
 
 		bool isReturnByCopy = IRShouldPassByCopy(context, expression->typeTableIdx);
 
-		ASSERT(context->typeTable[procTypeIdx].typeCategory == TYPECATEGORY_PROCEDURE);
-		TypeInfoProcedure procTypeInfo = context->typeTable[procTypeIdx].procedureInfo;
+		ASSERT(GetTypeInfo(context, procTypeIdx).typeCategory == TYPECATEGORY_PROCEDURE);
+		TypeInfoProcedure procTypeInfo = GetTypeInfo(context, procTypeIdx).procedureInfo;
 		bool isVarargs = procTypeInfo.isVarargs;
 
 		// Support both varargs and default parameters here
@@ -1823,7 +1829,7 @@ IRValue IRGenFromExpression(Context *context, ASTExpression *expression)
 					arrayOfAnyTypeIdx, VALUEFLAGS_FORCE_MEMORY);
 			IRValue arrayIRValue = IRValueValue(context, arrayValueIdx);
 
-			TypeInfo dynamicArrayTypeInfo = context->typeTable[TYPETABLEIDX_ARRAY_STRUCT];
+			TypeInfo dynamicArrayTypeInfo = GetTypeInfo(context, TYPETABLEIDX_ARRAY_STRUCT);
 			// Size
 			{
 				StructMember sizeStructMember = dynamicArrayTypeInfo.structInfo.members[0];
@@ -1935,7 +1941,7 @@ skipGeneratingVarargsArray:
 		case LITERALTYPE_INTEGER:
 		{
 			u32 typeTableIdx = StripAllAliases(context, expression->typeTableIdx);
-			TypeCategory typeCat = context->typeTable[typeTableIdx].typeCategory;
+			TypeCategory typeCat = GetTypeInfo(context, typeTableIdx).typeCategory;
 			if (typeCat == TYPECATEGORY_FLOATING)
 				result = IRValueImmediateFloat(context, (f64)expression->literal.integer,
 						expression->typeTableIdx);
@@ -2065,11 +2071,11 @@ skipGeneratingVarargsArray:
 		{
 			arrayValue = IRGenFromExpression(context, astFor->range);
 
-			TypeInfo rangeTypeInfo = context->typeTable[arrayValue.typeTableIdx];
+			TypeInfo rangeTypeInfo = GetTypeInfo(context, arrayValue.typeTableIdx);
 			if (rangeTypeInfo.typeCategory == TYPECATEGORY_POINTER)
 			{
 				arrayValue = IRDereferenceValue(context, arrayValue);
-				rangeTypeInfo = context->typeTable[arrayValue.typeTableIdx];
+				rangeTypeInfo = GetTypeInfo(context, arrayValue.typeTableIdx);
 			}
 
 			ASSERT(arrayValue.typeTableIdx == TYPETABLEIDX_STRING_STRUCT ||
@@ -2089,7 +2095,7 @@ skipGeneratingVarargsArray:
 			if (rangeTypeInfo.arrayInfo.count == 0 || arrayValue.typeTableIdx == TYPETABLEIDX_STRING_STRUCT)
 			{
 				// Compare with size member
-				TypeInfo dynamicArrayTypeInfo = context->typeTable[TYPETABLEIDX_ARRAY_STRUCT];
+				TypeInfo dynamicArrayTypeInfo = GetTypeInfo(context, TYPETABLEIDX_ARRAY_STRUCT);
 				to = IRDoMemberAccess(context, arrayValue, dynamicArrayTypeInfo.structInfo.members[0]);
 			}
 			else
@@ -2182,14 +2188,14 @@ skipGeneratingVarargsArray:
 		IRValue indexValue = context->irCurrentForLoopInfo.indexValue;
 		IRValue sizeValue;
 
-		TypeInfo arrayType = context->typeTable[arrayValue.typeTableIdx];
+		TypeInfo arrayType = GetTypeInfo(context, arrayValue.typeTableIdx);
 		if (arrayType.typeCategory == TYPECATEGORY_POINTER)
-			arrayType = context->typeTable[arrayType.pointerInfo.pointedTypeTableIdx];
+			arrayType = GetTypeInfo(context, arrayType.pointerInfo.pointedTypeTableIdx);
 
 		u32 elementTypeIdx = arrayType.arrayInfo.elementTypeTableIdx;
 
 		{
-			TypeInfo arrayStructTypeInfo = context->typeTable[TYPETABLEIDX_ARRAY_STRUCT];
+			TypeInfo arrayStructTypeInfo = GetTypeInfo(context, TYPETABLEIDX_ARRAY_STRUCT);
 			StructMember sizeMember = arrayStructTypeInfo.structInfo.members[0];
 			StructMember dataMember = arrayStructTypeInfo.structInfo.members[1];
 
@@ -2221,7 +2227,7 @@ skipGeneratingVarargsArray:
 	case ASTNODETYPE_RETURN:
 	{
 		IRProcedureScope *stackTop = &context->irProcedureStack[context->irProcedureStack.size - 1];
-		Procedure *currentProc = GetProcedure(context, stackTop->procedureIdx);
+		Procedure currentProc = GetProcedureRead(context, stackTop->procedureIdx);
 		bool isThereCleanUpToDo = false;
 		for (s64 stackIdx = context->irStack.size - 1;
 				stackIdx >= stackTop->irStackBase; --stackIdx)
@@ -2253,13 +2259,13 @@ skipGeneratingVarargsArray:
 
 			if (IRShouldPassByCopy(context, returnTypeTableIdx))
 			{
-				u64 size = context->typeTable[returnTypeTableIdx].size;
+				u64 size = GetTypeInfo(context, returnTypeTableIdx).size;
 				IRValue sizeValue = IRValueImmediate(size);
 
 				IRInstruction memcpyInst = {};
 				memcpyInst.type = IRINSTRUCTIONTYPE_COPY_MEMORY;
 				memcpyInst.copyMemory.src = IRPointerToValue(context, returnValue);
-				memcpyInst.copyMemory.dst = IRValueValue(currentProc->returnValueIdx,
+				memcpyInst.copyMemory.dst = IRValueValue(currentProc.returnValueIdx,
 						GetTypeInfoPointerOf(context, returnTypeTableIdx));
 				memcpyInst.copyMemory.size = sizeValue;
 
@@ -2267,7 +2273,7 @@ skipGeneratingVarargsArray:
 			}
 			else
 			{
-				IRValue dst = IRValueValue(currentProc->returnValueIdx, returnValue.typeTableIdx);
+				IRValue dst = IRValueValue(currentProc.returnValueIdx, returnValue.typeTableIdx);
 				IRDoAssignment(context, dst, returnValue);
 			}
 		}
@@ -2309,7 +2315,7 @@ skipGeneratingVarargsArray:
 	case ASTNODETYPE_SIZEOF:
 	{
 		u32 typeTableIdx = expression->sizeOfNode.expression->typeTableIdx;
-		s64 size = context->typeTable[typeTableIdx].size;
+		s64 size = GetTypeInfo(context, typeTableIdx).size;
 
 		result = IRValueImmediate(size, TYPETABLEIDX_S64);
 	} break;
@@ -2344,6 +2350,11 @@ void IRGenMain(Context *context)
 	DynamicArrayInit(&context->irExternalVariables, 32);
 	DynamicArrayInit(&context->irStack, 64);
 	DynamicArrayInit(&context->irProcedureStack, 8);
+
+	u64 procCount = BucketArrayCount(&context->procedures.LockForRead());
+	context->procedures.UnlockForRead();
+	DynamicArrayInit(&context->irProcedureInstructions, procCount);
+
 	BucketArrayInit(&context->irLabels);
 
 	PushIRScope(context);

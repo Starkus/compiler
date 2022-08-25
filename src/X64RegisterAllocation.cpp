@@ -67,13 +67,13 @@ BasicBlock *PushBasicBlock(BasicBlock *currentBasicBlock,
 
 bool CanBeRegister(Context *context, u32 valueIdx)
 {
-	Value v = context->values[valueIdx];
+	Value v = GetValueRead(context, valueIdx);
 	if (v.flags & (VALUEFLAGS_FORCE_MEMORY | VALUEFLAGS_ON_STATIC_STORAGE |
 				VALUEFLAGS_IS_EXTERNAL))
 		return false;
 	if (v.typeTableIdx == TYPETABLEIDX_128)
 		return true;
-	TypeInfo typeInfo = context->typeTable[v.typeTableIdx];
+	TypeInfo typeInfo = GetTypeInfo(context, v.typeTableIdx);
 	if (typeInfo.typeCategory == TYPECATEGORY_STRUCT ||
 		typeInfo.typeCategory == TYPECATEGORY_UNION)
 		return false;
@@ -87,17 +87,19 @@ bool CanBeRegister(Context *context, u32 valueIdx)
 inline bool AddValue(Context *context, u32 valueIdx, X64Procedure *proc,
 		DynamicArray<u32, PhaseAllocator> *array)
 {
-	context->values[valueIdx].flags |= VALUEFLAGS_IS_USED;
+	Value *value = GetValueWrite(context, valueIdx);
+	value->flags |= VALUEFLAGS_IS_USED;
 
 	// Nonsense to take these into account
 	if (!CanBeRegister(context, valueIdx))
 	{
-		if (!(context->values[valueIdx].flags & VALUEFLAGS_ON_STATIC_STORAGE |
+		if (!(value->flags & VALUEFLAGS_ON_STATIC_STORAGE |
 					VALUEFLAGS_IS_EXTERNAL))
 			DynamicArrayAddUnique(&proc->spilledValues, valueIdx);
 		return false;
 	}
 
+	context->values.UnlockForWrite();
 	return DynamicArrayAddUnique(array, valueIdx);
 }
 
@@ -224,7 +226,8 @@ void DoLivenessAnalisisOnInstruction(Context *context, BasicBlock *basicBlock, X
 	case X64_Push_Value:
 	{
 		// @Improve: This sucks a little bit.
-		context->values[inst->valueIdx].flags |= VALUEFLAGS_HAS_PUSH_INSTRUCTION;
+		GetValueWrite(context, inst->valueIdx)->flags |= VALUEFLAGS_HAS_PUSH_INSTRUCTION;
+		context->values.UnlockForWrite();
 	} break;
 	case X64_Patch:
 	case X64_Patch_Many:
@@ -474,14 +477,14 @@ void ResolveStackOffsets(Context *context, Array<X64Procedure, PhaseAllocator> x
 		// Allocate spilled values
 		for (int spillIdx = 0; spillIdx < proc->spilledValues.size; ++spillIdx)
 		{
-			Value *value = &context->values[proc->spilledValues[spillIdx]];
+			Value *value = GetValueWrite(context, proc->spilledValues[spillIdx]);
 			ASSERT(!(value->flags & VALUEFLAGS_IS_ALLOCATED));
 
 			// If the value has properly scoped allocation don't dumbly spill into stack.
 			if (value->flags & VALUEFLAGS_HAS_PUSH_INSTRUCTION)
 				continue;
 
-			u64 size = context->typeTable[value->typeTableIdx].size;
+			u64 size = GetTypeInfo(context, value->typeTableIdx).size;
 			int alignment = size > 8 ? 8 : NextPowerOf2((int)size);
 			if (stackCursor & (alignment - 1))
 				stackCursor = (stackCursor + alignment) & ~(alignment - 1);
@@ -489,6 +492,8 @@ void ResolveStackOffsets(Context *context, Array<X64Procedure, PhaseAllocator> x
 			value->stackOffset = (s32)stackCursor;
 			value->flags |= VALUEFLAGS_IS_ALLOCATED | VALUEFLAGS_IS_MEMORY;
 			stackCursor += size;
+
+			context->values.UnlockForWrite(); // @Speed: don't lock/unlock on every loop
 		}
 
 		proc->stackSize = stackCursor;
@@ -501,7 +506,7 @@ void ResolveStackOffsets(Context *context, Array<X64Procedure, PhaseAllocator> x
 			{
 			case X64_Push_Value:
 			{
-				Value *value = &context->values[inst->valueIdx];
+				Value *value = GetValueWrite(context, inst->valueIdx);
 				ASSERT(value->flags & VALUEFLAGS_HAS_PUSH_INSTRUCTION);
 				if (value->flags & VALUEFLAGS_IS_ALLOCATED)
 				{
@@ -512,7 +517,7 @@ void ResolveStackOffsets(Context *context, Array<X64Procedure, PhaseAllocator> x
 				ASSERT(!(value->flags & VALUEFLAGS_ON_STATIC_STORAGE));
 				ASSERT(!(value->flags & VALUEFLAGS_IS_EXTERNAL));
 
-				u64 size = context->typeTable[value->typeTableIdx].size;
+				u64 size = GetTypeInfo(context, value->typeTableIdx).size;
 				int alignment = size > 8 ? 8 : NextPowerOf2((int)size);
 				if (stackCursor & (alignment - 1))
 					stackCursor = (stackCursor + alignment) & ~(alignment - 1);
@@ -520,6 +525,8 @@ void ResolveStackOffsets(Context *context, Array<X64Procedure, PhaseAllocator> x
 				value->stackOffset = (s32)stackCursor;
 				value->flags |= VALUEFLAGS_IS_ALLOCATED | VALUEFLAGS_IS_MEMORY;
 				stackCursor += size;
+
+				context->values.UnlockForWrite();
 			} break;
 			case X64_Push_Scope:
 			{
@@ -548,7 +555,7 @@ inline u64 BitIfRegister(Context *context, IRValue irValue)
 {
 	if (irValue.valueType == IRVALUETYPE_VALUE || irValue.valueType == IRVALUETYPE_VALUE_DEREFERENCE)
 	{
-		Value value = context->values[irValue.value.valueIdx];
+		Value value = GetValueRead(context, irValue.value.valueIdx);
 		if (value.flags & VALUEFLAGS_IS_USED && VALUEFLAGS_IS_ALLOCATED &&
 				!(value.flags & VALUEFLAGS_IS_MEMORY))
 		{
@@ -570,7 +577,7 @@ inline u64 RegisterSavingInstruction(Context *context, X64Instruction *inst, u64
 		u64 liveRegisterBits = 0;
 		for (int i = 0; i < inst->liveValues.size; ++i)
 		{
-			Value v = context->values[inst->liveValues[i]];
+			Value v = GetValueRead(context, inst->liveValues[i]);
 			if ((v.flags & (VALUEFLAGS_IS_USED | VALUEFLAGS_IS_ALLOCATED | VALUEFLAGS_IS_MEMORY)) ==
 					(VALUEFLAGS_IS_USED | VALUEFLAGS_IS_ALLOCATED))
 				liveRegisterBits |= (1ull << v.allocatedRegister);
@@ -641,7 +648,9 @@ void X64AllocateRegisters(Context *context, Array<X64Procedure, PhaseAllocator> 
 	// The main reasoning behind this is to avoid so many queries into cold type table data just to
 	// see if each value is an xmm register or not.
 	{
-		u64 valueCount = BucketArrayCount(&context->values);
+		u64 valueCount = BucketArrayCount(&context->values.LockForRead());
+		context->values.UnlockForRead();
+
 		u64 qwordCount = valueCount >> 6;
 		if (valueCount & 63) ++qwordCount;
 		ArrayInit(&valueIsXmmBits, qwordCount);
@@ -650,10 +659,10 @@ void X64AllocateRegisters(Context *context, Array<X64Procedure, PhaseAllocator> 
 
 		for (int valueIdx = 0; valueIdx < valueCount; ++valueIdx)
 		{
-			u32 typeTableIdx = context->values[valueIdx].typeTableIdx;
+			u32 typeTableIdx = GetValueRead(context, valueIdx).typeTableIdx;
 			if (typeTableIdx >= 0)
 			{
-				TypeInfo typeInfo = context->typeTable[StripAllAliases(context, typeTableIdx)];
+				TypeInfo typeInfo = GetTypeInfo(context, StripAllAliases(context, typeTableIdx));
 				bool isXMM = typeInfo.size > 8 || typeInfo.typeCategory == TYPECATEGORY_FLOATING;
 				if (isXMM)
 					BitfieldSetBit(valueIsXmmBits, valueIdx);
@@ -738,7 +747,7 @@ void X64AllocateRegisters(Context *context, Array<X64Procedure, PhaseAllocator> 
 					continue;
 
 				u32 valueIdx = interferenceGraph.valueIndices[nodeIdx];
-				u32 vFlags = context->values[valueIdx].flags;
+				u32 vFlags = GetValueRead(context, valueIdx).flags;
 				if (vFlags & VALUEFLAGS_FORCE_REGISTER)
 					continue;
 
@@ -774,7 +783,7 @@ gotNodeToRemove:
 				if (valueIdx < RAX.value.valueIdx && HashSetHas(*edges, valueIdx))
 				{
 					// The only allocated things thus far should be physical register values
-					ASSERT(!(context->values[valueIdx].flags & VALUEFLAGS_IS_ALLOCATED));
+					ASSERT(!(GetValueRead(context, valueIdx).flags & VALUEFLAGS_IS_ALLOCATED));
 					HashSetRemove(edges, valueIdx);
 				}
 			}
@@ -786,29 +795,29 @@ gotNodeToRemove:
 		{
 			u32 currentNodeIdx = nodeStack[nodeIdx];
 			u32 valueIdx = interferenceGraph.valueIndices[currentNodeIdx];
-			Value *v = &context->values[valueIdx];
+			Value v = GetValueRead(context, valueIdx);
 			const HashSet<u32, PhaseAllocator> edges = interferenceGraph.edges[currentNodeIdx];
 			const u32 *edgesKeys = HashSetKeys(edges);
 
 			// We don't allocate static values, the assembler/linker does.
-			ASSERT(!(v->flags & VALUEFLAGS_ON_STATIC_STORAGE));
-			ASSERT(!(v->flags & VALUEFLAGS_IS_EXTERNAL));
+			ASSERT(!(v.flags & VALUEFLAGS_ON_STATIC_STORAGE));
+			ASSERT(!(v.flags & VALUEFLAGS_IS_EXTERNAL));
 
-			if (v->flags & VALUEFLAGS_IS_ALLOCATED)
+			if (v.flags & VALUEFLAGS_IS_ALLOCATED)
 				continue;
 
 			bool isXMM = BitfieldGetBit(valueIsXmmBits, valueIdx);
 
-			if (v->flags & VALUEFLAGS_TRY_IMMITATE)
+			if (v.flags & VALUEFLAGS_TRY_IMMITATE)
 			{
-				u32 immitateValueIdx = v->tryImmitateValueIdx;
-				Value immitateValue = context->values[immitateValueIdx];
+				u32 immitateValueIdx = v.tryImmitateValueIdx;
+				Value immitateValue = GetValueRead(context, immitateValueIdx);
 #if 0
 				while (immitateValue.flags & VALUEFLAGS_TRY_IMMITATE &&
 					   immitateValueIdx != immitateValue.tryImmitateValueIdx)
 				{
 					immitateValueIdx = immitateValue.tryImmitateValueIdx;
-					immitateValue = context->values[immitateValueIdx];
+					immitateValue = GetValueRead(context, immitateValueIdx);
 				}
 #endif
 
@@ -829,7 +838,7 @@ gotNodeToRemove:
 					{
 						if (!HashSetSlotOccupied(edges, slotIdx))
 							continue;
-						Value edgeValue = context->values[edgesKeys[slotIdx]];
+						Value edgeValue = GetValueRead(context, edgesKeys[slotIdx]);
 						if (!(edgeValue.flags & VALUEFLAGS_IS_ALLOCATED) ||
 							  edgeValue.flags & VALUEFLAGS_IS_MEMORY)
 							continue;
@@ -837,17 +846,22 @@ gotNodeToRemove:
 							goto skipImmitate;
 					}
 
-					v->allocatedRegister = candidate;
-					v->flags &= ~VALUEFLAGS_IS_MEMORY;
-					v->flags |= VALUEFLAGS_IS_ALLOCATED;
+					Value *valueWrite = GetValueWrite(context, valueIdx);
+					valueWrite->allocatedRegister = candidate;
+					valueWrite->flags &= ~VALUEFLAGS_IS_MEMORY;
+					valueWrite->flags |= VALUEFLAGS_IS_ALLOCATED;
+					v = *valueWrite;
+					context->values.UnlockForWrite();
 					continue;
 				}
 				else if (!(immitateValue.flags & VALUEFLAGS_IS_ALLOCATED) &&
 						 !(immitateValue.flags & VALUEFLAGS_TRY_IMMITATE) &&
 						 CanBeRegister(context, immitateValueIdx))
 				{
-					context->values[immitateValueIdx].flags |= VALUEFLAGS_TRY_IMMITATE;
-					context->values[immitateValueIdx].tryImmitateValueIdx = valueIdx;
+					Value *immitateValueWrite = GetValueWrite(context, immitateValueIdx);
+					immitateValueWrite->flags |= VALUEFLAGS_TRY_IMMITATE;
+					immitateValueWrite->tryImmitateValueIdx = valueIdx;
+					context->values.UnlockForWrite();
 				}
 			}
 skipImmitate:
@@ -858,7 +872,7 @@ skipImmitate:
 			{
 				if (!HashSetSlotOccupied(edges, slotIdx))
 					continue;
-				Value edgeValue = context->values[edgesKeys[slotIdx]];
+				Value edgeValue = GetValueRead(context, edgesKeys[slotIdx]);
 				if ((edgeValue.flags & VALUEFLAGS_IS_ALLOCATED) &&
 				   !(edgeValue.flags & VALUEFLAGS_IS_MEMORY))
 				{
@@ -872,15 +886,18 @@ skipImmitate:
 				u64 registerBit = 1ull << candidate;
 				if (!(usedRegisters & registerBit))
 				{
-					v->allocatedRegister = candidate;
-					v->flags &= ~VALUEFLAGS_IS_MEMORY;
-					v->flags |= VALUEFLAGS_IS_ALLOCATED;
+					Value *valueWrite = GetValueWrite(context, valueIdx);
+					valueWrite->allocatedRegister = candidate;
+					valueWrite->flags &= ~VALUEFLAGS_IS_MEMORY;
+					valueWrite->flags |= VALUEFLAGS_IS_ALLOCATED;
+					v = *valueWrite;
+					context->values.UnlockForWrite();
 					break;
 				}
 			}
-			if (!(v->flags & VALUEFLAGS_IS_ALLOCATED))
+			if (!(v.flags & VALUEFLAGS_IS_ALLOCATED))
 			{
-				if (v->flags & VALUEFLAGS_FORCE_REGISTER)
+				if (v.flags & VALUEFLAGS_FORCE_REGISTER)
 				{
 					ASSERT(!"Can't allocate value to register!");
 					continue;

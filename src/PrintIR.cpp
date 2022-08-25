@@ -43,7 +43,7 @@ s64 PIRPrintOut(Context *context, const char *format, ...)
 
 inline String PIRValueToStr(Context *context, u32 valueIdx)
 {
-	Value v = context->values[valueIdx];
+	Value v = GetValueRead(context, valueIdx);
 	if (v.name)
 		return TPrintF("$v%u\"%S\"", valueIdx, v.name);
 	else
@@ -206,8 +206,7 @@ void PrintIRInstruction(Context *context, IRInstruction inst)
 			PrintIRValue(context, inst.procedureCall.out);
 			PIRPrintOut(context, " := ");
 		}
-		String name = GetProcedure(context,
-				inst.procedureCall.procedureIdx)->name;
+		String name = GetProcedureRead(context, inst.procedureCall.procedureIdx).name;
 		PIRPrintOut(context, "call %S(", name);
 
 		for (int i = 0; i < inst.procedureCall.parameters.size; ++i)
@@ -295,22 +294,23 @@ void PrintIRInstructions(Context *context)
 	BucketArrayInit(&context->outputBuffer);
 
 	const int padding = 20;
-	const u64 procedureCount = BucketArrayCount(&context->procedures);
+	const u64 procedureCount = BucketArrayCount(&context->procedures.LockForRead());
+	context->procedures.UnlockForRead();
 	for (int procedureIdx = 1; procedureIdx < procedureCount; ++procedureIdx)
 	{
-		Procedure *proc = GetProcedure(context, procedureIdx);
-		TypeInfoProcedure procTypeInfo = context->typeTable[proc->typeTableIdx].procedureInfo;
+		Procedure proc = GetProcedureRead(context, procedureIdx);
+		TypeInfoProcedure procTypeInfo = GetTypeInfo(context, proc.typeTableIdx).procedureInfo;
 
 		String returnTypeStr = TypeInfoToString(context, procTypeInfo.returnTypeTableIdx);
 
-		String name = GetProcedure(context, procedureIdx)->name;
+		String name = proc.name;
 		PIRPrintOut(context, "proc %S(", name);
 
-		for (int paramIdx = 0; paramIdx < proc->parameterValues.size; ++paramIdx)
+		for (int paramIdx = 0; paramIdx < proc.parameterValues.size; ++paramIdx)
 		{
 			if (paramIdx) PIRPrintOut(context, ", ");
-			u32 paramValueIdx = proc->parameterValues[paramIdx];
-			Value paramValue = context->values[paramValueIdx];
+			u32 paramValueIdx = proc.parameterValues[paramIdx];
+			Value paramValue = GetValueRead(context, paramValueIdx);
 			String typeStr = TypeInfoToString(context, paramValue.typeTableIdx);
 			PIRPrintOut(context, "%S : %S", paramValue.name, typeStr);
 		}
@@ -319,16 +319,17 @@ void PrintIRInstructions(Context *context)
 			PIRPrintOut(context, " -> %S", returnTypeStr);
 		PIRPrintOut(context, "\n");
 
-		const u64 instructionCount = BucketArrayCount(&proc->instructions);
+		const auto &instructions = context->irProcedureInstructions[procedureIdx];
+		const u64 instructionCount = BucketArrayCount(&instructions);
 		for (int instructionIdx = 0; instructionIdx < instructionCount; ++instructionIdx)
 		{
-			IRInstruction inst = proc->instructions[instructionIdx];
+			IRInstruction inst = instructions[instructionIdx];
 
 			if (inst.type == IRINSTRUCTIONTYPE_LABEL)
 			{
 				PIRPrintOut(context, "%S: ", inst.label->name);
 
-				IRInstruction nextInst = proc->instructions[instructionIdx + 1];
+				IRInstruction nextInst = instructions[instructionIdx + 1];
 				if (nextInst.type != IRINSTRUCTIONTYPE_LABEL &&
 					nextInst.type != IRINSTRUCTIONTYPE_PUSH_SCOPE &&
 					nextInst.type != IRINSTRUCTIONTYPE_POP_SCOPE &&
@@ -340,7 +341,7 @@ void PrintIRInstructions(Context *context)
 					++instructionIdx;
 					if (instructionIdx >= instructionCount)
 						break;
-					inst = proc->instructions[instructionIdx];
+					inst = instructions[instructionIdx];
 				}
 				else
 				{

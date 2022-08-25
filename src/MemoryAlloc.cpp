@@ -9,10 +9,15 @@ void MemoryInit(Memory *memory)
 
 	memory->framePtr = memory->frameMem;
 	memory->phasePtr = memory->phaseMem;
+
+	memory->frameMutex = SYSCreateMutex();
+	memory->phaseMutex = SYSCreateMutex();
 }
 
 void *FrameAllocator::Alloc(u64 size)
 {
+	SYSMutexLock(g_memory->frameMutex);
+
 #if DEBUG_BUILD
 	if (*((u64 *)g_memory->framePtr) != 0xCDCDCDCDCDCDCDCD) CRASH; // Watch for memory corruption
 #endif
@@ -30,14 +35,19 @@ void *FrameAllocator::Alloc(u64 size)
 	result = g_memory->framePtr;
 	g_memory->framePtr = (u8 *)g_memory->framePtr + size;
 
+	SYSMutexUnlock(g_memory->frameMutex);
+
 	return result;
 }
 void *FrameAllocator::Realloc(void *ptr, u64 newSize)
 {
-	//Print("WARNING: FRAME REALLOC\n");
+	SYSMutexLock(g_memory->frameMutex);
 
 	void *newBlock = Alloc(newSize);
 	memcpy(newBlock, ptr, newSize);
+
+	SYSMutexUnlock(g_memory->frameMutex);
+
 	return newBlock;
 }
 void FrameAllocator::Free(void *ptr)
@@ -55,6 +65,8 @@ void FrameAllocator::Wipe()
 
 void *PhaseAllocator::Alloc(u64 size)
 {
+	SYSMutexLock(g_memory->phaseMutex);
+
 #if DEBUG_BUILD
 	if (*((u64 *)g_memory->phasePtr) != 0x5555555555555555) CRASH; // Watch for memory corruption
 #endif
@@ -72,14 +84,19 @@ void *PhaseAllocator::Alloc(u64 size)
 	result = g_memory->phasePtr;
 	g_memory->phasePtr = (u8 *)g_memory->phasePtr + size;
 
+	SYSMutexUnlock(g_memory->phaseMutex);
+
 	return result;
 }
 void *PhaseAllocator::Realloc(void *ptr, u64 newSize)
 {
-	//Print("WARNING: FRAME REALLOC\n");
+	SYSMutexLock(g_memory->phaseMutex);
 
 	void *newBlock = Alloc(newSize);
 	memcpy(newBlock, ptr, newSize);
+
+	SYSMutexUnlock(g_memory->phaseMutex);
+
 	return newBlock;
 }
 void PhaseAllocator::Free(void *ptr)

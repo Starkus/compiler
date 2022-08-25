@@ -1,3 +1,5 @@
+//compiler_output_type :: COMPILER_OUTPUT_EXECUTABLE;
+
 Person :: struct
 {
 	id : u64;

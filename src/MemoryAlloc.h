@@ -5,6 +5,7 @@ struct Memory
 	void *phaseMem, *phasePtr;
 	static const u64 frameSize = 64 * 1024 * 1024;
 	static const u64 phaseSize = 64 * 1024 * 1024;
+	Mutex frameMutex, phaseMutex;
 };
 
 class FrameAllocator

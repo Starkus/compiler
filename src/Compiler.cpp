@@ -1,3 +1,6 @@
+#if _MSC_VER
+#include "PlatformWindows.h"
+#endif
 #include "General.h"
 #include "Strings.h"
 #include "MemoryAlloc.h"
@@ -7,9 +10,9 @@
 const String TPrintF(const char *format, ...);
 
 #if _MSC_VER
-#include "Windows.cpp"
+#include "PlatformWindows.cpp"
 #else
-#include "Linux.cpp"
+#include "PlatformLinux.cpp"
 #endif
 
 #define STB_SPRINTF_IMPLEMENTATION
@@ -18,6 +21,7 @@ const String TPrintF(const char *format, ...);
 #include "Config.h"
 #include "Maths.h"
 #include "Containers.h"
+#include "Multithreading.cpp"
 
 #if USE_PROFILER_API
 #include "Superluminal/PerformanceAPI_loader.h"
@@ -31,6 +35,8 @@ FileHandle g_hStderr;
 
 s64 Print(const char *format, ...)
 {
+	SYSMutexLock(g_memory->phaseMutex);
+
 	// Log file
 	static FileHandle logFileHandle = SYSOpenFileWrite("output/log.txt"_s);
 
@@ -54,12 +60,16 @@ s64 Print(const char *format, ...)
 	memset(g_memory->phasePtr, 0x55, size + 1);
 #endif
 
+	SYSMutexUnlock(g_memory->phaseMutex);
+
 	va_end(args);
 	return size;
 }
 
 const String TPrintF(const char *format, ...)
 {
+	SYSMutexLock(g_memory->frameMutex);
+
 	char *buffer = (char *)g_memory->framePtr;
 
 	va_list args;
@@ -68,6 +78,8 @@ const String TPrintF(const char *format, ...)
 	va_end(args);
 
 	g_memory->framePtr = (u8 *)g_memory->framePtr + size + 1;
+
+	SYSMutexUnlock(g_memory->frameMutex);
 
 	return { size, buffer };
 }
@@ -103,6 +115,7 @@ u64 CycleCountEnd(u64 begin)
 #include "Strings.cpp"
 #include "Parser.h"
 #include "AST.h"
+#include "TypeChecker.h"
 #include "IRGen.h"
 
 struct Config
@@ -126,7 +139,6 @@ struct InterferenceGraph
 };
 
 #define OUTPUT_BUFFER_BUCKET_SIZE 8192
-struct TCJob;
 struct Procedure;
 struct TypeInfo;
 struct OperatorOverload;
@@ -151,22 +163,22 @@ struct Context
 	BucketArray<String, HeapAllocator, 1024> stringLiterals;
 
 	// Type check -----
-	DynamicArray<TCJob, PhaseAllocator> tcJobs;
-	s32 currentTCJob;
-	BucketArray<Value, HeapAllocator, 2048> values;
-	BucketArray<Procedure, HeapAllocator, 512> procedures;
-	BucketArray<Procedure, HeapAllocator, 128> externalProcedures;
+	Mutex tcMutex;
+	DynamicArray<HANDLE, HeapAllocator> tcThreads;
+	SafeContainer<DynamicArray<TCJobState, HeapAllocator>> tcJobStates;
+	SafeContainer<BucketArray<Value, HeapAllocator, 2048>> values;
+	SafeContainer<BucketArray<Procedure, HeapAllocator, 512>> procedures;
+	SafeContainer<BucketArray<Procedure, HeapAllocator, 128>> externalProcedures;
 	DynamicArray<OperatorOverload, HeapAllocator> operatorOverloads;
-	BucketArray<StaticDefinition, HeapAllocator, 512> staticDefinitions;
+	SafeContainer<BucketArray<StaticDefinition, HeapAllocator, 512>> staticDefinitions;
 
 	/* Don't add types to the type table by hand without checking what AddType() does! */
-	BucketArray<const TypeInfo, HeapAllocator, 1024> typeTable;
+	SafeContainer<BucketArray<const TypeInfo, HeapAllocator, 1024>> typeTable;
 
-	TCScope *tcGlobalScope;
-	u32 tcCurrentReturnType;
-	u32 tcCurrentForLoopArrayType;
+	SafeContainer<TCScope> tcGlobalScope;
 
 	// IR -----
+	DynamicArray<BucketArray<IRInstruction, FrameAllocator, 256>, HeapAllocator> irProcedureInstructions;
 	DynamicArray<IRStaticVariable, HeapAllocator> irStaticVariables;
 	DynamicArray<u32, HeapAllocator> irExternalVariables;
 	DynamicArray<IRScope, PhaseAllocator> irStack;

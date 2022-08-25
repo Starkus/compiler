@@ -41,9 +41,9 @@ struct ASTBinaryOperation : ASTBase
 
 struct Value;
 struct StructMember;
-struct StaticDefinition;
 enum NameType
 {
+	NAMETYPE_INVALID,
 	NAMETYPE_PRIMITIVE,
 	NAMETYPE_VARIABLE,
 	NAMETYPE_STRUCT_MEMBER,
@@ -61,7 +61,7 @@ struct ASTIdentifier : ASTBase
 		u32 valueIdx;
 		const StructMember *structMember;
 		ASTExpression *expression;
-		StaticDefinition *staticDefinition;
+		u32 staticDefinitionIdx;
 	};
 };
 
@@ -190,7 +190,6 @@ struct ASTProcedureDeclaration : ASTBase
 	bool isExported;
 
 	// Type check
-	bool checkedPrototype;
 	s32 procedureIdx;
 };
 
@@ -203,7 +202,6 @@ struct ASTOperatorOverload : ASTBase
 
 	// Type check
 	bool overloadRegistered;
-	bool checkedPrototype;
 	s32 procedureIdx;
 };
 
@@ -213,7 +211,7 @@ struct ASTStaticDefinition : ASTBase
 	ASTExpression *expression;
 
 	// Type check
-	StaticDefinition *staticDef;
+	u32 staticDefinitionIdx;
 };
 
 enum ProcedureCallType
@@ -231,7 +229,6 @@ struct ASTProcedureCall : ASTBase
 	u32 procedureTypeIdx;
 	ProcedureCallType callType;
 	bool procedureFound;
-	u32 parameterTypeCheckingIdx;
 	union
 	{
 		s32 procedureIdx;
@@ -311,6 +308,12 @@ struct ASTInclude : ASTBase
 	String filename;
 };
 
+struct ASTDefined : ASTBase
+{
+	String identifier;
+	bool isDefined;
+};
+
 struct ASTRoot : ASTBase
 {
 	ASTBlock block;
@@ -347,6 +350,7 @@ enum ASTNodeType : u8
 	ASTNODETYPE_TYPEOF,
 	ASTNODETYPE_SIZEOF,
 	ASTNODETYPE_CAST,
+	ASTNODETYPE_DEFINED,
 	ASTNODETYPE_GARBAGE
 };
 struct ASTExpression
@@ -382,6 +386,7 @@ struct ASTExpression
 		ASTSimple usingNode;
 		ASTSimple typeOfNode;
 		ASTSimple sizeOfNode;
+		ASTDefined definedNode;
 		ASTCast castNode;
 	};
 };

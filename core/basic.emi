@@ -25,6 +25,9 @@ Compiler_Output_Types :: enum
 else
 	#include "core/basic_linux.emi";
 
+#if !#defined(compiler_output_type)
+	compiler_output_type :: COMPILER_OUTPUT_EXECUTABLE;
+
 // @Todo: replace?
 String :: struct
 {

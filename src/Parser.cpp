@@ -158,7 +158,7 @@ ASTType ParseType(Context *context)
 		Advance(context);
 	}
 	else if (context->token->type == '(' ||
-			 context->token->type == TOKEN_KEYWORD_CALLING_CONVENTION)
+			 context->token->type == TOKEN_DIRECTIVE_CALLING_CONVENTION)
 	{
 		astType.nodeType = ASTTYPENODETYPE_PROCEDURE;
 		astType.procedurePrototype = ParseProcedurePrototype(context);
@@ -306,7 +306,7 @@ bool TryParseBinaryOperation(Context *context, ASTExpression leftHand, s32 prevP
 ASTIf ParseIf(Context *context, bool onStaticContext)
 {
 	ASSERT(context->token->type == TOKEN_KEYWORD_IF ||
-		   context->token->type == TOKEN_KEYWORD_IF_STATIC);
+		   context->token->type == TOKEN_DIRECTIVE_IF);
 	Advance(context);
 
 	ASTIf ifNode = {};
@@ -616,7 +616,7 @@ ASTVariableDeclaration ParseVariableDeclaration(Context *context)
 	else
 		UNEXPECTED_TOKEN_ERROR(context, context->token);
 
-	if (context->token->type == TOKEN_KEYWORD_EXTERNAL)
+	if (context->token->type == TOKEN_DIRECTIVE_EXTERNAL)
 	{
 		varDecl.isExternal = true;
 		Advance(context);
@@ -690,7 +690,7 @@ ASTProcedurePrototype ParseProcedurePrototype(Context *context)
 	prototype.loc = context->token->loc;
 	prototype.callingConvention = CC_DEFAULT;
 
-	if (context->token->type == TOKEN_KEYWORD_CALLING_CONVENTION)
+	if (context->token->type == TOKEN_DIRECTIVE_CALLING_CONVENTION)
 	{
 		Advance(context);
 		AssertToken(context, context->token, '(');
@@ -806,7 +806,6 @@ ASTExpression ParseExpression(Context *context, s32 precedence)
 			result.nodeType = ASTNODETYPE_PROCEDURE_CALL;
 			result.procedureCall.name = identifier;
 			result.procedureCall.procedureFound = false;
-			result.procedureCall.parameterTypeCheckingIdx = 0;
 			DynamicArrayInit(&result.procedureCall.arguments, 4);
 
 			// Parse arguments
@@ -889,21 +888,37 @@ ASTExpression ParseExpression(Context *context, s32 precedence)
 	} break;
 	case TOKEN_KEYWORD_TYPEOF:
 	{
+		result.any.loc = context->token->loc;
 		Advance(context);
 
-		result.any.loc = context->token->loc;
 		result.nodeType = ASTNODETYPE_TYPEOF;
 		result.typeOfNode.expression = NewTreeNode(context);
 		*result.typeOfNode.expression = ParseExpression(context, -1);
 	} break;
 	case TOKEN_KEYWORD_SIZEOF:
 	{
+		result.any.loc = context->token->loc;
 		Advance(context);
 
-		result.any.loc = context->token->loc;
 		result.nodeType = ASTNODETYPE_SIZEOF;
 		result.sizeOfNode.expression = NewTreeNode(context);
 		*result.sizeOfNode.expression = ParseExpression(context, -1);
+	} break;
+	case TOKEN_DIRECTIVE_DEFINED:
+	{
+		result.any.loc = context->token->loc;
+		Advance(context);
+
+		AssertToken(context, context->token, '(');
+		Advance(context);
+
+		result.nodeType = ASTNODETYPE_DEFINED;
+		AssertToken(context, context->token, TOKEN_IDENTIFIER);
+		result.definedNode.identifier = TokenToString(context, *context->token);
+		Advance(context);
+
+		AssertToken(context, context->token, ')');
+		Advance(context);
 	} break;
 	case TOKEN_KEYWORD_CAST:
 	{
@@ -923,7 +938,7 @@ ASTExpression ParseExpression(Context *context, s32 precedence)
 		int castPrecedence = GetOperatorPrecedence(TOKEN_KEYWORD_CAST);
 		*result.castNode.expression = ParseExpression(context, castPrecedence);
 	} break;
-	case TOKEN_KEYWORD_INTRINSIC:
+	case TOKEN_DIRECTIVE_INTRINSIC:
 	{
 		Advance(context);
 		result.any.loc = context->token->loc;
@@ -991,7 +1006,7 @@ ASTExpression ParseExpression(Context *context, s32 precedence)
 	{
 		LogError(context, context->token->loc, "'union' not valid on this context!"_s);
 	} break;
-	case TOKEN_KEYWORD_TYPE:
+	case TOKEN_DIRECTIVE_TYPE:
 	{
 		LogError(context, context->token->loc, "Not a valid type context!"_s);
 	} break;
@@ -1050,19 +1065,19 @@ ASTStaticDefinition ParseStaticDefinition(Context *context)
 	bool isExported = false;
 	while (true)
 	{
-		if (context->token->type == TOKEN_KEYWORD_INLINE)
+		if (context->token->type == TOKEN_DIRECTIVE_INLINE)
 		{
 			if (isInline) LogError(context, context->token->loc, "'inline' used twice"_s);
 			isInline = true;
 			Advance(context);
 		}
-		else if (context->token->type == TOKEN_KEYWORD_EXTERNAL)
+		else if (context->token->type == TOKEN_DIRECTIVE_EXTERNAL)
 		{
 			if (isExternal) LogError(context, context->token->loc, "'external' used twice"_s);
 			isExternal = true;
 			Advance(context);
 		}
-		else if (context->token->type == TOKEN_KEYWORD_EXPORT)
+		else if (context->token->type == TOKEN_DIRECTIVE_EXPORT)
 		{
 			if (isExported) LogError(context, context->token->loc, "'export' used twice"_s);
 			isExported = true;
@@ -1074,7 +1089,7 @@ ASTStaticDefinition ParseStaticDefinition(Context *context)
 
 	// Procedures!
 	if (context->token->type == '(' ||
-		context->token->type == TOKEN_KEYWORD_CALLING_CONVENTION)
+		context->token->type == TOKEN_DIRECTIVE_CALLING_CONVENTION)
 	{
 		expression.nodeType = ASTNODETYPE_PROCEDURE_DECLARATION;
 
@@ -1119,7 +1134,7 @@ ASTStaticDefinition ParseStaticDefinition(Context *context)
 			AssertToken(context, context->token, ';');
 			Advance(context);
 		} break;
-		case TOKEN_KEYWORD_TYPE:
+		case TOKEN_DIRECTIVE_TYPE:
 		{
 			Advance(context);
 			expression.nodeType = ASTNODETYPE_TYPE;
@@ -1128,7 +1143,7 @@ ASTStaticDefinition ParseStaticDefinition(Context *context)
 			AssertToken(context, context->token, ';');
 			Advance(context);
 		} break;
-		case TOKEN_KEYWORD_ALIAS:
+		case TOKEN_DIRECTIVE_ALIAS:
 		{
 			Advance(context);
 			expression.nodeType = ASTNODETYPE_ALIAS;
@@ -1178,7 +1193,7 @@ ASTExpression ParseStatement(Context *context)
 		result.nodeType = ASTNODETYPE_IF;
 		result.ifNode = ParseIf(context, false);
 	} break;
-	case TOKEN_KEYWORD_IF_STATIC:
+	case TOKEN_DIRECTIVE_IF:
 	{
 		result.nodeType = ASTNODETYPE_IF_STATIC;
 		result.ifNode = ParseIf(context, false);
@@ -1330,12 +1345,12 @@ ASTExpression ParseStaticStatement(Context *context)
 		}
 		Advance(context);
 	} break;
-	case TOKEN_KEYWORD_IF_STATIC:
+	case TOKEN_DIRECTIVE_IF:
 	{
 		result.nodeType = ASTNODETYPE_IF_STATIC;
 		result.ifNode = ParseIf(context, true);
 	} break;
-	case TOKEN_KEYWORD_OPERATOR:
+	case TOKEN_DIRECTIVE_OPERATOR:
 	{
 		Advance(context);
 
@@ -1348,7 +1363,7 @@ ASTExpression ParseStaticStatement(Context *context)
 		Advance(context);
 
 		bool isInline = false;
-		if (context->token->type == TOKEN_KEYWORD_INLINE)
+		if (context->token->type == TOKEN_DIRECTIVE_INLINE)
 		{
 			isInline = true;
 			Advance(context);
@@ -1366,7 +1381,7 @@ ASTExpression ParseStaticStatement(Context *context)
 		result.nodeType = ASTNODETYPE_OPERATOR_OVERLOAD;
 		result.operatorOverload = overload;
 	} break;
-	case TOKEN_KEYWORD_INCLUDE:
+	case TOKEN_DIRECTIVE_INCLUDE:
 	{
 		result.nodeType = ASTNODETYPE_INCLUDE;
 		Advance(context);
@@ -1378,7 +1393,7 @@ ASTExpression ParseStaticStatement(Context *context)
 		AssertToken(context, context->token, ';');
 		Advance(context);
 	} break;
-	case TOKEN_KEYWORD_LINKLIB:
+	case TOKEN_DIRECTIVE_LINKLIB:
 	{
 		result.nodeType = ASTNODETYPE_LINKLIB;
 		Advance(context);
@@ -1425,8 +1440,6 @@ ASTRoot *GenerateSyntaxTree(Context *context)
 	DynamicArrayInit(&root->block.statements, 4096);
 	BucketArrayInit(&context->treeNodes);
 	BucketArrayInit(&context->astTypeNodes);
-	BucketArrayInit(&context->values);
-	BucketArrayInit(&context->externalProcedures);
 	BucketArrayInit(&context->stringLiterals);
 
 	// Empty string
