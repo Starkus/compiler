@@ -226,6 +226,10 @@ inline void PopTCScope(Context *context, TCJob *job)
 // RUNNING.
 bool TCYield(Context *context, TCJob *job)
 {
+#if USE_PROFILER_API
+	performanceAPI.BeginEvent("TC Yield", nullptr, PERFORMANCEAPI_MAKE_COLOR(0xE0, 0x10, 0x10));
+#endif
+
 	{
 		auto jobStates = context->tcJobStates.GetForWrite();
 		(*jobStates)[job->jobIdx] = TCJOBSTATE_SLEEPING;
@@ -237,9 +241,60 @@ bool TCYield(Context *context, TCJob *job)
 				(*jobStates)[i] == TCJOBSTATE_WAITING_FOR_STOP)
 				goto sleep;
 	}
+#if USE_PROFILER_API
+	performanceAPI.EndEvent();
+#endif
 	return false;
 sleep:
 	Sleep(0);
+#if USE_PROFILER_API
+	performanceAPI.EndEvent();
+#endif
+	return true;
+}
+
+bool TCYield(Context *context, TCJob *job, String name, SRWLOCK *lock)
+{
+#if USE_PROFILER_API
+	performanceAPI.BeginEvent("TC Yield", nullptr, PERFORMANCEAPI_MAKE_COLOR(0xE0, 0x10, 0x10));
+#endif
+
+	{
+		auto jobStates = context->tcJobStates.GetForWrite();
+		(*jobStates)[job->jobIdx] = TCJOBSTATE_SLEEPING;
+	}
+	{
+		auto jobStates = context->tcJobStates.GetForRead();
+		for (int i = 0; i < (*jobStates).size; ++i)
+			if ((*jobStates)[i] == TCJOBSTATE_RUNNING ||
+				(*jobStates)[i] == TCJOBSTATE_WAITING_FOR_STOP)
+				goto sleep;
+	}
+#if USE_PROFILER_API
+	performanceAPI.EndEvent();
+#endif
+	return false;
+sleep:
+	CONDITION_VARIABLE *conditionVar;
+	{
+		auto conditionVariables = context->tcConditionVariables.GetForRead();
+		conditionVar = HashMapGet(*conditionVariables, name);
+	}
+	if (!conditionVar)
+	{
+		auto conditionVariables = context->tcConditionVariables.GetForWrite();
+		conditionVar = HashMapGet(*conditionVariables, name);
+		if (!conditionVar)
+		{
+			conditionVar = HashMapGetOrAdd(&conditionVariables, name);
+			InitializeConditionVariable(conditionVar);
+		}
+	}
+	SleepConditionVariableSRW(conditionVar, lock, INFINITE,
+			CONDITION_VARIABLE_LOCKMODE_SHARED);
+#if USE_PROFILER_API
+	performanceAPI.EndEvent();
+#endif
 	return true;
 }
 
@@ -267,26 +322,70 @@ TCScopeName TCFindScopeName(Context *context, TCJob *job, String name)
 	while (true)
 	{
 		auto globalScope = context->tcGlobalScope.GetForRead();
-		for (int i = 0; i < globalScope->names.size; ++i)
 		{
-			const TCScopeName *currentName = &globalScope->names[i];
-			if (StringEquals(name, currentName->name))
+			for (int i = 0; i < globalScope->names.size; ++i)
 			{
-				TCResume(context, job);
-				return *currentName;
+				const TCScopeName *currentName = &globalScope->names[i];
+				if (StringEquals(name, currentName->name))
+				{
+					TCResume(context, job);
+					return *currentName;
+				}
 			}
 		}
-		if (!TCYield(context, job))
+		{
+			auto jobStates = context->tcJobStates.GetForWrite();
+			(*jobStates)[job->jobIdx] = TCJOBSTATE_SLEEPING;
+		}
+		{
+			auto jobStates = context->tcJobStates.GetForRead();
+			for (int i = 0; i < (*jobStates).size; ++i)
+				if ((*jobStates)[i] == TCJOBSTATE_RUNNING ||
+					(*jobStates)[i] == TCJOBSTATE_WAITING_FOR_STOP)
+					goto sleep;
+
+			TCResume(context, job);
 			return { NAMETYPE_INVALID };
+		}
+sleep:
+		CONDITION_VARIABLE *conditionVar;
+		{
+			auto conditionVariables = context->tcConditionVariables.GetForRead();
+			conditionVar = HashMapGet(*conditionVariables, name);
+		}
+		if (!conditionVar)
+		{
+			auto conditionVariables = context->tcConditionVariables.GetForWrite();
+			conditionVar = HashMapGet(*conditionVariables, name);
+			if (!conditionVar)
+			{
+				conditionVar = HashMapGetOrAdd(&conditionVariables, name);
+				InitializeConditionVariable(conditionVar);
+			}
+		}
+		SleepConditionVariableSRW(conditionVar, &context->tcGlobalScope.rwLock, INFINITE,
+				CONDITION_VARIABLE_LOCKMODE_SHARED);
+
 	}
 }
 
-inline u32 NewStaticDefinition(Context *context, StaticDefinition *value)
+inline u32 TCNewStaticDefinition(Context *context, StaticDefinition *value)
 {
 	auto staticDefinitions = context->staticDefinitions.GetForWrite();
 	u64 result = BucketArrayCount(&staticDefinitions);
 	*BucketArrayAdd(&staticDefinitions) = *value;
 	ASSERT(result < U32_MAX);
+
+	CONDITION_VARIABLE *conditionVar;
+	{
+		auto conditionVariables = context->tcConditionVariables.GetForWrite();
+		conditionVar = HashMapGet(*conditionVariables, value->name);
+		if (conditionVar)
+			HashMapRemove(&conditionVariables, value->name);
+	}
+	if (conditionVar)
+		WakeAllConditionVariable(conditionVar);
+
 	return (u32)result;
 }
 
@@ -296,10 +395,43 @@ inline StaticDefinition GetStaticDefinition(Context *context, u32 staticDefiniti
 	return (*staticDefinitions)[staticDefinitionIdx];
 }
 
-inline void UpdateStaticDefinition(Context *context, u32 staticDefinitionIdx, StaticDefinition *value)
+inline StaticDefinition TCGetStaticDefinition(Context *context, TCJob *job, u32 staticDefinitionIdx,
+		bool ensureTypeChecked)
 {
-	auto staticDefinitions = context->staticDefinitions.GetForWrite();
-	(*staticDefinitions)[staticDefinitionIdx] = *value;
+	auto staticDefinitions = context->staticDefinitions.GetForRead();
+	StaticDefinition staticDefinition;
+	while (true)
+	{
+		staticDefinition = (*staticDefinitions)[staticDefinitionIdx];
+		if (staticDefinition.definitionType != STATICDEFINITIONTYPE_NOT_READY &&
+			(!ensureTypeChecked || staticDefinition.typeTableIdx != TYPETABLEIDX_UNSET))
+			break;
+
+		if (!TCYield(context, job, staticDefinition.name, &context->staticDefinitions.rwLock))
+			LogError(context, {},
+					TPrintF("COMPILER ERROR! Static definition \"%S\" never processed",
+					staticDefinition.name));
+	}
+	return staticDefinition;
+}
+
+inline void TCUpdateStaticDefinition(Context *context, TCJob *job, u32 staticDefinitionIdx,
+		StaticDefinition *value)
+{
+	{
+		auto staticDefinitions = context->staticDefinitions.GetForWrite();
+		(*staticDefinitions)[staticDefinitionIdx] = *value;
+	}
+
+	CONDITION_VARIABLE *conditionVar;
+	{
+		auto conditionVariables = context->tcConditionVariables.GetForWrite();
+		conditionVar = HashMapGet(*conditionVariables, value->name);
+		if (conditionVar)
+			HashMapRemove(&conditionVariables, value->name);
+	}
+	if (conditionVar)
+		WakeAllConditionVariable(conditionVar);
 }
 
 u32 FindTypeInStackByName(Context *context, TCJob *job, SourceLocation loc, String name)
@@ -316,29 +448,11 @@ u32 FindTypeInStackByName(Context *context, TCJob *job, SourceLocation loc, Stri
 	else if (scopeName.type != NAMETYPE_STATIC_DEFINITION)
 		LogError(context, loc, TPrintF("\"%S\" is not a type!", name));
 
-	StaticDefinition staticDefinition;
-	while (true)
-	{
-		staticDefinition = GetStaticDefinition(context, scopeName.staticDefinitionIdx);
-		if (staticDefinition.definitionType != STATICDEFINITIONTYPE_NOT_READY)
-			break;
-		if (!TCYield(context, job))
-			LogError(context, loc,
-					TPrintF("COMPILER ERROR! Static definition \"%S\" never processed", name));
-	}
+	StaticDefinition staticDefinition =
+		TCGetStaticDefinition(context, job, scopeName.staticDefinitionIdx, true);
 
 	if (staticDefinition.definitionType != STATICDEFINITIONTYPE_TYPE)
 		LogError(context, loc, TPrintF("\"%S\" is not a type!", name));
-
-	while (true)
-	{
-		if (staticDefinition.typeTableIdx != TYPETABLEIDX_UNSET)
-			break;
-		if (!TCYield(context, job))
-			LogError(context, loc,
-					TPrintF("COMPILER ERROR! Static definition \"%S\" never type checked", name));
-		scopeName = TCFindScopeName(context, job, name);
-	}
 
 	typeTableIdx = staticDefinition.typeTableIdx;
 	return typeTableIdx;
@@ -1452,8 +1566,20 @@ inline void TCAddScopeName(Context *context, TCJob *job, TCScopeName scopeName)
 		*DynamicArrayAdd(&stackTop->names) = scopeName;
 	else
 	{
-		auto globalScope = context->tcGlobalScope.GetForWrite();
-		*DynamicArrayAdd(&globalScope->names) = scopeName;
+		{
+			auto globalScope = context->tcGlobalScope.GetForWrite();
+			*DynamicArrayAdd(&globalScope->names) = scopeName;
+		}
+
+		CONDITION_VARIABLE *conditionVar;
+		{
+			auto conditionVariables = context->tcConditionVariables.GetForWrite();
+			conditionVar = HashMapGet(*conditionVariables, scopeName.name);
+			if (conditionVar)
+				HashMapRemove(&conditionVariables, scopeName.name);
+		}
+		if (conditionVar)
+			WakeAllConditionVariable(conditionVar);
 	}
 }
 
@@ -1547,7 +1673,7 @@ u32 TypeCheckType(Context *context, TCJob *job, String name, SourceLocation loc,
 			staticDefinition.constant.valueAsInt = currentValue;
 			staticDefinition.constant.typeTableIdx = TYPETABLEIDX_UNSET;
 
-			u32 newStaticDefIdx = NewStaticDefinition(context, &staticDefinition);
+			u32 newStaticDefIdx = TCNewStaticDefinition(context, &staticDefinition);
 			*ArrayAdd(&valueStaticDefs) = newStaticDefIdx;
 
 			TCScopeName newName;
@@ -1580,7 +1706,7 @@ u32 TypeCheckType(Context *context, TCJob *job, String name, SourceLocation loc,
 			StaticDefinition staticDefinition = GetStaticDefinition(context, staticDef);
 			staticDefinition.typeTableIdx = typeTableIdx;
 			staticDefinition.constant.typeTableIdx = typeTableIdx;
-			UpdateStaticDefinition(context, staticDef, &staticDefinition);
+			TCUpdateStaticDefinition(context, job, staticDef, &staticDefinition);
 		}
 
 		TCScope *stackTop = GetTopMostScope(context, job);
@@ -2328,18 +2454,8 @@ bool IsExpressionAType(Context *context, TCJob *job, ASTExpression *expression)
 		case NAMETYPE_STATIC_DEFINITION:
 		{
 			u32 defIdx = expression->identifier.staticDefinitionIdx;
-			StaticDefinitionType defType;
-			while (true)
-			{
-				StaticDefinition staticDef = GetStaticDefinition(context, defIdx);
-				defType = staticDef.definitionType;
-				if (defType != STATICDEFINITIONTYPE_NOT_READY)
-					break;
-				if (!TCYield(context, job))
-					LogError(context, expression->any.loc, TPrintF("COMPILER ERROR! Static "
-								"definition \"%S\" never processed", staticDef.name));
-			}
-			return defType == STATICDEFINITIONTYPE_TYPE;
+			StaticDefinition staticDef = TCGetStaticDefinition(context, job, defIdx, false);
+			return staticDef.definitionType == STATICDEFINITIONTYPE_TYPE;
 		}
 		case NAMETYPE_PRIMITIVE:
 			return true;
@@ -2600,7 +2716,7 @@ void TryTypeCheckExpression(Context *context, TCJob *job, ASTExpression *express
 		newStaticDef.typeTableIdx = TYPETABLEIDX_UNSET;
 		newStaticDef.name = astStaticDef->name;
 
-		u32 newStaticDefIdx = NewStaticDefinition(context, &newStaticDef);
+		u32 newStaticDefIdx = TCNewStaticDefinition(context, &newStaticDef);
 
 		// Add scope name
 		TCScopeName staticDefScopeName;
@@ -2645,7 +2761,7 @@ void TryTypeCheckExpression(Context *context, TCJob *job, ASTExpression *express
 			astStaticDef->expression->typeTableIdx = typeTableIdx;
 			newStaticDef.typeTableIdx = typeTableIdx;
 
-			UpdateStaticDefinition(context, newStaticDefIdx, &newStaticDef);
+			TCUpdateStaticDefinition(context, job, newStaticDefIdx, &newStaticDef);
 			UpdateProcedure(context, procedureIdx, &procedure);
 
 #if DEBUG_BUILD
@@ -2733,7 +2849,7 @@ void TryTypeCheckExpression(Context *context, TCJob *job, ASTExpression *express
 
 			newStaticDef.typeTableIdx = newTypeIdx;
 			expression->typeTableIdx = newTypeIdx;
-			UpdateStaticDefinition(context, newStaticDefIdx, &newStaticDef);
+			TCUpdateStaticDefinition(context, job, newStaticDefIdx, &newStaticDef);
 		}
 		else
 		{
@@ -2744,7 +2860,7 @@ void TryTypeCheckExpression(Context *context, TCJob *job, ASTExpression *express
 			{
 				ASSERT(astStaticDef->expression->typeTableIdx != TYPETABLEIDX_UNSET);
 				u32 identifierStaticDefIdx = astStaticDef->expression->identifier.staticDefinitionIdx;
-				newStaticDef = GetStaticDefinition(context, identifierStaticDefIdx);
+				newStaticDef = TCGetStaticDefinition(context, job, identifierStaticDefIdx, true);
 				newStaticDef.name = astStaticDef->name;
 				newStaticDef.typeTableIdx = astStaticDef->expression->typeTableIdx;
 				expression->typeTableIdx = astStaticDef->expression->typeTableIdx;
@@ -2764,7 +2880,7 @@ void TryTypeCheckExpression(Context *context, TCJob *job, ASTExpression *express
 					LogError(context, astStaticDef->expression->any.loc,
 							"Failed to evaluate constant"_s);
 			}
-			UpdateStaticDefinition(context, newStaticDefIdx, &newStaticDef);
+			TCUpdateStaticDefinition(context, job, newStaticDefIdx, &newStaticDef);
 		}
 	} break;
 	case ASTNODETYPE_RETURN:
@@ -2845,32 +2961,9 @@ void TryTypeCheckExpression(Context *context, TCJob *job, ASTExpression *express
 		case NAMETYPE_STATIC_DEFINITION:
 		{
 			expression->identifier.staticDefinitionIdx = scopeName.staticDefinitionIdx;
-			StaticDefinition staticDefinition;
-			while (true)
-			{
-				staticDefinition = GetStaticDefinition(context, scopeName.staticDefinitionIdx);
-				if (staticDefinition.definitionType != STATICDEFINITIONTYPE_NOT_READY)
-					break;
-				if (!TCYield(context, job))
-					LogError(context, expression->any.loc, TPrintF("COMPILER ERROR! Static "
-								"definition \"%S\" never processed", string));
-			}
-			TCResume(context, job);
-
-			u32 staticDefTypeIdx;
-			while (true)
-			{
-				staticDefTypeIdx =
-					GetStaticDefinition(context, scopeName.staticDefinitionIdx).typeTableIdx;
-				if (staticDefTypeIdx != TYPETABLEIDX_UNSET)
-					break;
-				if (!TCYield(context, job))
-					LogError(context, expression->any.loc, TPrintF("COMPILER ERROR! Static "
-								"definition \"%S\" never type checked", string));
-			}
-			TCResume(context, job);
-
-			expression->typeTableIdx = staticDefTypeIdx;
+			StaticDefinition staticDefinition = TCGetStaticDefinition(context, job,
+					scopeName.staticDefinitionIdx, true);
+			expression->typeTableIdx = staticDefinition.typeTableIdx;
 		} break;
 		case NAMETYPE_PRIMITIVE:
 		{
@@ -2929,18 +3022,9 @@ void TryTypeCheckExpression(Context *context, TCJob *job, ASTExpression *express
 		}
 		else if (scopeName.type == NAMETYPE_STATIC_DEFINITION)
 		{
-			StaticDefinition staticDefinition;
-			while (true)
-			{
-				staticDefinition = GetStaticDefinition(context, scopeName.staticDefinitionIdx);
-				if (staticDefinition.definitionType != STATICDEFINITIONTYPE_NOT_READY)
-					break;
-				if (!TCYield(context, job))
-					LogError(context, expression->any.loc, TPrintF("COMPILER ERROR! Static "
-								"definition \"%S\" never processed", staticDefinition.name));
-				scopeName = TCFindScopeName(context, job, procName);
-			}
-			TCResume(context, job);
+			StaticDefinition staticDefinition = TCGetStaticDefinition(context, job,
+					scopeName.staticDefinitionIdx, false);
+
 			if (staticDefinition.definitionType != STATICDEFINITIONTYPE_PROCEDURE)
 				LogError(context, expression->any.loc, "Calling a non-procedure"_s);
 
@@ -4083,7 +4167,13 @@ void TypeCheckMain(Context *context)
 	}
 
 	{
-		auto globalScope = context->tcGlobalScope.GetForWrite();
+		auto conditionVariables = context->tcConditionVariables.GetForWrite();
+		HashMapInit(&conditionVariables, 256);
+	}
+
+	{
+		auto globalScope = &context->tcGlobalScope.GetForWrite();
+
 		DynamicArrayInit(&globalScope->names, 64);
 		DynamicArrayInit(&globalScope->typeIndices, 64);
 

@@ -125,3 +125,114 @@ public:
 		return HandleWrite(this);
 	}
 };
+
+template <typename T>
+class SafeContainer2
+{
+public:
+	T content;
+	SRWLOCK rwLock;
+
+	SafeContainer2()
+	{
+		InitializeSRWLock(&rwLock);
+	}
+
+	const T &LockForRead()
+	{
+		AcquireSRWLockShared(&rwLock);
+		return content;
+	}
+
+	void UnlockForRead()
+	{
+		ReleaseSRWLockShared(&rwLock);
+	}
+
+	T &LockForWrite()
+	{
+		AcquireSRWLockExclusive(&rwLock);
+		return content;
+	}
+
+	void UnlockForWrite()
+	{
+		ReleaseSRWLockExclusive(&rwLock);
+	}
+
+	template <typename T>
+	class HandleRead
+	{
+	public:
+		SafeContainer2<T> *safeContainer;
+
+		HandleRead(SafeContainer2<T> *safe)
+		{
+			safeContainer = safe;
+			safeContainer->LockForRead();
+		}
+
+		~HandleRead()
+		{
+			safeContainer->UnlockForRead();
+		}
+
+		const T &operator*()
+		{
+			return safeContainer->content;
+		}
+
+		const T *operator->()
+		{
+			return &safeContainer->content;
+		}
+
+		const T *operator&()
+		{
+			return &safeContainer->content;
+		}
+	};
+
+	HandleRead<T> GetForRead()
+	{
+		return HandleRead(this);
+	}
+
+	template <typename T>
+	class HandleWrite
+	{
+	public:
+		SafeContainer2<T> *safeContainer;
+
+		HandleWrite(SafeContainer2<T> *safe)
+		{
+			safe->LockForWrite();
+			safeContainer = safe;
+		}
+
+		~HandleWrite()
+		{
+			safeContainer->UnlockForWrite();
+		}
+
+		T &operator*()
+		{
+			return safeContainer->content;
+		}
+
+		T *operator->()
+		{
+			return &safeContainer->content;
+		}
+
+		T *operator&()
+		{
+			return &safeContainer->content;
+		}
+	};
+
+	HandleWrite<T> GetForWrite()
+	{
+		return HandleWrite(this);
+	}
+};

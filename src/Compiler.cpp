@@ -5,7 +5,7 @@
 #include "Strings.h"
 #include "MemoryAlloc.h"
 
-#define USE_PROFILER_API 0
+#define USE_PROFILER_API 1
 
 const String TPrintF(const char *format, ...);
 
@@ -170,12 +170,13 @@ struct Context
 	SafeContainer<BucketArray<Procedure, HeapAllocator, 512>> procedures;
 	SafeContainer<BucketArray<Procedure, HeapAllocator, 128>> externalProcedures;
 	DynamicArray<OperatorOverload, HeapAllocator> operatorOverloads;
-	SafeContainer<BucketArray<StaticDefinition, HeapAllocator, 512>> staticDefinitions;
+	SafeContainer2<BucketArray<StaticDefinition, HeapAllocator, 512>> staticDefinitions;
 
 	/* Don't add types to the type table by hand without checking what AddType() does! */
 	SafeContainer<BucketArray<const TypeInfo, HeapAllocator, 1024>> typeTable;
 
-	SafeContainer<TCScope> tcGlobalScope;
+	SafeContainer2<TCScope> tcGlobalScope;
+	SafeContainer<HashMap<String, CONDITION_VARIABLE, HeapAllocator>> tcConditionVariables;
 
 	// IR -----
 	DynamicArray<BucketArray<IRInstruction, FrameAllocator, 256>, HeapAllocator> irProcedureInstructions;

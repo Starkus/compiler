@@ -647,6 +647,33 @@ add:
 	return &values[slotIdx];
 }
 
+template <typename K, typename V, typename A>
+bool HashMapRemove(HashMap<K,V,A> *hashMap, K key)
+{
+	ASSERT(IsPowerOf2(hashMap->capacity));
+	u32 mask = hashMap->capacity - 1;
+	u32 slotIdx = Hash(key) & mask;
+
+	K *keys = HashMapKeys(*hashMap);
+
+	K foundKey;
+	for (u32 iterations = 0; iterations < hashMap->capacity; ++iterations)
+	{
+		if (!HashMapSlotOccupied(*hashMap, slotIdx))
+			return false;
+		foundKey = keys[slotIdx];
+		if (foundKey == key)
+		{
+			// Remove
+			u32 *bookkeep = (u32 *)hashMap->memory;
+			BitfieldClearBit(bookkeep, slotIdx);
+			return true;
+		}
+		slotIdx = (slotIdx + 1) & mask;
+	}
+	return false;
+}
+
 bool PresentInBigArray(u32 *buffer, u64 count, u32 item)
 {
 	__m256i itemX8 = _mm256_set1_epi32(item);
