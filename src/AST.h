@@ -201,7 +201,6 @@ struct ASTOperatorOverload : ASTBase
 	bool isInline;
 
 	// Type check
-	bool overloadRegistered;
 	s32 procedureIdx;
 };
 

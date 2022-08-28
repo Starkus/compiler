@@ -7,6 +7,14 @@ struct Tokenizer
 	const char *beginningOfLine;
 };
 
+struct Context;
+struct ParseJobArgs
+{
+	Context *context;
+	u32 fileIdx;
+	u32 jobIdx;
+};
+
 enum TokenType : u8
 {
 	TOKEN_INVALID			= 0,
@@ -134,3 +142,5 @@ struct Token
 	u16 size;
 	SourceLocation loc;
 };
+
+void ParseJobProc(void *);

@@ -150,26 +150,27 @@ struct Context
 {
 	Config config;
 
+	u32 tlsIndex;
+
+	SRWLOCK filesLock;
 	DynamicArray<SourceFile, HeapAllocator> sourceFiles;
 	DynamicArray<String, HeapAllocator> libsToLink;
 
 	// Parsing -----
-	BucketArray<Token, HeapAllocator, 1024> tokens;
-	u64 currentTokenIdx;
-	Token *token;
-	ASTRoot *astRoot;
-	BucketArray<ASTExpression, HeapAllocator, 1024> treeNodes;
-	BucketArray<ASTType, HeapAllocator, 1024> astTypeNodes;
-	BucketArray<String, HeapAllocator, 1024> stringLiterals;
+	DynamicArray<HANDLE, HeapAllocator> parseThreads;
+	SafeContainer<DynamicArray<TCJobState, HeapAllocator>> parseJobStates;
+	DynamicArray<BucketArray<Token, HeapAllocator, 1024>, HeapAllocator> fileTokens;
+	DynamicArray<ASTRoot, HeapAllocator> fileASTRoots;
+	DynamicArray<SafeContainer2<BucketArray<ASTExpression, HeapAllocator, 1024>>, HeapAllocator> fileTreeNodes;
+	DynamicArray<SafeContainer2<BucketArray<ASTType, HeapAllocator, 1024>>, HeapAllocator> fileTypeNodes;
 
 	// Type check -----
-	Mutex tcMutex;
-	DynamicArray<HANDLE, HeapAllocator> tcThreads;
+	SafeContainer<DynamicArray<HANDLE, HeapAllocator>> tcThreads;
 	SafeContainer<DynamicArray<TCJobState, HeapAllocator>> tcJobStates;
 	SafeContainer<BucketArray<Value, HeapAllocator, 2048>> values;
 	SafeContainer<BucketArray<Procedure, HeapAllocator, 512>> procedures;
 	SafeContainer<BucketArray<Procedure, HeapAllocator, 128>> externalProcedures;
-	DynamicArray<OperatorOverload, HeapAllocator> operatorOverloads;
+	SafeContainer<DynamicArray<OperatorOverload, HeapAllocator>> operatorOverloads;
 	SafeContainer2<BucketArray<StaticDefinition, HeapAllocator, 512>> staticDefinitions;
 
 	/* Don't add types to the type table by hand without checking what AddType() does! */
@@ -179,6 +180,7 @@ struct Context
 	SafeContainer<HashMap<String, CONDITION_VARIABLE, HeapAllocator>> tcConditionVariables;
 
 	// IR -----
+	BucketArray<String, HeapAllocator, 1024> stringLiterals;
 	DynamicArray<BucketArray<IRInstruction, FrameAllocator, 256>, HeapAllocator> irProcedureInstructions;
 	DynamicArray<IRStaticVariable, HeapAllocator> irStaticVariables;
 	DynamicArray<u32, HeapAllocator> irExternalVariables;
@@ -201,6 +203,13 @@ struct Context
 	BucketArray<BEInstruction, PhaseAllocator, 128> bePatchedInstructions;
 };
 
+struct ThreadData
+{
+	u32 fileIdx;
+	u64 currentTokenIdx;
+	Token *token;
+};
+
 FatSourceLocation ExpandSourceLocation(Context *context, SourceLocation loc);
 void __Log(Context *context, SourceLocation loc, String str, const char *inFile, const char *inFunc,
 		int inLine)
@@ -208,7 +217,11 @@ void __Log(Context *context, SourceLocation loc, String str, const char *inFile,
 	FatSourceLocation fatLoc = ExpandSourceLocation(context, loc);
 
 	// Info
-	SourceFile sourceFile = context->sourceFiles[loc.fileIdx];
+	SourceFile sourceFile;
+	{
+		ScopedLockRead filesLock(&context->filesLock);
+		sourceFile = context->sourceFiles[loc.fileIdx];
+	}
 	Print("%S %d:%d %S\n", sourceFile.name, fatLoc.line, fatLoc.character, str);
 
 	// Source line
@@ -254,6 +267,8 @@ bool CompilerAddSourceFile(Context *context, String filename, SourceLocation loc
 				TPrintF("Included source file \"%S\" doesn't exist!", filename));
 
 	// First file is <builtin>
+	// @Improve: delete builtin file, shouldn't need it anymore...
+	ScopedLockWrite sourceFiles(&context->filesLock);
 	for (int i = 1; i < context->sourceFiles.size; ++i)
 	{
 		String currentFilename = context->sourceFiles[i].name;
@@ -271,6 +286,26 @@ bool CompilerAddSourceFile(Context *context, String filename, SourceLocation loc
 	SYSReadEntireFile(file, &newSourceFile.buffer, &newSourceFile.size, FrameAllocator::Alloc);
 
 	*DynamicArrayAdd(&context->sourceFiles) = newSourceFile;
+
+	ASTRoot *newRoot = DynamicArrayAdd(&context->fileASTRoots);
+	DynamicArrayInit(&newRoot->block.statements, 4096);
+
+	BucketArrayInit(DynamicArrayAdd(&context->fileTokens));
+
+	SafeContainer2<BucketArray<ASTExpression, HeapAllocator, 1024>> newTreeNodes;
+	BucketArrayInit(&newTreeNodes.content);
+	*DynamicArrayAdd(&context->fileTreeNodes) = newTreeNodes;
+
+	SafeContainer2<BucketArray<ASTType, HeapAllocator, 1024>> newTypeNodes;
+	BucketArrayInit(&newTypeNodes.content);
+	*DynamicArrayAdd(&context->fileTypeNodes) = newTypeNodes;
+
+	auto parseJobStates = context->parseJobStates.GetForWrite();
+	ParseJobArgs *args = ALLOC(PhaseAllocator::Alloc, ParseJobArgs);
+	u32 jobIdx = (u32)parseJobStates->size;
+	*args = { context, (u32)context->sourceFiles.size - 1, jobIdx };
+	*DynamicArrayAdd(&parseJobStates) = TCJOBSTATE_RUNNING;
+	*DynamicArrayAdd(&context->parseThreads) = (HANDLE)_beginthread(ParseJobProc, 0, (void *)args);
 
 	return true;
 }
@@ -314,14 +349,22 @@ int main(int argc, char **argv)
 
 	Context context = {};
 
+	context.tlsIndex = TlsAlloc();
+	ThreadData mainThreadData;
+	TlsSetValue(context.tlsIndex, &mainThreadData);
+
 	DynamicArrayInit(&context.sourceFiles, 16);
 	DynamicArrayInit(&context.libsToLink, 8);
-	BucketArrayInit(&context.tokens);
 
 	DynamicArray<String, FrameAllocator> inputFiles;
 	DynamicArrayInit(&inputFiles, 16);
 	*DynamicArrayAdd(&inputFiles) = "core/basic.emi"_s;
 	*DynamicArrayAdd(&inputFiles) = "core/print.emi"_s;
+#if _MSC_VER
+	*DynamicArrayAdd(&inputFiles) = "core/basic_windows.emi"_s;
+#else
+	*DynamicArrayAdd(&inputFiles) = "core/basic_linux.emi"_s;
+#endif
 	for (int argIdx = 1; argIdx < argc; ++argIdx)
 	{
 		char *arg = argv[argIdx];
@@ -349,24 +392,15 @@ int main(int argc, char **argv)
 
 	TimerSplit("Initialization"_s);
 
-	// Platform constant
-	{
-#if _MSC_VER
-		String code = "compiler_platform :: COMPILER_PLATFORM_WINDOWS;"_s;
-#else
-		String code = "compiler_platform :: COMPILER_PLATFORM_LINUX;"_s;
-#endif
-		SourceFile builtinSourceFile = {};
-		builtinSourceFile.buffer = code.data;
-		builtinSourceFile.size   = code.size;
-		*DynamicArrayAdd(&context.sourceFiles) = builtinSourceFile;
-	}
+	ParserMain(&context);
+	TypeCheckMain(&context);
 
 	for (int i = 0; i < inputFiles.size; ++i)
 		CompilerAddSourceFile(&context, inputFiles[i], {});
 
 	TimerSplit("Read input files"_s);
 
+#if 0
 	for (int i = 0; i < context.sourceFiles.size; ++i)
 		TokenizeFile(&context, i);
 
@@ -388,6 +422,16 @@ int main(int argc, char **argv)
 
 	TimerSplit("Type checking"_s);
 	PhaseAllocator::Wipe();
+#else
+	for (int threadIdx = 0; threadIdx < context.parseThreads.size; ++threadIdx)
+		WaitForSingleObject(context.parseThreads[threadIdx], INFINITE);
+
+	// Unsafe reads!
+	for (int threadIdx = 0; threadIdx < context.tcThreads.content.size; ++threadIdx)
+		WaitForSingleObject(context.tcThreads.content[threadIdx], INFINITE);
+#endif
+
+	//BREAK;
 
 	IRGenMain(&context);
 

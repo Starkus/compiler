@@ -216,7 +216,7 @@ IRValue IRValueTypeOf(Context *context, u32 typeTableIdx)
 	return IRValueValue(typeValueIdx, typeInfoPointerTypeIdx);
 }
 
-IRValue IRGenFromExpression(Context *context, ASTExpression *expression);
+IRValue IRGenFromExpression(Context *context, const ASTExpression *expression);
 
 IRValue IRDereferenceValue(Context *context, IRValue in)
 {
@@ -584,7 +584,8 @@ IRValue IRDoCast(Context *context, IRValue value, u32 typeTableIdx)
 	return result;
 }
 
-IRValue IRInstructionFromBinaryOperation(Context *context, ASTExpression *expression, IRValue outValue)
+IRValue IRInstructionFromBinaryOperation(Context *context, const ASTExpression *expression,
+		IRValue outValue)
 {
 	IRValue result = {};
 
@@ -1412,7 +1413,7 @@ void IRGenProcedure(Context *context, s32 procedureIdx, SourceLocation loc)
 	PopIRProcedure(context);
 }
 
-IRValue IRGenFromExpression(Context *context, ASTExpression *expression)
+IRValue IRGenFromExpression(Context *context, const ASTExpression *expression)
 {
 #if DEBUG_BUILD
 	SourceLocation loc = expression->any.loc;
@@ -1664,7 +1665,7 @@ IRValue IRGenFromExpression(Context *context, ASTExpression *expression)
 	} break;
 	case ASTNODETYPE_PROCEDURE_CALL:
 	{
-		ASTProcedureCall *astProcCall = &expression->procedureCall;
+		const ASTProcedureCall *astProcCall = &expression->procedureCall;
 		IRInstruction procCallInst = {};
 		u32 procTypeIdx;
 		switch (astProcCall->callType)
@@ -1741,7 +1742,7 @@ IRValue IRGenFromExpression(Context *context, ASTExpression *expression)
 		s64 normalArgumentsCount = Min(callParamCount, procParamCount);
 		for (int argIdx = 0; argIdx < normalArgumentsCount; ++argIdx)
 		{
-			ASTExpression *arg = &astProcCall->arguments[argIdx];
+			const ASTExpression *arg = &astProcCall->arguments[argIdx];
 			u32 argTypeTableIdx = procTypeInfo.parameters[argIdx].typeTableIdx;
 
 			IRValue param = IRGenFromExpression(context, arg);
@@ -1777,7 +1778,7 @@ IRValue IRGenFromExpression(Context *context, ASTExpression *expression)
 
 			if (varargsCount == 1)
 			{
-				ASTExpression *varargsArrayExp = &astProcCall->arguments[procParamCount];
+				const ASTExpression *varargsArrayExp = &astProcCall->arguments[procParamCount];
 				if (varargsArrayExp->typeTableIdx == arrayOfAnyTypeIdx)
 				{
 					IRAddComment(context, "Forwarding varargs array"_s);
@@ -1806,7 +1807,7 @@ IRValue IRGenFromExpression(Context *context, ASTExpression *expression)
 				int nonVarargs = (int)procParamCount;
 				for (int argIdx = 0; argIdx < varargsCount; ++argIdx)
 				{
-					ASTExpression *arg = &astProcCall->arguments[argIdx + nonVarargs];
+					const ASTExpression *arg = &astProcCall->arguments[argIdx + nonVarargs];
 
 					IRValue bufferIndexValue = IRValueImmediate(argIdx);
 					IRValue bufferSlotValue = IRDoArrayAccess(context, bufferIRValue, bufferIndexValue,
@@ -2045,7 +2046,7 @@ skipGeneratingVarargsArray:
 	{
 		PushIRScope(context);
 
-		ASTFor *astFor = &expression->forNode;
+		const ASTFor *astFor = &expression->forNode;
 
 		u32 indexValueIdx = astFor->indexValueIdx;
 		IRPushValueIntoStack(context, indexValueIdx);
@@ -2350,6 +2351,10 @@ void IRGenMain(Context *context)
 	DynamicArrayInit(&context->irExternalVariables, 32);
 	DynamicArrayInit(&context->irStack, 64);
 	DynamicArrayInit(&context->irProcedureStack, 8);
+	BucketArrayInit(&context->stringLiterals);
+
+	// Empty string
+	*BucketArrayAdd(&context->stringLiterals) = {};
 
 	u64 procCount = BucketArrayCount(&context->procedures.LockForRead());
 	context->procedures.UnlockForRead();
@@ -2359,9 +2364,13 @@ void IRGenMain(Context *context)
 
 	PushIRScope(context);
 
-	for (int statementIdx = 0; statementIdx < context->astRoot->block.statements.size; ++statementIdx)
+	for (int fileIdx = 0; fileIdx < context->fileASTRoots.size; ++fileIdx)
 	{
-		ASTExpression *statement = &context->astRoot->block.statements[statementIdx];
-		IRGenFromExpression(context, statement);
+		ArrayView<ASTExpression> statements = context->fileASTRoots[fileIdx].block.statements;
+		for (int statementIdx = 0; statementIdx < statements.size; ++statementIdx)
+		{
+			const ASTExpression *statement = &statements[statementIdx];
+			IRGenFromExpression(context, statement);
+		}
 	}
 }

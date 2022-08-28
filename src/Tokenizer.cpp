@@ -130,7 +130,11 @@ void ProcessCComment(Tokenizer *tokenizer)
 
 String TokenToString(Context *context, Token token)
 {
-	SourceFile sourceFile = context->sourceFiles[token.loc.fileIdx];
+	SourceFile sourceFile;
+	{
+		ScopedLockRead(&context->filesLock);
+		sourceFile = context->sourceFiles[token.loc.fileIdx];
+	}
 	String result = { token.size, (const char *)sourceFile.buffer + token.loc.character };
 	if (token.type == TOKEN_LITERAL_STRING || token.type == TOKEN_LITERAL_CHARACTER)
 	{
@@ -764,7 +768,11 @@ Token ReadNewToken(Context *context, Tokenizer *tokenizer, const char *fileBuffe
 
 FatSourceLocation ExpandSourceLocation(Context *context, SourceLocation loc)
 {
-	SourceFile sourceFile = context->sourceFiles[loc.fileIdx];
+	SourceFile sourceFile;
+	{
+		ScopedLockWrite(&context->filesLock);
+		sourceFile = context->sourceFiles[loc.fileIdx];
+	}
 
 	FatSourceLocation result;
 	result.beginingOfLine = (const char *)sourceFile.buffer;
@@ -809,15 +817,20 @@ FatSourceLocation ExpandSourceLocation(Context *context, SourceLocation loc)
 void TokenizeFile(Context *context, u32 fileIdx)
 {
 	Tokenizer tokenizer = {};
-	SourceFile file = context->sourceFiles[fileIdx];
+	SourceFile file;
+	{
+		ScopedLockRead filesLock(&context->filesLock);
+		file = context->sourceFiles[fileIdx];
+	}
 	tokenizer.fileIdx = fileIdx;
 	tokenizer.cursor = (char *)file.buffer;
 	tokenizer.beginningOfLine = (char *)file.buffer;
 	tokenizer.end = (char *)(file.buffer + file.size);
 	tokenizer.line = 1; // Line numbers start at 1 not 0.
 
-	const char *fileBuffer = context->sourceFiles[fileIdx].buffer;
+	const char *fileBuffer = file.buffer;
 
+#if 0
 	u64 tokenCount = BucketArrayCount(&context->tokens);
 	if (tokenCount)
 	{
@@ -825,6 +838,7 @@ void TokenizeFile(Context *context, u32 fileIdx)
 		// Remove!
 		--context->tokens.buckets[context->tokens.buckets.size - 1].size;
 	}
+#endif
 
 	while (true)
 	{
@@ -854,11 +868,11 @@ void TokenizeFile(Context *context, u32 fileIdx)
 		if (newToken.type == TOKEN_INVALID_DIRECTIVE)
 			LogError(context, newToken.loc, "Invalid parser directive"_s);
 
-		*BucketArrayAdd(&context->tokens) = newToken;
+		*BucketArrayAdd(&context->fileTokens[fileIdx]) = newToken;
 
 		tokenizer.cursor += newToken.size;
 	}
 
-	*BucketArrayAdd(&context->tokens) = { TOKEN_END_OF_FILE, 0,
+	*BucketArrayAdd(&context->fileTokens[fileIdx]) = { TOKEN_END_OF_FILE, 0,
 		{ fileIdx, (u32)(tokenizer.cursor - file.buffer)-1 } };
 }

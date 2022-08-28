@@ -175,8 +175,8 @@ void Indent()
 		Print("+-");
 }
 
-void PrintExpression(Context *context, ASTExpression *e);
-void PrintASTType(Context *context, ASTType *type)
+void PrintExpression(Context *context, const ASTExpression *e);
+void PrintASTType(Context *context, const ASTType *type)
 {
 	Indent();
 	if (!type)
@@ -226,7 +226,7 @@ void PrintASTType(Context *context, ASTType *type)
 		++indentLevels;
 		for (int i = 0; i < type->structDeclaration.members.size; ++i)
 		{
-			ASTStructMemberDeclaration *member = &type->structDeclaration.members[i];
+			const ASTStructMemberDeclaration *member = &type->structDeclaration.members[i];
 
 			Indent();
 			Print("Struct member \"%S\" of type:\n", member->name);
@@ -263,7 +263,7 @@ void PrintASTType(Context *context, ASTType *type)
 		++indentLevels;
 		for (int i = 0; i < type->enumDeclaration.members.size; ++i)
 		{
-			ASTEnumMember *member = &type->enumDeclaration.members[i];
+			const ASTEnumMember *member = &type->enumDeclaration.members[i];
 
 			Indent();
 			Print("Enum member \"%S\"\n", member->name);
@@ -285,7 +285,7 @@ void PrintASTType(Context *context, ASTType *type)
 	}
 }
 
-void PrintExpression(Context *context, ASTExpression *e)
+void PrintExpression(Context *context, const ASTExpression *e)
 {
 	Indent();
 	switch (e->nodeType)
@@ -320,7 +320,7 @@ void PrintExpression(Context *context, ASTExpression *e)
 		Indent();
 		Print("Parameters:\n");
 		++indentLevels;
-		ASTProcedurePrototype *prototype = &e->procedureDeclaration.prototype;
+		const ASTProcedurePrototype *prototype = &e->procedureDeclaration.prototype;
 		for (int i = 0; i < prototype->astParameters.size; ++i)
 		{
 			ASTProcedureParameter astParam = prototype->astParameters[i];
@@ -555,9 +555,13 @@ void PrintAST(Context *context)
 {
 	indentLevels = 0;
 
-	for (int i = 0; i < context->astRoot->block.statements.size; ++i)
+	for (int fileIdx = 0; fileIdx < context->fileASTRoots.size; ++fileIdx)
 	{
-		ASTExpression *statement = &context->astRoot->block.statements[i];
-		PrintExpression(context, statement);
+		ArrayView<ASTExpression> statements = context->fileASTRoots[fileIdx].block.statements;
+		for (int i = 0; i < statements.size; ++i)
+		{
+			const ASTExpression *statement = &statements[i];
+			PrintExpression(context, statement);
+		}
 	}
 }

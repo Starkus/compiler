@@ -1,3 +1,5 @@
+compiler_platform :: COMPILER_PLATFORM_LINUX;
+
 STDIN  :: 0;
 STDOUT :: 1;
 STDERR :: 2;

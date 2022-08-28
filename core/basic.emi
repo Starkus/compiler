@@ -20,11 +20,6 @@ Compiler_Output_Types :: enum
 	COMPILER_OUTPUT_LIBRARY    = 1
 };
 
-#if (compiler_platform == COMPILER_PLATFORM_WINDOWS)
-	#include "core/basic_windows.emi";
-else
-	#include "core/basic_linux.emi";
-
 #if !#defined(compiler_output_type)
 	compiler_output_type :: COMPILER_OUTPUT_EXECUTABLE;
 

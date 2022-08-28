@@ -220,6 +220,24 @@ inline void PopTCScope(Context *context, TCJob *job)
 	--job->scopeStack.size;
 }
 
+inline bool TCIsAnyJobRunning(Context *context)
+{
+	{
+		auto jobStates = context->tcJobStates.GetForRead();
+		for (int i = 0; i < (*jobStates).size; ++i)
+			if ((*jobStates)[i] == TCJOBSTATE_RUNNING ||
+				(*jobStates)[i] == TCJOBSTATE_WAITING_FOR_STOP)
+				return true;
+	}
+	{
+		auto jobStates = context->parseJobStates.GetForRead();
+		for (int i = 0; i < (*jobStates).size; ++i)
+			if ((*jobStates)[i] == TCJOBSTATE_RUNNING)
+				return true;
+	}
+	return false;
+}
+
 // Try to sleep and yield execution to other jobs.
 // Returns false all other jobs are also sleeping.
 // Caller must call TCResume after finding what it's looking for, to set the job state back to
@@ -234,18 +252,13 @@ bool TCYield(Context *context, TCJob *job)
 		auto jobStates = context->tcJobStates.GetForWrite();
 		(*jobStates)[job->jobIdx] = TCJOBSTATE_SLEEPING;
 	}
+	if (!TCIsAnyJobRunning(context))
 	{
-		auto jobStates = context->tcJobStates.GetForRead();
-		for (int i = 0; i < (*jobStates).size; ++i)
-			if ((*jobStates)[i] == TCJOBSTATE_RUNNING ||
-				(*jobStates)[i] == TCJOBSTATE_WAITING_FOR_STOP)
-				goto sleep;
-	}
 #if USE_PROFILER_API
-	performanceAPI.EndEvent();
+		performanceAPI.EndEvent();
 #endif
-	return false;
-sleep:
+		return false;
+	}
 	Sleep(0);
 #if USE_PROFILER_API
 	performanceAPI.EndEvent();
@@ -263,18 +276,13 @@ bool TCYield(Context *context, TCJob *job, String name, SRWLOCK *lock)
 		auto jobStates = context->tcJobStates.GetForWrite();
 		(*jobStates)[job->jobIdx] = TCJOBSTATE_SLEEPING;
 	}
+	if (!TCIsAnyJobRunning(context))
 	{
-		auto jobStates = context->tcJobStates.GetForRead();
-		for (int i = 0; i < (*jobStates).size; ++i)
-			if ((*jobStates)[i] == TCJOBSTATE_RUNNING ||
-				(*jobStates)[i] == TCJOBSTATE_WAITING_FOR_STOP)
-				goto sleep;
-	}
 #if USE_PROFILER_API
-	performanceAPI.EndEvent();
+		performanceAPI.EndEvent();
 #endif
-	return false;
-sleep:
+		return false;
+	}
 	CONDITION_VARIABLE *conditionVar;
 	{
 		auto conditionVariables = context->tcConditionVariables.GetForRead();
@@ -337,17 +345,11 @@ TCScopeName TCFindScopeName(Context *context, TCJob *job, String name)
 			auto jobStates = context->tcJobStates.GetForWrite();
 			(*jobStates)[job->jobIdx] = TCJOBSTATE_SLEEPING;
 		}
+		if (!TCIsAnyJobRunning(context))
 		{
-			auto jobStates = context->tcJobStates.GetForRead();
-			for (int i = 0; i < (*jobStates).size; ++i)
-				if ((*jobStates)[i] == TCJOBSTATE_RUNNING ||
-					(*jobStates)[i] == TCJOBSTATE_WAITING_FOR_STOP)
-					goto sleep;
-
 			TCResume(context, job);
 			return { NAMETYPE_INVALID };
 		}
-sleep:
 		CONDITION_VARIABLE *conditionVar;
 		{
 			auto conditionVariables = context->tcConditionVariables.GetForRead();
@@ -2535,58 +2537,61 @@ bool LookForOperatorOverload(Context *context, TCJob *job, ASTExpression *expres
 		rightHand = expression->binaryOperation.rightHand;
 	}
 
-	for (int overloadIdx = 0; overloadIdx < context->operatorOverloads.size; ++overloadIdx)
 	{
-		OperatorOverload currentOverload = context->operatorOverloads[overloadIdx];
-
-		if (op != currentOverload.op)
-			continue;
-
-		Procedure procedure = GetProcedureRead(context, currentOverload.procedureIdx);
-		TypeInfo procType = GetTypeInfo(context, procedure.typeTableIdx);
-		ASSERT(procType.typeCategory == TYPECATEGORY_PROCEDURE);
-
-		if (paramCount == 1)
+		auto operatorOverloads = context->operatorOverloads.GetForRead();
+		for (int overloadIdx = 0; overloadIdx < operatorOverloads->size; ++overloadIdx)
 		{
-			if (procType.procedureInfo.parameters.size != 1)
+			OperatorOverload currentOverload = (*operatorOverloads)[overloadIdx];
+
+			if (op != currentOverload.op)
 				continue;
 
-			u32 leftHandTypeIdx  = procType.procedureInfo.parameters[0].typeTableIdx;
+			Procedure procedure = GetProcedureRead(context, currentOverload.procedureIdx);
+			TypeInfo procType = GetTypeInfo(context, procedure.typeTableIdx);
+			ASSERT(procType.typeCategory == TYPECATEGORY_PROCEDURE);
 
-			if (CheckTypesMatch(context, leftHand->typeTableIdx, leftHandTypeIdx) == TYPECHECK_COOL)
+			if (paramCount == 1)
 			{
-				if (foundOverload)
-					LogError(context, expression->any.loc,
-							TPrintF("Multiple overloads found for operator %S with operand of "
-								"type %S",
-								OperatorToString(op),
-								TypeInfoToString(context, leftHand->typeTableIdx)));
-				overload = currentOverload;
-				foundOverload = true;
+				if (procType.procedureInfo.parameters.size != 1)
+					continue;
+
+				u32 leftHandTypeIdx  = procType.procedureInfo.parameters[0].typeTableIdx;
+
+				if (CheckTypesMatch(context, leftHand->typeTableIdx, leftHandTypeIdx) == TYPECHECK_COOL)
+				{
+					if (foundOverload)
+						LogError(context, expression->any.loc,
+								TPrintF("Multiple overloads found for operator %S with operand of "
+									"type %S",
+									OperatorToString(op),
+									TypeInfoToString(context, leftHand->typeTableIdx)));
+					overload = currentOverload;
+					foundOverload = true;
+				}
 			}
-		}
-		else
-		{
-			if (procType.procedureInfo.parameters.size != 2)
-				continue;
-
-			u32 leftHandTypeIdx  = procType.procedureInfo.parameters[0].typeTableIdx;
-			u32 rightHandTypeIdx = procType.procedureInfo.parameters[1].typeTableIdx;
-
-			if (CheckTypesMatch(context, leftHand->typeTableIdx, leftHandTypeIdx) ==
-					TYPECHECK_COOL &&
-				CheckTypesMatch(context, rightHand->typeTableIdx, rightHandTypeIdx) ==
-					TYPECHECK_COOL)
+			else
 			{
-				if (foundOverload)
-					LogError(context, expression->any.loc,
-							TPrintF("Multiple overloads found for operator %S with left hand "
-								"of type %S and right hand of type %S",
-								OperatorToString(op),
-								TypeInfoToString(context, leftHand->typeTableIdx),
-								TypeInfoToString(context, rightHand->typeTableIdx)));
-				overload = currentOverload;
-				foundOverload = true;
+				if (procType.procedureInfo.parameters.size != 2)
+					continue;
+
+				u32 leftHandTypeIdx  = procType.procedureInfo.parameters[0].typeTableIdx;
+				u32 rightHandTypeIdx = procType.procedureInfo.parameters[1].typeTableIdx;
+
+				if (CheckTypesMatch(context, leftHand->typeTableIdx, leftHandTypeIdx) ==
+						TYPECHECK_COOL &&
+					CheckTypesMatch(context, rightHand->typeTableIdx, rightHandTypeIdx) ==
+						TYPECHECK_COOL)
+				{
+					if (foundOverload)
+						LogError(context, expression->any.loc,
+								TPrintF("Multiple overloads found for operator %S with left hand "
+									"of type %S and right hand of type %S",
+									OperatorToString(op),
+									TypeInfoToString(context, leftHand->typeTableIdx),
+									TypeInfoToString(context, rightHand->typeTableIdx)));
+					overload = currentOverload;
+					foundOverload = true;
+				}
 			}
 		}
 	}
@@ -3684,34 +3689,31 @@ void TryTypeCheckExpression(Context *context, TCJob *job, ASTExpression *express
 	{
 		ASTOperatorOverload *astOverload = &expression->operatorOverload;
 
-		// This doesn't yield, this runs once.
-		if (!astOverload->overloadRegistered)
+		static u64 overloadUniqueId = 0;
+
+		OperatorOverload overload = {};
+		overload.op = astOverload->op;
+
+		Procedure p = {};
+		p.typeTableIdx = TYPETABLEIDX_UNSET;
+		p.name = TPrintF("__overload%d_%d", overload.op, overloadUniqueId++);
+		p.returnValueIdx = U32_MAX;
+		p.astBody = astOverload->astBody;
+		p.isInline = astOverload->isInline;
+		p.astPrototype = astOverload->prototype;
+		DynamicArrayInit(&p.parameterValues, 8);
+		overload.procedureIdx = NewProcedure(context, p, false);
+
 		{
-			static u64 overloadUniqueId = 0;
-
-			OperatorOverload overload = {};
-			overload.op = astOverload->op;
-
-			Procedure p = {};
-			p.typeTableIdx = TYPETABLEIDX_UNSET;
-			p.name = TPrintF("__overload%d_%d", overload.op, overloadUniqueId++);
-			p.returnValueIdx = U32_MAX;
-			p.astBody = astOverload->astBody;
-			p.isInline = astOverload->isInline;
-			p.astPrototype = astOverload->prototype;
-			DynamicArrayInit(&p.parameterValues, 8);
-			overload.procedureIdx = NewProcedure(context, p, false);
-
-			*DynamicArrayAdd(&context->operatorOverloads) = overload;
-
-			astOverload->procedureIdx = overload.procedureIdx;
-			astOverload->overloadRegistered = true;
-
-			// Important to do this only ONCE per overload!
-			PushTCScope(context, job);
+			auto operatorOverloads = context->operatorOverloads.GetForWrite();
+			*DynamicArrayAdd(&operatorOverloads) = overload;
 		}
 
-		// This can yield
+		astOverload->procedureIdx = overload.procedureIdx;
+
+		// Important to do this only ONCE per overload!
+		PushTCScope(context, job);
+
 		Procedure procedure = GetProcedureRead(context, astOverload->procedureIdx);
 
 		TypeCheckProcedurePrototype(context, job,
@@ -3806,12 +3808,15 @@ void TryTypeCheckExpression(Context *context, TCJob *job, ASTExpression *express
 	{
 		String filename = expression->include.filename;
 
+#if 1
+		CompilerAddSourceFile(context, filename, expression->any.loc);
+#else
 		// Lock so we don't generate multiple jobs from the same tree branch.
 		SYSMutexLock(context->tcMutex);
 
 		if (CompilerAddSourceFile(context, filename, expression->any.loc))
 		{
-			TokenizeFile(context, (int)context->sourceFiles.size - 1);
+			TokenizeFile(context, (int)context->sourceFiles.GetForRead()->size - 1);
 
 			while (context->token->type != TOKEN_END_OF_FILE)
 			{
@@ -3822,6 +3827,7 @@ void TryTypeCheckExpression(Context *context, TCJob *job, ASTExpression *express
 		}
 
 		SYSMutexUnlock(context->tcMutex);
+#endif
 	} break;
 	case ASTNODETYPE_LINKLIB:
 	{
@@ -3874,6 +3880,12 @@ void TryTypeCheckExpression(Context *context, TCJob *job, ASTExpression *express
 					if ((*jobStates)[i] == TCJOBSTATE_RUNNING)
 						goto sleep;
 			}
+			{
+				auto jobStates = context->parseJobStates.GetForRead();
+				for (int i = 0; i < (*jobStates).size; ++i)
+					if ((*jobStates)[i] == TCJOBSTATE_RUNNING)
+						goto sleep;
+			}
 			isDefined = false;
 			goto done;
 sleep:
@@ -3897,6 +3909,10 @@ void TCJobProc(void *args)
 	ASTExpression *expression = argsStruct->expression;
 	TCJob job = { argsStruct->jobIdx, expression };
 	job.currentReturnType = TYPETABLEIDX_UNSET;
+
+	ThreadData threadData = {};
+	threadData.fileIdx = expression->any.loc.fileIdx;
+	TlsSetValue(context->tlsIndex, &threadData);
 
 #if DEBUG_BUILD
 	String threadName = "???"_s;
@@ -3992,16 +4008,17 @@ void GenerateTypeCheckJobs(Context *context, ASTExpression *expression)
 	case ASTNODETYPE_IF_STATIC:
 	case ASTNODETYPE_OPERATOR_OVERLOAD:
 	{
-		u32 jobIdx = (u32)context->tcThreads.size;
+		auto tcThreads = context->tcThreads.GetForWrite();
+		u32 jobIdx = (u32)tcThreads->size;
 
 		TCJobArgs *args = ALLOC(PhaseAllocator::Alloc, TCJobArgs);
 		*args = { context, jobIdx, expression };
 		{
 			auto jobStates = context->tcJobStates.GetForWrite();
-			ASSERT((*jobStates).size == context->tcThreads.size);
+			ASSERT((*jobStates).size == tcThreads->size);
 			*DynamicArrayAdd(&jobStates) = TCJOBSTATE_RUNNING;
 		}
-		*DynamicArrayAdd(&context->tcThreads) = (HANDLE)_beginthread(TCJobProc, 0, (void *)args);
+		*DynamicArrayAdd(&tcThreads) = (HANDLE)_beginthread(TCJobProc, 0, (void *)args);
 	} break;
 	case ASTNODETYPE_GARBAGE:
 	case ASTNODETYPE_RETURN:
@@ -4033,6 +4050,7 @@ void GenerateTypeCheckJobs(Context *context, ASTExpression *expression)
 	}
 }
 
+#if 0
 void TCCompileString(Context *context, String code)
 {
 	// Lock so we don't generate multiple jobs from the same tree branch.
@@ -4041,7 +4059,10 @@ void TCCompileString(Context *context, String code)
 	SourceFile builtinSourceFile = {};
 	builtinSourceFile.buffer = code.data;
 	builtinSourceFile.size   = code.size;
-	*DynamicArrayAdd(&context->sourceFiles) = builtinSourceFile;
+	{
+		auto sourceFiles = context->sourceFiles.GetForWrite();
+		*DynamicArrayAdd(&sourceFiles) = builtinSourceFile;
+	}
 
 	TokenizeFile(context, (int)context->sourceFiles.size - 1);
 	while (context->token->type != TOKEN_END_OF_FILE)
@@ -4053,6 +4074,7 @@ void TCCompileString(Context *context, String code)
 
 	SYSMutexUnlock(context->tcMutex);
 }
+#endif
 
 void TypeCheckMain(Context *context)
 {
@@ -4079,7 +4101,10 @@ void TypeCheckMain(Context *context)
 		*BucketArrayAdd(&externalProcedures) = {};
 	}
 
-	DynamicArrayInit(&context->operatorOverloads, 32);
+	{
+		auto operatorOverloads = context->operatorOverloads.GetForWrite();
+		DynamicArrayInit(&operatorOverloads, 32);
+	}
 
 	{
 		auto typeTable = context->typeTable.GetForWrite();
@@ -4233,13 +4258,16 @@ void TypeCheckMain(Context *context)
 		*DynamicArrayAdd(&globalScope->names) = scopeNamePrimitive;
 	}
 
-	context->tcMutex = SYSCreateMutex();
-
-	DynamicArrayInit(&context->tcThreads, 128);
+	{
+		auto tcThreads = context->tcThreads.GetForWrite();
+		DynamicArrayInit(&tcThreads, 128);
+	}
 	{
 		auto jobStates = context->tcJobStates.GetForWrite();
 		DynamicArrayInit(&jobStates, 128);
 	}
+
+#if 0
 	// Lock so we don't generate multiple jobs from the same tree branch.
 	SYSMutexLock(context->tcMutex);
 	for (int statementIdx = 0; statementIdx < context->astRoot->block.statements.size; ++statementIdx)
@@ -4251,4 +4279,5 @@ void TypeCheckMain(Context *context)
 
 	for (int threadIdx = 0; threadIdx < context->tcThreads.size; ++threadIdx)
 		WaitForSingleObject(context->tcThreads[threadIdx], INFINITE);
+#endif
 }

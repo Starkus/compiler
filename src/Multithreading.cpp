@@ -5,18 +5,33 @@ struct Mutex;
 void SYSMutexLock(Mutex m, u64 timeout);
 void SYSMutexUnlock(Mutex m);
 
-template <typename T>
-class AutoLock
+class ScopedLockRead
 {
 public:
-	Mutex mutex;
-	AutoLock(Mutex mutex)
+	SRWLOCK *lock;
+	ScopedLockRead(SRWLOCK *aLock)
 	{
-		SYSMutexLock(mutex);
+		lock = aLock;
+		AcquireSRWLockShared(lock);
 	}
-	~AutoLock()
+	~ScopedLockRead()
 	{
-		SYSMutexUnlock(mutex);
+		ReleaseSRWLockShared(lock);
+	}
+};
+
+class ScopedLockWrite
+{
+public:
+	SRWLOCK *lock;
+	ScopedLockWrite(SRWLOCK *aLock)
+	{
+		lock = aLock;
+		AcquireSRWLockExclusive(lock);
+	}
+	~ScopedLockWrite()
+	{
+		ReleaseSRWLockExclusive(lock);
 	}
 };
 

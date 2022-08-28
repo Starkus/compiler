@@ -233,3 +233,5 @@ enum TCJobState
 	TCJOBSTATE_WAITING_FOR_STOP,
 	TCJOBSTATE_DONE,
 };
+
+void GenerateTypeCheckJobs(Context *context, ASTExpression *expression);

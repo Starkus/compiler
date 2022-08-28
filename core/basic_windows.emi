@@ -1,3 +1,5 @@
+compiler_platform :: COMPILER_PLATFORM_WINDOWS;
+
 GetStdHandle :: #external #convention(win64) (handle: s64) -> s64;
 WriteFile :: #external #convention(win64) (handle: s64, buffer: ^void, bytesToWrite: s64, bytesWritten: ^s64,
 		overlapped: ^void) -> bool;

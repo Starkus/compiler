@@ -23,23 +23,32 @@ void AssertToken(Context *context, Token *token, int type)
 
 void Advance(Context *context)
 {
-	ASSERT(context->token == &context->tokens[context->currentTokenIdx]);
+	ThreadData *threadData = (ThreadData *)TlsGetValue(context->tlsIndex);
+	BucketArray<Token, HeapAllocator, 1024> &fileTokens = context->fileTokens[threadData->fileIdx];
+	ASSERT(threadData->token == &fileTokens[threadData->currentTokenIdx]);
 
-	++context->currentTokenIdx;
-	u64 tokenCount = BucketArrayCount(&context->tokens);
-	if (context->currentTokenIdx > tokenCount)
-		LogError(context, context->token->loc, "Unexpected end of file"_s);
-	context->token = &context->tokens[context->currentTokenIdx];
+	++threadData->currentTokenIdx;
+	if (threadData->currentTokenIdx > BucketArrayCount(&fileTokens))
+		LogError(context, threadData->token->loc, "Unexpected end of file"_s);
+	threadData->token = &fileTokens[threadData->currentTokenIdx];
 }
 
 inline ASTExpression *NewTreeNode(Context *context)
 {
-	return BucketArrayAdd(&context->treeNodes);
+	ScopedLockRead filesLock(&context->filesLock);
+
+	ThreadData *threadData = (ThreadData *)TlsGetValue(context->tlsIndex);
+	auto treeNodes = context->fileTreeNodes[threadData->fileIdx].GetForWrite();
+	return BucketArrayAdd(&treeNodes);
 }
 
 inline ASTType *NewASTType(Context *context)
 {
-	return BucketArrayAdd(&context->astTypeNodes);
+	ScopedLockRead filesLock(&context->filesLock);
+
+	ThreadData *threadData = (ThreadData *)TlsGetValue(context->tlsIndex);
+	auto typeNodes = context->fileTypeNodes[threadData->fileIdx].GetForWrite();
+	return BucketArrayAdd(&typeNodes);
 }
 
 inline s64 ParseInt(Context *context, String str)
@@ -62,16 +71,17 @@ inline s64 ParseInt(Context *context, String str)
 
 	if (parseResult.error)
 	{
+		ThreadData *threadData = (ThreadData *)TlsGetValue(context->tlsIndex);
 		switch (parseResult.error)
 		{
 		case PARSENUMBERRROR_OVERFLOW:
-			LogError(context, context->token->loc, "Integer literal too big!"_s);
+			LogError(context, threadData->token->loc, "Integer literal too big!"_s);
 			break;
 		case PARSENUMBERRROR_UNDERFLOW:
-			LogError(context, context->token->loc, "Integer literal too negative!"_s);
+			LogError(context, threadData->token->loc, "Integer literal too negative!"_s);
 			break;
 		case PARSENUMBERRROR_INVALID_CHARACTER:
-			LogError(context, context->token->loc,
+			LogError(context, threadData->token->loc,
 					"Integer literal contains invalid characters"_s);
 			break;
 		}
@@ -84,19 +94,20 @@ inline f64 ParseFloat(Context *context, String str)
 	ParseFloatResult parseResult = F64FromString(str);
 	if (parseResult.error)
 	{
+		ThreadData *threadData = (ThreadData *)TlsGetValue(context->tlsIndex);
 		switch (parseResult.error)
 		{
 		case PARSENUMBERRROR_OVERFLOW:
-			LogError(context, context->token->loc, "Floating point literal too big!"_s);
+			LogError(context, threadData->token->loc, "Floating point literal too big!"_s);
 			break;
 		case PARSENUMBERRROR_UNDERFLOW:
-			LogError(context, context->token->loc, "Floating point literal too small!"_s);
+			LogError(context, threadData->token->loc, "Floating point literal too small!"_s);
 			break;
 		case PARSENUMBERRROR_INVALID_CHARACTER:
-			LogError(context, context->token->loc,
+			LogError(context, threadData->token->loc,
 					"Floating point literal contains invalid characters"_s);
 		case PARSENUMBERRROR_INVALID_EXPONENT:
-			LogError(context, context->token->loc,
+			LogError(context, threadData->token->loc,
 					"Could not parse exponent in scientific notation"_s);
 			break;
 		}
@@ -109,56 +120,58 @@ ASTEnumDeclaration ParseEnumDeclaration(Context *context);
 ASTProcedurePrototype ParseProcedurePrototype(Context *context);
 ASTType ParseType(Context *context)
 {
-	ASTType astType;
-	astType.loc = context->token->loc;
+	ThreadData *threadData = (ThreadData *)TlsGetValue(context->tlsIndex);
 
-	if (context->token->type == TOKEN_OP_ARRAY_ACCESS)
+	ASTType astType;
+	astType.loc = threadData->token->loc;
+
+	if (threadData->token->type == TOKEN_OP_ARRAY_ACCESS)
 	{
 		Advance(context);
 		astType.nodeType = ASTTYPENODETYPE_ARRAY;
 
 		astType.arrayCount = 0;
-		if (context->token->type == TOKEN_LITERAL_NUMBER)
+		if (threadData->token->type == TOKEN_LITERAL_NUMBER)
 		{
-			astType.arrayCount = ParseInt(context, TokenToString(context, *context->token));
+			astType.arrayCount = ParseInt(context, TokenToString(context, *threadData->token));
 			Advance(context);
 		}
-		AssertToken(context, context->token, ']');
+		AssertToken(context, threadData->token, ']');
 		Advance(context);
 
 		astType.arrayType = NewASTType(context);
 		*astType.arrayType = ParseType(context);
 	}
-	else if (context->token->type == TOKEN_OP_POINTER_TO)
+	else if (threadData->token->type == TOKEN_OP_POINTER_TO)
 	{
 		Advance(context);
 		astType.nodeType = ASTTYPENODETYPE_POINTER;
 		astType.pointedType = NewASTType(context);
 		*astType.pointedType = ParseType(context);
 	}
-	else if (context->token->type == TOKEN_KEYWORD_STRUCT)
+	else if (threadData->token->type == TOKEN_KEYWORD_STRUCT)
 	{
 		astType.nodeType = ASTTYPENODETYPE_STRUCT_DECLARATION;
 		astType.structDeclaration = ParseStructOrUnion(context);
 	}
-	else if (context->token->type == TOKEN_KEYWORD_UNION)
+	else if (threadData->token->type == TOKEN_KEYWORD_UNION)
 	{
 		astType.nodeType = ASTTYPENODETYPE_UNION_DECLARATION;
 		astType.structDeclaration = ParseStructOrUnion(context);
 	}
-	else if (context->token->type == TOKEN_KEYWORD_ENUM)
+	else if (threadData->token->type == TOKEN_KEYWORD_ENUM)
 	{
 		astType.nodeType = ASTTYPENODETYPE_ENUM_DECLARATION;
 		astType.enumDeclaration = ParseEnumDeclaration(context);
 	}
-	else if (context->token->type == TOKEN_IDENTIFIER)
+	else if (threadData->token->type == TOKEN_IDENTIFIER)
 	{
 		astType.nodeType = ASTTYPENODETYPE_IDENTIFIER;
-		astType.name = TokenToString(context, *context->token);
+		astType.name = TokenToString(context, *threadData->token);
 		Advance(context);
 	}
-	else if (context->token->type == '(' ||
-			 context->token->type == TOKEN_DIRECTIVE_CALLING_CONVENTION)
+	else if (threadData->token->type == '(' ||
+			 threadData->token->type == TOKEN_DIRECTIVE_CALLING_CONVENTION)
 	{
 		astType.nodeType = ASTTYPENODETYPE_PROCEDURE;
 		astType.procedurePrototype = ParseProcedurePrototype(context);
@@ -166,7 +179,7 @@ ASTType ParseType(Context *context)
 	else
 	{
 		astType.nodeType = ASTTYPENODETYPE_INVALID;
-		LogError(context, context->token->loc, "Failed to parse type"_s);
+		LogError(context, threadData->token->loc, "Failed to parse type"_s);
 	}
 
 	return astType;
@@ -174,15 +187,17 @@ ASTType ParseType(Context *context)
 
 bool TryParseUnaryOperation(Context *context, s32 prevPrecedence, ASTUnaryOperation *result)
 {
-	if (!IsOperatorToken(context->token))
+	ThreadData *threadData = (ThreadData *)TlsGetValue(context->tlsIndex);
+
+	if (!IsOperatorToken(threadData->token))
 		return false;
 
-	Token *oldToken = context->token;
-	s64 oldTokenIdx = context->currentTokenIdx;
+	Token *oldToken = threadData->token;
+	s64 oldTokenIdx = threadData->currentTokenIdx;
 
-	result->loc = context->token->loc;
+	result->loc = threadData->token->loc;
 
-	switch (context->token->type)
+	switch (threadData->token->type)
 	{
 	case TOKEN_OP_POINTER_TO:
 	case TOKEN_OP_DEREFERENCE:
@@ -190,7 +205,7 @@ bool TryParseUnaryOperation(Context *context, s32 prevPrecedence, ASTUnaryOperat
 	case TOKEN_OP_BITWISE_NOT:
 	case TOKEN_OP_MINUS:
 	{
-		enum TokenType op = context->token->type;
+		enum TokenType op = threadData->token->type;
 		result->op = op;
 		Advance(context);
 
@@ -203,23 +218,25 @@ bool TryParseUnaryOperation(Context *context, s32 prevPrecedence, ASTUnaryOperat
 	} break;
 	}
 
-	context->token = oldToken;
-	context->currentTokenIdx = oldTokenIdx;
+	threadData->token = oldToken;
+	threadData->currentTokenIdx = oldTokenIdx;
 	return false;
 }
 
 bool TryParseBinaryOperation(Context *context, ASTExpression leftHand, s32 prevPrecedence,
 		ASTBinaryOperation *result)
 {
-	if (!IsOperatorToken(context->token))
+	ThreadData *threadData = (ThreadData *)TlsGetValue(context->tlsIndex);
+
+	if (!IsOperatorToken(threadData->token))
 		return false;
 
-	Token *oldToken = context->token;
-	s64 oldTokenIdx = context->currentTokenIdx;
+	Token *oldToken = threadData->token;
+	s64 oldTokenIdx = threadData->currentTokenIdx;
 
-	result->loc = context->token->loc;
+	result->loc = threadData->token->loc;
 
-	switch (context->token->type)
+	switch (threadData->token->type)
 	{
 	case TOKEN_OP_ARRAY_ACCESS:
 	{
@@ -235,7 +252,7 @@ bool TryParseBinaryOperation(Context *context, ASTExpression leftHand, s32 prevP
 			result->rightHand = NewTreeNode(context);
 			*result->rightHand = ParseExpression(context, -1);
 
-			AssertToken(context, context->token, ']');
+			AssertToken(context, threadData->token, ']');
 			Advance(context);
 
 			return true;
@@ -278,7 +295,7 @@ bool TryParseBinaryOperation(Context *context, ASTExpression leftHand, s32 prevP
 		result->leftHand = NewTreeNode(context);
 		*result->leftHand = leftHand;
 
-		enum TokenType op = context->token->type;
+		enum TokenType op = threadData->token->type;
 		result->op = op;
 		Advance(context);
 
@@ -293,32 +310,33 @@ bool TryParseBinaryOperation(Context *context, ASTExpression leftHand, s32 prevP
 	} break;
 	default:
 	{
-		String opStr = TokenTypeToString(context->token->type);
-		LogError(context, context->token->loc, TPrintF("Unexpected operator %S", opStr));
+		String opStr = TokenTypeToString(threadData->token->type);
+		LogError(context, threadData->token->loc, TPrintF("Unexpected operator %S", opStr));
 	} break;
 	}
 
-	context->token = oldToken;
-	context->currentTokenIdx = oldTokenIdx;
+	threadData->token = oldToken;
+	threadData->currentTokenIdx = oldTokenIdx;
 	return false;
 }
 
 ASTIf ParseIf(Context *context, bool onStaticContext)
 {
-	ASSERT(context->token->type == TOKEN_KEYWORD_IF ||
-		   context->token->type == TOKEN_DIRECTIVE_IF);
+	ThreadData *threadData = (ThreadData *)TlsGetValue(context->tlsIndex);
+	ASSERT(threadData->token->type == TOKEN_KEYWORD_IF ||
+		   threadData->token->type == TOKEN_DIRECTIVE_IF);
 	Advance(context);
 
 	ASTIf ifNode = {};
-	ifNode.loc = context->token->loc;
+	ifNode.loc = threadData->token->loc;
 
 	ifNode.condition = NewTreeNode(context);
-	if (context->token->type == '(')
+	if (threadData->token->type == '(')
 	{
 		// If there are parenthesis, grab _only_ the expression inside.
 		Advance(context);
 		*ifNode.condition = ParseExpression(context, -1);
-		AssertToken(context, context->token, ')');
+		AssertToken(context, threadData->token, ')');
 		Advance(context);
 	}
 	else
@@ -330,9 +348,9 @@ ASTIf ParseIf(Context *context, bool onStaticContext)
 	else
 		*ifNode.body = ParseStatement(context);
 
-	if (context->token->type == TOKEN_KEYWORD_ELSE)
+	if (threadData->token->type == TOKEN_KEYWORD_ELSE)
 	{
-		ifNode.elseLoc = context->token->loc;
+		ifNode.elseLoc = threadData->token->loc;
 		Advance(context);
 		ifNode.elseBody = NewTreeNode(context);
 		if (onStaticContext)
@@ -345,19 +363,20 @@ ASTIf ParseIf(Context *context, bool onStaticContext)
 
 ASTWhile ParseWhile(Context *context)
 {
-	ASSERT(context->token->type == TOKEN_KEYWORD_WHILE);
+	ThreadData *threadData = (ThreadData *)TlsGetValue(context->tlsIndex);
+	ASSERT(threadData->token->type == TOKEN_KEYWORD_WHILE);
 
 	ASTWhile whileNode = {};
-	whileNode.loc = context->token->loc;
+	whileNode.loc = threadData->token->loc;
 	Advance(context);
 
 	whileNode.condition = NewTreeNode(context);
-	if (context->token->type == '(')
+	if (threadData->token->type == '(')
 	{
 		// If there are parenthesis, grab _only_ the expression inside.
 		Advance(context);
 		*whileNode.condition = ParseExpression(context, -1);
-		AssertToken(context, context->token, ')');
+		AssertToken(context, threadData->token, ')');
 		Advance(context);
 	}
 	else
@@ -371,30 +390,31 @@ ASTWhile ParseWhile(Context *context)
 
 ASTFor ParseFor(Context *context)
 {
-	ASSERT(context->token->type == TOKEN_KEYWORD_FOR);
+	ThreadData *threadData = (ThreadData *)TlsGetValue(context->tlsIndex);
+	ASSERT(threadData->token->type == TOKEN_KEYWORD_FOR);
 
 	ASTFor forNode = {};
-	forNode.loc = context->token->loc;
+	forNode.loc = threadData->token->loc;
 	forNode.indexVariableName = "i"_s;
 	forNode.itemVariableName = "it"_s;
 	Advance(context);
 
 	bool closeParenthesis = false;
 	forNode.range = NewTreeNode(context);
-	if (context->token->type == '(')
+	if (threadData->token->type == '(')
 	{
 		// If there are parenthesis, grab _only_ the expression inside.
 		Advance(context);
 		closeParenthesis = true;
 	}
 
-	Token *oldToken = context->token;
-	u64 oldTokenIdx = context->currentTokenIdx;
+	Token *oldToken = threadData->token;
+	u64 oldTokenIdx = threadData->currentTokenIdx;
 
-	Token first = *context->token;
+	Token first = *threadData->token;
 	Advance(context);
 
-	if (context->token->type == TOKEN_OP_VARIABLE_DECLARATION)
+	if (threadData->token->type == TOKEN_OP_VARIABLE_DECLARATION)
 	{
 		Advance(context);
 		if (first.type != TOKEN_IDENTIFIER)
@@ -404,15 +424,15 @@ ASTFor ParseFor(Context *context)
 
 		forNode.indexVariableName = TokenToString(context, first);
 	}
-	else if (context->token->type == ',')
+	else if (threadData->token->type == ',')
 	{
 		Advance(context);
-		Token second = *context->token;
+		Token second = *threadData->token;
 		Advance(context);
-		if (context->token->type == ',')
-			LogError(context, context->token->loc, "Too many names in for loop condition, only up "
+		if (threadData->token->type == ',')
+			LogError(context, threadData->token->loc, "Too many names in for loop condition, only up "
 					"to 2 allowed (indexVar, itemVar : expr)"_s);
-		AssertToken(context, context->token, TOKEN_OP_VARIABLE_DECLARATION);
+		AssertToken(context, threadData->token, TOKEN_OP_VARIABLE_DECLARATION);
 		Advance(context);
 
 		if (first.type != TOKEN_IDENTIFIER)
@@ -427,15 +447,15 @@ ASTFor ParseFor(Context *context)
 	}
 	else
 	{
-		context->token = oldToken;
-		context->currentTokenIdx = oldTokenIdx;
+		threadData->token = oldToken;
+		threadData->currentTokenIdx = oldTokenIdx;
 	}
 
 	*forNode.range = ParseExpression(context, -1);
 
 	if (closeParenthesis)
 	{
-		AssertToken(context, context->token, ')');
+		AssertToken(context, threadData->token, ')');
 		Advance(context);
 	}
 
@@ -447,39 +467,40 @@ ASTFor ParseFor(Context *context)
 
 ASTStructMemberDeclaration ParseStructMemberDeclaration(Context *context)
 {
+	ThreadData *threadData = (ThreadData *)TlsGetValue(context->tlsIndex);
 	ASTStructMemberDeclaration structMem = {};
-	structMem.loc = context->token->loc;
+	structMem.loc = threadData->token->loc;
 
-	if (context->token->type == TOKEN_KEYWORD_USING)
+	if (threadData->token->type == TOKEN_KEYWORD_USING)
 	{
 		structMem.isUsing = true;
 		Advance(context);
 	}
 
 	// Anonymous structs/unions
-	if (context->token->type == TOKEN_KEYWORD_STRUCT || 
-		context->token->type == TOKEN_KEYWORD_UNION)
+	if (threadData->token->type == TOKEN_KEYWORD_STRUCT || 
+		threadData->token->type == TOKEN_KEYWORD_UNION)
 	{
 	}
 	else
 	{
-		AssertToken(context, context->token, TOKEN_IDENTIFIER);
-		structMem.name = TokenToString(context, *context->token);
+		AssertToken(context, threadData->token, TOKEN_IDENTIFIER);
+		structMem.name = TokenToString(context, *threadData->token);
 		Advance(context);
 
-		AssertToken(context, context->token, TOKEN_OP_VARIABLE_DECLARATION);
+		AssertToken(context, threadData->token, TOKEN_OP_VARIABLE_DECLARATION);
 		Advance(context);
 	}
 
-	if (context->token->type != TOKEN_OP_ASSIGNMENT)
+	if (threadData->token->type != TOKEN_OP_ASSIGNMENT)
 	{
 		structMem.astType = NewASTType(context);
 		*structMem.astType = ParseType(context);
 		if (structMem.astType->nodeType == ASTTYPENODETYPE_INVALID)
-			LogError(context, context->token->loc, "Expected type"_s);
+			LogError(context, threadData->token->loc, "Expected type"_s);
 	}
 
-	if (context->token->type == TOKEN_OP_ASSIGNMENT)
+	if (threadData->token->type == TOKEN_OP_ASSIGNMENT)
 	{
 		Advance(context);
 		structMem.value = NewTreeNode(context);
@@ -491,43 +512,44 @@ ASTStructMemberDeclaration ParseStructMemberDeclaration(Context *context)
 
 ASTEnumDeclaration ParseEnumDeclaration(Context *context)
 {
-	SourceLocation loc = context->token->loc;
+	ThreadData *threadData = (ThreadData *)TlsGetValue(context->tlsIndex);
+	SourceLocation loc = threadData->token->loc;
 
-	AssertToken(context, context->token, TOKEN_KEYWORD_ENUM);
+	AssertToken(context, threadData->token, TOKEN_KEYWORD_ENUM);
 	Advance(context);
 
 	ASTEnumDeclaration enumNode = {};
 	enumNode.loc = loc;
 	DynamicArrayInit(&enumNode.members, 16);
 
-	if (context->token->type == TOKEN_OP_VARIABLE_DECLARATION)
+	if (threadData->token->type == TOKEN_OP_VARIABLE_DECLARATION)
 	{
 		Advance(context);
 		enumNode.astType = NewASTType(context);
 		*enumNode.astType = ParseType(context);
 	}
 
-	AssertToken(context, context->token, '{');
+	AssertToken(context, threadData->token, '{');
 	Advance(context);
-	while (context->token->type != '}')
+	while (threadData->token->type != '}')
 	{
 		ASTEnumMember enumMember = {};
 
-		AssertToken(context, context->token, TOKEN_IDENTIFIER);
-		enumMember.name = TokenToString(context, *context->token);
-		enumMember.loc = context->token->loc;
+		AssertToken(context, threadData->token, TOKEN_IDENTIFIER);
+		enumMember.name = TokenToString(context, *threadData->token);
+		enumMember.loc = threadData->token->loc;
 		Advance(context);
 
-		if (context->token->type == TOKEN_OP_ASSIGNMENT)
+		if (threadData->token->type == TOKEN_OP_ASSIGNMENT)
 		{
 			Advance(context);
 			enumMember.value = NewTreeNode(context);
 			*enumMember.value = ParseExpression(context, -1);
 		}
 
-		if (context->token->type != '}')
+		if (threadData->token->type != '}')
 		{
-			AssertToken(context, context->token, ',');
+			AssertToken(context, threadData->token, ',');
 			Advance(context);
 		}
 
@@ -540,24 +562,25 @@ ASTEnumDeclaration ParseEnumDeclaration(Context *context)
 
 ASTStructDeclaration ParseStructOrUnion(Context *context)
 {
-	SourceLocation loc = context->token->loc;
+	ThreadData *threadData = (ThreadData *)TlsGetValue(context->tlsIndex);
+	SourceLocation loc = threadData->token->loc;
 
-	ASSERT(context->token->type == TOKEN_KEYWORD_STRUCT ||
-			context->token->type == TOKEN_KEYWORD_UNION);
+	ASSERT(threadData->token->type == TOKEN_KEYWORD_STRUCT ||
+			threadData->token->type == TOKEN_KEYWORD_UNION);
 	Advance(context);
 
 	ASTStructDeclaration structDeclaration = {};
 	structDeclaration.loc = loc;
 	DynamicArrayInit(&structDeclaration.members, 16);
 
-	AssertToken(context, context->token, '{');
+	AssertToken(context, threadData->token, '{');
 	Advance(context);
-	while (context->token->type != '}')
+	while (threadData->token->type != '}')
 	{
 		ASTStructMemberDeclaration member = ParseStructMemberDeclaration(context);
 		*DynamicArrayAdd(&structDeclaration.members) = member;
 
-		AssertToken(context, context->token, ';');
+		AssertToken(context, threadData->token, ';');
 		Advance(context);
 	}
 	Advance(context);
@@ -567,6 +590,7 @@ ASTStructDeclaration ParseStructOrUnion(Context *context)
 
 Array<ASTExpression *, FrameAllocator> ParseGroupLiteral(Context *context)
 {
+	ThreadData *threadData = (ThreadData *)TlsGetValue(context->tlsIndex);
 	DynamicArray<ASTExpression *, FrameAllocator> members;
 	DynamicArrayInit(&members, 8);
 
@@ -576,16 +600,16 @@ Array<ASTExpression *, FrameAllocator> ParseGroupLiteral(Context *context)
 		*newTreeNode = ParseExpression(context, -1);
 		*DynamicArrayAdd(&members) = newTreeNode;
 
-		if (context->token->type == '}')
+		if (threadData->token->type == '}')
 			break;
-		if (context->token->type == ',')
+		if (threadData->token->type == ',')
 		{
 			Advance(context);
 			continue;
 		}
 
-		String tokenStr = TokenTypeToString(context->token->type);
-		LogError(context, context->token->loc, TPrintF("Parsing struct literal. Expected ',' or '}' but got %S", tokenStr));
+		String tokenStr = TokenTypeToString(threadData->token->type);
+		LogError(context, threadData->token->loc, TPrintF("Parsing struct literal. Expected ',' or '}' but got %S", tokenStr));
 	}
 
 	Array<ASTExpression *, FrameAllocator> result;
@@ -599,39 +623,40 @@ Array<ASTExpression *, FrameAllocator> ParseGroupLiteral(Context *context)
 
 ASTVariableDeclaration ParseVariableDeclaration(Context *context)
 {
+	ThreadData *threadData = (ThreadData *)TlsGetValue(context->tlsIndex);
 	ASTVariableDeclaration varDecl = {};
-	varDecl.loc = context->token->loc;
+	varDecl.loc = threadData->token->loc;
 
-	AssertToken(context, context->token, TOKEN_IDENTIFIER);
-	varDecl.name = TokenToString(context, *context->token);
+	AssertToken(context, threadData->token, TOKEN_IDENTIFIER);
+	varDecl.name = TokenToString(context, *threadData->token);
 	Advance(context);
 
-	if (context->token->type == TOKEN_OP_VARIABLE_DECLARATION)
+	if (threadData->token->type == TOKEN_OP_VARIABLE_DECLARATION)
 		Advance(context);
-	else if (context->token->type == TOKEN_OP_VARIABLE_DECLARATION_STATIC)
+	else if (threadData->token->type == TOKEN_OP_VARIABLE_DECLARATION_STATIC)
 	{
 		varDecl.isStatic = true;
 		Advance(context);
 	}
 	else
-		UNEXPECTED_TOKEN_ERROR(context, context->token);
+		UNEXPECTED_TOKEN_ERROR(context, threadData->token);
 
-	if (context->token->type == TOKEN_DIRECTIVE_EXTERNAL)
+	if (threadData->token->type == TOKEN_DIRECTIVE_EXTERNAL)
 	{
 		varDecl.isExternal = true;
 		Advance(context);
 	}
 
-	if (context->token->type != TOKEN_OP_ASSIGNMENT)
+	if (threadData->token->type != TOKEN_OP_ASSIGNMENT)
 	{
 		varDecl.astType = NewASTType(context);
 		*varDecl.astType = ParseType(context);
 	}
 
-	if (context->token->type == TOKEN_OP_ASSIGNMENT)
+	if (threadData->token->type == TOKEN_OP_ASSIGNMENT)
 	{
 		if (varDecl.isExternal)
-			LogError(context, context->token->loc, "Can't assign value to external variable"_s);
+			LogError(context, threadData->token->loc, "Can't assign value to external variable"_s);
 
 		Advance(context);
 		varDecl.astInitialValue = NewTreeNode(context);
@@ -643,38 +668,39 @@ ASTVariableDeclaration ParseVariableDeclaration(Context *context)
 
 ASTProcedureParameter ParseProcedureParameter(Context *context)
 {
+	ThreadData *threadData = (ThreadData *)TlsGetValue(context->tlsIndex);
 	ASTProcedureParameter astParameter = {};
-	astParameter.loc = context->token->loc;
+	astParameter.loc = threadData->token->loc;
 
-	if (context->token->type == TOKEN_KEYWORD_USING)
+	if (threadData->token->type == TOKEN_KEYWORD_USING)
 	{
 		astParameter.isUsing = true;
 		Advance(context);
 	}
 
-	u64 startTokenIdx = context->currentTokenIdx;
+	u64 startTokenIdx = threadData->currentTokenIdx;
 
-	AssertToken(context, context->token, TOKEN_IDENTIFIER);
-	astParameter.name = TokenToString(context, *context->token);
+	AssertToken(context, threadData->token, TOKEN_IDENTIFIER);
+	astParameter.name = TokenToString(context, *threadData->token);
 	Advance(context);
 
-	if (context->token->type == TOKEN_OP_VARIABLE_DECLARATION)
+	if (threadData->token->type == TOKEN_OP_VARIABLE_DECLARATION)
 		Advance(context);
 	else
 	{
 		// Nameless parameter, rewind
-		context->currentTokenIdx = startTokenIdx;
-		context->token = &context->tokens[startTokenIdx];
+		threadData->currentTokenIdx = startTokenIdx;
+		threadData->token = &context->fileTokens[threadData->fileIdx][startTokenIdx];
 		astParameter.name = {};
 	}
 
-	if (context->token->type != TOKEN_OP_ASSIGNMENT)
+	if (threadData->token->type != TOKEN_OP_ASSIGNMENT)
 	{
 		astParameter.astType = NewASTType(context);
 		*astParameter.astType = ParseType(context);
 	}
 
-	if (context->token->type == TOKEN_OP_ASSIGNMENT)
+	if (threadData->token->type == TOKEN_OP_ASSIGNMENT)
 	{
 		Advance(context);
 		astParameter.astInitialValue = NewTreeNode(context);
@@ -686,45 +712,46 @@ ASTProcedureParameter ParseProcedureParameter(Context *context)
 
 ASTProcedurePrototype ParseProcedurePrototype(Context *context)
 {
+	ThreadData *threadData = (ThreadData *)TlsGetValue(context->tlsIndex);
 	ASTProcedurePrototype prototype = {};
-	prototype.loc = context->token->loc;
+	prototype.loc = threadData->token->loc;
 	prototype.callingConvention = CC_DEFAULT;
 
-	if (context->token->type == TOKEN_DIRECTIVE_CALLING_CONVENTION)
+	if (threadData->token->type == TOKEN_DIRECTIVE_CALLING_CONVENTION)
 	{
 		Advance(context);
-		AssertToken(context, context->token, '(');
+		AssertToken(context, threadData->token, '(');
 		Advance(context);
 
-		AssertToken(context, context->token, TOKEN_IDENTIFIER);
-		String tokenStr = TokenToString(context, *context->token);
+		AssertToken(context, threadData->token, TOKEN_IDENTIFIER);
+		String tokenStr = TokenToString(context, *threadData->token);
 		if (StringEquals(tokenStr, "win64"_s))
 			prototype.callingConvention = CC_WIN64;
 		else if (StringEquals(tokenStr, "linux64"_s))
 			prototype.callingConvention = CC_LINUX64;
 		else
-			LogError(context, context->token->loc, "Invalid calling convention specified"_s);
+			LogError(context, threadData->token->loc, "Invalid calling convention specified"_s);
 		Advance(context);
 
-		AssertToken(context, context->token, ')');
+		AssertToken(context, threadData->token, ')');
 		Advance(context);
 	}
 
 	DynamicArrayInit(&prototype.astParameters, 4);
 
-	AssertToken(context, context->token, '(');
+	AssertToken(context, threadData->token, '(');
 	Advance(context);
-	while (context->token->type != ')')
+	while (threadData->token->type != ')')
 	{
-		if (context->token->type == TOKEN_OP_RANGE)
+		if (threadData->token->type == TOKEN_OP_RANGE)
 		{
 			Advance(context);
 			prototype.isVarargs = true;
-			prototype.varargsLoc = context->token->loc;
+			prototype.varargsLoc = threadData->token->loc;
 
-			if (context->token->type == TOKEN_IDENTIFIER)
+			if (threadData->token->type == TOKEN_IDENTIFIER)
 			{
-				prototype.varargsName = TokenToString(context, *context->token);
+				prototype.varargsName = TokenToString(context, *threadData->token);
 				Advance(context);
 			}
 			break;
@@ -735,15 +762,15 @@ ASTProcedurePrototype ParseProcedurePrototype(Context *context)
 
 		*DynamicArrayAdd(&prototype.astParameters) = astParam;
 
-		if (context->token->type != ')')
+		if (threadData->token->type != ')')
 		{
-			AssertToken(context, context->token, ',');
+			AssertToken(context, threadData->token, ',');
 			Advance(context);
 		}
 	}
 	Advance(context);
 
-	if (context->token->type == TOKEN_OP_ARROW)
+	if (threadData->token->type == TOKEN_OP_ARROW)
 	{
 		Advance(context);
 		prototype.astReturnType = NewASTType(context);
@@ -759,11 +786,12 @@ ASTProcedurePrototype ParseProcedurePrototype(Context *context)
 
 ASTExpression ParseExpression(Context *context, s32 precedence)
 {
+	ThreadData *threadData = (ThreadData *)TlsGetValue(context->tlsIndex);
 	ASTExpression result = {};
 	result.typeTableIdx = TYPETABLEIDX_UNSET;
-	result.any.loc = context->token->loc;
+	result.any.loc = threadData->token->loc;
 
-	switch (context->token->type)
+	switch (threadData->token->type)
 	{
 	// Parenthesis
 	case '(':
@@ -772,35 +800,35 @@ ASTExpression ParseExpression(Context *context, s32 precedence)
 
 		result = ParseExpression(context, -1);
 
-		AssertToken(context, context->token, ')');
+		AssertToken(context, threadData->token, ')');
 		Advance(context);
 	} break;
 	case '{':
 	{
 		Advance(context);
 
-		result.any.loc = context->token->loc;
+		result.any.loc = threadData->token->loc;
 		result.nodeType = ASTNODETYPE_LITERAL;
 
 		result.literal.type = LITERALTYPE_GROUP;
 		result.literal.members = ParseGroupLiteral(context);
 
-		AssertToken(context, context->token, '}');
+		AssertToken(context, threadData->token, '}');
 		Advance(context);
 	} break;
 	case '?':
 	{
-		result.any.loc = context->token->loc;
+		result.any.loc = threadData->token->loc;
 		result.nodeType = ASTNODETYPE_GARBAGE;
 		Advance(context);
 	} break;
 	case TOKEN_IDENTIFIER:
 	{
-		result.any.loc = context->token->loc;
-		String identifier = TokenToString(context, *context->token);
+		result.any.loc = threadData->token->loc;
+		String identifier = TokenToString(context, *threadData->token);
 		Advance(context);
 
-		if (context->token->type == '(')
+		if (threadData->token->type == '(')
 		{
 			// Procedure call
 			result.nodeType = ASTNODETYPE_PROCEDURE_CALL;
@@ -810,19 +838,19 @@ ASTExpression ParseExpression(Context *context, s32 precedence)
 
 			// Parse arguments
 			Advance(context);
-			while (context->token->type != ')')
+			while (threadData->token->type != ')')
 			{
 				ASTExpression arg = ParseExpression(context, -1);
 				*DynamicArrayAdd(&result.procedureCall.arguments) = arg;
 
-				if (context->token->type != ')')
+				if (threadData->token->type != ')')
 				{
-					if (context->token->type != ',')
+					if (threadData->token->type != ',')
 					{
-						String tokenTypeGot = TokenToStringOrType(context, *context->token);
+						String tokenTypeGot = TokenToStringOrType(context, *threadData->token);
 						String errorStr = TPrintF("Expected ')' or ',' but got %S",
 								tokenTypeGot);
-						LogError(context, context->token->loc, errorStr);
+						LogError(context, threadData->token->loc, errorStr);
 					}
 					Advance(context);
 				}
@@ -837,10 +865,10 @@ ASTExpression ParseExpression(Context *context, s32 precedence)
 	} break;
 	case TOKEN_LITERAL_NUMBER:
 	{
-		result.any.loc = context->token->loc;
+		result.any.loc = threadData->token->loc;
 		result.nodeType = ASTNODETYPE_LITERAL;
 
-		String tokenStr = TokenToString(context, *context->token);
+		String tokenStr = TokenToString(context, *threadData->token);
 
 		bool isHex = false;
 		bool isFloating = false;
@@ -850,7 +878,7 @@ ASTExpression ParseExpression(Context *context, s32 precedence)
 				isHex = true;
 		}
 
-		for (u32 i = 0; i < context->token->size; ++i)
+		for (u32 i = 0; i < threadData->token->size; ++i)
 		{
 			if (tokenStr.data[i] == '.')
 			{
@@ -872,23 +900,23 @@ ASTExpression ParseExpression(Context *context, s32 precedence)
 	} break;
 	case TOKEN_LITERAL_CHARACTER:
 	{
-		result.any.loc = context->token->loc;
+		result.any.loc = threadData->token->loc;
 		result.nodeType = ASTNODETYPE_LITERAL;
 		result.literal.type = LITERALTYPE_CHARACTER;
-		result.literal.character = TokenToString(context, *context->token).data[0];
+		result.literal.character = TokenToString(context, *threadData->token).data[0];
 		Advance(context);
 	} break;
 	case TOKEN_LITERAL_STRING:
 	{
-		result.any.loc = context->token->loc;
+		result.any.loc = threadData->token->loc;
 		result.nodeType = ASTNODETYPE_LITERAL;
 		result.literal.type = LITERALTYPE_STRING;
-		result.literal.string = TokenToString(context, *context->token);
+		result.literal.string = TokenToString(context, *threadData->token);
 		Advance(context);
 	} break;
 	case TOKEN_KEYWORD_TYPEOF:
 	{
-		result.any.loc = context->token->loc;
+		result.any.loc = threadData->token->loc;
 		Advance(context);
 
 		result.nodeType = ASTNODETYPE_TYPEOF;
@@ -897,7 +925,7 @@ ASTExpression ParseExpression(Context *context, s32 precedence)
 	} break;
 	case TOKEN_KEYWORD_SIZEOF:
 	{
-		result.any.loc = context->token->loc;
+		result.any.loc = threadData->token->loc;
 		Advance(context);
 
 		result.nodeType = ASTNODETYPE_SIZEOF;
@@ -906,32 +934,32 @@ ASTExpression ParseExpression(Context *context, s32 precedence)
 	} break;
 	case TOKEN_DIRECTIVE_DEFINED:
 	{
-		result.any.loc = context->token->loc;
+		result.any.loc = threadData->token->loc;
 		Advance(context);
 
-		AssertToken(context, context->token, '(');
+		AssertToken(context, threadData->token, '(');
 		Advance(context);
 
 		result.nodeType = ASTNODETYPE_DEFINED;
-		AssertToken(context, context->token, TOKEN_IDENTIFIER);
-		result.definedNode.identifier = TokenToString(context, *context->token);
+		AssertToken(context, threadData->token, TOKEN_IDENTIFIER);
+		result.definedNode.identifier = TokenToString(context, *threadData->token);
 		Advance(context);
 
-		AssertToken(context, context->token, ')');
+		AssertToken(context, threadData->token, ')');
 		Advance(context);
 	} break;
 	case TOKEN_KEYWORD_CAST:
 	{
 		Advance(context);
-		result.any.loc = context->token->loc;
+		result.any.loc = threadData->token->loc;
 		result.nodeType = ASTNODETYPE_CAST;
 
-		AssertToken(context, context->token, '(');
+		AssertToken(context, threadData->token, '(');
 		Advance(context);
 
 		result.castNode.astType = ParseType(context);
 
-		AssertToken(context, context->token, ')');
+		AssertToken(context, threadData->token, ')');
 		Advance(context);
 
 		result.castNode.expression = NewTreeNode(context);
@@ -941,79 +969,79 @@ ASTExpression ParseExpression(Context *context, s32 precedence)
 	case TOKEN_DIRECTIVE_INTRINSIC:
 	{
 		Advance(context);
-		result.any.loc = context->token->loc;
+		result.any.loc = threadData->token->loc;
 		result.nodeType = ASTNODETYPE_INTRINSIC;
 
-		AssertToken(context, context->token, '(');
+		AssertToken(context, threadData->token, '(');
 		Advance(context);
 
-		AssertToken(context, context->token, TOKEN_IDENTIFIER);
-		result.intrinsic.name = TokenToString(context, *context->token);
+		AssertToken(context, threadData->token, TOKEN_IDENTIFIER);
+		result.intrinsic.name = TokenToString(context, *threadData->token);
 		Advance(context);
 
-		if (context->token->type == ',')
+		if (threadData->token->type == ',')
 		{
 			// Parse arguments
 			Advance(context);
 			DynamicArrayInit(&result.intrinsic.arguments, 4);
-			while (context->token->type != ')')
+			while (threadData->token->type != ')')
 			{
 				ASTExpression arg = ParseExpression(context, -1);
 				*DynamicArrayAdd(&result.intrinsic.arguments) = arg;
 
-				if (context->token->type != ')')
+				if (threadData->token->type != ')')
 				{
-					if (context->token->type != ',')
+					if (threadData->token->type != ',')
 					{
-						String tokenTypeGot = TokenToStringOrType(context, *context->token);
+						String tokenTypeGot = TokenToStringOrType(context, *threadData->token);
 						String errorStr = TPrintF("Expected ')' or ',' but got %S",
 								tokenTypeGot);
-						LogError(context, context->token->loc, errorStr);
+						LogError(context, threadData->token->loc, errorStr);
 					}
 					Advance(context);
 				}
 			}
 		}
 
-		AssertToken(context, context->token, ')');
+		AssertToken(context, threadData->token, ')');
 		Advance(context);
 	} break;
 	case TOKEN_KEYWORD_IF:
 	{
-		LogError(context, context->token->loc, "'if' only valid at statement level!"_s);
+		LogError(context, threadData->token->loc, "'if' only valid at statement level!"_s);
 	} break;
 	case TOKEN_KEYWORD_WHILE:
 	{
-		LogError(context, context->token->loc, "'while' only valid at statement level!"_s);
+		LogError(context, threadData->token->loc, "'while' only valid at statement level!"_s);
 	} break;
 	case TOKEN_KEYWORD_FOR:
 	{
-		LogError(context, context->token->loc, "'for' only valid at statement level!"_s);
+		LogError(context, threadData->token->loc, "'for' only valid at statement level!"_s);
 	} break;
 	case TOKEN_KEYWORD_DEFER:
 	{
-		LogError(context, context->token->loc, "'defer' only valid at statement level!"_s);
+		LogError(context, threadData->token->loc, "'defer' only valid at statement level!"_s);
 	} break;
 	case TOKEN_KEYWORD_RETURN:
 	{
-		LogError(context, context->token->loc, "'return' only valid at statement level!"_s);
+		LogError(context, threadData->token->loc, "'return' only valid at statement level!"_s);
 	} break;
 	case TOKEN_KEYWORD_STRUCT:
 	{
-		LogError(context, context->token->loc, "'struct' not valid on this context!"_s);
+		LogError(context, threadData->token->loc, "'struct' not valid on this context!"_s);
 	} break;
 	case TOKEN_KEYWORD_UNION:
 	{
-		LogError(context, context->token->loc, "'union' not valid on this context!"_s);
+		LogError(context, threadData->token->loc, "'union' not valid on this context!"_s);
 	} break;
 	case TOKEN_DIRECTIVE_TYPE:
 	{
-		LogError(context, context->token->loc, "Not a valid type context!"_s);
+		LogError(context, threadData->token->loc, "Not a valid type context!"_s);
 	} break;
 	default:
 	{
-		if (!IsOperatorToken(context->token))
-			UNEXPECTED_TOKEN_ERROR(context, context->token);
+		if (!IsOperatorToken(threadData->token))
+			UNEXPECTED_TOKEN_ERROR(context, threadData->token);
 		// Operators are handled in the loop below.
 	}
 	}
@@ -1027,7 +1055,7 @@ ASTExpression ParseExpression(Context *context, s32 precedence)
 			ASTUnaryOperation unaryOp = result.unaryOperation;
 			bool success = TryParseUnaryOperation(context, precedence, &unaryOp);
 			if (!success)
-				LogError(context, context->token->loc, "Invalid expression!"_s);
+				LogError(context, threadData->token->loc, "Invalid expression!"_s);
 			result.nodeType = ASTNODETYPE_UNARY_OPERATION;
 			result.unaryOperation = unaryOp;
 		}
@@ -1047,39 +1075,40 @@ ASTExpression ParseExpression(Context *context, s32 precedence)
 
 ASTStaticDefinition ParseStaticDefinition(Context *context)
 {
+	ThreadData *threadData = (ThreadData *)TlsGetValue(context->tlsIndex);
 	ASTStaticDefinition result = {};
 
-	AssertToken(context, context->token, TOKEN_IDENTIFIER);
-	result.name = TokenToString(context, *context->token);
-	result.loc = context->token->loc;
+	AssertToken(context, threadData->token, TOKEN_IDENTIFIER);
+	result.name = TokenToString(context, *threadData->token);
+	result.loc = threadData->token->loc;
 	Advance(context);
 
 	Advance(context);
 
 	ASTExpression expression = {};
 	expression.typeTableIdx = TYPETABLEIDX_UNSET;
-	expression.any.loc = context->token->loc;
+	expression.any.loc = threadData->token->loc;
 
 	bool isInline = false;
 	bool isExternal = false;
 	bool isExported = false;
 	while (true)
 	{
-		if (context->token->type == TOKEN_DIRECTIVE_INLINE)
+		if (threadData->token->type == TOKEN_DIRECTIVE_INLINE)
 		{
-			if (isInline) LogError(context, context->token->loc, "'inline' used twice"_s);
+			if (isInline) LogError(context, threadData->token->loc, "'inline' used twice"_s);
 			isInline = true;
 			Advance(context);
 		}
-		else if (context->token->type == TOKEN_DIRECTIVE_EXTERNAL)
+		else if (threadData->token->type == TOKEN_DIRECTIVE_EXTERNAL)
 		{
-			if (isExternal) LogError(context, context->token->loc, "'external' used twice"_s);
+			if (isExternal) LogError(context, threadData->token->loc, "'external' used twice"_s);
 			isExternal = true;
 			Advance(context);
 		}
-		else if (context->token->type == TOKEN_DIRECTIVE_EXPORT)
+		else if (threadData->token->type == TOKEN_DIRECTIVE_EXPORT)
 		{
-			if (isExported) LogError(context, context->token->loc, "'export' used twice"_s);
+			if (isExported) LogError(context, threadData->token->loc, "'export' used twice"_s);
 			isExported = true;
 			Advance(context);
 		}
@@ -1088,25 +1117,25 @@ ASTStaticDefinition ParseStaticDefinition(Context *context)
 	}
 
 	// Procedures!
-	if (context->token->type == '(' ||
-		context->token->type == TOKEN_DIRECTIVE_CALLING_CONVENTION)
+	if (threadData->token->type == '(' ||
+		threadData->token->type == TOKEN_DIRECTIVE_CALLING_CONVENTION)
 	{
 		expression.nodeType = ASTNODETYPE_PROCEDURE_DECLARATION;
 
 		ASTProcedureDeclaration procDecl = {};
-		procDecl.loc = context->token->loc;
+		procDecl.loc = threadData->token->loc;
 		procDecl.name = result.name;
 		procDecl.isInline = isInline;
 		procDecl.isExternal = isExternal;
 		procDecl.isExported = isExported;
 		procDecl.prototype = ParseProcedurePrototype(context);
 
-		if (context->token->type == ';')
+		if (threadData->token->type == ';')
 			Advance(context);
 		else
 		{
 			if (isExternal)
-				LogError(context, context->token->loc, "External procedure declaration can't have a body"_s);
+				LogError(context, threadData->token->loc, "External procedure declaration can't have a body"_s);
 			procDecl.astBody = NewTreeNode(context);
 			*procDecl.astBody = ParseStatement(context);
 		}
@@ -1116,13 +1145,13 @@ ASTStaticDefinition ParseStaticDefinition(Context *context)
 	else
 	{
 		if (isInline)
-			LogError(context, context->token->loc, "'inline' specified for a non-procedure!"_s);
+			LogError(context, threadData->token->loc, "'inline' specified for a non-procedure!"_s);
 		if (isExternal)
-			LogError(context, context->token->loc, "'external' specified for a non-procedure!"_s);
+			LogError(context, threadData->token->loc, "'external' specified for a non-procedure!"_s);
 		if (isExported)
-			LogError(context, context->token->loc, "'external' specified for a non-procedure!"_s);
+			LogError(context, threadData->token->loc, "'external' specified for a non-procedure!"_s);
 
-		switch (context->token->type)
+		switch (threadData->token->type)
 		{
 		case TOKEN_KEYWORD_STRUCT:
 		case TOKEN_KEYWORD_UNION:
@@ -1131,7 +1160,7 @@ ASTStaticDefinition ParseStaticDefinition(Context *context)
 			expression.nodeType = ASTNODETYPE_TYPE;
 			expression.astType = ParseType(context);
 
-			AssertToken(context, context->token, ';');
+			AssertToken(context, threadData->token, ';');
 			Advance(context);
 		} break;
 		case TOKEN_DIRECTIVE_TYPE:
@@ -1140,7 +1169,7 @@ ASTStaticDefinition ParseStaticDefinition(Context *context)
 			expression.nodeType = ASTNODETYPE_TYPE;
 			expression.astType = ParseType(context);
 
-			AssertToken(context, context->token, ';');
+			AssertToken(context, threadData->token, ';');
 			Advance(context);
 		} break;
 		case TOKEN_DIRECTIVE_ALIAS:
@@ -1149,14 +1178,14 @@ ASTStaticDefinition ParseStaticDefinition(Context *context)
 			expression.nodeType = ASTNODETYPE_ALIAS;
 			expression.astType = ParseType(context);
 
-			AssertToken(context, context->token, ';');
+			AssertToken(context, threadData->token, ';');
 			Advance(context);
 		} break;
 		default:
 		{
 			expression = ParseExpression(context, -1);
 
-			AssertToken(context, context->token, ';');
+			AssertToken(context, threadData->token, ';');
 			Advance(context);
 		}
 		}
@@ -1170,11 +1199,12 @@ ASTStaticDefinition ParseStaticDefinition(Context *context)
 
 ASTExpression ParseStatement(Context *context)
 {
+	ThreadData *threadData = (ThreadData *)TlsGetValue(context->tlsIndex);
 	ASTExpression result = {};
 	result.typeTableIdx = TYPETABLEIDX_UNSET;
-	result.any.loc = context->token->loc;
+	result.any.loc = threadData->token->loc;
 
-	switch (context->token->type)
+	switch (threadData->token->type)
 	{
 	case '{':
 	{
@@ -1182,7 +1212,7 @@ ASTExpression ParseStatement(Context *context)
 
 		Advance(context);
 		DynamicArrayInit(&result.block.statements, 512);
-		while (context->token->type != '}')
+		while (threadData->token->type != '}')
 		{
 			*DynamicArrayAdd(&result.block.statements) = ParseStatement(context);
 		}
@@ -1200,7 +1230,7 @@ ASTExpression ParseStatement(Context *context)
 	} break;
 	case TOKEN_KEYWORD_ELSE:
 	{
-		LogError(context, context->token->loc, "Invalid 'else' without matching 'if'"_s);
+		LogError(context, threadData->token->loc, "Invalid 'else' without matching 'if'"_s);
 	} break;
 	case TOKEN_KEYWORD_WHILE:
 	{
@@ -1217,7 +1247,7 @@ ASTExpression ParseStatement(Context *context)
 		result.nodeType = ASTNODETYPE_CONTINUE;
 		Advance(context);
 
-		AssertToken(context, context->token, ';');
+		AssertToken(context, threadData->token, ';');
 		Advance(context);
 	} break;
 	case TOKEN_KEYWORD_REMOVE:
@@ -1225,7 +1255,7 @@ ASTExpression ParseStatement(Context *context)
 		result.nodeType = ASTNODETYPE_REMOVE;
 		Advance(context);
 
-		AssertToken(context, context->token, ';');
+		AssertToken(context, threadData->token, ';');
 		Advance(context);
 	} break;
 	case TOKEN_KEYWORD_BREAK:
@@ -1233,16 +1263,16 @@ ASTExpression ParseStatement(Context *context)
 		result.nodeType = ASTNODETYPE_BREAK;
 		Advance(context);
 
-		AssertToken(context, context->token, ';');
+		AssertToken(context, threadData->token, ';');
 		Advance(context);
 	} break;
 	case TOKEN_KEYWORD_RETURN:
 	{
 		Advance(context);
 
-		result.any.loc = context->token->loc;
+		result.any.loc = threadData->token->loc;
 		result.nodeType = ASTNODETYPE_RETURN;
-		if (context->token->type == ';')
+		if (threadData->token->type == ';')
 			result.returnNode.expression = nullptr;
 		else
 		{
@@ -1250,31 +1280,31 @@ ASTExpression ParseStatement(Context *context)
 			*result.returnNode.expression = ParseExpression(context, -1);
 		}
 
-		AssertToken(context, context->token, ';');
+		AssertToken(context, threadData->token, ';');
 		Advance(context);
 	} break;
 	case TOKEN_KEYWORD_DEFER:
 	{
 		Advance(context);
 
-		result.any.loc = context->token->loc;
+		result.any.loc = threadData->token->loc;
 		result.nodeType = ASTNODETYPE_DEFER;
 		result.deferNode.expression = NewTreeNode(context);
 		*result.deferNode.expression = ParseExpression(context, -1);
 
-		AssertToken(context, context->token, ';');
+		AssertToken(context, threadData->token, ';');
 		Advance(context);
 	} break;
 	case TOKEN_KEYWORD_STRUCT:
 	case TOKEN_KEYWORD_UNION:
 	{
 		ASTVariableDeclaration varDecl = {};
-		varDecl.loc = context->token->loc;
+		varDecl.loc = threadData->token->loc;
 
 		varDecl.astType = NewASTType(context);
 		*varDecl.astType = ParseType(context); // This will parse the struct/union declaration.
 
-		if (context->token->type == TOKEN_OP_ASSIGNMENT)
+		if (threadData->token->type == TOKEN_OP_ASSIGNMENT)
 		{
 			Advance(context);
 			varDecl.astInitialValue = NewTreeNode(context);
@@ -1284,21 +1314,21 @@ ASTExpression ParseStatement(Context *context)
 		result.nodeType = ASTNODETYPE_VARIABLE_DECLARATION;
 		result.variableDeclaration = varDecl;
 
-		AssertToken(context, context->token, ';');
+		AssertToken(context, threadData->token, ';');
 		Advance(context);
 	} break;
 	case TOKEN_KEYWORD_USING:
 	{
 		Advance(context);
 
-		result.any.loc = context->token->loc;
+		result.any.loc = threadData->token->loc;
 		result.nodeType = ASTNODETYPE_USING;
 		result.usingNode.expression = NewTreeNode(context);
 		*result.usingNode.expression = ParseStatement(context);
 	} break;
 	default:
 	{
-		Token *next = &context->tokens[context->currentTokenIdx + 1];
+		Token *next = &context->fileTokens[threadData->fileIdx][threadData->currentTokenIdx + 1];
 		if (next->type == TOKEN_OP_STATIC_DEF)
 		{
 			result.nodeType = ASTNODETYPE_STATIC_DEFINITION;
@@ -1310,13 +1340,13 @@ ASTExpression ParseStatement(Context *context)
 			result.nodeType = ASTNODETYPE_VARIABLE_DECLARATION;
 			result.variableDeclaration = ParseVariableDeclaration(context);
 
-			AssertToken(context, context->token, ';');
+			AssertToken(context, threadData->token, ';');
 			Advance(context);
 		}
 		else
 		{
 			result = ParseExpression(context, -1);
-			AssertToken(context, context->token, ';');
+			AssertToken(context, threadData->token, ';');
 			Advance(context);
 		}
 	} break;
@@ -1327,11 +1357,12 @@ ASTExpression ParseStatement(Context *context)
 
 ASTExpression ParseStaticStatement(Context *context)
 {
+	ThreadData *threadData = (ThreadData *)TlsGetValue(context->tlsIndex);
 	ASTExpression result = {};
-	result.any.loc = context->token->loc;
+	result.any.loc = threadData->token->loc;
 	result.typeTableIdx = TYPETABLEIDX_UNSET;
 
-	switch (context->token->type)
+	switch (threadData->token->type)
 	{
 	case '{':
 	{
@@ -1339,7 +1370,7 @@ ASTExpression ParseStaticStatement(Context *context)
 
 		Advance(context);
 		DynamicArrayInit(&result.block.statements, 512);
-		while (context->token->type != '}')
+		while (threadData->token->type != '}')
 		{
 			*DynamicArrayAdd(&result.block.statements) = ParseStaticStatement(context);
 		}
@@ -1354,23 +1385,23 @@ ASTExpression ParseStaticStatement(Context *context)
 	{
 		Advance(context);
 
-		enum TokenType op = context->token->type;
+		enum TokenType op = threadData->token->type;
 		if (op < TOKEN_OP_Begin || op > TOKEN_OP_End)
-			UNEXPECTED_TOKEN_ERROR(context, context->token);
+			UNEXPECTED_TOKEN_ERROR(context, threadData->token);
 		Advance(context);
 
-		AssertToken(context, context->token, TOKEN_OP_STATIC_DEF);
+		AssertToken(context, threadData->token, TOKEN_OP_STATIC_DEF);
 		Advance(context);
 
 		bool isInline = false;
-		if (context->token->type == TOKEN_DIRECTIVE_INLINE)
+		if (threadData->token->type == TOKEN_DIRECTIVE_INLINE)
 		{
 			isInline = true;
 			Advance(context);
 		}
 
 		ASTOperatorOverload overload = {};
-		overload.loc = context->token->loc;
+		overload.loc = threadData->token->loc;
 		overload.op = op;
 		overload.isInline = isInline;
 		overload.prototype = ParseProcedurePrototype(context);
@@ -1386,11 +1417,11 @@ ASTExpression ParseStaticStatement(Context *context)
 		result.nodeType = ASTNODETYPE_INCLUDE;
 		Advance(context);
 
-		AssertToken(context, context->token, TOKEN_LITERAL_STRING);
-		result.include.filename = TokenToString(context, *context->token);
+		AssertToken(context, threadData->token, TOKEN_LITERAL_STRING);
+		result.include.filename = TokenToString(context, *threadData->token);
 		Advance(context);
 
-		AssertToken(context, context->token, ';');
+		AssertToken(context, threadData->token, ';');
 		Advance(context);
 	} break;
 	case TOKEN_DIRECTIVE_LINKLIB:
@@ -1398,16 +1429,16 @@ ASTExpression ParseStaticStatement(Context *context)
 		result.nodeType = ASTNODETYPE_LINKLIB;
 		Advance(context);
 
-		AssertToken(context, context->token, TOKEN_LITERAL_STRING);
-		result.linklib.filename = TokenToString(context, *context->token);
+		AssertToken(context, threadData->token, TOKEN_LITERAL_STRING);
+		result.linklib.filename = TokenToString(context, *threadData->token);
 		Advance(context);
 
-		AssertToken(context, context->token, ';');
+		AssertToken(context, threadData->token, ';');
 		Advance(context);
 	} break;
 	default:
 	{
-		Token *next = &context->tokens[context->currentTokenIdx + 1];
+		Token *next = &context->fileTokens[threadData->fileIdx][threadData->currentTokenIdx + 1];
 		if (next->type == TOKEN_OP_STATIC_DEF)
 		{
 			result.nodeType = ASTNODETYPE_STATIC_DEFINITION;
@@ -1422,19 +1453,22 @@ ASTExpression ParseStaticStatement(Context *context)
 			ASSERT(result.variableDeclaration.isStatic ||
 				   result.variableDeclaration.isExternal);
 
-			AssertToken(context, context->token, ';');
+			AssertToken(context, threadData->token, ';');
 			Advance(context);
 		}
 		else
-			LogError(context, context->token->loc, "Invalid expression in static context"_s);
+			LogError(context, threadData->token->loc, "Invalid expression in static context"_s);
 	} break;
 	}
 
 	return result;
 }
 
+#if 0
 ASTRoot *GenerateSyntaxTree(Context *context)
 {
+	ThreadData *threadData = (ThreadData *)TlsGetValue(context->tlsIndex);
+
 	ASTRoot *root = ALLOC(FrameAllocator::Alloc, ASTRoot);
 	context->astRoot = root;
 	DynamicArrayInit(&root->block.statements, 4096);
@@ -1446,11 +1480,75 @@ ASTRoot *GenerateSyntaxTree(Context *context)
 	*BucketArrayAdd(&context->stringLiterals) = {};
 
 	context->currentTokenIdx = 0;
-	context->token = &context->tokens[0];
-	while (context->token->type != TOKEN_END_OF_FILE)
+	threadData->token = &threadData->tokens[0];
+	while (threadData->token->type != TOKEN_END_OF_FILE)
 	{
 		*DynamicArrayAdd(&root->block.statements) = ParseStaticStatement(context);
 	}
 
 	return root;
+}
+#endif
+
+void ParseJobProc(void *args)
+{
+	ParseJobArgs *argsStruct = (ParseJobArgs *)args;
+	Context *context = argsStruct->context;
+	u32 fileIdx = argsStruct->fileIdx;
+	u32 jobIdx = argsStruct->fileIdx;
+
+	ThreadData threadData;
+	threadData.fileIdx = fileIdx;
+	threadData.currentTokenIdx = 0;
+	threadData.token = &context->fileTokens[fileIdx][0];
+	TlsSetValue(context->tlsIndex, &threadData);
+
+#if DEBUG_BUILD
+	HANDLE thread = GetCurrentThread();
+	SourceFile sourceFile;
+	{
+		ScopedLockRead filesLock(&context->filesLock);
+		sourceFile = context->sourceFiles[fileIdx];
+	}
+	String threadName = TPrintF("%S ~ Parsing", sourceFile.name);
+
+	char buffer[512];
+	char *dst = buffer;
+	const char *src = threadName.data;
+	for (int i = 0; i < threadName.size; ++i)
+	{
+		*dst++ = *src++;
+		*dst++ = 0;
+	}
+	*dst++ = 0;
+	*dst++ = 0;
+	SetThreadDescription(thread, (PCWSTR)buffer);
+#endif
+
+	TokenizeFile(context, fileIdx);
+
+	DynamicArray<ASTExpression, FrameAllocator> *statements =
+		&context->fileASTRoots[fileIdx].block.statements;
+	while (threadData.token->type != TOKEN_END_OF_FILE)
+	{
+		ASTExpression *statement = DynamicArrayAdd(statements);
+		*statement = ParseStaticStatement(context);
+		GenerateTypeCheckJobs(context, statement);
+	}
+
+	(*context->parseJobStates.GetForWrite())[jobIdx] = TCJOBSTATE_DONE;
+}
+
+void ParserMain(Context *context)
+{
+	{
+		ScopedLockWrite filesLock(&context->filesLock);
+		DynamicArrayInit(&context->sourceFiles, 64);
+		DynamicArrayInit(&context->fileASTRoots, 64);
+		DynamicArrayInit(&context->fileTokens, 64);
+		DynamicArrayInit(&context->fileTreeNodes, 64);
+		DynamicArrayInit(&context->fileTypeNodes, 64);
+	}
+	DynamicArrayInit(&context->parseThreads, 64);
+	DynamicArrayInit(&context->parseJobStates.GetForWrite(), 64);
 }
