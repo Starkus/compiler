@@ -35,7 +35,7 @@ void Advance(Context *context)
 
 inline ASTExpression *NewTreeNode(Context *context)
 {
-	ScopedLockRead filesLock(&context->filesLock);
+	ScopedLockSpin filesLock(&context->filesLock);
 
 	ThreadData *threadData = (ThreadData *)TlsGetValue(context->tlsIndex);
 	auto treeNodes = context->fileTreeNodes[threadData->fileIdx].GetForWrite();
@@ -44,7 +44,7 @@ inline ASTExpression *NewTreeNode(Context *context)
 
 inline ASTType *NewASTType(Context *context)
 {
-	ScopedLockRead filesLock(&context->filesLock);
+	ScopedLockSpin filesLock(&context->filesLock);
 
 	ThreadData *threadData = (ThreadData *)TlsGetValue(context->tlsIndex);
 	auto typeNodes = context->fileTypeNodes[threadData->fileIdx].GetForWrite();
@@ -1507,10 +1507,10 @@ void ParseJobProc(void *args)
 	HANDLE thread = GetCurrentThread();
 	SourceFile sourceFile;
 	{
-		ScopedLockRead filesLock(&context->filesLock);
+		ScopedLockSpin filesLock(&context->filesLock);
 		sourceFile = context->sourceFiles[fileIdx];
 	}
-	String threadName = TPrintF("%S ~ Parsing", sourceFile.name);
+	String threadName = TPrintF("P:%S", sourceFile.name);
 
 	char buffer[512];
 	char *dst = buffer;
@@ -1542,7 +1542,7 @@ void ParseJobProc(void *args)
 void ParserMain(Context *context)
 {
 	{
-		ScopedLockWrite filesLock(&context->filesLock);
+		ScopedLockSpin filesLock(&context->filesLock);
 		DynamicArrayInit(&context->sourceFiles, 64);
 		DynamicArrayInit(&context->fileASTRoots, 64);
 		DynamicArrayInit(&context->fileTokens, 64);

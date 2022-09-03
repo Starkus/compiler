@@ -1,3 +1,11 @@
+struct IRJobArgs
+{
+	Context *context;
+	s32 procedureIdx;
+	BucketArray<Value, HeapAllocator, 1024> localValues;
+	const ASTExpression *expression;
+};
+
 enum IRValueType
 {
 	IRVALUETYPE_INVALID = -1,
@@ -33,7 +41,6 @@ struct IRValue
 struct IRLabel
 {
 	String name;
-	s32 procedureIdx;
 	s64 instructionIdx;
 };
 
@@ -206,18 +213,11 @@ struct IRScope
 	DynamicArray<ASTExpression *, PhaseAllocator> deferredStatements;
 };
 
-struct IRProcedureScope
-{
-	s32 procedureIdx;
-	s64 irStackBase;
-	IRLabel *returnLabel;
-	u32 shouldReturnValueIdx;
-
-	SourceLocation definitionLoc;
-};
-
 struct IRStaticVariable
 {
 	u32 valueIdx;
 	IRValue initialValue;
 };
+
+void IRJobProcedure(void *args);
+void IRJobExpression(void *args);

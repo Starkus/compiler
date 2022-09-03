@@ -1,11 +1,8 @@
-#define RWLOCK_CPP
-#include "RWLock/RWLock.cpp"
-
 struct Mutex;
 void SYSMutexLock(Mutex m, u64 timeout);
 void SYSMutexUnlock(Mutex m);
 
-class ScopedLockRead
+class [[nodiscard]] ScopedLockRead
 {
 public:
 	SRWLOCK *lock;
@@ -20,7 +17,7 @@ public:
 	}
 };
 
-class ScopedLockWrite
+class [[nodiscard]] ScopedLockWrite
 {
 public:
 	SRWLOCK *lock;
@@ -35,120 +32,29 @@ public:
 	}
 };
 
-template <typename T>
-class SafeContainer
+class [[nodiscard]] ScopedLockSpin
 {
 public:
-	T content;
-	RWLockReentrant rwLock;
-
-	const T &LockForRead()
+	volatile u32 *lock;
+	ScopedLockSpin(volatile u32 *aLock)
 	{
-		rwLock.StartRead();
-		return content;
+		lock = aLock;
+		SYSSpinlockLock(lock);
 	}
-
-	void UnlockForRead()
+	~ScopedLockSpin()
 	{
-		rwLock.EndRead();
-	}
-
-	T &LockForWrite()
-	{
-		rwLock.StartWrite();
-		return content;
-	}
-
-	void UnlockForWrite()
-	{
-		rwLock.EndWrite();
-	}
-
-	template <typename T>
-	class HandleRead
-	{
-	public:
-		SafeContainer<T> *safeContainer;
-
-		HandleRead(SafeContainer<T> *safe)
-		{
-			safeContainer = safe;
-			safeContainer->LockForRead();
-		}
-
-		~HandleRead()
-		{
-			safeContainer->UnlockForRead();
-		}
-
-		const T &operator*()
-		{
-			return safeContainer->content;
-		}
-
-		const T *operator->()
-		{
-			return &safeContainer->content;
-		}
-
-		const T *operator&()
-		{
-			return &safeContainer->content;
-		}
-	};
-
-	HandleRead<T> GetForRead()
-	{
-		return HandleRead(this);
-	}
-
-	template <typename T>
-	class HandleWrite
-	{
-	public:
-		SafeContainer<T> *safeContainer;
-
-		HandleWrite(SafeContainer<T> *safe)
-		{
-			safe->LockForWrite();
-			safeContainer = safe;
-		}
-
-		~HandleWrite()
-		{
-			safeContainer->UnlockForWrite();
-		}
-
-		T &operator*()
-		{
-			return safeContainer->content;
-		}
-
-		T *operator->()
-		{
-			return &safeContainer->content;
-		}
-
-		T *operator&()
-		{
-			return &safeContainer->content;
-		}
-	};
-
-	HandleWrite<T> GetForWrite()
-	{
-		return HandleWrite(this);
+		SYSSpinlockUnlock(lock);
 	}
 };
 
 template <typename T>
-class SafeContainer2
+class RWContainer
 {
 public:
 	T content;
 	SRWLOCK rwLock;
 
-	SafeContainer2()
+	RWContainer()
 	{
 		InitializeSRWLock(&rwLock);
 	}
@@ -179,9 +85,9 @@ public:
 	class HandleRead
 	{
 	public:
-		SafeContainer2<T> *safeContainer;
+		RWContainer<T> *safeContainer;
 
-		HandleRead(SafeContainer2<T> *safe)
+		HandleRead(RWContainer<T> *safe)
 		{
 			safeContainer = safe;
 			safeContainer->LockForRead();
@@ -217,9 +123,9 @@ public:
 	class HandleWrite
 	{
 	public:
-		SafeContainer2<T> *safeContainer;
+		RWContainer<T> *safeContainer;
 
-		HandleWrite(SafeContainer2<T> *safe)
+		HandleWrite(RWContainer<T> *safe)
 		{
 			safe->LockForWrite();
 			safeContainer = safe;
@@ -249,5 +155,62 @@ public:
 	HandleWrite<T> GetForWrite()
 	{
 		return HandleWrite(this);
+	}
+};
+
+template <typename T>
+class SLContainer
+{
+public:
+	T content;
+	volatile u32 lock;
+
+	const T &Lock()
+	{
+		SYSSpinlockLock(&lock);
+		return content;
+	}
+
+	void Unlock()
+	{
+		SYSSpinlockUnlock(&lock);
+	}
+
+	template <typename T>
+	class Handle
+	{
+	public:
+		SLContainer<T> *safeContainer;
+
+		Handle(SLContainer<T> *safe)
+		{
+			safe->Lock();
+			safeContainer = safe;
+		}
+
+		~Handle()
+		{
+			safeContainer->Unlock();
+		}
+
+		T &operator*()
+		{
+			return safeContainer->content;
+		}
+
+		T *operator->()
+		{
+			return &safeContainer->content;
+		}
+
+		T *operator&()
+		{
+			return &safeContainer->content;
+		}
+	};
+
+	Handle<T> Get()
+	{
+		return Handle(this);
 	}
 };

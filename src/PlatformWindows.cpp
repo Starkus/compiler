@@ -1,3 +1,5 @@
+#include <intrin.h>
+
 String StupidStrToString(const wchar_t *wstr, void *(*allocFunc)(u64))
 {
 	s64 size = 0;
@@ -499,4 +501,32 @@ void SYSMutexLock(Mutex m, u64 timeout = 0)
 void SYSMutexUnlock(Mutex m)
 {
 	ReleaseMutex(m.mutexHandle);
+}
+
+inline void SYSSpinlockLock(volatile u32 *locked)
+{
+	// Stupid MSVC uses long for this intrinsic but it's the same size as u32.
+	static_assert(sizeof(long) == sizeof(u32));
+	for (;;)
+	{
+		long oldLocked = _InterlockedCompareExchange_HLEAcquire((volatile long *)locked, 1, 0);
+		if (!oldLocked)
+		{
+			//printf("[%d] Locked spinlock %llx\n", GetCurrentThreadId(), locked);
+			return;
+		}
+
+		for (;;)
+		{
+			if (!*locked)
+				break;
+			_mm_pause();
+		}
+	}
+}
+
+inline void SYSSpinlockUnlock(volatile u32 *locked)
+{
+	static_assert(sizeof(long) == sizeof(u32));
+	_Store_HLERelease((volatile long *)locked, 0);
 }

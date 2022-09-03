@@ -132,7 +132,7 @@ String TokenToString(Context *context, Token token)
 {
 	SourceFile sourceFile;
 	{
-		ScopedLockRead(&context->filesLock);
+		ScopedLockSpin filesLock(&context->filesLock);
 		sourceFile = context->sourceFiles[token.loc.fileIdx];
 	}
 	String result = { token.size, (const char *)sourceFile.buffer + token.loc.character };
@@ -770,7 +770,7 @@ FatSourceLocation ExpandSourceLocation(Context *context, SourceLocation loc)
 {
 	SourceFile sourceFile;
 	{
-		ScopedLockWrite(&context->filesLock);
+		ScopedLockSpin filesLock(&context->filesLock);
 		sourceFile = context->sourceFiles[loc.fileIdx];
 	}
 
@@ -819,7 +819,7 @@ void TokenizeFile(Context *context, u32 fileIdx)
 	Tokenizer tokenizer = {};
 	SourceFile file;
 	{
-		ScopedLockRead filesLock(&context->filesLock);
+		ScopedLockSpin filesLock(&context->filesLock);
 		file = context->sourceFiles[fileIdx];
 	}
 	tokenizer.fileIdx = fileIdx;

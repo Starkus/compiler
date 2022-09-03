@@ -35,10 +35,10 @@ FileHandle g_hStderr;
 
 s64 Print(const char *format, ...)
 {
-	SYSMutexLock(g_memory->phaseMutex);
-
 	// Log file
 	static FileHandle logFileHandle = SYSOpenFileWrite("output/log.txt"_s);
+
+	SYSMutexLock(g_memory->phaseMutex);
 
 	char *buffer = (char *)g_memory->phasePtr;
 
@@ -117,6 +117,8 @@ u64 CycleCountEnd(u64 begin)
 #include "AST.h"
 #include "TypeChecker.h"
 #include "IRGen.h"
+#include "Backend.h"
+#include "x64.h"
 
 struct Config
 {
@@ -127,80 +129,55 @@ struct Config
 	bool logAllocationInfo;
 };
 
-struct InterferenceGraph
-{
-	u32 count;
-	u32 capacity;
-	u32 *valueIndices;
-	u8 *removed;
-	HashSet<u32, PhaseAllocator> *edges; // @Improve?
-
-	HashMap<u32, u32, PhaseAllocator> valueToNodeMap;
-};
-
 #define OUTPUT_BUFFER_BUCKET_SIZE 8192
 struct Procedure;
 struct TypeInfo;
 struct OperatorOverload;
 struct StaticDefinition;
 struct TCScope;
-struct BasicBlock;
-struct BEInstruction;
 struct Context
 {
 	Config config;
 
 	u32 tlsIndex;
 
-	SRWLOCK filesLock;
+	volatile u32 filesLock;
 	DynamicArray<SourceFile, HeapAllocator> sourceFiles;
 	DynamicArray<String, HeapAllocator> libsToLink;
 
 	// Parsing -----
 	DynamicArray<HANDLE, HeapAllocator> parseThreads;
-	SafeContainer<DynamicArray<TCJobState, HeapAllocator>> parseJobStates;
+	RWContainer<DynamicArray<TCJobState, HeapAllocator>> parseJobStates;
 	DynamicArray<BucketArray<Token, HeapAllocator, 1024>, HeapAllocator> fileTokens;
 	DynamicArray<ASTRoot, HeapAllocator> fileASTRoots;
-	DynamicArray<SafeContainer2<BucketArray<ASTExpression, HeapAllocator, 1024>>, HeapAllocator> fileTreeNodes;
-	DynamicArray<SafeContainer2<BucketArray<ASTType, HeapAllocator, 1024>>, HeapAllocator> fileTypeNodes;
+	DynamicArray<RWContainer<BucketArray<ASTExpression, HeapAllocator, 1024>>, HeapAllocator> fileTreeNodes;
+	DynamicArray<RWContainer<BucketArray<ASTType, HeapAllocator, 1024>>, HeapAllocator> fileTypeNodes;
 
 	// Type check -----
-	SafeContainer<DynamicArray<HANDLE, HeapAllocator>> tcThreads;
-	SafeContainer<DynamicArray<TCJobState, HeapAllocator>> tcJobStates;
-	SafeContainer<BucketArray<Value, HeapAllocator, 2048>> values;
-	SafeContainer<BucketArray<Procedure, HeapAllocator, 512>> procedures;
-	SafeContainer<BucketArray<Procedure, HeapAllocator, 128>> externalProcedures;
-	SafeContainer<DynamicArray<OperatorOverload, HeapAllocator>> operatorOverloads;
-	SafeContainer2<BucketArray<StaticDefinition, HeapAllocator, 512>> staticDefinitions;
+	RWContainer<DynamicArray<HANDLE, HeapAllocator>> tcThreads;
+	RWContainer<DynamicArray<TCJobState, HeapAllocator>> tcJobStates;
+	RWContainer<BucketArray<Value, HeapAllocator, 1024>> values;
+	RWContainer<BucketArray<Procedure, HeapAllocator, 512>> procedures;
+	RWContainer<BucketArray<Procedure, HeapAllocator, 128>> externalProcedures;
+	RWContainer<DynamicArray<OperatorOverload, HeapAllocator>> operatorOverloads;
+	RWContainer<BucketArray<StaticDefinition, HeapAllocator, 512>> staticDefinitions;
 
 	/* Don't add types to the type table by hand without checking what AddType() does! */
-	SafeContainer<BucketArray<const TypeInfo, HeapAllocator, 1024>> typeTable;
+	RWContainer<BucketArray<const TypeInfo, HeapAllocator, 1024>> typeTable;
 
-	SafeContainer2<TCScope> tcGlobalScope;
-	SafeContainer<HashMap<String, CONDITION_VARIABLE, HeapAllocator>> tcConditionVariables;
+	RWContainer<TCScope> tcGlobalScope;
+	RWContainer<HashMap<String, CONDITION_VARIABLE, HeapAllocator>> tcConditionVariables;
 
 	// IR -----
-	BucketArray<String, HeapAllocator, 1024> stringLiterals;
-	DynamicArray<BucketArray<IRInstruction, FrameAllocator, 256>, HeapAllocator> irProcedureInstructions;
-	DynamicArray<IRStaticVariable, HeapAllocator> irStaticVariables;
-	DynamicArray<u32, HeapAllocator> irExternalVariables;
-	DynamicArray<IRScope, PhaseAllocator> irStack;
-	DynamicArray<IRProcedureScope, PhaseAllocator> irProcedureStack;
-	BucketArray<IRLabel, HeapAllocator, 1024> irLabels;
-	IRLabel *currentBreakLabel;
-	IRLabel *currentContinueLabel;
-	IRLabel *currentContinueSkipIncrementLabel;
-	struct {
-		IRValue arrayValue;
-		IRValue indexValue;
-	} irCurrentForLoopInfo;
+	RWContainer<DynamicArray<HANDLE, HeapAllocator>> irThreads;
+	SRWLOCK proceduresLock;
+	RWContainer<BucketArray<String, HeapAllocator, 1024>> stringLiterals;
+	RWContainer<DynamicArray<IRStaticVariable, HeapAllocator>> irStaticVariables;
+	RWContainer<DynamicArray<u32, HeapAllocator>> irExternalVariables;
 
 	// Backend -----
 	BucketArray<u8, PhaseAllocator, OUTPUT_BUFFER_BUCKET_SIZE> outputBuffer;
-	BucketArray<BasicBlock, PhaseAllocator, 512> beBasicBlocks;
-	DynamicArray<BasicBlock *, PhaseAllocator> beLeafBasicBlocks;
-	InterferenceGraph beInterferenceGraph;
-	BucketArray<BEInstruction, PhaseAllocator, 128> bePatchedInstructions;
+	RWContainer<DynamicArray<BEFinalProcedure, PhaseAllocator>> beFinalProcedureData;
 };
 
 struct ThreadData
@@ -208,6 +185,38 @@ struct ThreadData
 	u32 fileIdx;
 	u64 currentTokenIdx;
 	Token *token;
+};
+
+struct IRThreadData
+{
+	s32 procedureIdx;
+	BucketArray<IRInstruction, FrameAllocator, 256> irInstructions;
+	DynamicArray<IRScope, PhaseAllocator> irStack;
+	BucketArray<IRLabel, HeapAllocator, 1024> irLabels;
+	IRLabel *returnLabel;
+	IRLabel *currentBreakLabel;
+	IRLabel *currentContinueLabel;
+	IRLabel *currentContinueSkipIncrementLabel;
+	struct {
+		IRValue arrayValue;
+		IRValue indexValue;
+	} irCurrentForLoopInfo;
+	u32 returnValueIdx;
+	u32 shouldReturnValueIdx;
+	BucketArray<Value, HeapAllocator, 1024> localValues;
+
+	// Back end
+	BucketArray<BEInstruction, PhaseAllocator, 1024> beInstructions;
+	u64 stackSize;
+	s64 allocatedParameterCount;
+	DynamicArray<u32, PhaseAllocator> spilledValues;
+	BucketArray<BasicBlock, PhaseAllocator, 512> beBasicBlocks;
+	BasicBlock * beLeafBasicBlock;
+	InterferenceGraph beInterferenceGraph;
+	BucketArray<BEInstruction, PhaseAllocator, 128> bePatchedInstructions;
+	Array<u64, PhaseAllocator> valueIsXmmBits;
+	u32 x64SpilledParametersRead[32];
+	u32 x64SpilledParametersWrite[32];
 };
 
 FatSourceLocation ExpandSourceLocation(Context *context, SourceLocation loc);
@@ -219,7 +228,7 @@ void __Log(Context *context, SourceLocation loc, String str, const char *inFile,
 	// Info
 	SourceFile sourceFile;
 	{
-		ScopedLockRead filesLock(&context->filesLock);
+		ScopedLockSpin filesLock(&context->filesLock);
 		sourceFile = context->sourceFiles[loc.fileIdx];
 	}
 	Print("%S %d:%d %S\n", sourceFile.name, fatLoc.line, fatLoc.character, str);
@@ -266,10 +275,8 @@ bool CompilerAddSourceFile(Context *context, String filename, SourceLocation loc
 		LogError(context, loc,
 				TPrintF("Included source file \"%S\" doesn't exist!", filename));
 
-	// First file is <builtin>
-	// @Improve: delete builtin file, shouldn't need it anymore...
-	ScopedLockWrite sourceFiles(&context->filesLock);
-	for (int i = 1; i < context->sourceFiles.size; ++i)
+	ScopedLockSpin sourceFiles(&context->filesLock);
+	for (int i = 0; i < context->sourceFiles.size; ++i)
 	{
 		String currentFilename = context->sourceFiles[i].name;
 		FileHandle currentFile = SYSOpenFileRead(currentFilename);
@@ -292,11 +299,11 @@ bool CompilerAddSourceFile(Context *context, String filename, SourceLocation loc
 
 	BucketArrayInit(DynamicArrayAdd(&context->fileTokens));
 
-	SafeContainer2<BucketArray<ASTExpression, HeapAllocator, 1024>> newTreeNodes;
+	RWContainer<BucketArray<ASTExpression, HeapAllocator, 1024>> newTreeNodes;
 	BucketArrayInit(&newTreeNodes.content);
 	*DynamicArrayAdd(&context->fileTreeNodes) = newTreeNodes;
 
-	SafeContainer2<BucketArray<ASTType, HeapAllocator, 1024>> newTypeNodes;
+	RWContainer<BucketArray<ASTType, HeapAllocator, 1024>> newTypeNodes;
 	BucketArrayInit(&newTypeNodes.content);
 	*DynamicArrayAdd(&context->fileTypeNodes) = newTypeNodes;
 
@@ -315,7 +322,7 @@ bool CompilerAddSourceFile(Context *context, String filename, SourceLocation loc
 #include "TypeChecker.cpp"
 #include "PrintAST.cpp"
 #include "IRGen.cpp"
-#include "PrintIR.cpp"
+//#include "PrintIR.cpp" // @Fix
 #include "x64.cpp"
 
 int main(int argc, char **argv)
@@ -394,55 +401,27 @@ int main(int argc, char **argv)
 
 	ParserMain(&context);
 	TypeCheckMain(&context);
+	IRGenMain(&context);
+	BackendMain(&context);
 
 	for (int i = 0; i < inputFiles.size; ++i)
 		CompilerAddSourceFile(&context, inputFiles[i], {});
 
 	TimerSplit("Read input files"_s);
 
-#if 0
-	for (int i = 0; i < context.sourceFiles.size; ++i)
-		TokenizeFile(&context, i);
-
-	TimerSplit("Tokenizer"_s);
-	PhaseAllocator::Wipe();
-
-	GenerateSyntaxTree(&context);
-
-	if (context.config.logAST)
-		PrintAST(&context);
-
-	TimerSplit("Generating AST"_s);
-	PhaseAllocator::Wipe();
-
-	TypeCheckMain(&context);
-
-	if (context.config.logAST)
-		PrintAST(&context);
-
-	TimerSplit("Type checking"_s);
-	PhaseAllocator::Wipe();
-#else
 	for (int threadIdx = 0; threadIdx < context.parseThreads.size; ++threadIdx)
 		WaitForSingleObject(context.parseThreads[threadIdx], INFINITE);
 
 	// Unsafe reads!
 	for (int threadIdx = 0; threadIdx < context.tcThreads.content.size; ++threadIdx)
 		WaitForSingleObject(context.tcThreads.content[threadIdx], INFINITE);
-#endif
 
-	//BREAK;
+	for (int threadIdx = 0; threadIdx < context.irThreads.content.size; ++threadIdx)
+		WaitForSingleObject(context.irThreads.content[threadIdx], INFINITE);
 
-	IRGenMain(&context);
+	BackendGenerateOutputFile(&context);
 
-	if (context.config.logIR)
-		PrintIRInstructions(&context);
-
-	TimerSplit("IR generation"_s);
-	PhaseAllocator::Wipe();
-
-	BackendMain(&context);
-
+	TimerSplit("Done"_s);
 	Print("Compilation success\n");
 
 	return 0;

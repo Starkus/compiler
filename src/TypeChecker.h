@@ -204,9 +204,11 @@ struct TCJob
 {
 	u32 jobIdx;
 	ASTExpression *expression;
+	bool onStaticContext;
 	DynamicArray<TCScope, PhaseAllocator> scopeStack;
 	u32 currentReturnType;
 	u32 currentForLoopArrayType;
+	BucketArray<Value, HeapAllocator, 1024> localValues;
 };
 
 struct TCResultWithType

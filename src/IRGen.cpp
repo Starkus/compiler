@@ -1,57 +1,128 @@
+u32 IRNewValue(Context *context, u32 typeTableIdx, u32 flags, u32 immitateValueIdx = U32_MAX)
+{
+	ASSERT(typeTableIdx != 0);
+	ASSERT(!(flags & VALUEFLAGS_TRY_IMMITATE) || immitateValueIdx != U32_MAX);
+
+	IRThreadData *threadData = (IRThreadData *)TlsGetValue(context->tlsIndex);
+
+	u64 idx = BucketArrayCount(&threadData->localValues);
+	Value *result = BucketArrayAdd(&threadData->localValues);
+	result->name = {};
+	result->typeTableIdx = typeTableIdx;
+	result->flags = flags;
+	result->tryImmitateValueIdx = immitateValueIdx;
+
+	ASSERT(idx < U32_MAX);
+	return (u32)idx;
+}
+
+u32 IRNewValue(Context *context, String name, u32 typeTableIdx, u32 flags, u32 immitateValueIdx = U32_MAX)
+{
+	ASSERT(typeTableIdx != 0);
+	ASSERT(!(flags & VALUEFLAGS_TRY_IMMITATE) || immitateValueIdx != U32_MAX);
+
+	IRThreadData *threadData = (IRThreadData *)TlsGetValue(context->tlsIndex);
+
+	u64 idx = BucketArrayCount(&threadData->localValues);
+	Value *result = BucketArrayAdd(&threadData->localValues);
+	result->name = name;
+	result->typeTableIdx = typeTableIdx;
+	result->flags = flags;
+	result->tryImmitateValueIdx = immitateValueIdx;
+
+	ASSERT(idx < U32_MAX);
+	return (u32)idx;
+}
+
+u32 IRNewValue(Context *context, Value value)
+{
+	ASSERT(value.typeTableIdx != 0);
+	ASSERT(!(value.flags & VALUEFLAGS_TRY_IMMITATE) || value.tryImmitateValueIdx != U32_MAX);
+
+	IRThreadData *threadData = (IRThreadData *)TlsGetValue(context->tlsIndex);
+
+	u64 idx = BucketArrayCount(&threadData->localValues);
+	Value *result = BucketArrayAdd(&threadData->localValues);
+	*result = value;
+
+	ASSERT(idx < U32_MAX);
+	return (u32)idx;
+}
+
+inline Value IRGetValue(Context *context, u32 valueIdx)
+{
+	if (valueIdx & 0x80000000)
+		return GetGlobalValue(context, valueIdx);
+	else
+	{
+		IRThreadData *threadData = (IRThreadData *)TlsGetValue(context->tlsIndex);
+		return threadData->localValues[valueIdx];
+	}
+}
+
+inline void IRUpdateValue(Context *context, u32 valueIdx, Value *value)
+{
+	if (valueIdx & 0x80000000)
+	{
+		auto values = context->values.GetForWrite();
+		(*values)[valueIdx & 0x7FFFFFFF] = *value;
+	}
+	else
+	{
+		IRThreadData *threadData = (IRThreadData *)TlsGetValue(context->tlsIndex);
+		threadData->localValues[valueIdx] = *value;
+	}
+}
+
+inline void IRSetValueFlags(Context *context, u32 valueIdx, u32 flags)
+{
+	if (valueIdx & 0x80000000)
+	{
+		auto values = context->values.GetForWrite();
+		(*values)[valueIdx & 0x7FFFFFFF].flags |= flags;
+	}
+	else
+	{
+		IRThreadData *threadData = (IRThreadData *)TlsGetValue(context->tlsIndex);
+		threadData->localValues[valueIdx].flags |= flags;
+	}
+}
+
 IRLabel *NewLabel(Context *context, String prefix)
 {
 	static u64 currentLabelId = 0;
 
+	IRThreadData *threadData = (IRThreadData *)TlsGetValue(context->tlsIndex);
+
 	IRLabel result = {};
-	IRProcedureScope stackTop = context->irProcedureStack[context->irProcedureStack.size - 1];
 
 	result.name = TPrintF("%S%d", prefix, currentLabelId++);
-	result.procedureIdx = stackTop.procedureIdx;
 	result.instructionIdx = -1;
 
-	IRLabel *newLabel = BucketArrayAdd(&context->irLabels);
+	IRLabel *newLabel = BucketArrayAdd(&threadData->irLabels);
 	*newLabel = result;
 	return newLabel;
 }
 
 void PushIRScope(Context *context)
 {
+	IRThreadData *threadData = (IRThreadData *)TlsGetValue(context->tlsIndex);
 	IRScope newScope = {};
 	DynamicArrayInit(&newScope.deferredStatements, 4);
-	*DynamicArrayAdd(&context->irStack) = newScope;
+	*DynamicArrayAdd(&threadData->irStack) = newScope;
 }
 
-void PopIRScope(Context *context)
+inline void PopIRScope(Context *context)
 {
-	ASSERT(context->irStack.size);
-	--context->irStack.size;
-}
-
-IRProcedureScope *PushIRProcedure(Context *context, SourceLocation definitionLoc, s32 procedureIdx)
-{
-	IRProcedureScope procScope;
-	procScope.procedureIdx = procedureIdx;
-	procScope.irStackBase = context->irStack.size;
-	procScope.shouldReturnValueIdx = U32_MAX;
-	procScope.definitionLoc = definitionLoc;
-
-	IRProcedureScope *newProcScope = DynamicArrayAdd(&context->irProcedureStack);
-	*newProcScope = procScope;
-
-	PushIRScope(context);
-	return newProcScope;
-}
-
-void PopIRProcedure(Context *context)
-{
-	--context->irProcedureStack.size;
-	PopIRScope(context);
+	IRThreadData *threadData = (IRThreadData *)TlsGetValue(context->tlsIndex);
+	ASSERT(threadData->irStack.size);
+	--threadData->irStack.size;
 }
 
 inline IRInstruction *AddInstruction(Context *context)
 {
-	IRProcedureScope stackTop = context->irProcedureStack[context->irProcedureStack.size - 1];
-	return BucketArrayAdd(&context->irProcedureInstructions[stackTop.procedureIdx]);
+	IRThreadData *threadData = (IRThreadData *)TlsGetValue(context->tlsIndex);
+	return BucketArrayAdd(&threadData->irInstructions);
 }
 
 void IRAddComment(Context *context, String comment)
@@ -93,7 +164,7 @@ IRValue IRValueValue(Context *context, u32 valueIdx, s64 offset = 0)
 	result.value.valueIdx = valueIdx;
 	result.value.elementSize = 0;
 	result.value.offset = offset;
-	result.typeTableIdx = GetValueRead(context, valueIdx).typeTableIdx;
+	result.typeTableIdx = IRGetValue(context, valueIdx).typeTableIdx;
 	return result;
 }
 
@@ -125,11 +196,12 @@ IRValue IRValueImmediateString(Context *context, String string)
 		result.immediateStringIdx = 0;
 	else
 	{
-		s64 stringCount = BucketArrayCount(&context->stringLiterals);
+		auto stringLiterals = context->stringLiterals.GetForWrite();
+		s64 stringCount = BucketArrayCount(&stringLiterals);
 		ASSERT(stringCount < U32_MAX);
 		for (u32 stringIdx = 0; stringIdx < stringCount; ++stringIdx)
 		{
-			if (StringEquals(context->stringLiterals[stringIdx], string))
+			if (StringEquals((*stringLiterals)[stringIdx], string))
 			{
 				result.immediateStringIdx = stringIdx;
 				goto done;
@@ -137,7 +209,7 @@ IRValue IRValueImmediateString(Context *context, String string)
 		}
 		u32 idx = (u32)stringCount;
 		result.immediateStringIdx = idx;
-		*BucketArrayAdd(&context->stringLiterals) = string;
+		*BucketArrayAdd(&stringLiterals) = string;
 	}
 done:
 	return result;
@@ -147,9 +219,10 @@ IRValue IRValueImmediateFloat(Context *context, f64 f, u32 typeTableIdx = TYPETA
 {
 	static u64 floatStaticVarUniqueID = 0;
 
-	for (int i = 0; i < context->irStaticVariables.size; ++i)
+	auto staticVars = context->irStaticVariables.GetForWrite();
+	for (int i = 0; i < staticVars->size; ++i)
 	{
-		IRStaticVariable staticVar = context->irStaticVariables[i];
+		IRStaticVariable staticVar = (*staticVars)[i];
 		if (staticVar.initialValue.valueType == IRVALUETYPE_IMMEDIATE_FLOAT &&
 			staticVar.initialValue.typeTableIdx == typeTableIdx)
 		{
@@ -165,13 +238,13 @@ IRValue IRValueImmediateFloat(Context *context, f64 f, u32 typeTableIdx = TYPETA
 	}
 
 	IRStaticVariable newStaticVar = {};
-	newStaticVar.valueIdx = NewValue(context,
+	newStaticVar.valueIdx = NewGlobalValue(context,
 			TPrintF("_staticFloat%d", floatStaticVarUniqueID++), typeTableIdx,
 			VALUEFLAGS_ON_STATIC_STORAGE);
 	newStaticVar.initialValue.valueType = IRVALUETYPE_IMMEDIATE_FLOAT;
 	newStaticVar.initialValue.immediateFloat = f;
 	newStaticVar.initialValue.typeTableIdx = typeTableIdx;
-	*DynamicArrayAdd(&context->irStaticVariables) = newStaticVar;
+	*DynamicArrayAdd(&staticVars) = newStaticVar;
 
 	return IRValueValue(newStaticVar.valueIdx, typeTableIdx);
 }
@@ -187,7 +260,7 @@ IRValue IRValueProcedure(Context *context, s32 procedureIdx)
 
 IRValue IRValueNewValue(Context *context, u32 typeTableIdx, u32 flags, u32 immitateValueIdx = 0)
 {
-	u32 newValue = NewValue(context, typeTableIdx, flags, immitateValueIdx);
+	u32 newValue = IRNewValue(context, typeTableIdx, flags, immitateValueIdx);
 
 	IRValue result = {};
 	result.valueType = IRVALUETYPE_VALUE;
@@ -199,7 +272,7 @@ IRValue IRValueNewValue(Context *context, u32 typeTableIdx, u32 flags, u32 immit
 IRValue IRValueNewValue(Context *context, String name, u32 typeTableIdx, u32 flags,
 		u32 immitateValueIdx = 0)
 {
-	u32 newValueIdx = NewValue(context, name, typeTableIdx, flags, immitateValueIdx);
+	u32 newValueIdx = IRNewValue(context, name, typeTableIdx, flags, immitateValueIdx);
 
 	IRValue result = {};
 	result.valueType = IRVALUETYPE_VALUE;
@@ -240,10 +313,10 @@ IRValue IRDereferenceValue(Context *context, IRValue in)
 		// then we can dereference that pointer once it's on a register:
 		//     mov out, [rax]
 
-		String srcName = GetValueRead(context, in.value.valueIdx).name;
+		String srcName = IRGetValue(context, in.value.valueIdx).name;
 
 		String name = TPrintF("_deref_forcereg_%S", srcName);
-		u32 tempValueIdx = NewValue(context, name, in.typeTableIdx, VALUEFLAGS_TRY_IMMITATE |
+		u32 tempValueIdx = IRNewValue(context, name, in.typeTableIdx, VALUEFLAGS_TRY_IMMITATE |
 				VALUEFLAGS_FORCE_REGISTER, in.value.valueIdx);
 		IRValue tmpValue = IRValueValue(tempValueIdx, in.typeTableIdx);
 
@@ -253,7 +326,7 @@ IRValue IRDereferenceValue(Context *context, IRValue in)
 		*AddInstruction(context) = inst;
 
 		name = TPrintF("_deref_%S", srcName);
-		u32 newValueIdx = NewValue(context, name, in.typeTableIdx, VALUEFLAGS_TRY_IMMITATE,
+		u32 newValueIdx = IRNewValue(context, name, in.typeTableIdx, VALUEFLAGS_TRY_IMMITATE,
 				in.value.valueIdx);
 		IRValue value = IRValueValue(newValueIdx, in.typeTableIdx);
 
@@ -291,7 +364,7 @@ IRValue IRDoMemberAccess(Context *context, IRValue structValue, StructMember str
 		   structValue.valueType == IRVALUETYPE_VALUE_DEREFERENCE);
 
 	IRAddComment(context, TPrintF("Accessing struct member \"%S.%S\"",
-				GetValueRead(context, structValue.value.valueIdx).name, structMember.name));
+				IRGetValue(context, structValue.value.valueIdx).name, structMember.name));
 
 	s64 offset = structMember.offset + structValue.value.offset;
 	IRValue result = IRValueDereference(structValue.value.valueIdx, structMember.typeTableIdx,
@@ -344,7 +417,7 @@ IRValue IRDoArrayAccess(Context *context, IRValue arrayValue, IRValue indexValue
 				VALUEFLAGS_FORCE_REGISTER | VALUEFLAGS_TRY_IMMITATE, indexValue.value.valueIdx);
 		IRDoAssignment(context, indexForceReg, indexValue);
 
-		u32 flags = GetValueRead(context, arrayValue.value.valueIdx).flags;
+		u32 flags = IRGetValue(context, arrayValue.value.valueIdx).flags;
 		if (flags & VALUEFLAGS_ON_STATIC_STORAGE)
 		{
 			// @Improve: This is x64 specific. Move to x64 backend.
@@ -403,7 +476,7 @@ inline void IRPushValueIntoStack(Context *context, u32 valueIdx)
 
 u32 IRAddTempValue(Context *context, String name, u32 typeTableIdx, u8 flags)
 {
-	u32 valueIdx = NewValue(context, name, typeTableIdx, flags);
+	u32 valueIdx = IRNewValue(context, name, typeTableIdx, flags);
 	IRPushValueIntoStack(context, valueIdx);
 	return valueIdx;
 }
@@ -569,7 +642,8 @@ void IRDoAssignment(Context *context, IRValue dstValue, IRValue srcValue)
 
 void IRInsertLabelInstruction(Context *context, IRLabel *label)
 {
-	label->instructionIdx = BucketArrayCount(&context->irProcedureInstructions[label->procedureIdx]);
+	IRThreadData *threadData = (IRThreadData *)TlsGetValue(context->tlsIndex);
+	label->instructionIdx = BucketArrayCount(&threadData->irInstructions);
 	IRInstruction result;
 	result.type = IRINSTRUCTIONTYPE_LABEL;
 	result.label = label;
@@ -601,8 +675,8 @@ IRValue IRInstructionFromBinaryOperation(Context *context, const ASTExpression *
 			structTypeInfo.typeCategory == TYPECATEGORY_POINTER)
 		{
 			// Dereference the pointer to the struct
-			String name = TPrintF("_derefstrctptr_%S", GetValueRead(context, irValue.value.valueIdx).name);
-			u32 newValueIdx = NewValue(context, name, irValue.typeTableIdx,
+			String name = TPrintF("_derefstrctptr_%S", IRGetValue(context, irValue.value.valueIdx).name);
+			u32 newValueIdx = IRNewValue(context, name, irValue.typeTableIdx,
 					VALUEFLAGS_FORCE_REGISTER);
 			IRValue newValue = IRValueValue(newValueIdx, irValue.typeTableIdx);
 
@@ -858,10 +932,10 @@ IRValue IRInstructionFromBinaryOperation(Context *context, const ASTExpression *
 		if (outValue.valueType == IRVALUETYPE_VALUE &&
 			inst.binaryOperation.left.valueType == IRVALUETYPE_VALUE)
 		{
-			Value *v = GetValueWrite(context, inst.binaryOperation.left.value.valueIdx);
-			v->flags |= VALUEFLAGS_TRY_IMMITATE;
-			v->tryImmitateValueIdx = outValue.value.valueIdx;
-			context->values.UnlockForWrite();
+			Value v = IRGetValue(context, inst.binaryOperation.left.value.valueIdx);
+			v.flags |= VALUEFLAGS_TRY_IMMITATE;
+			v.tryImmitateValueIdx = outValue.value.valueIdx;
+			IRUpdateValue(context, inst.binaryOperation.left.value.valueIdx, &v);
 		}
 
 		inst.binaryOperation.out = outValue;
@@ -1011,10 +1085,13 @@ insertSimpleJump:
 
 IRValue IRDoInlineProcedureCall(Context *context, ASTProcedureCall astProcCall)
 {
+	IRThreadData *threadData = (IRThreadData *)TlsGetValue(context->tlsIndex);
+
 	ASSERT(astProcCall.callType == CALLTYPE_STATIC);
 	Procedure procedure = GetProcedureRead(context, astProcCall.procedureIdx);
 
 	// Check for cyclic inline procedure calls
+#if 0 // @Fix
 	for (int i = 0; i < context->irProcedureStack.size; ++i)
 	{
 		if (context->irProcedureStack[i].procedureIdx == astProcCall.procedureIdx)
@@ -1024,24 +1101,16 @@ IRValue IRDoInlineProcedureCall(Context *context, ASTProcedureCall astProcCall)
 			PANIC;
 		}
 	}
+#endif
+
+	IRLabel *oldReturnLabel = threadData->returnLabel;
+	u32 oldReturnValueIdx = threadData->returnValueIdx;
 
 	TypeInfoProcedure procTypeInfo = GetTypeInfo(context, procedure.typeTableIdx).procedureInfo;
 	IRValue returnValue = IRValueNewValue(context, "_inline_return"_s, procTypeInfo.returnTypeTableIdx, 0);
+	threadData->returnValueIdx = returnValue.value.valueIdx;
 	IRPushValueIntoStack(context, returnValue.value.valueIdx);
 	bool isVarargs = procTypeInfo.isVarargs;
-
-	IRProcedureScope *stackTop = &context->irProcedureStack[context->irProcedureStack.size - 1];
-	Procedure oldProc = GetProcedureRead(context, stackTop->procedureIdx);
-
-	{
-		Procedure p = procedure;
-		p.name = TPrintF("_%S_inline", procedure.name);
-		p.returnValueIdx = returnValue.value.valueIdx;
-		p.parameterValues.data = astProcCall.inlineParameterValues.data;
-		p.parameterValues.size = astProcCall.inlineParameterValues.size;
-		p.parameterValues.capacity = astProcCall.inlineParameterValues.size;
-		UpdateProcedure(context, stackTop->procedureIdx, &p);
-	}
 
 	// Support both varargs and default parameters here
 	s32 procParamCount = (s32)procTypeInfo.parameters.size;
@@ -1174,22 +1243,23 @@ IRValue IRDoInlineProcedureCall(Context *context, ASTProcedureCall astProcCall)
 skipGeneratingVarargsArray:
 
 	// IRGen
-	IRProcedureScope *newScope = PushIRProcedure(context, astProcCall.loc, stackTop->procedureIdx);
 	IRLabel *returnLabel = NewLabel(context, "inline_return"_s);
-	newScope->returnLabel = returnLabel;
+	threadData->returnLabel = returnLabel;
 
 	ASSERT(astProcCall.astBodyInlineCopy);
 	IRGenFromExpression(context, astProcCall.astBodyInlineCopy);
 
 	IRInstruction *returnLabelInst = AddInstruction(context);
-	returnLabel->instructionIdx =
-	BucketArrayCount(&context->irProcedureInstructions[stackTop->procedureIdx]) - 1;
+	{
+		ScopedLockRead proceduresLock(&context->proceduresLock);
+		returnLabel->instructionIdx =
+			BucketArrayCount(&threadData->irInstructions) - 1;
+	}
 	returnLabelInst->type = IRINSTRUCTIONTYPE_LABEL;
 	returnLabelInst->label = returnLabel;
 
-	PopIRProcedure(context);
-
-	UpdateProcedure(context, stackTop->procedureIdx, &oldProc);
+	threadData->returnLabel = oldReturnLabel;
+	threadData->returnValueIdx = oldReturnValueIdx;
 
 	return returnValue;
 }
@@ -1367,19 +1437,16 @@ void IRAssignmentFromExpression(Context *context, IRValue dstValue, ASTExpressio
 
 void IRGenProcedure(Context *context, s32 procedureIdx, SourceLocation loc)
 {
+	IRThreadData *threadData = (IRThreadData *)TlsGetValue(context->tlsIndex);
 	Procedure procedure = GetProcedureRead(context, procedureIdx);
 
 	if (!procedure.astBody)
 		return;
 
-	if (context->irProcedureInstructions.size <= procedureIdx)
-		DynamicArrayAddMany(&context->irProcedureInstructions,
-				procedureIdx - context->irProcedureInstructions.size);
-	BucketArrayInit(&context->irProcedureInstructions[procedureIdx]);
+	BucketArrayInit(&threadData->irInstructions);
 
-	IRProcedureScope *currentProc = PushIRProcedure(context, loc, procedureIdx);
 	IRLabel *returnLabel = NewLabel(context, "return"_s);
-	currentProc->returnLabel = returnLabel;
+	threadData->returnLabel = returnLabel;
 
 	for (int i = 0; i < procedure.parameterValues.size; ++i)
 	{
@@ -1388,20 +1455,20 @@ void IRGenProcedure(Context *context, s32 procedureIdx, SourceLocation loc)
 	}
 
 	s32 returnValueIdx = procedure.returnValueIdx;
-	Value *returnValue = GetValueWrite(context, returnValueIdx);
-	if (IRShouldPassByCopy(context, returnValue->typeTableIdx))
+	Value returnValue = IRGetValue(context, returnValueIdx);
+	if (IRShouldPassByCopy(context, returnValue.typeTableIdx))
 	{
-		returnValue->flags |= VALUEFLAGS_PARAMETER_BY_COPY;
-		returnValue->typeTableIdx = GetTypeInfoPointerOf(context, returnValue->typeTableIdx);
+		returnValue.flags |= VALUEFLAGS_PARAMETER_BY_COPY;
+		returnValue.typeTableIdx = GetTypeInfoPointerOf(context, returnValue.typeTableIdx);
+		IRUpdateValue(context, returnValueIdx, &returnValue);
 	}
-	context->values.UnlockForWrite();
 	IRPushValueIntoStack(context, returnValueIdx);
 
 	IRGenFromExpression(context, procedure.astBody);
 
 	IRInstruction *returnLabelInst = AddInstruction(context);
 	returnLabel->instructionIdx =
-		BucketArrayCount(&context->irProcedureInstructions[procedureIdx]) - 1;
+		BucketArrayCount(&threadData->irInstructions) - 1;
 	returnLabelInst->type = IRINSTRUCTIONTYPE_LABEL;
 	returnLabelInst->label = returnLabel;
 
@@ -1409,24 +1476,25 @@ void IRGenProcedure(Context *context, s32 procedureIdx, SourceLocation loc)
 	IRInstruction returnInst;
 	returnInst.type = IRINSTRUCTIONTYPE_RETURN;
 	*AddInstruction(context) = returnInst;
-
-	PopIRProcedure(context);
 }
 
 IRValue IRGenFromExpression(Context *context, const ASTExpression *expression)
 {
+	IRThreadData *threadData = (IRThreadData *)TlsGetValue(context->tlsIndex);
 #if DEBUG_BUILD
-	SourceLocation loc = expression->any.loc;
-	static u32 lastFileIdx = loc.fileIdx;
-	static u32 lastLine = ExpandSourceLocation(context, loc).line;
+	if (threadData && threadData->procedureIdx != 0)
+	{
+		SourceLocation loc = expression->any.loc;
+		static u32 lastFileIdx = loc.fileIdx;
+		static u32 lastLine = ExpandSourceLocation(context, loc).line;
 
-	FatSourceLocation fatLoc = ExpandSourceLocation(context, loc);
-	if (loc.fileIdx != lastFileIdx || fatLoc.line != lastLine)
-		if (context->irProcedureStack.size > 0)
+		FatSourceLocation fatLoc = ExpandSourceLocation(context, loc);
+		if (loc.fileIdx != lastFileIdx || fatLoc.line != lastLine)
 			IRAddComment(context, { fatLoc.lineSize, fatLoc.beginingOfLine });
 
-	lastFileIdx = loc.fileIdx;
-	lastLine = fatLoc.line;
+		lastFileIdx = loc.fileIdx;
+		lastLine = fatLoc.line;
+	}
 #endif
 
 	IRValue result = {};
@@ -1442,18 +1510,20 @@ IRValue IRGenFromExpression(Context *context, const ASTExpression *expression)
 	} break;
 	case ASTNODETYPE_PROCEDURE_DECLARATION:
 	{
-		s32 procedureIdx = expression->procedureDeclaration.procedureIdx;
-		IRGenProcedure(context, procedureIdx, expression->any.loc);
+		//s32 procedureIdx = expression->procedureDeclaration.procedureIdx;
+		//IRGenProcedure(context, procedureIdx, expression->any.loc);
 	} break;
 	case ASTNODETYPE_OPERATOR_OVERLOAD:
 	{
-		s32 procedureIdx = expression->operatorOverload.procedureIdx;
-		IRGenProcedure(context, procedureIdx, expression->any.loc);
+		//s32 procedureIdx = expression->operatorOverload.procedureIdx;
+		//IRGenProcedure(context, procedureIdx, expression->any.loc);
 	} break;
 	case ASTNODETYPE_BLOCK:
 	{
 		PushIRScope(context);
-		IRScope *currentScope = &context->irStack[context->irStack.size - 1];
+		int currentScopeIdx = (int)threadData->irStack.size - 1;
+		IRScope *currentScope = &threadData->irStack[currentScopeIdx];
+		int parentScopeIdx = currentScopeIdx - 1;
 		currentScope->closeLabel = NewLabel(context, "closeScope"_s);
 
 		*AddInstruction(context) = { IRINSTRUCTIONTYPE_PUSH_SCOPE };
@@ -1463,12 +1533,10 @@ IRValue IRGenFromExpression(Context *context, const ASTExpression *expression)
 
 		*AddInstruction(context) = { IRINSTRUCTIONTYPE_POP_SCOPE };
 
-		IRProcedureScope stackTop = context->irProcedureStack[context->irProcedureStack.size - 1];
 		bool isThereCleanUpToDo = false;
-		for (s64 stackIdx = context->irStack.size - 1;
-				stackIdx >= stackTop.irStackBase; --stackIdx)
+		for (s64 stackIdx = currentScopeIdx; stackIdx >= 0; --stackIdx)
 		{
-			if (context->irStack[stackIdx].deferredStatements.size)
+			if (threadData->irStack[stackIdx].deferredStatements.size)
 			{
 				isThereCleanUpToDo = true;
 				break;
@@ -1477,11 +1545,11 @@ IRValue IRGenFromExpression(Context *context, const ASTExpression *expression)
 
 		if (isThereCleanUpToDo)
 		{
-			if (stackTop.shouldReturnValueIdx == U32_MAX)
-				stackTop.shouldReturnValueIdx = NewValue(context, TYPETABLEIDX_U8, 0);
+			if (threadData->shouldReturnValueIdx == U32_MAX)
+				threadData->shouldReturnValueIdx = IRNewValue(context, TYPETABLEIDX_U8, 0);
 
 			// Set should-return register to 0
-			IRValue shouldReturnRegister = IRValueValue(context, stackTop.shouldReturnValueIdx);
+			IRValue shouldReturnRegister = IRValueValue(context, threadData->shouldReturnValueIdx);
 			IRValue zero = IRValueImmediate(0);
 			IRDoAssignment(context, shouldReturnRegister, zero);
 
@@ -1497,7 +1565,7 @@ IRValue IRGenFromExpression(Context *context, const ASTExpression *expression)
 			}
 
 			// If should-return register is set, return
-			if ((s64)(context->irStack.size - 2) != stackTop.irStackBase)
+			if (parentScopeIdx > 0)
 			{
 				IRLabel *skipLabel = NewLabel(context, "skipReturn"_s);
 
@@ -1510,22 +1578,21 @@ IRValue IRGenFromExpression(Context *context, const ASTExpression *expression)
 				// Jump to closing of next scope with deferred statements
 				IRInstruction jumpInst;
 				jumpInst.type = IRINSTRUCTIONTYPE_JUMP;
-				for (int scopeIdx = (int)context->irStack.size - 2; ; --scopeIdx)
+				jumpInst.jump.label = threadData->returnLabel;
+				for (int scopeIdx = parentScopeIdx; scopeIdx >= 0; --scopeIdx)
 				{
-					IRScope *scope = &context->irStack[scopeIdx];
-					if (scopeIdx == stackTop.irStackBase || scope->deferredStatements.size > 0)
+					IRScope *scope = &threadData->irStack[scopeIdx];
+					if (scope->deferredStatements.size > 0)
 					{
 						jumpInst.jump.label = scope->closeLabel;
 						break;
 					}
 				}
-				if (jumpInst.jump.label == nullptr)
-					jumpInst.jump.label = stackTop.returnLabel;
 				*AddInstruction(context) = jumpInst;
 
 				IRInstruction *skipLabelInst = AddInstruction(context);
 				skipLabel->instructionIdx =
-					BucketArrayCount(&context->irProcedureInstructions[stackTop.procedureIdx]) - 1;
+					BucketArrayCount(&threadData->irInstructions) - 1;
 				skipLabelInst->type = IRINSTRUCTIONTYPE_LABEL;
 				skipLabelInst->label = skipLabel;
 			}
@@ -1536,10 +1603,6 @@ IRValue IRGenFromExpression(Context *context, const ASTExpression *expression)
 	case ASTNODETYPE_VARIABLE_DECLARATION:
 	{
 		ASTVariableDeclaration varDecl = expression->variableDeclaration;
-
-		bool isGlobalScope = context->irProcedureStack.size == 0;
-		if (isGlobalScope && !varDecl.isStatic && !varDecl.isExternal)
-			LogError(context, expression->any.loc, "Global variables have to be static or external"_s);
 
 		if (varDecl.isStatic)
 		{
@@ -1566,10 +1629,14 @@ IRValue IRGenFromExpression(Context *context, const ASTExpression *expression)
 				}
 			}
 
-			*DynamicArrayAdd(&context->irStaticVariables) = newStaticVar;
+			auto staticVars = context->irStaticVariables.GetForWrite();
+			*DynamicArrayAdd(&staticVars) = newStaticVar;
 		}
 		else if (varDecl.isExternal)
-			*DynamicArrayAdd(&context->irExternalVariables) = varDecl.valueIdx;
+		{
+			auto externalVars = context->irExternalVariables.GetForWrite();
+			*DynamicArrayAdd(&externalVars) = varDecl.valueIdx;
+		}
 		else
 		{
 			IRPushValueIntoStack(context, varDecl.valueIdx);
@@ -1656,7 +1723,7 @@ IRValue IRGenFromExpression(Context *context, const ASTExpression *expression)
 		case NAMETYPE_VARIABLE:
 		{
 			result = IRValueValue(context, expression->identifier.valueIdx);
-			if (GetValueRead(context, result.value.valueIdx).flags & VALUEFLAGS_PARAMETER_BY_COPY)
+			if (IRGetValue(context, result.value.valueIdx).flags & VALUEFLAGS_PARAMETER_BY_COPY)
 				result = IRDereferenceValue(context, result);
 		} break;
 		default:
@@ -1709,9 +1776,6 @@ IRValue IRGenFromExpression(Context *context, const ASTExpression *expression)
 		s32 callParamCount = (s32)astProcCall->arguments.size;
 		s32 paramCount = Max(procParamCount, callParamCount) + isReturnByCopy + isVarargs;
 		ArrayInit(&procCallInst.procedureCall.parameters, paramCount);
-
-		// Remember parameter count because we need space for them in the stack
-		IRProcedureScope stackTop = context->irProcedureStack[context->irProcedureStack.size - 1];
 
 		// Return value
 		procCallInst.procedureCall.out.valueType = IRVALUETYPE_INVALID;
@@ -1961,12 +2025,16 @@ skipGeneratingVarargsArray:
 			static u64 stringStaticVarUniqueID = 0;
 
 			IRStaticVariable newStaticVar = {};
-			newStaticVar.valueIdx = NewValue(context,
+			newStaticVar.valueIdx = NewGlobalValue(context,
 					TPrintF("staticString%d", stringStaticVarUniqueID++),
 					TYPETABLEIDX_STRING_STRUCT, VALUEFLAGS_ON_STATIC_STORAGE);
 			newStaticVar.initialValue = IRValueImmediateString(context, expression->literal.string);
 			newStaticVar.initialValue.typeTableIdx = TYPETABLEIDX_STRING_STRUCT;
-			*DynamicArrayAdd(&context->irStaticVariables) = newStaticVar;
+
+			{
+				auto staticVars = context->irStaticVariables.GetForWrite();
+				*DynamicArrayAdd(&staticVars) = newStaticVar;
+			}
 
 			result = IRValueValue(context, newStaticVar.valueIdx);
 		} break;
@@ -2024,10 +2092,10 @@ skipGeneratingVarargsArray:
 		IRLabel *breakLabel    = NewLabel(context, "break"_s);
 		IRInsertLabelInstruction(context, loopLabel);
 
-		IRLabel *oldBreakLabel    = context->currentBreakLabel;
-		IRLabel *oldContinueLabel = context->currentContinueLabel;
-		context->currentBreakLabel    = breakLabel;
-		context->currentContinueLabel = loopLabel;
+		IRLabel *oldBreakLabel    = threadData->currentBreakLabel;
+		IRLabel *oldContinueLabel = threadData->currentContinueLabel;
+		threadData->currentBreakLabel    = breakLabel;
+		threadData->currentContinueLabel = loopLabel;
 
 		IRConditionalJumpFromExpression(context, expression->whileNode.condition, breakLabel, false);
 
@@ -2039,8 +2107,8 @@ skipGeneratingVarargsArray:
 
 		IRInsertLabelInstruction(context, breakLabel);
 
-		context->currentBreakLabel    = oldBreakLabel;
-		context->currentContinueLabel = oldContinueLabel;
+		threadData->currentBreakLabel    = oldBreakLabel;
+		threadData->currentContinueLabel = oldContinueLabel;
 	} break;
 	case ASTNODETYPE_FOR:
 	{
@@ -2121,11 +2189,11 @@ skipGeneratingVarargsArray:
 
 		IRInsertLabelInstruction(context, loopLabel);
 
-		IRLabel *oldBreakLabel    = context->currentBreakLabel;
-		IRLabel *oldContinueLabel = context->currentContinueLabel;
-		context->currentBreakLabel    = breakLabel;
-		context->currentContinueLabel = continueLabel;
-		context->currentContinueSkipIncrementLabel = continueSkipIncrementLabel;
+		IRLabel *oldBreakLabel    = threadData->currentBreakLabel;
+		IRLabel *oldContinueLabel = threadData->currentContinueLabel;
+		threadData->currentBreakLabel    = breakLabel;
+		threadData->currentContinueLabel = continueLabel;
+		threadData->currentContinueSkipIncrementLabel = continueSkipIncrementLabel;
 
 		IRInstruction *breakJump = AddInstruction(context);
 		breakJump->type = IRINSTRUCTIONTYPE_JUMP_IF_GREATER_THAN_OR_EQUALS;
@@ -2133,10 +2201,10 @@ skipGeneratingVarargsArray:
 		breakJump->conditionalJump2.left  = indexValue;
 		breakJump->conditionalJump2.right = to;
 
-		IRValue oldArrayValue = context->irCurrentForLoopInfo.arrayValue;
-		IRValue oldIndexValue = context->irCurrentForLoopInfo.indexValue;
-		context->irCurrentForLoopInfo.arrayValue = arrayValue;
-		context->irCurrentForLoopInfo.indexValue = indexValue;
+		IRValue oldArrayValue = threadData->irCurrentForLoopInfo.arrayValue;
+		IRValue oldIndexValue = threadData->irCurrentForLoopInfo.indexValue;
+		threadData->irCurrentForLoopInfo.arrayValue = arrayValue;
+		threadData->irCurrentForLoopInfo.indexValue = indexValue;
 
 		IRGenFromExpression(context, astFor->body);
 
@@ -2165,14 +2233,14 @@ skipGeneratingVarargsArray:
 		IRInstruction *loopJump = AddInstruction(context);
 		IRInsertLabelInstruction(context, breakLabel);
 
-		context->currentBreakLabel    = oldBreakLabel;
-		context->currentContinueLabel = oldContinueLabel;
+		threadData->currentBreakLabel    = oldBreakLabel;
+		threadData->currentContinueLabel = oldContinueLabel;
 
 		loopJump->type = IRINSTRUCTIONTYPE_JUMP;
 		loopJump->jump.label = loopLabel;
 
-		context->irCurrentForLoopInfo.arrayValue = oldArrayValue;
-		context->irCurrentForLoopInfo.indexValue = oldIndexValue;
+		threadData->irCurrentForLoopInfo.arrayValue = oldArrayValue;
+		threadData->irCurrentForLoopInfo.indexValue = oldIndexValue;
 
 		PopIRScope(context);
 	} break;
@@ -2180,13 +2248,13 @@ skipGeneratingVarargsArray:
 	{
 		IRInstruction inst;
 		inst.type = IRINSTRUCTIONTYPE_JUMP;
-		inst.jump.label = context->currentContinueLabel;
+		inst.jump.label = threadData->currentContinueLabel;
 		*AddInstruction(context) = inst;
 	} break;
 	case ASTNODETYPE_REMOVE:
 	{
-		IRValue arrayValue = context->irCurrentForLoopInfo.arrayValue;
-		IRValue indexValue = context->irCurrentForLoopInfo.indexValue;
+		IRValue arrayValue = threadData->irCurrentForLoopInfo.arrayValue;
+		IRValue indexValue = threadData->irCurrentForLoopInfo.indexValue;
 		IRValue sizeValue;
 
 		TypeInfo arrayType = GetTypeInfo(context, arrayValue.typeTableIdx);
@@ -2215,25 +2283,22 @@ skipGeneratingVarargsArray:
 
 		IRInstruction inst;
 		inst.type = IRINSTRUCTIONTYPE_JUMP;
-		inst.jump.label = context->currentContinueSkipIncrementLabel;
+		inst.jump.label = threadData->currentContinueSkipIncrementLabel;
 		*AddInstruction(context) = inst;
 	} break;
 	case ASTNODETYPE_BREAK:
 	{
 		IRInstruction inst;
 		inst.type = IRINSTRUCTIONTYPE_JUMP;
-		inst.jump.label = context->currentBreakLabel;
+		inst.jump.label = threadData->currentBreakLabel;
 		*AddInstruction(context) = inst;
 	} break;
 	case ASTNODETYPE_RETURN:
 	{
-		IRProcedureScope *stackTop = &context->irProcedureStack[context->irProcedureStack.size - 1];
-		Procedure currentProc = GetProcedureRead(context, stackTop->procedureIdx);
 		bool isThereCleanUpToDo = false;
-		for (s64 stackIdx = context->irStack.size - 1;
-				stackIdx >= stackTop->irStackBase; --stackIdx)
+		for (s64 stackIdx = threadData->irStack.size - 1; stackIdx >= 0; --stackIdx)
 		{
-			if (context->irStack[stackIdx].deferredStatements.size)
+			if (threadData->irStack[stackIdx].deferredStatements.size)
 			{
 				isThereCleanUpToDo = true;
 				break;
@@ -2242,11 +2307,11 @@ skipGeneratingVarargsArray:
 
 		if (isThereCleanUpToDo)
 		{
-			if (stackTop->shouldReturnValueIdx == U32_MAX)
-				stackTop->shouldReturnValueIdx = NewValue(context, TYPETABLEIDX_U8, 0);
+			if (threadData->shouldReturnValueIdx == U32_MAX)
+				threadData->shouldReturnValueIdx = IRNewValue(context, TYPETABLEIDX_U8, 0);
 
 			// Set should return to one
-			IRValue shouldReturnRegister = IRValueValue(stackTop->shouldReturnValueIdx,
+			IRValue shouldReturnRegister = IRValueValue(threadData->shouldReturnValueIdx,
 					TYPETABLEIDX_U8);
 			IRValue one = IRValueImmediate(1);
 			IRDoAssignment(context, shouldReturnRegister, one);
@@ -2266,7 +2331,7 @@ skipGeneratingVarargsArray:
 				IRInstruction memcpyInst = {};
 				memcpyInst.type = IRINSTRUCTIONTYPE_COPY_MEMORY;
 				memcpyInst.copyMemory.src = IRPointerToValue(context, returnValue);
-				memcpyInst.copyMemory.dst = IRValueValue(currentProc.returnValueIdx,
+				memcpyInst.copyMemory.dst = IRValueValue(threadData->returnValueIdx,
 						GetTypeInfoPointerOf(context, returnTypeTableIdx));
 				memcpyInst.copyMemory.size = sizeValue;
 
@@ -2274,7 +2339,7 @@ skipGeneratingVarargsArray:
 			}
 			else
 			{
-				IRValue dst = IRValueValue(currentProc.returnValueIdx, returnValue.typeTableIdx);
+				IRValue dst = IRValueValue(threadData->returnValueIdx, returnValue.typeTableIdx);
 				IRDoAssignment(context, dst, returnValue);
 			}
 		}
@@ -2283,20 +2348,20 @@ skipGeneratingVarargsArray:
 		{
 			IRInstruction jumpInst;
 			jumpInst.type = IRINSTRUCTIONTYPE_JUMP;
-			jumpInst.jump.label = context->irStack[context->irStack.size - 1].closeLabel;
+			jumpInst.jump.label = threadData->irStack[threadData->irStack.size - 1].closeLabel;
 			*AddInstruction(context) = jumpInst;
 		}
 		else
 		{
 			IRInstruction jumpInst;
 			jumpInst.type = IRINSTRUCTIONTYPE_JUMP;
-			jumpInst.jump.label = stackTop->returnLabel;
+			jumpInst.jump.label = threadData->returnLabel;
 			*AddInstruction(context) = jumpInst;
 		}
 	} break;
 	case ASTNODETYPE_DEFER:
 	{
-		IRScope *stackTop = &context->irStack[context->irStack.size - 1];
+		IRScope *stackTop = DynamicArrayBack(&threadData->irStack);
 		*DynamicArrayAdd(&stackTop->deferredStatements) = expression->deferNode.expression;
 	} break;
 	case ASTNODETYPE_TYPEOF:
@@ -2347,30 +2412,86 @@ skipGeneratingVarargsArray:
 
 void IRGenMain(Context *context)
 {
-	DynamicArrayInit(&context->irStaticVariables, 64);
-	DynamicArrayInit(&context->irExternalVariables, 32);
-	DynamicArrayInit(&context->irStack, 64);
-	DynamicArrayInit(&context->irProcedureStack, 8);
-	BucketArrayInit(&context->stringLiterals);
+	InitializeSRWLock(&context->proceduresLock);
 
-	// Empty string
-	*BucketArrayAdd(&context->stringLiterals) = {};
-
-	u64 procCount = BucketArrayCount(&context->procedures.LockForRead());
-	context->procedures.UnlockForRead();
-	DynamicArrayInit(&context->irProcedureInstructions, procCount);
-
-	BucketArrayInit(&context->irLabels);
-
-	PushIRScope(context);
-
-	for (int fileIdx = 0; fileIdx < context->fileASTRoots.size; ++fileIdx)
 	{
-		ArrayView<ASTExpression> statements = context->fileASTRoots[fileIdx].block.statements;
-		for (int statementIdx = 0; statementIdx < statements.size; ++statementIdx)
-		{
-			const ASTExpression *statement = &statements[statementIdx];
-			IRGenFromExpression(context, statement);
-		}
+		auto staticVars = context->irStaticVariables.GetForWrite();
+		DynamicArrayInit(&staticVars, 64);
 	}
+	{
+		auto externalVars = context->irExternalVariables.GetForWrite();
+		DynamicArrayInit(&externalVars, 32);
+	}
+	{
+		auto stringLiterals = context->stringLiterals.GetForWrite();
+		BucketArrayInit(&stringLiterals);
+		// Empty string
+		*BucketArrayAdd(&stringLiterals) = {};
+	}
+}
+
+void IRJobProcedure(void *args)
+{
+	IRJobArgs *argsStruct = (IRJobArgs *)args;
+	Context *context = argsStruct->context;
+	s32 procedureIdx = argsStruct->procedureIdx;
+
+#if DEBUG_BUILD
+	String threadName = TPrintF("IR:%S", GetProcedureRead(context, procedureIdx).name);
+	HANDLE thread = GetCurrentThread();
+
+	char buffer[512];
+	char *dst = buffer;
+	const char *src = threadName.data;
+	for (int i = 0; i < threadName.size; ++i)
+	{
+		*dst++ = *src++;
+		*dst++ = 0;
+	}
+	*dst++ = 0;
+	*dst++ = 0;
+	SetThreadDescription(thread, (PCWSTR)buffer);
+#endif
+
+	IRThreadData threadData = {};
+	threadData.procedureIdx = procedureIdx;
+	threadData.returnValueIdx = GetProcedureRead(context, procedureIdx).returnValueIdx;
+	threadData.shouldReturnValueIdx = U32_MAX;
+	BucketArrayInit(&threadData.irInstructions);
+	DynamicArrayInit(&threadData.irStack, 64);
+	BucketArrayInit(&threadData.irLabels);
+	threadData.localValues = argsStruct->localValues;
+	TlsSetValue(context->tlsIndex, &threadData);
+
+	IRGenProcedure(context, procedureIdx, {});
+
+	if (GetProcedureRead(context, procedureIdx).astBody)
+		BackendJobProc(context, procedureIdx);
+}
+
+void IRJobExpression(void *args)
+{
+	IRJobArgs *argsStruct = (IRJobArgs *)args;
+	Context *context = argsStruct->context;
+
+#if DEBUG_BUILD
+	String threadName = "IR:Expression"_s;
+	HANDLE thread = GetCurrentThread();
+
+	char buffer[512];
+	char *dst = buffer;
+	const char *src = threadName.data;
+	for (int i = 0; i < threadName.size; ++i)
+	{
+		*dst++ = *src++;
+		*dst++ = 0;
+	}
+	*dst++ = 0;
+	*dst++ = 0;
+	SetThreadDescription(thread, (PCWSTR)buffer);
+#endif
+
+	TlsSetValue(context->tlsIndex, nullptr);
+
+	IRGenFromExpression(context, argsStruct->expression);
 }

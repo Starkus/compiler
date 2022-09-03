@@ -1,665 +1,10 @@
-enum X64OperandType
-{
-	OPERANDTYPE_NONE      = 0,
-	OPERANDTYPE_REGISTER  = 1,
-	OPERANDTYPE_MEMORY    = 2,
-	OPERANDTYPE_REGMEM    = 3,
-	OPERANDTYPE_IMMEDIATE = 4,
-	OPERANDTYPE_ALL       = 7,
-};
-
-enum X64OperandAccess
-{
-	OPERANDACCESS_NONE      = 0,
-	OPERANDACCESS_READ      = 1,
-	OPERANDACCESS_WRITE     = 2,
-	OPERANDACCESS_READWRITE = 3,
-};
-
-struct X64InstructionInfo
-{
-	String mnemonic;
-	u8 operandTypesLeft;
-	u8 operandAccessLeft;
-	u8 operandTypesRight;
-	u8 operandAccessRight;
-};
-
-enum X64InstructionType
-{
-	X64_INT,
-
-	X64_MOV,
-	X64_MOVZX,
-	X64_MOVSX,
-	X64_MOVSXD,
-	X64_CQO,
-	X64_PUSH,
-	X64_POP,
-
-	X64_Jump_Begin,
-	X64_JMP,
-	X64_JE,
-	X64_JNE,
-	X64_JG,
-	X64_JL,
-	X64_JGE,
-	X64_JLE,
-	X64_JA,
-	X64_JB,
-	X64_JAE,
-	X64_JBE,
-	X64_Jump_End,
-
-	X64_CALL,
-	X64_CALL_Indirect,
-	X64_SYSCALL,
-	X64_LEAVE,
-	X64_RET,
-	X64_LEA,
-	X64_CMP,
-	X64_TEST,
-	X64_SETG,
-	X64_SETL,
-	X64_SETGE,
-	X64_SETLE,
-	X64_SETA,
-	X64_SETB,
-	X64_SETAE,
-	X64_SETBE,
-	X64_SETE,
-	X64_SETNE,
-	X64_ADD,
-	X64_SUB,
-	X64_MUL,
-	X64_IMUL,
-	X64_DIV,
-	X64_IDIV,
-	X64_SAR,
-	X64_SAL,
-	X64_SHR,
-	X64_SHL,
-	X64_AND,
-	X64_OR,
-	X64_XOR,
-	X64_NOT,
-	X64_NEG,
-	X64_MOVSS,
-	X64_MOVSD,
-	X64_ADDSS,
-	X64_ADDSD,
-	X64_SUBSS,
-	X64_SUBSD,
-	X64_MULSS,
-	X64_MULSD,
-	X64_DIVSS,
-	X64_DIVSD,
-	X64_XORPS,
-	X64_XORPD,
-	X64_SQRTSS,
-	X64_SQRTSD,
-	X64_COMISS,
-	X64_COMISD,
-	X64_CVTSI2SS,
-	X64_CVTSI2SD,
-	X64_CVTTSS2SI,
-	X64_CVTTSD2SI,
-	X64_CVTSS2SD,
-	X64_CVTSD2SS,
-	X64_MOVUPS,
-	X64_MOVAPS,
-	X64_Count,
-	X64_Ignore = X64_Count,
-	X64_Comment,
-	X64_Label,
-	X64_Push_Scope,
-	X64_Pop_Scope,
-	X64_Push_Value,
-	X64_Patch,
-	X64_Patch_Many,
-	X64_FullCount
-};
-
-s32 copyMemoryProcIdx;
-s32 zeroMemoryProcIdx;
-
-struct BEInstruction
-{
-	X64InstructionType type;
-	union
-	{
-		struct
-		{
-			IRValue dst;
-			IRValue src;
-		};
-		IRLabel *label;
-		struct
-		{
-			// Proc call info
-			union
-			{
-				s32 procedureIdx;
-				IRValue procedureIRValue;
-			};
-			Array<u32, PhaseAllocator> liveValues;
-
-			// These tell the liveness analisis what registers to flag as live.
-			Array<u32, PhaseAllocator> parameterValues;
-		};
-		u32 valueIdx;
-		struct
-		{
-			BEInstruction *patch1;
-			BEInstruction *patch2;
-		};
-		Array<BEInstruction, PhaseAllocator> patchInstructions;
-		String comment;
-	};
-};
-typedef BEInstruction X64Instruction;
-
-struct X64Procedure
-{
-	String name;
-	BucketArray<X64Instruction, PhaseAllocator, 1024> instructions;
-	u64 stackSize;
-	s64 allocatedParameterCount;
-	u32 returnValueIdx;
-	DynamicArray<u32, PhaseAllocator> spilledValues;
-};
-
-enum X64FloatingType
-{
-	X64FLOATINGTYPE_NONE,
-	X64FLOATINGTYPE_F32,
-	X64FLOATINGTYPE_F64
-};
-
-struct X64InstructionStream
-{
-	struct Frame
-	{
-		X64Instruction *instruction;
-		s64 idx;
-	};
-
-	X64Procedure *procedure;
-	s64 idx;
-	s64 instructionArrayCount;
-	FixedArray<Frame, 16> stack;
-};
-
-X64InstructionInfo x64InstructionInfos[X64_FullCount];
-
-enum X64Register
-{
-	RAX_idx,
-	RCX_idx,
-	RDX_idx,
-	RBX_idx,
-	RSI_idx,
-	RDI_idx,
-	RSP_idx,
-	RBP_idx,
-	R8_idx ,
-	R9_idx ,
-	R10_idx,
-	R11_idx,
-	R12_idx,
-	R13_idx,
-	R14_idx,
-	R15_idx,
-	XMM0_idx,
-	XMM1_idx,
-	XMM2_idx,
-	XMM3_idx,
-	XMM4_idx,
-	XMM5_idx,
-	XMM6_idx,
-	XMM7_idx,
-	XMM8_idx,
-	XMM9_idx,
-	XMM10_idx,
-	XMM11_idx,
-	XMM12_idx,
-	XMM13_idx,
-	XMM14_idx,
-	XMM15_idx,
-	X64REGISTER_Count
-};
-
-X64Register x64ScratchRegisters[] = {
-	RAX_idx, RBX_idx, RCX_idx, RDX_idx,
-	RSI_idx, RDI_idx, R8_idx,  R9_idx,
-	R10_idx, R11_idx, R12_idx, R13_idx,
-	R14_idx, R15_idx };
-
-u32 x64SpilledParametersWrite[32];
-u32 x64SpilledParametersRead[32];
-
-IRValue RAX;
-IRValue RCX;
-IRValue RDX;
-IRValue RBX;
-IRValue RSI;
-IRValue RDI;
-IRValue RSP;
-IRValue RBP;
-IRValue R8;
-IRValue R9;
-IRValue R10;
-IRValue R11;
-IRValue R12;
-IRValue R13;
-IRValue R14;
-IRValue R15;
-
-IRValue EAX;
-IRValue ECX;
-IRValue EDX;
-IRValue EBX;
-IRValue ESI;
-IRValue EDI;
-IRValue ESP;
-IRValue EBP;
-IRValue R8D;
-IRValue R9D;
-IRValue R10D;
-IRValue R11D;
-IRValue R12D;
-IRValue R13D;
-IRValue R14D;
-IRValue R15D;
-
-IRValue AX;
-IRValue CX;
-IRValue DX;
-IRValue BX;
-IRValue SI;
-IRValue DI;
-IRValue SP;
-IRValue BP;
-IRValue R8W;
-IRValue R9W;
-IRValue R10W;
-IRValue R11W;
-IRValue R12W;
-IRValue R13W;
-IRValue R14W;
-IRValue R15W;
-
-IRValue AL;
-IRValue CL;
-IRValue DL;
-IRValue BL;
-IRValue SIL;
-IRValue DIL;
-IRValue SPL;
-IRValue BPL;
-IRValue R8B;
-IRValue R9B;
-IRValue R10B;
-IRValue R11B;
-IRValue R12B;
-IRValue R13B;
-IRValue R14B;
-IRValue R15B;
-
-IRValue XMM0;
-IRValue XMM1;
-IRValue XMM2;
-IRValue XMM3;
-IRValue XMM4;
-IRValue XMM5;
-IRValue XMM6;
-IRValue XMM7;
-IRValue XMM8;
-IRValue XMM9;
-IRValue XMM10;
-IRValue XMM11;
-IRValue XMM12;
-IRValue XMM13;
-IRValue XMM14;
-IRValue XMM15;
-
-IRValue x64Registers[X64REGISTER_Count] = {
-	RAX,	RCX,	RDX,	RBX,
-	RSI,	RDI,	RSP,	RBP,
-	R8,		R9,		R10,	R11,
-	R12,	R13,	R14,	R15,
-	XMM0,	XMM1,	XMM2,	XMM3,
-	XMM4,	XMM5,	XMM6,	XMM7,
-	XMM8,	XMM9,	XMM10,	XMM11,
-	XMM12,	XMM13,	XMM14,	XMM15
-};
-
-#if !_MSC_VER
-String x64LinuxSyscallNames[] =
-{
-	"read"_s,
-	"write"_s,
-	"open"_s,
-	"close"_s,
-	"stat"_s,
-	"fstat"_s,
-	"lstat"_s,
-	"poll"_s,
-	"lseek"_s,
-	"mmap"_s,
-	"mprotect"_s,
-	"munmap"_s,
-	"brk"_s,
-	"rt_sigaction"_s,
-	"rt_sigprocmask"_s,
-	"rt_sigreturn"_s,
-	"ioctl"_s,
-	"pread64"_s,
-	"pwrite64"_s,
-	"readv"_s,
-	"writev"_s,
-	"access"_s,
-	"pipe"_s,
-	"select"_s,
-	"sched_yield"_s,
-	"mremap"_s,
-	"msync"_s,
-	"mincore"_s,
-	"madvise"_s,
-	"shmget"_s,
-	"shmat"_s,
-	"shmctl"_s,
-	"dup"_s,
-	"dup2"_s,
-	"pause"_s,
-	"nanosleep"_s,
-	"getitimer"_s,
-	"alarm"_s,
-	"setitimer"_s,
-	"getpid"_s,
-	"sendfile"_s,
-	"socket"_s,
-	"connect"_s,
-	"accept"_s,
-	"sendto"_s,
-	"recvfrom"_s,
-	"sendmsg"_s,
-	"recvmsg"_s,
-	"shutdown"_s,
-	"bind"_s,
-	"listen"_s,
-	"getsockname"_s,
-	"getpeername"_s,
-	"socketpair"_s,
-	"setsockopt"_s,
-	"getsockopt"_s,
-	"clone"_s,
-	"fork"_s,
-	"vfork"_s,
-	"execve"_s,
-	"exit"_s,
-	"wait4"_s,
-	"kill"_s,
-	"uname"_s,
-	"semget"_s,
-	"semop"_s,
-	"semctl"_s,
-	"shmdt"_s,
-	"msgget"_s,
-	"msgsnd"_s,
-	"msgrcv"_s,
-	"msgctl"_s,
-	"fcntl"_s,
-	"flock"_s,
-	"fsync"_s,
-	"fdatasync"_s,
-	"truncate"_s,
-	"ftruncate"_s,
-	"getdents"_s,
-	"getcwd"_s,
-	"chdir"_s,
-	"fchdir"_s,
-	"rename"_s,
-	"mkdir"_s,
-	"rmdir"_s,
-	"creat"_s,
-	"link"_s,
-	"unlink"_s,
-	"symlink"_s,
-	"readlink"_s,
-	"chmod"_s,
-	"fchmod"_s,
-	"chown"_s,
-	"fchown"_s,
-	"lchown"_s,
-	"umask"_s,
-	"gettimeofday"_s,
-	"getrlimit"_s,
-	"getrusage"_s,
-	"sysinfo"_s,
-	"times"_s,
-	"ptrace"_s,
-	"getuid"_s,
-	"syslog"_s,
-	"getgid"_s,
-	"setuid"_s,
-	"setgid"_s,
-	"geteuid"_s,
-	"getegid"_s,
-	"setpgid"_s,
-	"getppid"_s,
-	"getpgrp"_s,
-	"setsid"_s,
-	"setreuid"_s,
-	"setregid"_s,
-	"getgroups"_s,
-	"setgroups"_s,
-	"setresuid"_s,
-	"getresuid"_s,
-	"setresgid"_s,
-	"getresgid"_s,
-	"getpgid"_s,
-	"setfsuid"_s,
-	"setfsgid"_s,
-	"getsid"_s,
-	"capget"_s,
-	"capset"_s,
-	"rt_sigpending"_s,
-	"rt_sigtimedwait"_s,
-	"rt_sigqueueinfo"_s,
-	"rt_sigsuspend"_s,
-	"sigaltstack"_s,
-	"utime"_s,
-	"mknod"_s,
-	"uselib"_s,
-	"personality"_s,
-	"ustat"_s,
-	"statfs"_s,
-	"fstatfs"_s,
-	"sysfs"_s,
-	"getpriority"_s,
-	"setpriority"_s,
-	"sched_setparam"_s,
-	"sched_getparam"_s,
-	"sched_setscheduler"_s,
-	"sched_getscheduler"_s,
-	"sched_get_priority_max"_s,
-	"sched_get_priority_min"_s,
-	"sched_rr_get_interval"_s,
-	"mlock"_s,
-	"munlock"_s,
-	"mlockall"_s,
-	"munlockall"_s,
-	"vhangup"_s,
-	"modify_ldt"_s,
-	"pivot_root"_s,
-	"_sysctl"_s,
-	"prctl"_s,
-	"arch_prctl"_s,
-	"adjtimex"_s,
-	"setrlimit"_s,
-	"chroot"_s,
-	"sync"_s,
-	"acct"_s,
-	"settimeofday"_s,
-	"mount"_s,
-	"umount2"_s,
-	"swapon"_s,
-	"swapoff"_s,
-	"reboot"_s,
-	"sethostname"_s,
-	"setdomainname"_s,
-	"iopl"_s,
-	"ioperm"_s,
-	"create_module"_s,
-	"init_module"_s,
-	"delete_module"_s,
-	"get_kernel_syms"_s,
-	"query_module"_s,
-	"quotactl"_s,
-	"nfsservctl"_s,
-	"getpmsg"_s,
-	"putpmsg"_s,
-	"afs_syscall"_s,
-	"tuxcall"_s,
-	"security"_s,
-	"gettid"_s,
-	"readahead"_s,
-	"setxattr"_s,
-	"lsetxattr"_s,
-	"fsetxattr"_s,
-	"getxattr"_s,
-	"lgetxattr"_s,
-	"fgetxattr"_s,
-	"listxattr"_s,
-	"llistxattr"_s,
-	"flistxattr"_s,
-	"removexattr"_s,
-	"lremovexattr"_s,
-	"fremovexattr"_s,
-	"tkill"_s,
-	"time"_s,
-	"futex"_s,
-	"sched_setaffinity"_s,
-	"sched_getaffinity"_s,
-	"set_thread_area"_s,
-	"io_setup"_s,
-	"io_destroy"_s,
-	"io_getevents"_s,
-	"io_submit"_s,
-	"io_cancel"_s,
-	"get_thread_area"_s,
-	"lookup_dcookie"_s,
-	"epoll_create"_s,
-	"epoll_ctl_old"_s,
-	"epoll_wait_old"_s,
-	"remap_file_pages"_s,
-	"getdents64"_s,
-	"set_tid_address"_s,
-	"restart_syscall"_s,
-	"semtimedop"_s,
-	"fadvise64"_s,
-	"timer_create"_s,
-	"timer_settime"_s,
-	"timer_gettime"_s,
-	"timer_getoverrun"_s,
-	"timer_delete"_s,
-	"clock_settime"_s,
-	"clock_gettime"_s,
-	"clock_getres"_s,
-	"clock_nanosleep"_s,
-	"exit_group"_s,
-	"epoll_wait"_s,
-	"epoll_ctl"_s,
-	"tgkill"_s,
-	"utimes"_s,
-	"vserver"_s,
-	"mbind"_s,
-	"set_mempolicy"_s,
-	"get_mempolicy"_s,
-	"mq_open"_s,
-	"mq_unlink"_s,
-	"mq_timedsend"_s,
-	"mq_timedreceive"_s,
-	"mq_notify"_s,
-	"mq_getsetattr"_s,
-	"kexec_load"_s,
-	"waitid"_s,
-	"add_key"_s,
-	"request_key"_s,
-	"keyctl"_s,
-	"ioprio_set"_s,
-	"ioprio_get"_s,
-	"inotify_init"_s,
-	"inotify_add_watch"_s,
-	"inotify_rm_watch"_s,
-	"migrate_pages"_s,
-	"openat"_s,
-	"mkdirat"_s,
-	"mknodat"_s,
-	"fchownat"_s,
-	"futimesat"_s,
-	"newfstatat"_s,
-	"unlinkat"_s,
-	"renameat"_s,
-	"linkat"_s,
-	"symlinkat"_s,
-	"readlinkat"_s,
-	"fchmodat"_s,
-	"faccessat"_s,
-	"pselect6"_s,
-	"ppoll"_s,
-	"unshare"_s,
-	"set_robust_list"_s,
-	"get_robust_list"_s,
-	"splice"_s,
-	"tee"_s,
-	"sync_file_range"_s,
-	"vmsplice"_s,
-	"move_pages"_s,
-	"utimensat"_s,
-	"epoll_pwait"_s,
-	"signalfd"_s,
-	"timerfd_create"_s,
-	"eventfd"_s,
-	"fallocate"_s,
-	"timerfd_settime"_s,
-	"timerfd_gettime"_s,
-	"accept4"_s,
-	"signalfd4"_s,
-	"eventfd2"_s,
-	"epoll_create1"_s,
-	"dup3"_s,
-	"pipe2"_s,
-	"inotify_init1"_s,
-	"preadv"_s,
-	"pwritev"_s,
-	"rt_tgsigqueueinfo"_s,
-	"perf_event_open"_s,
-	"recvmmsg"_s,
-	"fanotify_init"_s,
-	"fanotify_mark"_s,
-	"prlimit64"_s,
-	"name_to_handle_at"_s,
-	"open_by_handle_at"_s,
-	"clock_adjtime"_s,
-	"syncfs"_s,
-	"sendmmsg"_s,
-	"setns"_s,
-	"getcpu"_s,
-	"process_vm_readv"_s,
-	"process_vm_writev"_s,
-	"kcmp"_s,
-	"finit_module"_s
-};
-#endif
-
-X64InstructionStream X64InstructionStreamBegin(X64Procedure *proc)
+X64InstructionStream X64InstructionStreamBegin(
+		BucketArray<X64Instruction, PhaseAllocator, 1024> *instructionArray)
 {
 	X64InstructionStream stream;
-	stream.procedure = proc;
 	stream.idx = -1;
-	stream.instructionArrayCount = BucketArrayCount(&proc->instructions);
+	stream.instructionArray = instructionArray;
+	stream.instructionArrayCount = BucketArrayCount(instructionArray);
 	stream.stack.size = 0;
 	return stream;
 }
@@ -674,7 +19,7 @@ X64Instruction *X64InstructionStreamAdvance(X64InstructionStream *iterator)
 			++iterator->idx;
 			if (iterator->idx >= iterator->instructionArrayCount)
 				return nullptr;
-			result = &iterator->procedure->instructions[iterator->idx];
+			result = &(*iterator->instructionArray)[iterator->idx];
 			break;
 		}
 		else
@@ -770,7 +115,8 @@ s64 PrintOut(Context *context, const char *format, ...)
 	return size;
 }
 
-String X64IRValueToStr(Context *context, IRValue value)
+String X64IRValueToStr(Context *context, IRValue value,
+		BucketArray<Value, HeapAllocator, 1024> *localValues)
 {
 	String result = "???VALUE"_s;
 
@@ -787,7 +133,11 @@ String X64IRValueToStr(Context *context, IRValue value)
 	TypeInfo typeInfo = GetTypeInfo(context, StripAllAliases(context, value.typeTableIdx));
 	bool isXMM;
 	size = typeInfo.size;
-	Value v = GetValueRead(context, value.value.valueIdx);
+	Value v;
+	if (value.value.valueIdx & 0x80000000)
+		v = GetGlobalValue(context, value.value.valueIdx);
+	else
+		v = (*localValues)[value.value.valueIdx];
 
 	s64 offset = 0;
 	if (value.valueType == IRVALUETYPE_VALUE || value.valueType == IRVALUETYPE_VALUE_DEREFERENCE)
@@ -813,7 +163,8 @@ String X64IRValueToStr(Context *context, IRValue value)
 		// Array indexing
 		if (value.value.elementSize > 0)
 		{
-			String indexRegisterStr = X64IRValueToStr(context, IRValueValue(context, value.value.indexValueIdx));
+			String indexRegisterStr = X64IRValueToStr(context,
+					IRValueValue(context, value.value.indexValueIdx), localValues);
 			result = TPrintF("%S+%S*%llu", result, indexRegisterStr, value.value.elementSize);
 		}
 
@@ -837,13 +188,6 @@ String X64IRValueToStr(Context *context, IRValue value)
 				result = TPrintF("%S+0%xh", result, offset);
 			else if (offset < 0)
 				result = TPrintF("%S-0%xh", result, -offset);
-
-			// Array indexing
-			if (value.value.elementSize > 0)
-			{
-				String indexRegisterStr = X64IRValueToStr(context, IRValueValue(context, value.value.indexValueIdx));
-				result = TPrintF("%S+%S*%llu", result, indexRegisterStr, value.value.elementSize);
-			}
 		}
 		else if (value.valueType == IRVALUETYPE_VALUE_DEREFERENCE)
 		{
@@ -873,13 +217,6 @@ String X64IRValueToStr(Context *context, IRValue value)
 				result = TPrintF("%S+0%xh", result, offset);
 			else if (offset < 0)
 				result = TPrintF("%S-0%xh", result, -offset);
-
-			// Array indexing
-			if (value.value.elementSize > 0)
-			{
-				String indexRegisterStr = X64IRValueToStr(context, IRValueValue(context, value.value.indexValueIdx));
-				result = TPrintF("%S+%S*%llu", result, indexRegisterStr, value.value.elementSize);
-			}
 		}
 		else if (!isXMM)
 		{
@@ -986,13 +323,6 @@ String X64IRValueToStr(Context *context, IRValue value)
 				result = TPrintF("%S+0%xh", result, offset);
 			else if (offset < 0)
 				result = TPrintF("%S-0%xh", result, -offset);
-
-			// Array indexing
-			if (value.value.elementSize > 0)
-			{
-				String indexRegisterStr = X64IRValueToStr(context, IRValueValue(context, value.value.indexValueIdx));
-				result = TPrintF("%S+%S*%llu", result, indexRegisterStr, value.value.elementSize);
-			}
 		}
 		else switch (v.allocatedRegister)
 		{
@@ -1032,9 +362,18 @@ String X64IRValueToStr(Context *context, IRValue value)
 		// Array indexing
 		if (value.value.elementSize > 0)
 		{
-			String indexRegisterStr = X64IRValueToStr(context, IRValueValue(context, value.value.indexValueIdx));
+			String indexRegisterStr = X64IRValueToStr(context,
+					IRValueValue(context, value.value.indexValueIdx), localValues);
 			result = TPrintF("%S+%S*%llu", result, indexRegisterStr, value.value.elementSize);
 		}
+	}
+
+	// Array indexing
+	if (value.value.elementSize > 0)
+	{
+		String indexRegisterStr = X64IRValueToStr(context,
+				IRValueValue(value.value.indexValueIdx, TYPETABLEIDX_S64), localValues);
+		result = TPrintF("%S+%S*%llu", result, indexRegisterStr, value.value.elementSize);
 	}
 
 	if (value.valueType != IRVALUETYPE_VALUE_DEREFERENCE && !(v.flags & VALUEFLAGS_IS_MEMORY))
@@ -1096,7 +435,7 @@ bool IsValueInMemory(Context *context, IRValue irValue)
 		return true;
 	if (irValue.valueType != IRVALUETYPE_VALUE)
 		return false;
-	Value value = GetValueRead(context, irValue.value.valueIdx);
+	Value value = IRGetValue(context, irValue.value.valueIdx);
 	if (value.flags & (VALUEFLAGS_FORCE_MEMORY | VALUEFLAGS_IS_MEMORY |
 				VALUEFLAGS_ON_STATIC_STORAGE))
 		return true;
@@ -1122,17 +461,19 @@ bool CanValueBeMemory(Context *context, IRValue value)
 					   value.valueType == IRVALUETYPE_IMMEDIATE_FLOAT;
 	if (isImmediate)
 		return false;
-	if (GetValueRead(context, value.value.valueIdx).flags & VALUEFLAGS_FORCE_REGISTER)
+	if (IRGetValue(context, value.value.valueIdx).flags & VALUEFLAGS_FORCE_REGISTER)
 		return false;
-	if ((GetValueRead(context, value.value.valueIdx).flags & (VALUEFLAGS_IS_ALLOCATED |
+	if ((IRGetValue(context, value.value.valueIdx).flags & (VALUEFLAGS_IS_ALLOCATED |
 			VALUEFLAGS_IS_MEMORY)) == VALUEFLAGS_IS_ALLOCATED)
 		return false;
 	return true;
 }
 
-void X64Mov(Context *context, X64Procedure *x64Proc, IRValue dst, IRValue src);
-void X64MovNoTmp(Context *context, X64Procedure *x64Proc, IRValue dst, IRValue src)
+void X64Mov(Context *context, IRValue dst, IRValue src);
+void X64MovNoTmp(Context *context, IRValue dst, IRValue src)
 {
+	IRThreadData *threadData = (IRThreadData *)TlsGetValue(context->tlsIndex);
+
 	X64Instruction result;
 	TypeInfo dstType = GetTypeInfo(context, StripAllAliases(context, dst.typeTableIdx));
 	TypeInfo srcType = GetTypeInfo(context, StripAllAliases(context, src.typeTableIdx));
@@ -1144,7 +485,7 @@ void X64MovNoTmp(Context *context, X64Procedure *x64Proc, IRValue dst, IRValue s
 		result.type = X64_MOVUPS;
 		result.dst = dst;
 		result.src = src;
-		*BucketArrayAdd(&x64Proc->instructions) = result;
+		*BucketArrayAdd(&threadData->beInstructions) = result;
 		return;
 	}
 
@@ -1165,7 +506,7 @@ void X64MovNoTmp(Context *context, X64Procedure *x64Proc, IRValue dst, IRValue s
 					// MOVSXD is R-RM
 					IRValue newValue = IRValueNewValue(context, "_movsxd_tmp"_s, dst.typeTableIdx,
 							VALUEFLAGS_FORCE_REGISTER);
-					*BucketArrayAdd(&x64Proc->instructions) = { X64_MOVSXD, newValue, src };
+					*BucketArrayAdd(&threadData->beInstructions) = { X64_MOVSXD, newValue, src };
 					src = newValue;
 				}
 				ASSERT(dstType.size >= 4);
@@ -1177,7 +518,7 @@ void X64MovNoTmp(Context *context, X64Procedure *x64Proc, IRValue dst, IRValue s
 				// MOVSX and MOVZX are R-RM
 				IRValue newValue = IRValueNewValue(context, "_movzx_tmp"_s, dst.typeTableIdx,
 						VALUEFLAGS_FORCE_REGISTER);
-				*BucketArrayAdd(&x64Proc->instructions) = { extendType, newValue, src };
+				*BucketArrayAdd(&threadData->beInstructions) = { extendType, newValue, src };
 				src = newValue;
 			}
 			else if (srcType.size > dstType.size)
@@ -1199,7 +540,7 @@ void X64MovNoTmp(Context *context, X64Procedure *x64Proc, IRValue dst, IRValue s
 				ASSERT(srcType.size == 8);
 				type = X64_CVTTSD2SI;
 			}
-			*BucketArrayAdd(&x64Proc->instructions) = { type, newValue, src };
+			*BucketArrayAdd(&threadData->beInstructions) = { type, newValue, src };
 
 			result.type = X64_MOV;
 			src = newValue;
@@ -1218,7 +559,7 @@ void X64MovNoTmp(Context *context, X64Procedure *x64Proc, IRValue dst, IRValue s
 				IRValue newValue = IRValueNewValue(context, "_cvt_tmp"_s, TYPETABLEIDX_U32,
 						VALUEFLAGS_FORCE_REGISTER);
 				X64InstructionType extendType = isSigned ? X64_MOVSX : X64_MOVZX;
-				*BucketArrayAdd(&x64Proc->instructions) = { extendType, newValue, src };
+				*BucketArrayAdd(&threadData->beInstructions) = { extendType, newValue, src };
 				src = newValue;
 			}
 			result.type = X64_CVTSI2SS;
@@ -1245,7 +586,7 @@ void X64MovNoTmp(Context *context, X64Procedure *x64Proc, IRValue dst, IRValue s
 				IRValue newValue = IRValueNewValue(context, "_cvt_tmp"_s, TYPETABLEIDX_U32,
 						VALUEFLAGS_FORCE_REGISTER);
 				X64InstructionType extendType = isSigned ? X64_MOVSX : X64_MOVZX;
-				*BucketArrayAdd(&x64Proc->instructions) = { extendType, newValue, src };
+				*BucketArrayAdd(&threadData->beInstructions) = { extendType, newValue, src };
 				src = newValue;
 			}
 			result.type = X64_CVTSI2SD;
@@ -1261,20 +602,20 @@ void X64MovNoTmp(Context *context, X64Procedure *x64Proc, IRValue dst, IRValue s
 
 	result.dst = dst;
 	result.src = src;
-	*BucketArrayAdd(&x64Proc->instructions) = result;
+	*BucketArrayAdd(&threadData->beInstructions) = result;
 }
 
-void X64Mov(Context *context, X64Procedure *x64Proc, IRValue dst, IRValue src)
+void X64Mov(Context *context, IRValue dst, IRValue src)
 {
 	if (CanValueBeMemory(context, dst) && CanValueBeMemory(context, src))
 	{
-		Value srcValue = GetValueRead(context, src.value.valueIdx);
+		Value srcValue = IRGetValue(context, src.value.valueIdx);
 		u32 srcUsedFlag = srcValue.flags & VALUEFLAGS_IS_USED;
 		u32 immitateFlag = src.valueType == IRVALUETYPE_VALUE ? VALUEFLAGS_TRY_IMMITATE : 0;
 		IRValue tmp = IRValueNewValue(context, "_movtmp"_s, dst.typeTableIdx,
 				VALUEFLAGS_FORCE_REGISTER | srcUsedFlag | immitateFlag, src.value.valueIdx);
 
-		X64MovNoTmp(context, x64Proc, tmp, src);
+		X64MovNoTmp(context, tmp, src);
 		src = tmp;
 	}
 	// Can't directly mov a 64 bit immediate to a memory location
@@ -1284,15 +625,17 @@ void X64Mov(Context *context, X64Procedure *x64Proc, IRValue dst, IRValue src)
 	{
 		IRValue tmp = IRValueNewValue(context, "_movimmtmp"_s, dst.typeTableIdx,
 				VALUEFLAGS_FORCE_REGISTER);
-		X64MovNoTmp(context, x64Proc, tmp, src);
+		X64MovNoTmp(context, tmp, src);
 		src = tmp;
 	}
 
-	X64MovNoTmp(context, x64Proc, dst, src);
+	X64MovNoTmp(context, dst, src);
 }
 
-void X64Test(Context *context, X64Procedure *x64Proc, IRValue value)
+void X64Test(Context *context, IRValue value)
 {
+	IRThreadData *threadData = (IRThreadData *)TlsGetValue(context->tlsIndex);
+
 	X64FloatingType floatingType = X64FLOATINGTYPE_NONE;
 	TypeInfo typeInfo = GetTypeInfo(context, value.typeTableIdx);
 	if (typeInfo.typeCategory == TYPECATEGORY_FLOATING)
@@ -1311,14 +654,14 @@ void X64Test(Context *context, X64Procedure *x64Proc, IRValue value)
 	{
 		cmpInst.type = X64_COMISS;
 		IRValue zero = IRValueNewValue(context, "_zero"_s, cmpInst.dst.typeTableIdx, 0);
-		*BucketArrayAdd(&x64Proc->instructions) = { X64_XORPS, zero, zero };
+		*BucketArrayAdd(&threadData->beInstructions) = { X64_XORPS, zero, zero };
 		cmpInst.src = zero;
 	} break;
 	case X64FLOATINGTYPE_F64:
 	{
 		cmpInst.type = X64_COMISD;
 		IRValue zero = IRValueNewValue(context, "_zero"_s, cmpInst.dst.typeTableIdx, 0);
-		*BucketArrayAdd(&x64Proc->instructions) = { X64_XORPD, zero, zero };
+		*BucketArrayAdd(&threadData->beInstructions) = { X64_XORPD, zero, zero };
 		cmpInst.src = zero;
 	} break;
 	default:
@@ -1331,11 +674,11 @@ void X64Test(Context *context, X64Procedure *x64Proc, IRValue value)
 		ASSERT(accepted & OPERANDTYPE_REGISTER);
 		IRValue newValue = IRValueNewValue(context, "_test_hlp"_s, cmpInst.dst.typeTableIdx,
 				VALUEFLAGS_FORCE_REGISTER);
-		X64Mov(context, x64Proc, newValue, cmpInst.dst);
+		X64Mov(context, newValue, cmpInst.dst);
 		cmpInst.dst = newValue;
 	}
 
-	*BucketArrayAdd(&x64Proc->instructions) = cmpInst;
+	*BucketArrayAdd(&threadData->beInstructions) = cmpInst;
 }
 
 IRValue X64PushRegisterParameter(u32 typeTableIdx, s32 *numberOfGPR, s32 *numberOfXMM)
@@ -1358,8 +701,10 @@ IRValue X64PushRegisterParameter(u32 typeTableIdx, s32 *numberOfGPR, s32 *number
 	return { IRVALUETYPE_INVALID };
 }
 
-void X64CopyMemory(Context *context, X64Procedure *x64Proc, IRValue dst, IRValue src, IRValue size)
+void X64CopyMemory(Context *context, IRValue dst, IRValue src, IRValue size)
 {
+	IRThreadData *threadData = (IRThreadData *)TlsGetValue(context->tlsIndex);
+
 	ASSERT(dst.valueType == IRVALUETYPE_VALUE ||
 		   dst.valueType == IRVALUETYPE_VALUE_DEREFERENCE);
 	ASSERT(src.valueType == IRVALUETYPE_VALUE ||
@@ -1370,35 +715,35 @@ void X64CopyMemory(Context *context, X64Procedure *x64Proc, IRValue dst, IRValue
 	// First attempt to copy manually
 	if (size.valueType == IRVALUETYPE_IMMEDIATE_INTEGER)
 	{
-		TypeInfo dstTypeInfo = GetTypeInfo(context, GetValueRead(context, dstIdx).typeTableIdx);
-		TypeInfo srcTypeInfo = GetTypeInfo(context, GetValueRead(context, srcIdx).typeTableIdx);
+		TypeInfo dstTypeInfo = GetTypeInfo(context, IRGetValue(context, dstIdx).typeTableIdx);
+		TypeInfo srcTypeInfo = GetTypeInfo(context, IRGetValue(context, srcIdx).typeTableIdx);
 		s64 sizeImm = size.immediate;
 
 		s64 copiedBytes = 0;
 		while (sizeImm - copiedBytes >= 16)
 		{
-			X64Mov(context, x64Proc,
+			X64Mov(context,
 					IRValueDereference(dstIdx, TYPETABLEIDX_128, copiedBytes),
 					IRValueDereference(srcIdx, TYPETABLEIDX_128, copiedBytes));
 			copiedBytes += 16;
 		}
 		while (sizeImm - copiedBytes >= 8)
 		{
-			X64Mov(context, x64Proc,
+			X64Mov(context,
 					IRValueDereference(dstIdx, TYPETABLEIDX_S64, copiedBytes),
 					IRValueDereference(srcIdx, TYPETABLEIDX_S64, copiedBytes));
 			copiedBytes += 8;
 		}
 		while (sizeImm - copiedBytes >= 4)
 		{
-			X64Mov(context, x64Proc,
+			X64Mov(context,
 					IRValueDereference(dstIdx, TYPETABLEIDX_S32, copiedBytes),
 					IRValueDereference(srcIdx, TYPETABLEIDX_S32, copiedBytes));
 			copiedBytes += 4;
 		}
 		while (sizeImm - copiedBytes >= 1)
 		{
-			X64Mov(context, x64Proc,
+			X64Mov(context,
 					IRValueDereference(dstIdx, TYPETABLEIDX_S8, copiedBytes),
 					IRValueDereference(srcIdx, TYPETABLEIDX_S8, copiedBytes));
 			++copiedBytes;
@@ -1406,16 +751,16 @@ void X64CopyMemory(Context *context, X64Procedure *x64Proc, IRValue dst, IRValue
 		return;
 	}
 
-	X64Mov(context, x64Proc, RCX, dst);
-	X64Mov(context, x64Proc, RDX, src);
-	X64Mov(context, x64Proc, R8,  size);
+	X64Mov(context, RCX, dst);
+	X64Mov(context, RDX, src);
+	X64Mov(context, R8,  size);
 	X64Instruction result = { X64_CALL };
 	result.procedureIdx = copyMemoryProcIdx;
 	ArrayInit(&result.parameterValues, 3);
 	*ArrayAdd(&result.parameterValues) = RCX.value.valueIdx;
 	*ArrayAdd(&result.parameterValues) = RDX.value.valueIdx;
 	*ArrayAdd(&result.parameterValues) = R8.value.valueIdx;
-	*BucketArrayAdd(&x64Proc->instructions) = result;
+	*BucketArrayAdd(&threadData->beInstructions) = result;
 }
 
 bool X64WinABIShouldPassByCopy(Context *context, u32 typeTableIdx)
@@ -1431,9 +776,11 @@ bool X64WinABIShouldPassByCopy(Context *context, u32 typeTableIdx)
 			typeInfo.size != 8);
 }
 
-Array<u32, PhaseAllocator> X64ReadyWin64Parameters(Context *context, X64Procedure *x64Proc,
+Array<u32, PhaseAllocator> X64ReadyWin64Parameters(Context *context,
 		ArrayView<IRValue> parameters, bool isCaller)
 {
+	IRThreadData *threadData = (IRThreadData *)TlsGetValue(context->tlsIndex);
+
 	int parameterCount = (int)parameters.size;
 
 	Array<u32, PhaseAllocator> parameterValues;
@@ -1449,17 +796,17 @@ Array<u32, PhaseAllocator> X64ReadyWin64Parameters(Context *context, X64Procedur
 		{
 			static u32 voidPtrTypeIdx = GetTypeInfoPointerOf(context, TYPETABLEIDX_VOID);
 
-			u32 tmpValueIdx = NewValue(context, "paramcpy"_s, paramTypeIdx, 0);
+			u32 tmpValueIdx = IRNewValue(context, "paramcpy"_s, paramTypeIdx, 0);
 			IRValue tmpValue = IRValueValue(tmpValueIdx, voidPtrTypeIdx);
 
 			X64Instruction pushInst = { X64_Push_Value };
 			pushInst.valueIdx = tmpValueIdx;
-			*BucketArrayAdd(&x64Proc->instructions) = pushInst;
+			*BucketArrayAdd(&threadData->beInstructions) = pushInst;
 
 			IRValue ptr = IRValueNewValue(context, "paramptr"_s, TYPETABLEIDX_S64, 0);
-			*BucketArrayAdd(&x64Proc->instructions) = { X64_LEA, ptr, tmpValue };
+			*BucketArrayAdd(&threadData->beInstructions) = { X64_LEA, ptr, tmpValue };
 
-			X64CopyMemory(context, x64Proc, ptr, param, IRValueImmediate(paramType.size));
+			X64CopyMemory(context, ptr, param, IRValueImmediate(paramType.size));
 			param = ptr;
 			paramTypeIdx = TYPETABLEIDX_S64;
 		}
@@ -1483,14 +830,14 @@ Array<u32, PhaseAllocator> X64ReadyWin64Parameters(Context *context, X64Procedur
 			break;
 		default:
 			if (isCaller)
-				slot = IRValueValue(x64SpilledParametersWrite[i], TYPETABLEIDX_S64);
+				slot = IRValueValue(threadData->x64SpilledParametersWrite[i], TYPETABLEIDX_S64);
 			else
-				slot = IRValueValue(x64SpilledParametersRead[i], TYPETABLEIDX_S64);
+				slot = IRValueValue(threadData->x64SpilledParametersRead[i], TYPETABLEIDX_S64);
 		}
 		slot.typeTableIdx = paramTypeIdx;
 
 		if (isCaller)
-			X64Mov(context, x64Proc, slot, param);
+			X64Mov(context, slot, param);
 		else
 		{
 			if (X64WinABIShouldPassByCopy(context, paramTypeIdx))
@@ -1498,11 +845,11 @@ Array<u32, PhaseAllocator> X64ReadyWin64Parameters(Context *context, X64Procedur
 				u32 ptrTypeIdx = GetTypeInfoPointerOf(context, paramTypeIdx);
 				param.typeTableIdx = ptrTypeIdx;
 				slot.typeTableIdx = ptrTypeIdx;
-				X64CopyMemory(context, x64Proc, param, slot,
+				X64CopyMemory(context, param, slot,
 						IRValueImmediate(paramType.size));
 			}
 			else
-				X64Mov(context, x64Proc, param, slot);
+				X64Mov(context, param, slot);
 		}
 
 		*ArrayAdd(&parameterValues) = slot.value.valueIdx;
@@ -1510,16 +857,18 @@ Array<u32, PhaseAllocator> X64ReadyWin64Parameters(Context *context, X64Procedur
 
 	if (isCaller)
 	{
-		if (x64Proc->allocatedParameterCount < parameterCount)
-			x64Proc->allocatedParameterCount = parameterCount;
+		if (threadData->allocatedParameterCount < parameterCount)
+			threadData->allocatedParameterCount = parameterCount;
 	}
 
 	return parameterValues;
 }
 
-Array<u32, PhaseAllocator> X64ReadyLinuxParameters(Context *context, X64Procedure *x64Proc,
+Array<u32, PhaseAllocator> X64ReadyLinuxParameters(Context *context,
 		ArrayView<IRValue> parameters, bool isCaller)
 {
+	IRThreadData *threadData = (IRThreadData *)TlsGetValue(context->tlsIndex);
+
 	int parameterCount = (int)parameters.size;
 
 	Array<u32, PhaseAllocator> parameterValues;
@@ -1627,15 +976,15 @@ Array<u32, PhaseAllocator> X64ReadyLinuxParameters(Context *context, X64Procedur
 				{
 					if (isCaller)
 					{
-						X64Mov(context, x64Proc, firstSlot,  first);
+						X64Mov(context, firstSlot,  first);
 						if (secondSlot.valueType != IRVALUETYPE_INVALID)
-							X64Mov(context, x64Proc, secondSlot, second);
+							X64Mov(context, secondSlot, second);
 					}
 					else
 					{
-						X64Mov(context, x64Proc, first,  firstSlot);
+						X64Mov(context, first,  firstSlot);
 						if (secondSlot.valueType != IRVALUETYPE_INVALID)
-							X64Mov(context, x64Proc, second, secondSlot);
+							X64Mov(context, second, secondSlot);
 					}
 
 					*ArrayAdd(&parameterValues) = firstSlot.value.valueIdx;
@@ -1668,15 +1017,15 @@ Array<u32, PhaseAllocator> X64ReadyLinuxParameters(Context *context, X64Procedur
 
 				if (isCaller)
 				{
-					IRValue slot = IRValueDereference(x64SpilledParametersWrite[numberOfSpilled++],
+					IRValue slot = IRValueDereference(threadData->x64SpilledParametersWrite[numberOfSpilled++],
 							typeTableIdx);
-					X64Mov(context, x64Proc, slot, param);
+					X64Mov(context, slot, param);
 				}
 				else
 				{
-					IRValue slot = IRValueDereference(x64SpilledParametersRead[numberOfSpilled++],
+					IRValue slot = IRValueDereference(threadData->x64SpilledParametersRead[numberOfSpilled++],
 							typeTableIdx);
-					X64Mov(context, x64Proc, param, slot);
+					X64Mov(context, param, slot);
 				}
 				param.value.offset += 8;
 				sizeLeft -= 8;
@@ -1689,19 +1038,19 @@ Array<u32, PhaseAllocator> X64ReadyLinuxParameters(Context *context, X64Procedur
 			{
 				slot = X64PushRegisterParameter(param.typeTableIdx, &numberOfGPR, &numberOfXMM);
 				if (slot.valueType == IRVALUETYPE_INVALID)
-					slot = IRValueDereference(x64SpilledParametersWrite[numberOfSpilled++],
+					slot = IRValueDereference(threadData->x64SpilledParametersWrite[numberOfSpilled++],
 							TYPETABLEIDX_S64);
 
-				X64Mov(context, x64Proc, slot, param);
+				X64Mov(context, slot, param);
 			}
 			else
 			{
 				slot = X64PushRegisterParameter(param.typeTableIdx, &numberOfGPR, &numberOfXMM);
 				if (slot.valueType == IRVALUETYPE_INVALID)
-					slot = IRValueDereference(x64SpilledParametersRead[numberOfSpilled++],
+					slot = IRValueDereference(threadData->x64SpilledParametersRead[numberOfSpilled++],
 							TYPETABLEIDX_S64);
 
-				X64Mov(context, x64Proc, param, slot);
+				X64Mov(context, param, slot);
 			}
 
 			*ArrayAdd(&parameterValues) = slot.value.valueIdx;
@@ -1710,15 +1059,16 @@ Array<u32, PhaseAllocator> X64ReadyLinuxParameters(Context *context, X64Procedur
 
 	if (isCaller)
 	{
-		if (x64Proc->allocatedParameterCount < numberOfSpilled)
-			x64Proc->allocatedParameterCount = numberOfSpilled;
+		if (threadData->allocatedParameterCount < numberOfSpilled)
+			threadData->allocatedParameterCount = numberOfSpilled;
 	}
 
 	return parameterValues;
 }
 
-void X64ConvertInstruction(Context *context, IRInstruction inst, X64Procedure *x64Proc)
+void X64ConvertInstruction(Context *context, IRInstruction inst)
 {
+	IRThreadData *threadData = (IRThreadData *)TlsGetValue(context->tlsIndex);
 	X64Instruction result = {};
 
 	X64FloatingType floatingType = X64FLOATINGTYPE_NONE;
@@ -1756,7 +1106,7 @@ void X64ConvertInstruction(Context *context, IRInstruction inst, X64Procedure *x
 	{
 	case IRINSTRUCTIONTYPE_ASSIGNMENT:
 	{
-		X64Mov(context, x64Proc, inst.assignment.dst, inst.assignment.src);
+		X64Mov(context, inst.assignment.dst, inst.assignment.src);
 		return;
 	}
 	case IRINSTRUCTIONTYPE_LOAD_EFFECTIVE_ADDRESS:
@@ -1770,12 +1120,12 @@ void X64ConvertInstruction(Context *context, IRInstruction inst, X64Procedure *x
 		{
 			IRValue tmp = IRValueNewValue(context, "_lea_mm_tmp"_s, dst.typeTableIdx,
 					VALUEFLAGS_FORCE_REGISTER);
-			*BucketArrayAdd(&x64Proc->instructions) = { X64_LEA, tmp, src };
-			X64Mov(context, x64Proc, dst, tmp);
+			*BucketArrayAdd(&threadData->beInstructions) = { X64_LEA, tmp, src };
+			X64Mov(context, dst, tmp);
 			src = tmp;
 		}
 		else
-			*BucketArrayAdd(&x64Proc->instructions) = { X64_LEA, dst, src };
+			*BucketArrayAdd(&threadData->beInstructions) = { X64_LEA, dst, src };
 		return;
 	}
 	case IRINSTRUCTIONTYPE_ADD:
@@ -1806,7 +1156,7 @@ void X64ConvertInstruction(Context *context, IRInstruction inst, X64Procedure *x
 		}
 	case IRINSTRUCTIONTYPE_SUBTRACT_UNARY:
 	{
-		X64Mov(context, x64Proc, inst.unaryOperation.out, inst.unaryOperation.in);
+		X64Mov(context, inst.unaryOperation.out, inst.unaryOperation.in);
 		switch (floatingType)
 		{
 		case X64FLOATINGTYPE_NONE:
@@ -1823,7 +1173,7 @@ void X64ConvertInstruction(Context *context, IRInstruction inst, X64Procedure *x
 			break;
 		}
 		result.dst = inst.unaryOperation.out;
-		*BucketArrayAdd(&x64Proc->instructions) = result;
+		*BucketArrayAdd(&threadData->beInstructions) = result;
 		return;
 	}
 	case IRINSTRUCTIONTYPE_BITWISE_AND:
@@ -1862,10 +1212,10 @@ void X64ConvertInstruction(Context *context, IRInstruction inst, X64Procedure *x
 				IRValue tmp = IRValueNewValue(context, "_mulshfttmp"_s, left.typeTableIdx,
 						immitateFlag, left.value.valueIdx);
 
-				X64Mov(context, x64Proc, tmp, left);
-				*BucketArrayAdd(&x64Proc->instructions) = { X64_SAL, tmp,
+				X64Mov(context, tmp, left);
+				*BucketArrayAdd(&threadData->beInstructions) = { X64_SAL, tmp,
 						IRValueImmediate(63 - Nlz64(right.immediate)) };
-				X64Mov(context, x64Proc, out, tmp);
+				X64Mov(context, out, tmp);
 				return;
 			}
 			else
@@ -1877,9 +1227,9 @@ void X64ConvertInstruction(Context *context, IRInstruction inst, X64Procedure *x
 				}
 				else
 				{
-					X64Mov(context, x64Proc, RAX, left);
+					X64Mov(context, RAX, left);
 
-					*BucketArrayAdd(&x64Proc->instructions) = { X64_XOR, RDX, RDX };
+					*BucketArrayAdd(&threadData->beInstructions) = { X64_XOR, RDX, RDX };
 
 					IRValue multiplier = right;
 					u8 accepted = x64InstructionInfos[X64_MUL].operandTypesLeft;
@@ -1888,14 +1238,14 @@ void X64ConvertInstruction(Context *context, IRInstruction inst, X64Procedure *x
 						ASSERT(accepted & OPERANDTYPE_REGISTER);
 						IRValue newValue = IRValueNewValue(context, multiplier.typeTableIdx,
 								VALUEFLAGS_FORCE_REGISTER);
-						X64Mov(context, x64Proc, newValue, multiplier);
+						X64Mov(context, newValue, multiplier);
 						multiplier = newValue;
 					}
 					result.type = X64_MUL;
 					result.dst = multiplier;
-					*BucketArrayAdd(&x64Proc->instructions) = result;
+					*BucketArrayAdd(&threadData->beInstructions) = result;
 
-					X64Mov(context, x64Proc, out, RAX);
+					X64Mov(context, out, RAX);
 					return;
 				}
 			}
@@ -1925,19 +1275,19 @@ void X64ConvertInstruction(Context *context, IRInstruction inst, X64Procedure *x
 				TypeInfo leftType = GetTypeInfo(context, left.typeTableIdx);
 				X64InstructionType shiftType = isSigned ? X64_SAR : X64_SHR;
 
-				X64Mov(context, x64Proc, tmp, left);
-				*BucketArrayAdd(&x64Proc->instructions) = { shiftType, tmp,
+				X64Mov(context, tmp, left);
+				*BucketArrayAdd(&threadData->beInstructions) = { shiftType, tmp,
 						IRValueImmediate(63 - Nlz64(right.immediate)) };
-				X64Mov(context, x64Proc, out, tmp);
+				X64Mov(context, out, tmp);
 			}
 			else
 			{
-				X64Mov(context, x64Proc, RAX, left);
+				X64Mov(context, RAX, left);
 
 				if (isSigned)
-					*BucketArrayAdd(&x64Proc->instructions) = { X64_CQO };
+					*BucketArrayAdd(&threadData->beInstructions) = { X64_CQO };
 				else
-					*BucketArrayAdd(&x64Proc->instructions) = { X64_XOR, RDX, RDX };
+					*BucketArrayAdd(&threadData->beInstructions) = { X64_XOR, RDX, RDX };
 
 				IRValue divisor = right;
 				u8 accepted = x64InstructionInfos[X64_DIV].operandTypesLeft;
@@ -1946,14 +1296,14 @@ void X64ConvertInstruction(Context *context, IRInstruction inst, X64Procedure *x
 					ASSERT(accepted & OPERANDTYPE_REGISTER);
 					IRValue newValue = IRValueNewValue(context, divisor.typeTableIdx,
 							VALUEFLAGS_FORCE_REGISTER);
-					X64Mov(context, x64Proc, newValue, divisor);
+					X64Mov(context, newValue, divisor);
 					divisor = newValue;
 				}
 				result.type = isSigned ? X64_IDIV : X64_DIV;
 				result.dst = divisor;
-				*BucketArrayAdd(&x64Proc->instructions) = result;
+				*BucketArrayAdd(&threadData->beInstructions) = result;
 
-				X64Mov(context, x64Proc, out, RAX);
+				X64Mov(context, out, RAX);
 			}
 			return;
 		}
@@ -1976,18 +1326,18 @@ void X64ConvertInstruction(Context *context, IRInstruction inst, X64Procedure *x
 			IRValue tmp = IRValueNewValue(context, "_mulshfttmp"_s, left.typeTableIdx, immitateFlag,
 					left.value.valueIdx);
 
-			X64Mov(context, x64Proc, tmp, left);
-			*BucketArrayAdd(&x64Proc->instructions) = { X64_AND, tmp,
+			X64Mov(context, tmp, left);
+			*BucketArrayAdd(&threadData->beInstructions) = { X64_AND, tmp,
 					IRValueImmediate(right.immediate - 1) };
-			X64Mov(context, x64Proc, out, tmp);
+			X64Mov(context, out, tmp);
 		}
 		else
 		{
-			X64Mov(context, x64Proc, RAX, left);
+			X64Mov(context, RAX, left);
 			if (isSigned)
-				*BucketArrayAdd(&x64Proc->instructions) = { X64_CQO };
+				*BucketArrayAdd(&threadData->beInstructions) = { X64_CQO };
 			else
-				*BucketArrayAdd(&x64Proc->instructions) = { X64_XOR, RDX, RDX };
+				*BucketArrayAdd(&threadData->beInstructions) = { X64_XOR, RDX, RDX };
 
 			IRValue divisor = right;
 			u8 accepted = x64InstructionInfos[X64_DIV].operandTypesLeft;
@@ -1996,14 +1346,14 @@ void X64ConvertInstruction(Context *context, IRInstruction inst, X64Procedure *x
 				ASSERT(accepted & OPERANDTYPE_REGISTER);
 				IRValue newValue = IRValueNewValue(context, divisor.typeTableIdx,
 						VALUEFLAGS_FORCE_REGISTER);
-				X64Mov(context, x64Proc, newValue, divisor);
+				X64Mov(context, newValue, divisor);
 				divisor = newValue;
 			}
 			result.type = isSigned ? X64_IDIV : X64_DIV;
 			result.dst = divisor;
 
-			*BucketArrayAdd(&x64Proc->instructions) = result;
-			X64Mov(context, x64Proc, out, RDX);
+			*BucketArrayAdd(&threadData->beInstructions) = result;
+			X64Mov(context, out, RDX);
 		}
 		return;
 	}
@@ -2022,12 +1372,12 @@ void X64ConvertInstruction(Context *context, IRInstruction inst, X64Procedure *x
 	case IRINSTRUCTIONTYPE_LABEL:
 		result.type = X64_Label;
 		result.label = inst.label;
-		*BucketArrayAdd(&x64Proc->instructions) = result;
+		*BucketArrayAdd(&threadData->beInstructions) = result;
 		return;
 	case IRINSTRUCTIONTYPE_JUMP:
 		result.type = X64_JMP;
 		result.label = inst.jump.label;
-		*BucketArrayAdd(&x64Proc->instructions) = result;
+		*BucketArrayAdd(&threadData->beInstructions) = result;
 		return;
 	case IRINSTRUCTIONTYPE_JUMP_IF_ZERO:
 		result.type = X64_JE;
@@ -2097,17 +1447,17 @@ void X64ConvertInstruction(Context *context, IRInstruction inst, X64Procedure *x
 		goto doConditionalSet;
 	case IRINSTRUCTIONTYPE_NOT:
 	{
-		X64Test(context, x64Proc, inst.unaryOperation.in);
+		X64Test(context, inst.unaryOperation.in);
 
 		result.type = X64_SETE;
 		result.dst = inst.unaryOperation.out;
 		if (GetTypeInfo(context, result.dst.typeTableIdx).size != 1)
 		{
-			X64Mov(context, x64Proc, result.dst, IRValueImmediate(0));
+			X64Mov(context, result.dst, IRValueImmediate(0));
 			result.dst.typeTableIdx = TYPETABLEIDX_S8;
 		}
 
-		*BucketArrayAdd(&x64Proc->instructions) = result;
+		*BucketArrayAdd(&threadData->beInstructions) = result;
 		return;
 	}
 	case IRINSTRUCTIONTYPE_PROCEDURE_CALL:
@@ -2145,13 +1495,13 @@ void X64ConvertInstruction(Context *context, IRInstruction inst, X64Procedure *x
 		{
 			case CC_WIN64:
 				paramValues =
-					X64ReadyWin64Parameters(context, x64Proc, inst.procedureCall.parameters, true);
+					X64ReadyWin64Parameters(context, inst.procedureCall.parameters, true);
 				break;
 			case CC_DEFAULT:
 			case CC_LINUX64:
 			default:
 				paramValues =
-					X64ReadyLinuxParameters(context, x64Proc, inst.procedureCall.parameters, true);
+					X64ReadyLinuxParameters(context, inst.procedureCall.parameters, true);
 		}
 
 		result.parameterValues.data = paramValues.data;
@@ -2168,14 +1518,14 @@ void X64ConvertInstruction(Context *context, IRInstruction inst, X64Procedure *x
 				if (StringEquals(procName, x64LinuxSyscallNames[i]))
 				{
 					result.type = X64_SYSCALL;
-					X64Mov(context, x64Proc, RAX, IRValueImmediate(i));
+					X64Mov(context, RAX, IRValueImmediate(i));
 					break;
 				}
 			}
 		}
 #endif
 
-		*BucketArrayAdd(&x64Proc->instructions) = result;
+		*BucketArrayAdd(&threadData->beInstructions) = result;
 
 		if (inst.procedureCall.out.valueType != IRVALUETYPE_INVALID)
 		{
@@ -2184,10 +1534,10 @@ void X64ConvertInstruction(Context *context, IRInstruction inst, X64Procedure *x
 			{
 				IRValue typedXmm0 = XMM0;
 				typedXmm0.typeTableIdx = returnTypeIdx;
-				X64Mov(context, x64Proc, inst.procedureCall.out, typedXmm0);
+				X64Mov(context, inst.procedureCall.out, typedXmm0);
 			}
 			else
-				X64Mov(context, x64Proc, inst.procedureCall.out, RAX);
+				X64Mov(context, inst.procedureCall.out, RAX);
 		}
 		return;
 	}
@@ -2196,7 +1546,7 @@ void X64ConvertInstruction(Context *context, IRInstruction inst, X64Procedure *x
 		switch (inst.intrinsic.type)
 		{
 		case INTRINSIC_BREAKPOINT:
-			*BucketArrayAdd(&x64Proc->instructions) = { X64_INT, IRValueImmediate(3) };
+			*BucketArrayAdd(&threadData->beInstructions) = { X64_INT, IRValueImmediate(3) };
 			return;
 		case INTRINSIC_SQRT32:
 			result.type = X64_SQRTSS;
@@ -2211,7 +1561,7 @@ void X64ConvertInstruction(Context *context, IRInstruction inst, X64Procedure *x
 	}
 	case IRINSTRUCTIONTYPE_COPY_MEMORY:
 	{
-		X64CopyMemory(context, x64Proc, inst.copyMemory.dst, inst.copyMemory.src,
+		X64CopyMemory(context, inst.copyMemory.dst, inst.copyMemory.src,
 				inst.copyMemory.size);
 		return;
 	}
@@ -2224,7 +1574,7 @@ void X64ConvertInstruction(Context *context, IRInstruction inst, X64Procedure *x
 		// First attempt to zero manually
 		if (inst.zeroMemory.size.valueType == IRVALUETYPE_IMMEDIATE_INTEGER)
 		{
-			TypeInfo dstTypeInfo = GetTypeInfo(context, GetValueRead(context, dstIdx).typeTableIdx);
+			TypeInfo dstTypeInfo = GetTypeInfo(context, IRGetValue(context, dstIdx).typeTableIdx);
 			s64 size = inst.zeroMemory.size.immediate;
 
 			s64 copiedBytes = 0;
@@ -2232,10 +1582,10 @@ void X64ConvertInstruction(Context *context, IRInstruction inst, X64Procedure *x
 			{
 				IRValue zeroXmmReg = IRValueNewValue(context, "_zeroxmm"_s, TYPETABLEIDX_128,
 						VALUEFLAGS_FORCE_REGISTER);
-				*BucketArrayAdd(&x64Proc->instructions) = { X64_XORPS, zeroXmmReg, zeroXmmReg };
+				*BucketArrayAdd(&threadData->beInstructions) = { X64_XORPS, zeroXmmReg, zeroXmmReg };
 				while (size - copiedBytes >= 16)
 				{
-					X64Mov(context, x64Proc,
+					X64Mov(context,
 							IRValueDereference(dstIdx, TYPETABLEIDX_128, copiedBytes), zeroXmmReg);
 					copiedBytes += 16;
 				}
@@ -2244,22 +1594,22 @@ void X64ConvertInstruction(Context *context, IRInstruction inst, X64Procedure *x
 			{
 				IRValue zeroReg = IRValueNewValue(context, "_zeroreg"_s, TYPETABLEIDX_S64,
 						VALUEFLAGS_FORCE_REGISTER);
-				*BucketArrayAdd(&x64Proc->instructions) = { X64_XOR, zeroReg, zeroReg };
+				*BucketArrayAdd(&threadData->beInstructions) = { X64_XOR, zeroReg, zeroReg };
 				while (size - copiedBytes >= 8)
 				{
-					X64Mov(context, x64Proc,
+					X64Mov(context,
 							IRValueDereference(dstIdx, TYPETABLEIDX_S64, copiedBytes), zeroReg);
 					copiedBytes += 8;
 				}
 				while (size - copiedBytes >= 4)
 				{
-					X64Mov(context, x64Proc,
+					X64Mov(context,
 							IRValueDereference(dstIdx, TYPETABLEIDX_S32, copiedBytes), zeroReg);
 					copiedBytes += 4;
 				}
 				while (size - copiedBytes >= 1)
 				{
-					X64Mov(context, x64Proc,
+					X64Mov(context,
 							IRValueDereference(dstIdx, TYPETABLEIDX_S8, copiedBytes), zeroReg);
 					++copiedBytes;
 				}
@@ -2267,33 +1617,33 @@ void X64ConvertInstruction(Context *context, IRInstruction inst, X64Procedure *x
 			return;
 		}
 
-		X64Mov(context, x64Proc, RCX, inst.zeroMemory.dst);
-		X64Mov(context, x64Proc, RDX,  inst.zeroMemory.size);
+		X64Mov(context, RCX, inst.zeroMemory.dst);
+		X64Mov(context, RDX,  inst.zeroMemory.size);
 		result.type = X64_CALL;
 		result.procedureIdx = zeroMemoryProcIdx;
 		ArrayInit(&result.parameterValues, 2);
 		*ArrayAdd(&result.parameterValues) = RCX.value.valueIdx;
 		*ArrayAdd(&result.parameterValues) = RDX.value.valueIdx;
-		*BucketArrayAdd(&x64Proc->instructions) = result;
+		*BucketArrayAdd(&threadData->beInstructions) = result;
 		return;
 	}
 	case IRINSTRUCTIONTYPE_PUSH_SCOPE:
 		result.type = X64_Push_Scope;
-		*BucketArrayAdd(&x64Proc->instructions) = result;
+		*BucketArrayAdd(&threadData->beInstructions) = result;
 		return;
 	case IRINSTRUCTIONTYPE_POP_SCOPE:
 		result.type = X64_Pop_Scope;
-		*BucketArrayAdd(&x64Proc->instructions) = result;
+		*BucketArrayAdd(&threadData->beInstructions) = result;
 		return;
 	case IRINSTRUCTIONTYPE_PUSH_VALUE:
 		result.type = X64_Push_Value;
 		result.valueIdx = inst.pushValue.valueIdx;
-		*BucketArrayAdd(&x64Proc->instructions) = result;
+		*BucketArrayAdd(&threadData->beInstructions) = result;
 		return;
 	case IRINSTRUCTIONTYPE_COMMENT:
 		result.type = X64_Comment;
 		result.comment = inst.comment;
-		*BucketArrayAdd(&x64Proc->instructions) = result;
+		*BucketArrayAdd(&threadData->beInstructions) = result;
 		return;
 	case IRINSTRUCTIONTYPE_RETURN:
 		return;
@@ -2310,14 +1660,14 @@ doRM:
 			(operand.immediate & 0xFFFFFFFF00000000))
 		{
 			IRValue tmp = IRValueNewValue(context, operand.typeTableIdx, 0);
-			X64Mov(context, x64Proc, tmp, operand);
+			X64Mov(context, tmp, operand);
 			operand = tmp;
 		}
 
-		X64Mov(context, x64Proc, operand, inst.unaryOperation.in);
+		X64Mov(context, operand, inst.unaryOperation.in);
 
 		result.dst = operand;
-		*BucketArrayAdd(&x64Proc->instructions) = result;
+		*BucketArrayAdd(&threadData->beInstructions) = result;
 
 		return;
 	}
@@ -2331,7 +1681,7 @@ doRM_RMI:
 			(right.immediate & 0xFFFFFFFF00000000))
 		{
 			IRValue tmp = IRValueNewValue(context, "_biglittmp"_s, right.typeTableIdx, 0);
-			X64Mov(context, x64Proc, tmp, right);
+			X64Mov(context, tmp, right);
 			right = tmp;
 		}
 
@@ -2339,13 +1689,13 @@ doRM_RMI:
 		IRValue tmp = IRValueNewValue(context, "_rmrmitmp"_s, left.typeTableIdx,
 				VALUEFLAGS_FORCE_REGISTER | immitateFlag, left.value.valueIdx);
 
-		X64MovNoTmp(context, x64Proc, tmp, left);
+		X64MovNoTmp(context, tmp, left);
 
 		result.dst = tmp;
 		result.src = right;
-		*BucketArrayAdd(&x64Proc->instructions) = result;
+		*BucketArrayAdd(&threadData->beInstructions) = result;
 
-		X64Mov(context, x64Proc, out, tmp);
+		X64Mov(context, out, tmp);
 
 		return;
 	}
@@ -2359,7 +1709,7 @@ doX_XM:
 		IRValue tmp = IRValueNewValue(context, left.typeTableIdx,
 				VALUEFLAGS_FORCE_REGISTER | immitateFlagLeft, out.value.valueIdx);
 
-		X64MovNoTmp(context, x64Proc, tmp, left);
+		X64MovNoTmp(context, tmp, left);
 
 		u8 accepted = x64InstructionInfos[result.type].operandTypesRight;
 		if (!FitsInOperand(context, accepted, right) ||
@@ -2369,15 +1719,15 @@ doX_XM:
 			u32 immitateFlagRight = right.valueType == IRVALUETYPE_VALUE ? VALUEFLAGS_TRY_IMMITATE : 0;
 			IRValue newValue = IRValueNewValue(context, out.typeTableIdx,
 					VALUEFLAGS_FORCE_REGISTER | immitateFlagRight, right.value.valueIdx);
-			X64Mov(context, x64Proc, newValue, right);
+			X64Mov(context, newValue, right);
 			right = newValue;
 		}
 
 		result.dst = tmp;
 		result.src = right;
-		*BucketArrayAdd(&x64Proc->instructions) = result;
+		*BucketArrayAdd(&threadData->beInstructions) = result;
 
-		X64Mov(context, x64Proc, out, tmp);
+		X64Mov(context, out, tmp);
 
 		return;
 	}
@@ -2389,28 +1739,28 @@ doShift:
 
 		IRValue tmp = IRValueNewValue(context, left.typeTableIdx, 0);
 
-		X64Mov(context, x64Proc, tmp, left);
+		X64Mov(context, tmp, left);
 
 		if (right.valueType != IRVALUETYPE_IMMEDIATE_INTEGER)
 		{
-			X64Mov(context, x64Proc, RCX, right);
+			X64Mov(context, RCX, right);
 			right = CL;
 		}
 
 		result.dst = tmp;
 		result.src = right;
-		*BucketArrayAdd(&x64Proc->instructions) = result;
+		*BucketArrayAdd(&threadData->beInstructions) = result;
 
-		X64Mov(context, x64Proc, out, tmp);
+		X64Mov(context, out, tmp);
 
 		return;
 	}
 doConditionalJump:
 	{
-		X64Test(context, x64Proc, inst.conditionalJump.condition);
+		X64Test(context, inst.conditionalJump.condition);
 
 		result.label = inst.conditionalJump.label;
-		*BucketArrayAdd(&x64Proc->instructions) = result;
+		*BucketArrayAdd(&threadData->beInstructions) = result;
 		return;
 	}
 doConditionalJump2:
@@ -2440,7 +1790,7 @@ doConditionalJump2:
 			u32 immitateFlagLeft = left.valueType == IRVALUETYPE_VALUE ? VALUEFLAGS_TRY_IMMITATE : 0;
 			IRValue newValue = IRValueNewValue(context, "_jump_hlp"_s, left.typeTableIdx,
 					VALUEFLAGS_FORCE_REGISTER | immitateFlagLeft, left.value.valueIdx);
-			X64Mov(context, x64Proc, newValue, left);
+			X64Mov(context, newValue, left);
 			left = newValue;
 		}
 
@@ -2455,7 +1805,7 @@ doConditionalJump2:
 			u32 immitateFlagRight = right.valueType == IRVALUETYPE_VALUE ? VALUEFLAGS_TRY_IMMITATE : 0;
 			IRValue newValue = IRValueNewValue(context, "_jump_hlp"_s, left.typeTableIdx,
 					VALUEFLAGS_FORCE_REGISTER | immitateFlagRight, right.value.valueIdx);
-			X64Mov(context, x64Proc, newValue, right);
+			X64Mov(context, newValue, right);
 			right = newValue;
 		}
 		cmpInst.dst = left;
@@ -2463,8 +1813,8 @@ doConditionalJump2:
 
 		result.label = inst.conditionalJump2.label;
 
-		*BucketArrayAdd(&x64Proc->instructions) = cmpInst;
-		*BucketArrayAdd(&x64Proc->instructions) = result;
+		*BucketArrayAdd(&threadData->beInstructions) = cmpInst;
+		*BucketArrayAdd(&threadData->beInstructions) = result;
 		return;
 	}
 doConditionalSet:
@@ -2492,7 +1842,7 @@ doConditionalSet:
 			(cmpInst.src.immediate & 0xFFFFFFFF00000000))
 		{
 			IRValue tmp = IRValueNewValue(context, cmpInst.src.typeTableIdx, 0);
-			X64Mov(context, x64Proc, tmp, cmpInst.src);
+			X64Mov(context, tmp, cmpInst.src);
 			cmpInst.src = tmp;
 		}
 
@@ -2503,19 +1853,19 @@ doConditionalSet:
 			ASSERT(accepted & OPERANDTYPE_REGISTER);
 			IRValue newValue = IRValueNewValue(context, "_setcc_hlp"_s, cmpInst.dst.typeTableIdx,
 					VALUEFLAGS_FORCE_REGISTER);
-			X64Mov(context, x64Proc, newValue, cmpInst.dst);
+			X64Mov(context, newValue, cmpInst.dst);
 			cmpInst.dst = newValue;
 		}
 
-		*BucketArrayAdd(&x64Proc->instructions) = cmpInst;
+		*BucketArrayAdd(&threadData->beInstructions) = cmpInst;
 
 		result.dst = inst.binaryOperation.out;
 		if (GetTypeInfo(context, result.dst.typeTableIdx).size != 1)
 		{
-			X64Mov(context, x64Proc, result.dst, IRValueImmediate(0));
+			X64Mov(context, result.dst, IRValueImmediate(0));
 			result.dst.typeTableIdx = TYPETABLEIDX_S8;
 		}
-		*BucketArrayAdd(&x64Proc->instructions) = result;
+		*BucketArrayAdd(&threadData->beInstructions) = result;
 		return;
 	}
 doTwoArgIntrinsic:
@@ -2528,14 +1878,15 @@ doTwoArgIntrinsic:
 
 		result.dst = tmp;
 		result.src = right;
-		*BucketArrayAdd(&x64Proc->instructions) = result;
+		*BucketArrayAdd(&threadData->beInstructions) = result;
 
-		X64Mov(context, x64Proc, out, tmp);
+		X64Mov(context, out, tmp);
 		return;
 	}
 }
 
-String X64InstructionToStr(Context *context, X64Instruction inst)
+String X64InstructionToStr(Context *context, X64Instruction inst,
+	BucketArray<Value, HeapAllocator, 1024> *localValues)
 {
 	String mnemonic = x64InstructionInfos[inst.type].mnemonic;
 	switch (inst.type)
@@ -2544,7 +1895,7 @@ String X64InstructionToStr(Context *context, X64Instruction inst)
 		return TPrintF("call %S", GetProcedureRead(context, inst.procedureIdx).name);
 	case X64_CALL_Indirect:
 	{
-		String proc = X64IRValueToStr(context, inst.procedureIRValue);
+		String proc = X64IRValueToStr(context, inst.procedureIRValue, localValues);
 		return TPrintF("call %S", proc);
 	}
 	case X64_JMP:
@@ -2585,13 +1936,13 @@ String X64InstructionToStr(Context *context, X64Instruction inst)
 
 printDst:
 	{
-		String dst = X64IRValueToStr(context, inst.dst);
+		String dst = X64IRValueToStr(context, inst.dst, localValues);
 		return TPrintF("%S %S", mnemonic, dst);
 	}
 printDstSrc:
 	{
-		String dst = X64IRValueToStr(context, inst.dst);
-		String src = X64IRValueToStr(context, inst.src);
+		String dst = X64IRValueToStr(context, inst.dst, localValues);
+		String src = X64IRValueToStr(context, inst.src, localValues);
 		return TPrintF("%S %S, %S", mnemonic, dst, src);
 	}
 printLabel:
@@ -2600,37 +1951,40 @@ printLabel:
 	}
 }
 
-inline s64 X64PrintInstruction(Context *context, X64Instruction inst)
+inline s64 X64PrintInstruction(Context *context, X64Instruction inst,
+	BucketArray<Value, HeapAllocator, 1024> *localValues)
 {
-	return PrintOut(context, "%S", X64InstructionToStr(context, inst));
+	return PrintOut(context, "%S", X64InstructionToStr(context, inst, localValues));
 }
 
 #include "X64RegisterAllocation.cpp"
 
-void X64PrintInstructions(Context *context, Array<X64Procedure, PhaseAllocator> x64Procedures)
+void X64PrintInstructions(Context *context)
 {
-	for (int procedureIdx = 1; procedureIdx < x64Procedures.size; ++procedureIdx)
+	auto beFinalProcedureData = context->beFinalProcedureData.GetForRead();
+	int procCount = (int)beFinalProcedureData->size;
+	for (int finalProcIdx = 0; finalProcIdx < procCount; ++finalProcIdx)
 	{
-		X64Procedure x64Proc = x64Procedures[procedureIdx];
-
+		X64FinalProcedure finalProc = (*beFinalProcedureData)[finalProcIdx];
+		Procedure proc = GetProcedureRead(context, finalProc.procedureIdx);
 #if _MSC_VER
-		if (GetProcedureRead(context, procedureIdx).isExported)
-			PrintOut(context, "\n%S PROC PUBLIC\n", x64Proc.name);
+		if (proc.isExported)
+			PrintOut(context, "\n%S PROC PUBLIC\n", proc.name);
 		else
-			PrintOut(context, "\n%S PROC PRIVATE\n", x64Proc.name);
+			PrintOut(context, "\n%S PROC PRIVATE\n", proc.name);
 #else
-		PrintOut(context, "\n%S:\n", x64Proc.name);
+		PrintOut(context, "\n%S:\n", proc.name);
 #endif
 		PrintOut(context, "push rbp\n");
 		PrintOut(context, "mov rbp, rsp\n");
-		if (x64Proc.stackSize > 0)
-			PrintOut(context, "sub rsp, 0%llxh\n", x64Proc.stackSize);
+		if (finalProc.stackSize > 0)
+			PrintOut(context, "sub rsp, 0%llxh\n", finalProc.stackSize);
 
-		X64InstructionStream stream = X64InstructionStreamBegin(&x64Proc);
+		X64InstructionStream stream = X64InstructionStreamBegin(&finalProc.instructions);
 		X64Instruction *inst = X64InstructionStreamAdvance(&stream);
 		while (inst)
 		{
-			if (X64PrintInstruction(context, *inst))
+			if (X64PrintInstruction(context, *inst, &finalProc.localValues))
 				PrintOut(context, "\n");
 			inst = X64InstructionStreamAdvance(&stream);
 		}
@@ -2638,7 +1992,7 @@ void X64PrintInstructions(Context *context, Array<X64Procedure, PhaseAllocator> 
 		PrintOut(context, "leave\n");
 		PrintOut(context, "ret\n");
 #if _MSC_VER
-		PrintOut(context, "%S ENDP\n", x64Proc.name);
+		PrintOut(context, "%S ENDP\n", proc.name);
 #endif
 	}
 }
@@ -2665,7 +2019,11 @@ void X64PrintStaticData(Context *context, String name, IRValue value, u32 typeTa
 		int alignment = alignmentOverride < 0 ? 8 : alignmentOverride;
 		X64StaticDataAlignTo(context, alignment, true);
 
-		String str = context->stringLiterals[value.immediateStringIdx];
+		String str;
+		{
+			auto stringLiterals = context->stringLiterals.GetForRead();
+			str = (*stringLiterals)[value.immediateStringIdx];
+		}
 		s64 size = str.size;
 		if (size == 0)
 			PrintOut(context, "%S DQ 0H, 0H\n", name);
@@ -2725,7 +2083,7 @@ void X64PrintStaticData(Context *context, String name, IRValue value, u32 typeTa
 		int alignment = alignmentOverride < 0 ? 8 : alignmentOverride;
 		X64StaticDataAlignTo(context, alignment, true);
 
-		Value v = GetValueRead(context, value.value.valueIdx);
+		Value v = IRGetValue(context, value.value.valueIdx);
 		ASSERT(v.flags & VALUEFLAGS_ON_STATIC_STORAGE);
 		ASSERT(v.name.size);
 		PrintOut(context, "%S DQ g_%S\n", name, v.name);
@@ -2779,7 +2137,11 @@ void X64PrintStaticDataUninitialized(Context *context, String name, IRValue valu
 		int alignment = alignmentOverride < 0 ? 8 : alignmentOverride;
 		X64StaticDataAlignTo(context, alignment, false);
 
-		String str = context->stringLiterals[value.immediateStringIdx];
+		String str;
+		{
+			auto stringLiterals = context->stringLiterals.GetForRead();
+			str = (*stringLiterals)[value.immediateStringIdx];
+		}
 		ASSERT(str.size == 0);
 #if _MSC_VER
 		PrintOut(context, "COMM %S:QWORD:02H\n", name);
@@ -2853,7 +2215,10 @@ void WriteOutOutputBuffer(Context *context, String filename)
 
 void BackendMain(Context *context)
 {
-	BucketArrayInit(&context->bePatchedInstructions);
+	{
+		auto finalProcs = context->beFinalProcedureData.GetForWrite();
+		DynamicArrayInit(&finalProcs, 256);
+	}
 
 	// Hard coded CopyMemory and ZeroMemory external procedures
 	{
@@ -2962,42 +2327,46 @@ void BackendMain(Context *context)
 	x64InstructionInfos[X64_MOVAPS] =    { "movaps"_s,    OPERANDTYPE_REGMEM,    OPERANDACCESS_WRITE,     OPERANDTYPE_REGMEM, OPERANDACCESS_READ };
 
 	const u8 regValueFlags = VALUEFLAGS_IS_USED | VALUEFLAGS_IS_ALLOCATED;
-	u32 RAX_valueIdx = NewValue(context, "RAX"_s, TYPETABLEIDX_S64, regValueFlags);
-	u32 RCX_valueIdx = NewValue(context, "RCX"_s, TYPETABLEIDX_S64, regValueFlags);
-	u32 RDX_valueIdx = NewValue(context, "RDX"_s, TYPETABLEIDX_S64, regValueFlags);
-	u32 RBX_valueIdx = NewValue(context, "RBX"_s, TYPETABLEIDX_S64, regValueFlags);
-	u32 RSI_valueIdx = NewValue(context, "RSI"_s, TYPETABLEIDX_S64, regValueFlags);
-	u32 RDI_valueIdx = NewValue(context, "RDI"_s, TYPETABLEIDX_S64, regValueFlags);
-	u32 RSP_valueIdx = NewValue(context, "RSP"_s, TYPETABLEIDX_S64, regValueFlags);
-	u32 RBP_valueIdx = NewValue(context, "RBP"_s, TYPETABLEIDX_S64, regValueFlags);
-	u32 R8_valueIdx  = NewValue(context, "R8"_s,  TYPETABLEIDX_S64, regValueFlags);
-	u32 R9_valueIdx  = NewValue(context, "R9"_s,  TYPETABLEIDX_S64, regValueFlags);
-	u32 R10_valueIdx = NewValue(context, "R10"_s, TYPETABLEIDX_S64, regValueFlags);
-	u32 R11_valueIdx = NewValue(context, "R11"_s, TYPETABLEIDX_S64, regValueFlags);
-	u32 R12_valueIdx = NewValue(context, "R12"_s, TYPETABLEIDX_S64, regValueFlags);
-	u32 R13_valueIdx = NewValue(context, "R13"_s, TYPETABLEIDX_S64, regValueFlags);
-	u32 R14_valueIdx = NewValue(context, "R14"_s, TYPETABLEIDX_S64, regValueFlags);
-	u32 R15_valueIdx = NewValue(context, "R15"_s, TYPETABLEIDX_S64, regValueFlags);
+	u32 RAX_valueIdx = NewGlobalValue(context, "RAX"_s, TYPETABLEIDX_S64, regValueFlags);
+	u32 RCX_valueIdx = NewGlobalValue(context, "RCX"_s, TYPETABLEIDX_S64, regValueFlags);
+	u32 RDX_valueIdx = NewGlobalValue(context, "RDX"_s, TYPETABLEIDX_S64, regValueFlags);
+	u32 RBX_valueIdx = NewGlobalValue(context, "RBX"_s, TYPETABLEIDX_S64, regValueFlags);
+	u32 RSI_valueIdx = NewGlobalValue(context, "RSI"_s, TYPETABLEIDX_S64, regValueFlags);
+	u32 RDI_valueIdx = NewGlobalValue(context, "RDI"_s, TYPETABLEIDX_S64, regValueFlags);
+	u32 RSP_valueIdx = NewGlobalValue(context, "RSP"_s, TYPETABLEIDX_S64, regValueFlags);
+	u32 RBP_valueIdx = NewGlobalValue(context, "RBP"_s, TYPETABLEIDX_S64, regValueFlags);
+	u32 R8_valueIdx  = NewGlobalValue(context, "R8"_s,  TYPETABLEIDX_S64, regValueFlags);
+	u32 R9_valueIdx  = NewGlobalValue(context, "R9"_s,  TYPETABLEIDX_S64, regValueFlags);
+	u32 R10_valueIdx = NewGlobalValue(context, "R10"_s, TYPETABLEIDX_S64, regValueFlags);
+	u32 R11_valueIdx = NewGlobalValue(context, "R11"_s, TYPETABLEIDX_S64, regValueFlags);
+	u32 R12_valueIdx = NewGlobalValue(context, "R12"_s, TYPETABLEIDX_S64, regValueFlags);
+	u32 R13_valueIdx = NewGlobalValue(context, "R13"_s, TYPETABLEIDX_S64, regValueFlags);
+	u32 R14_valueIdx = NewGlobalValue(context, "R14"_s, TYPETABLEIDX_S64, regValueFlags);
+	u32 R15_valueIdx = NewGlobalValue(context, "R15"_s, TYPETABLEIDX_S64, regValueFlags);
 
-	u32 XMM0_valueIdx =  NewValue(context, "XMM0"_s,  TYPETABLEIDX_F64, regValueFlags);
-	u32 XMM1_valueIdx =  NewValue(context, "XMM1"_s,  TYPETABLEIDX_F64, regValueFlags);
-	u32 XMM2_valueIdx =  NewValue(context, "XMM2"_s,  TYPETABLEIDX_F64, regValueFlags);
-	u32 XMM3_valueIdx =  NewValue(context, "XMM3"_s,  TYPETABLEIDX_F64, regValueFlags);
-	u32 XMM4_valueIdx =  NewValue(context, "XMM4"_s,  TYPETABLEIDX_F64, regValueFlags);
-	u32 XMM5_valueIdx =  NewValue(context, "XMM5"_s,  TYPETABLEIDX_F64, regValueFlags);
-	u32 XMM6_valueIdx =  NewValue(context, "XMM6"_s,  TYPETABLEIDX_F64, regValueFlags);
-	u32 XMM7_valueIdx =  NewValue(context, "XMM7"_s,  TYPETABLEIDX_F64, regValueFlags);
-	u32 XMM8_valueIdx =  NewValue(context, "XMM8"_s,  TYPETABLEIDX_F64, regValueFlags);
-	u32 XMM9_valueIdx =  NewValue(context, "XMM9"_s,  TYPETABLEIDX_F64, regValueFlags);
-	u32 XMM10_valueIdx = NewValue(context, "XMM10"_s, TYPETABLEIDX_F64, regValueFlags);
-	u32 XMM11_valueIdx = NewValue(context, "XMM11"_s, TYPETABLEIDX_F64, regValueFlags);
-	u32 XMM12_valueIdx = NewValue(context, "XMM12"_s, TYPETABLEIDX_F64, regValueFlags);
-	u32 XMM13_valueIdx = NewValue(context, "XMM13"_s, TYPETABLEIDX_F64, regValueFlags);
-	u32 XMM14_valueIdx = NewValue(context, "XMM14"_s, TYPETABLEIDX_F64, regValueFlags);
-	u32 XMM15_valueIdx = NewValue(context, "XMM15"_s, TYPETABLEIDX_F64, regValueFlags);
+	u32 XMM0_valueIdx =  NewGlobalValue(context, "XMM0"_s,  TYPETABLEIDX_F64, regValueFlags);
+	u32 XMM1_valueIdx =  NewGlobalValue(context, "XMM1"_s,  TYPETABLEIDX_F64, regValueFlags);
+	u32 XMM2_valueIdx =  NewGlobalValue(context, "XMM2"_s,  TYPETABLEIDX_F64, regValueFlags);
+	u32 XMM3_valueIdx =  NewGlobalValue(context, "XMM3"_s,  TYPETABLEIDX_F64, regValueFlags);
+	u32 XMM4_valueIdx =  NewGlobalValue(context, "XMM4"_s,  TYPETABLEIDX_F64, regValueFlags);
+	u32 XMM5_valueIdx =  NewGlobalValue(context, "XMM5"_s,  TYPETABLEIDX_F64, regValueFlags);
+	u32 XMM6_valueIdx =  NewGlobalValue(context, "XMM6"_s,  TYPETABLEIDX_F64, regValueFlags);
+	u32 XMM7_valueIdx =  NewGlobalValue(context, "XMM7"_s,  TYPETABLEIDX_F64, regValueFlags);
+	u32 XMM8_valueIdx =  NewGlobalValue(context, "XMM8"_s,  TYPETABLEIDX_F64, regValueFlags);
+	u32 XMM9_valueIdx =  NewGlobalValue(context, "XMM9"_s,  TYPETABLEIDX_F64, regValueFlags);
+	u32 XMM10_valueIdx = NewGlobalValue(context, "XMM10"_s, TYPETABLEIDX_F64, regValueFlags);
+	u32 XMM11_valueIdx = NewGlobalValue(context, "XMM11"_s, TYPETABLEIDX_F64, regValueFlags);
+	u32 XMM12_valueIdx = NewGlobalValue(context, "XMM12"_s, TYPETABLEIDX_F64, regValueFlags);
+	u32 XMM13_valueIdx = NewGlobalValue(context, "XMM13"_s, TYPETABLEIDX_F64, regValueFlags);
+	u32 XMM14_valueIdx = NewGlobalValue(context, "XMM14"_s, TYPETABLEIDX_F64, regValueFlags);
+	u32 XMM15_valueIdx = NewGlobalValue(context, "XMM15"_s, TYPETABLEIDX_F64, regValueFlags);
 
 	for (int i = 0; i < X64REGISTER_Count; ++i)
-		GetValueWrite(context, RAX_valueIdx + i)->allocatedRegister = i;
+	{
+		Value v = GetGlobalValue(context, RAX_valueIdx + i);
+		v.allocatedRegister = i;
+		UpdateGlobalValue(context, RAX_valueIdx + i, &v);
+	}
 
 	RAX  = IRValueValue(RAX_valueIdx, TYPETABLEIDX_S64);
 	RCX  = IRValueValue(RCX_valueIdx, TYPETABLEIDX_S64);
@@ -3116,291 +2485,10 @@ void BackendMain(Context *context)
 	x64Registers[29] = XMM13;
 	x64Registers[30] = XMM14;
 	x64Registers[31] = XMM15;
+}
 
-	for (int paramIdx = 0; paramIdx < 32; ++paramIdx)
-	{
-		Value newValue = {};
-		newValue.name = TPrintF("_param%d", paramIdx);
-		newValue.typeTableIdx = TYPETABLEIDX_S64;
-		newValue.flags = VALUEFLAGS_IS_ALLOCATED | VALUEFLAGS_IS_MEMORY | VALUEFLAGS_BASE_RELATIVE;
-		newValue.stackOffset = 16 + paramIdx * 8; // Add 16, 8 for return address, and 8 because we push RBP
-		u32 newValueIdx = NewValue(context, newValue);
-		x64SpilledParametersRead[paramIdx] = newValueIdx;
-	}
-
-	for (int paramIdx = 0; paramIdx < 32; ++paramIdx)
-	{
-		Value newValue = {};
-		newValue.name = TPrintF("_param%d", paramIdx);
-		newValue.typeTableIdx = TYPETABLEIDX_S64;
-		newValue.flags = VALUEFLAGS_IS_ALLOCATED | VALUEFLAGS_IS_MEMORY;
-		newValue.stackOffset = paramIdx * 8; // Add 16, 8 for return address, and 8 because we push RBP
-		u32 newValueIdx = NewValue(context, newValue);
-		x64SpilledParametersWrite[paramIdx] = newValueIdx;
-	}
-
-	Array<X64Procedure, PhaseAllocator> x64Procedures;
-
-	u64 procedureCount = BucketArrayCount(&context->procedures.LockForRead());
-	context->procedures.UnlockForRead();
-
-	ArrayInit(&x64Procedures, procedureCount);
-	x64Procedures.size = procedureCount;
-
-	// Create X64Procedures
-	for (int procedureIdx = 1; procedureIdx < procedureCount; ++procedureIdx)
-	{
-		Procedure proc = GetProcedureRead(context, procedureIdx);
-		X64Procedure *x64Proc = &x64Procedures[procedureIdx];
-		ASSERT(GetTypeInfo(context, proc.typeTableIdx).typeCategory == TYPECATEGORY_PROCEDURE);
-		TypeInfoProcedure procTypeInfo = GetTypeInfo(context, proc.typeTableIdx).procedureInfo;
-
-		x64Proc->name = proc.name;
-		x64Proc->allocatedParameterCount = 0;
-		x64Proc->returnValueIdx = proc.returnValueIdx;
-		x64Proc->stackSize = 0;
-		DynamicArrayInit(&x64Proc->spilledValues, 8);
-
-		BucketArrayInit(&x64Proc->instructions);
-
-		bool returnByCopy = procTypeInfo.returnTypeTableIdx != TYPETABLEIDX_VOID &&
-				IRShouldPassByCopy(context, procTypeInfo.returnTypeTableIdx);
-		int paramCount = (int)proc.parameterValues.size;
-
-		// Allocate parameters
-		Array<IRValue, PhaseAllocator> params;
-		ArrayInit(&params, paramCount + returnByCopy);
-
-		// Pointer to return value
-		if (returnByCopy)
-			*ArrayAdd(&params) = IRValueValue(proc.returnValueIdx, TYPETABLEIDX_S64);
-
-		for (int paramIdx = 0; paramIdx < paramCount; ++paramIdx)
-			*ArrayAdd(&params) = IRValueValue(context, proc.parameterValues[paramIdx]);
-
-		switch (procTypeInfo.callingConvention)
-		{
-			case CC_WIN64:
-				X64ReadyWin64Parameters(context, x64Proc, params, false);
-				break;
-			case CC_DEFAULT:
-			case CC_LINUX64:
-				X64ReadyLinuxParameters(context, x64Proc, params, false);
-		}
-
-		auto &irInstructions = context->irProcedureInstructions[procedureIdx];
-		u64 instructionCount = BucketArrayCount(&irInstructions);
-		for (int instructionIdx = 0; instructionIdx < instructionCount; ++instructionIdx)
-		{
-			IRInstruction inst = irInstructions[instructionIdx];
-			X64ConvertInstruction(context, inst, x64Proc);
-		}
-
-		if (procTypeInfo.returnTypeTableIdx != TYPETABLEIDX_VOID)
-		{
-			u32 returnTypeTableIdx = GetValueRead(context, proc.returnValueIdx).typeTableIdx;
-			if (returnByCopy)
-			{
-				IRValue returnValue = IRValueValue(proc.returnValueIdx, returnTypeTableIdx);
-				*BucketArrayAdd(&x64Proc->instructions) = { X64_LEA, RAX, returnValue };
-			}
-			else
-			{
-				IRValue returnValue = IRValueValue(proc.returnValueIdx, returnTypeTableIdx);
-				if (GetTypeInfo(context, returnTypeTableIdx).typeCategory == TYPECATEGORY_FLOATING)
-				{
-					IRValue typedXmm0 = XMM0;
-					typedXmm0.typeTableIdx = returnTypeTableIdx;
-					X64Mov(context, x64Proc, typedXmm0, returnValue);
-				}
-				else
-					X64Mov(context, x64Proc, RAX, returnValue);
-			}
-		}
-	}
-
-#if DEBUG_BUILD
-	BucketArrayInit(&context->outputBuffer);
-	X64PrintInstructions(context, x64Procedures);
-	WriteOutOutputBuffer(context, "output/x64_before_allocation.txt"_s);
-#endif
-
-	TimerSplit("X64 generation"_s);
-
-	X64AllocateRegisters(context, x64Procedures);
-
-	// Remove instructions that reference unused values
-	for (int procedureIdx = 1; procedureIdx < x64Procedures.size; ++procedureIdx)
-	{
-		X64InstructionStream stream = X64InstructionStreamBegin(&x64Procedures[procedureIdx]);
-		X64Instruction *inst = X64InstructionStreamAdvance(&stream);
-		X64Instruction *nextInst  = X64InstructionStreamAdvance(&stream);
-		X64Instruction *nextInst2 = X64InstructionStreamAdvance(&stream);
-		while (inst)
-		{
-			// Replace LEAs with a register as a source with a MOV.
-			if (inst->type == X64_LEA)
-			{
-				if (inst->src.value.offset == 0 && inst->src.value.elementSize == 0)
-				{
-					Value v = GetValueRead(context, inst->src.value.valueIdx);
-					if ((v.flags & VALUEFLAGS_IS_ALLOCATED) && !(v.flags & VALUEFLAGS_IS_MEMORY))
-					{
-						inst->type = X64_MOV;
-						inst->src.valueType = IRVALUETYPE_VALUE;
-					}
-				}
-			}
-
-			switch (inst->type)
-			{
-			// dst write, src read
-			case X64_MOVUPS:
-			{
-				// If aligned change to MOVAPS
-				ASSERT((inst->dst.valueType == IRVALUETYPE_VALUE ||
-					 inst->dst.valueType == IRVALUETYPE_VALUE_DEREFERENCE) &&
-					(inst->src.valueType == IRVALUETYPE_VALUE ||
-					 inst->src.valueType == IRVALUETYPE_VALUE_DEREFERENCE));
-
-				Value dst = GetValueRead(context, inst->dst.value.valueIdx);
-				Value src = GetValueRead(context, inst->src.value.valueIdx);
-				if (dst.flags & VALUEFLAGS_IS_ALLOCATED && src.flags & VALUEFLAGS_IS_ALLOCATED)
-				{
-					if (!(dst.flags & VALUEFLAGS_IS_MEMORY) ||
-						(dst.stackOffset & 15))
-						goto unalignedMovups;
-
-					if (!(src.flags & VALUEFLAGS_IS_MEMORY) ||
-						(src.stackOffset & 15))
-						goto unalignedMovups;
-
-					inst->type = X64_MOVAPS;
-				}
-unalignedMovups:;
-			} // fall through
-			case X64_MOV:
-			case X64_MOVSS:
-			case X64_MOVSD:
-			{
-				// Ignore mov thing into itself
-				if (inst->dst.valueType == IRVALUETYPE_VALUE &&
-					inst->src.valueType == IRVALUETYPE_VALUE)
-				{
-					Value dst = GetValueRead(context, inst->dst.value.valueIdx);
-					Value src = GetValueRead(context, inst->src.value.valueIdx);
-					if (dst.flags & VALUEFLAGS_IS_ALLOCATED && src.flags & VALUEFLAGS_IS_ALLOCATED)
-					{
-						// Value::stackOffset is alias of Value::allocatedRegister
-						if (dst.allocatedRegister == src.allocatedRegister)
-						{
-							inst->type = X64_Ignore;
-							break;
-						}
-					}
-				}
-			} // fall through
-			case X64_MOVZX:
-			case X64_MOVSX:
-			case X64_MOVSXD:
-			case X64_LEA:
-			case X64_SETE:
-			case X64_SETNE:
-			case X64_SETL:
-			case X64_SETLE:
-			case X64_SETG:
-			case X64_SETGE:
-			case X64_SETA:
-			case X64_SETAE:
-			case X64_SETB:
-			case X64_SETBE:
-			case X64_CVTSI2SS:
-			case X64_CVTSI2SD:
-			case X64_CVTTSS2SI:
-			case X64_CVTTSD2SI:
-			case X64_CVTSS2SD:
-			case X64_CVTSD2SS:
-			{
-				if (inst->dst.valueType == IRVALUETYPE_VALUE ||
-					inst->dst.valueType == IRVALUETYPE_VALUE_DEREFERENCE)
-				{
-					Value v = GetValueRead(context, inst->dst.value.valueIdx);
-					if (!(v.flags & (VALUEFLAGS_IS_USED | VALUEFLAGS_ON_STATIC_STORAGE)))
-						inst->type = X64_Ignore;
-				}
-			} break;
-			}
-
-			// Zero idioms
-			if (inst->type == X64_MOVSS || inst->type == X64_MOVSD)
-			{
-				if (inst->src.valueType == IRVALUETYPE_IMMEDIATE_INTEGER &&
-					inst->src.immediate == 0)
-				{
-					if (IsValueInMemory(context, inst->dst))
-						inst->type = X64_MOV;
-					else
-						*inst = { inst->type == X64_MOVSS ? X64_XORPS : X64_XORPD,
-							inst->dst, inst->dst };
-				}
-			}
-			else if (inst->type == X64_MOV)
-			{
-				if (inst->src.valueType == IRVALUETYPE_IMMEDIATE_INTEGER &&
-					inst->src.immediate == 0)
-				{
-					if (!IsValueInMemory(context, inst->dst))
-						*inst = { X64_XOR, inst->dst, inst->dst };
-				}
-			}
-
-			// Unnecessary jumps
-			if (nextInst && inst->type >= X64_Jump_Begin && inst->type <= X64_Jump_End &&
-				nextInst->type == X64_Label)
-			{
-				if (inst->label == nextInst->label)
-					inst->type = X64_Ignore;
-			}
-
-			// Replace CMP 0 with TEST
-			if (nextInst2 && nextInst2->type == X64_CMP)
-			{
-				if (nextInst2->src.valueType == IRVALUETYPE_IMMEDIATE_INTEGER &&
-					nextInst2->src.immediate == 0 && !IsValueInMemory(context, nextInst2->dst))
-				{
-					nextInst2->type = X64_TEST;
-					nextInst2->src = nextInst2->dst;
-				}
-				else if (nextInst2->dst.valueType == IRVALUETYPE_IMMEDIATE_INTEGER &&
-					nextInst2->dst.immediate == 0 && !IsValueInMemory(context, nextInst2->src))
-				{
-					nextInst2->type = X64_TEST;
-					nextInst2->dst = nextInst2->src;
-				}
-			}
-
-			// Avoid saving to bool then testing
-			// @Todo: do this sort of thing with IR, should catch a lot more cases.
-			if (nextInst2 && inst->type == X64_SETE && nextInst->type == X64_TEST &&
-					nextInst2->type == X64_JE)
-			{
-				if (inst->dst.value.valueIdx == nextInst->dst.value.valueIdx &&
-					inst->dst.value.valueIdx == nextInst->src.value.valueIdx)
-				{
-					inst->type = X64_Ignore;
-					nextInst->type = X64_Ignore;
-					nextInst2->type = X64_JE;
-				}
-			}
-
-			inst = nextInst;
-			nextInst = nextInst2;
-			nextInst2 = X64InstructionStreamAdvance(&stream);
-			while (nextInst2 && nextInst2->type >= X64_Count)
-				nextInst2 = X64InstructionStreamAdvance(&stream);
-		}
-	}
-
+void BackendGenerateOutputFile(Context *context)
+{
 	// TypeInfo immediate structs
 	{
 		u32 pointerToStructMemberInfoIdx =
@@ -3418,7 +2506,9 @@ unalignedMovups:;
 		{
 			TypeInfo typeInfo = GetTypeInfo(context, typeTableIdx);
 
-			GetValueWrite(context, typeInfo.valueIdx)->typeTableIdx = TYPETABLEIDX_TYPE_INFO_STRUCT;
+			Value v = GetGlobalValue(context, typeInfo.valueIdx);
+			v.typeTableIdx = TYPETABLEIDX_TYPE_INFO_STRUCT;
+			IRUpdateValue(context, typeInfo.valueIdx, &v);
 
 			IRStaticVariable newStaticVar = { typeInfo.valueIdx };
 			newStaticVar.initialValue.valueType = IRVALUETYPE_IMMEDIATE_GROUP;
@@ -3452,7 +2542,7 @@ unalignedMovups:;
 				if (!structName.size)
 					structName = "<anonymous struct>"_s;
 
-				u32 membersValueIdx = NewValue(context, TPrintF("_members_%lld", typeTableIdx),
+				u32 membersValueIdx = NewGlobalValue(context, TPrintF("_members_%lld", typeTableIdx),
 						TYPETABLEIDX_TYPE_INFO_STRUCT_MEMBER_STRUCT, VALUEFLAGS_ON_STATIC_STORAGE);
 				IRStaticVariable membersStaticVar = { membersValueIdx };
 				membersStaticVar.initialValue.valueType = IRVALUETYPE_IMMEDIATE_GROUP;
@@ -3477,7 +2567,7 @@ unalignedMovups:;
 
 					*ArrayAdd(&membersStaticVar.initialValue.immediateStructMembers) = memberImm;
 				}
-				*DynamicArrayAdd(&context->irStaticVariables) = membersStaticVar;
+				*DynamicArrayAdd(&context->irStaticVariables.GetForWrite()) = membersStaticVar;
 
 				ArrayInit(&newStaticVar.initialValue.immediateStructMembers, 6);
 				*ArrayAdd(&newStaticVar.initialValue.immediateStructMembers) =
@@ -3501,7 +2591,7 @@ unalignedMovups:;
 
 				TypeInfo enumType = GetTypeInfo(context, typeInfo.enumInfo.typeTableIdx);
 
-				u32 namesValueIdx = NewValue(context, TPrintF("_names_%lld", typeTableIdx),
+				u32 namesValueIdx = NewGlobalValue(context, TPrintF("_names_%lld", typeTableIdx),
 						TYPETABLEIDX_STRING_STRUCT, VALUEFLAGS_ON_STATIC_STORAGE);
 				IRStaticVariable namesStaticVar = { namesValueIdx };
 				namesStaticVar.initialValue.valueType = IRVALUETYPE_IMMEDIATE_GROUP;
@@ -3513,9 +2603,9 @@ unalignedMovups:;
 							typeInfo.enumInfo.names[nameIdx]);
 					*ArrayAdd(&namesStaticVar.initialValue.immediateStructMembers) = nameImm;
 				}
-				*DynamicArrayAdd(&context->irStaticVariables) = namesStaticVar;
+				*DynamicArrayAdd(&context->irStaticVariables.GetForWrite()) = namesStaticVar;
 
-				u32 valuesValueIdx = NewValue(context, TPrintF("_values_%lld", typeTableIdx),
+				u32 valuesValueIdx = NewGlobalValue(context, TPrintF("_values_%lld", typeTableIdx),
 						TYPETABLEIDX_S64, VALUEFLAGS_ON_STATIC_STORAGE);
 				IRStaticVariable valuesStaticVar = { valuesValueIdx };
 				valuesStaticVar.initialValue.valueType = IRVALUETYPE_IMMEDIATE_GROUP;
@@ -3527,7 +2617,7 @@ unalignedMovups:;
 							TYPETABLEIDX_S64);
 					*ArrayAdd(&valuesStaticVar.initialValue.immediateStructMembers) = valueImm;
 				}
-				*DynamicArrayAdd(&context->irStaticVariables) = valuesStaticVar;
+				*DynamicArrayAdd(&context->irStaticVariables.GetForWrite()) = valuesStaticVar;
 
 				ArrayInit(&newStaticVar.initialValue.immediateStructMembers, 8);
 				*ArrayAdd(&newStaticVar.initialValue.immediateStructMembers) =
@@ -3578,7 +2668,7 @@ unalignedMovups:;
 				u32 parametersValueIdx = 0;
 				if (typeInfo.procedureInfo.parameters.size > 0)
 				{
-					parametersValueIdx = NewValue(context, TPrintF("_params_%lld", typeTableIdx),
+					parametersValueIdx = NewGlobalValue(context, TPrintF("_params_%lld", typeTableIdx),
 							pointerToTypeInfoIdx, VALUEFLAGS_ON_STATIC_STORAGE);
 					IRStaticVariable paramsStaticVar = { parametersValueIdx };
 					paramsStaticVar.initialValue.valueType = IRVALUETYPE_IMMEDIATE_GROUP;
@@ -3592,7 +2682,7 @@ unalignedMovups:;
 						IRValue paramImm = IRValueDereference(paramType.valueIdx, pointerToTypeInfoIdx);
 						*ArrayAdd(&paramsStaticVar.initialValue.immediateStructMembers) = paramImm;
 					}
-					*DynamicArrayAdd(&context->irStaticVariables) = paramsStaticVar;
+					*DynamicArrayAdd(&context->irStaticVariables.GetForWrite()) = paramsStaticVar;
 				}
 
 				ArrayInit(&newStaticVar.initialValue.immediateStructMembers, 5);
@@ -3632,12 +2722,11 @@ unalignedMovups:;
 			default:
 				ASSERT(false);
 			}
-			*DynamicArrayAdd(&context->irStaticVariables) = newStaticVar;
+			auto staticVars = context->irStaticVariables.GetForWrite();
+			*DynamicArrayAdd(&staticVars) = newStaticVar;
 		}
 		context->typeTable.UnlockForRead();
 	}
-
-	TimerSplit("X64 register/stack allocation"_s);
 
 	BucketArrayInit(&context->outputBuffer);
 
@@ -3656,114 +2745,120 @@ unalignedMovups:;
 #endif
 
 	// String literals
-	s64 strCount = (s64)BucketArrayCount(&context->stringLiterals);
-	s64 bytesWritten = 0;
-	for (s64 stringLiteralIdx = 1; stringLiteralIdx < strCount; ++stringLiteralIdx)
 	{
-		PrintOut(context, "_str_%lld DB ", stringLiteralIdx);
-		String str = context->stringLiterals[stringLiteralIdx];
-		s64 size = str.size;
-		bool first = true;
-		u8 *buffer = (u8 *)g_memory->framePtr;
-		u8 *out = buffer;
-		const u8 *in = (const u8 *)str.data;
-		for (int i = 0; i < str.size; ++i)
+		auto stringLiterals = context->stringLiterals.GetForRead();
+		s64 strCount = (s64)BucketArrayCount(&stringLiterals);
+		s64 bytesWritten = 0;
+		for (s64 stringLiteralIdx = 1; stringLiteralIdx < strCount; ++stringLiteralIdx)
 		{
-			if (*in == '\\')
+			PrintOut(context, "_str_%lld DB ", stringLiteralIdx);
+			String str = (*stringLiterals)[stringLiteralIdx];
+			s64 size = str.size;
+			bool first = true;
+			u8 *buffer = (u8 *)g_memory->framePtr;
+			u8 *out = buffer;
+			const u8 *in = (const u8 *)str.data;
+			for (int i = 0; i < str.size; ++i)
 			{
-				if (!first) PrintOut(context, ", ");
-
-				++in;
-				switch (*in)
+				if (*in == '\\')
 				{
-				case 'n':
-					PrintOut(context, "0AH");
-					break;
-				case '0':
-					PrintOut(context, "00H");
-					break;
-				case '"':
-					PrintOut(context, "22H");
-					break;
-				}
-				++in;
-				++i;
-				--size; // Don't count backslash for string size.
-				first = false;
-			}
-			else if (*in == '\'')
-			{
-				// MASM uses ' as string delimiters
-				if (!first) PrintOut(context, ", ");
-				PrintOut(context, "27H");
-				++in;
-				first = false;
-			}
-			else
-			{
-				*out++ = *in++;
-
-				if (i == str.size - 1 || *in == '\\' || *in == '\'')
-				{
-					*out++ = 0;
-					g_memory->framePtr = out;
-
 					if (!first) PrintOut(context, ", ");
-					PrintOut(context, "'%s'", buffer);
-					out = buffer;
 
+					++in;
+					switch (*in)
+					{
+					case 'n':
+						PrintOut(context, "0AH");
+						break;
+					case '0':
+						PrintOut(context, "00H");
+						break;
+					case '"':
+						PrintOut(context, "22H");
+						break;
+					}
+					++in;
+					++i;
+					--size; // Don't count backslash for string size.
 					first = false;
 				}
+				else if (*in == '\'')
+				{
+					// MASM uses ' as string delimiters
+					if (!first) PrintOut(context, ", ");
+					PrintOut(context, "27H");
+					++in;
+					first = false;
+				}
+				else
+				{
+					*out++ = *in++;
+
+					if (i == str.size - 1 || *in == '\\' || *in == '\'')
+					{
+						*out++ = 0;
+						g_memory->framePtr = out;
+
+						if (!first) PrintOut(context, ", ");
+						PrintOut(context, "'%s'", buffer);
+						out = buffer;
+
+						first = false;
+					}
+				}
 			}
+			PrintOut(context, "\n");
+			g_memory->framePtr = buffer;
+			bytesWritten += size;
 		}
-		PrintOut(context, "\n");
-		g_memory->framePtr = buffer;
-		bytesWritten += size;
 	}
 
 	X64StaticDataAlignTo(context, 16, true);
 
 	// Initialized
-	const u64 staticVariableCount = context->irStaticVariables.size;
-	for (int staticVariableIdx = 0; staticVariableIdx < staticVariableCount; ++staticVariableIdx)
 	{
-		IRStaticVariable staticVar = context->irStaticVariables[staticVariableIdx];
-		if (staticVar.initialValue.valueType != IRVALUETYPE_INVALID &&
-				staticVar.initialValue.immediate != 0)
+		auto staticVars = context->irStaticVariables.GetForRead();
+		const u64 staticVariableCount = staticVars->size;
+		for (int staticVariableIdx = 0; staticVariableIdx < staticVariableCount; ++staticVariableIdx)
 		{
-			Value value = GetValueRead(context, staticVar.valueIdx);
+			IRStaticVariable staticVar = (*staticVars)[staticVariableIdx];
+			if (staticVar.initialValue.valueType != IRVALUETYPE_INVALID &&
+					staticVar.initialValue.immediate != 0)
+			{
+				Value value = GetGlobalValue(context, staticVar.valueIdx);
 
-			String name = value.name;
-			if (!(value.flags & VALUEFLAGS_IS_EXTERNAL))
-				name = StringConcat("g_"_s, name);
+				String name = value.name;
+				if (!(value.flags & VALUEFLAGS_IS_EXTERNAL))
+					name = StringConcat("g_"_s, name);
 
-			X64PrintStaticData(context, name, staticVar.initialValue, value.typeTableIdx, 16);
+				X64PrintStaticData(context, name, staticVar.initialValue, value.typeTableIdx, 16);
+			}
 		}
-	}
 
 #if _MSC_VER
-	PrintOut(context, "_DATA ENDS\n");
-	PrintOut(context, "_BSS SEGMENT\n");
+		PrintOut(context, "_DATA ENDS\n");
+		PrintOut(context, "_BSS SEGMENT\n");
 #else
-	PrintOut(context, "section .bss\n");
+		PrintOut(context, "section .bss\n");
 #endif
 
-	// Uninitialized
-	// @Speed: don't iterate this twice...
-	for (int staticVariableIdx = 0; staticVariableIdx < staticVariableCount; ++staticVariableIdx)
-	{
-		IRStaticVariable staticVar = context->irStaticVariables[staticVariableIdx];
-		if (staticVar.initialValue.valueType == IRVALUETYPE_INVALID ||
-				staticVar.initialValue.immediate == 0)
+		// Uninitialized
+		// @Speed: don't iterate this twice...
+		for (int staticVariableIdx = 0; staticVariableIdx < staticVariableCount; ++staticVariableIdx)
 		{
-			Value value = GetValueRead(context, staticVar.valueIdx);
+			IRStaticVariable staticVar = (*staticVars)[staticVariableIdx];
+			if (staticVar.initialValue.valueType == IRVALUETYPE_INVALID ||
+					staticVar.initialValue.immediate == 0)
+			{
+				Value value = GetGlobalValue(context, staticVar.valueIdx);
 
-			String name = value.name;
-			if (!(value.flags & VALUEFLAGS_IS_EXTERNAL))
-				name = StringConcat("g_"_s, name);
+				String name = value.name;
+				if (!(value.flags & VALUEFLAGS_IS_EXTERNAL))
+					name = StringConcat("g_"_s, name);
 
-			X64PrintStaticDataUninitialized(context, name,
-					staticVar.initialValue, value.typeTableIdx, 16);
+				X64PrintStaticDataUninitialized(context, name,
+						staticVar.initialValue, value.typeTableIdx, 16);
+			}
 		}
 	}
 
@@ -3780,24 +2875,27 @@ unalignedMovups:;
 	}
 #endif
 
-	for (int varIdx = 0; varIdx < context->irExternalVariables.size; ++varIdx)
 	{
-		Value v = GetValueRead(context, context->irExternalVariables[varIdx]);
-		s64 size = GetTypeInfo(context, v.typeTableIdx).size;
-		String type;
-		switch (size)
+		auto externalVars = context->irExternalVariables.GetForRead();
+		for (int varIdx = 0; varIdx < externalVars->size; ++varIdx)
 		{
-			case 1: type = "BYTE"_s; break;
-			case 2: type = "WORD"_s; break;
-			case 4: type = "DWORD"_s; break;
-			case 8: type = "QWORD"_s; break;
-			default: type = "QWORD"_s;
-		}
+			Value v = GetGlobalValue(context, (*externalVars)[varIdx]);
+			s64 size = GetTypeInfo(context, v.typeTableIdx).size;
+			String type;
+			switch (size)
+			{
+				case 1: type = "BYTE"_s; break;
+				case 2: type = "WORD"_s; break;
+				case 4: type = "DWORD"_s; break;
+				case 8: type = "QWORD"_s; break;
+				default: type = "QWORD"_s;
+			}
 #if _MSC_VER
-		PrintOut(context, "EXTRN %S:%S\n", v.name, type);
+			PrintOut(context, "EXTRN %S:%S\n", v.name, type);
 #else
-		PrintOut(context, "EXTERN %S:%S\n", v.name, type);
+			PrintOut(context, "EXTERN %S:%S\n", v.name, type);
 #endif
+		}
 	}
 
 	{
@@ -3825,7 +2923,7 @@ unalignedMovups:;
 #endif
 
 	// Code
-	X64PrintInstructions(context, x64Procedures);
+	X64PrintInstructions(context);
 
 #if _MSC_VER
 	PrintOut(context, "_TEXT ENDS\n");
@@ -3894,4 +2992,277 @@ unalignedMovups:;
 		SYSRunLinker(outputPath, makeLibrary, extraLinkerArguments);
 		TimerSplit("Calling linker"_s);
 	}
+}
+
+void BackendJobProc(Context *context, s32 procedureIdx)
+{
+	IRThreadData *threadData = (IRThreadData *)TlsGetValue(context->tlsIndex);
+
+	// Initialize generic parameter values
+	for (int paramIdx = 0; paramIdx < 32; ++paramIdx)
+	{
+		Value newValue = {};
+		newValue.name = TPrintF("_param%d", paramIdx);
+		newValue.typeTableIdx = TYPETABLEIDX_S64;
+		newValue.flags = VALUEFLAGS_IS_ALLOCATED | VALUEFLAGS_IS_MEMORY | VALUEFLAGS_BASE_RELATIVE;
+		newValue.stackOffset = 16 + paramIdx * 8; // Add 16, 8 for return address, and 8 because we push RBP
+		u32 newValueIdx = IRNewValue(context, newValue);
+		threadData->x64SpilledParametersRead[paramIdx] = newValueIdx;
+	}
+
+	for (int paramIdx = 0; paramIdx < 32; ++paramIdx)
+	{
+		Value newValue = {};
+		newValue.name = TPrintF("_param%d", paramIdx);
+		newValue.typeTableIdx = TYPETABLEIDX_S64;
+		newValue.flags = VALUEFLAGS_IS_ALLOCATED | VALUEFLAGS_IS_MEMORY;
+		newValue.stackOffset = paramIdx * 8; // Add 16, 8 for return address, and 8 because we push RBP
+		u32 newValueIdx = IRNewValue(context, newValue);
+		threadData->x64SpilledParametersWrite[paramIdx] = newValueIdx;
+	}
+
+	Procedure proc = GetProcedureRead(context, procedureIdx);
+	ASSERT(proc.astBody);
+	ASSERT(GetTypeInfo(context, proc.typeTableIdx).typeCategory == TYPECATEGORY_PROCEDURE);
+	TypeInfoProcedure procTypeInfo = GetTypeInfo(context, proc.typeTableIdx).procedureInfo;
+
+	BucketArrayInit(&threadData->beInstructions);
+	threadData->allocatedParameterCount = 0;
+	threadData->returnValueIdx = proc.returnValueIdx;
+	threadData->stackSize = 0;
+	DynamicArrayInit(&threadData->spilledValues, 8);
+	BucketArrayInit(&threadData->bePatchedInstructions);
+
+	bool returnByCopy = procTypeInfo.returnTypeTableIdx != TYPETABLEIDX_VOID &&
+			IRShouldPassByCopy(context, procTypeInfo.returnTypeTableIdx);
+	int paramCount = (int)proc.parameterValues.size;
+
+	// Allocate parameters
+	Array<IRValue, PhaseAllocator> params;
+	ArrayInit(&params, paramCount + returnByCopy);
+
+	// Pointer to return value
+	if (returnByCopy)
+		*ArrayAdd(&params) = IRValueValue(proc.returnValueIdx, TYPETABLEIDX_S64);
+
+	for (int paramIdx = 0; paramIdx < paramCount; ++paramIdx)
+		*ArrayAdd(&params) = IRValueValue(context, proc.parameterValues[paramIdx]);
+
+	switch (procTypeInfo.callingConvention)
+	{
+		case CC_WIN64:
+			X64ReadyWin64Parameters(context, params, false);
+			break;
+		case CC_DEFAULT:
+		case CC_LINUX64:
+			X64ReadyLinuxParameters(context, params, false);
+	}
+
+	u64 instructionCount = BucketArrayCount(&threadData->irInstructions);
+	for (int instructionIdx = 0; instructionIdx < instructionCount; ++instructionIdx)
+	{
+		IRInstruction inst = threadData->irInstructions[instructionIdx];
+		X64ConvertInstruction(context, inst);
+	}
+
+	if (procTypeInfo.returnTypeTableIdx != TYPETABLEIDX_VOID)
+	{
+		u32 returnTypeTableIdx = IRGetValue(context, proc.returnValueIdx).typeTableIdx;
+		if (returnByCopy)
+		{
+			IRValue returnValue = IRValueValue(proc.returnValueIdx, returnTypeTableIdx);
+			*BucketArrayAdd(&threadData->beInstructions) = { X64_LEA, RAX, returnValue };
+		}
+		else
+		{
+			IRValue returnValue = IRValueValue(proc.returnValueIdx, returnTypeTableIdx);
+			if (GetTypeInfo(context, returnTypeTableIdx).typeCategory == TYPECATEGORY_FLOATING)
+			{
+				IRValue typedXmm0 = XMM0;
+				typedXmm0.typeTableIdx = returnTypeTableIdx;
+				X64Mov(context, typedXmm0, returnValue);
+			}
+			else
+				X64Mov(context, RAX, returnValue);
+		}
+	}
+
+	X64AllocateRegisters(context);
+
+	// Remove instructions that reference unused values
+	X64InstructionStream stream = X64InstructionStreamBegin(&threadData->beInstructions);
+	X64Instruction *inst = X64InstructionStreamAdvance(&stream);
+	X64Instruction *nextInst  = X64InstructionStreamAdvance(&stream);
+	X64Instruction *nextInst2 = X64InstructionStreamAdvance(&stream);
+	while (inst)
+	{
+		// Replace LEAs with a register as a source with a MOV.
+		if (inst->type == X64_LEA)
+		{
+			if (inst->src.value.offset == 0 && inst->src.value.elementSize == 0)
+			{
+				Value v = IRGetValue(context, inst->src.value.valueIdx);
+				if ((v.flags & VALUEFLAGS_IS_ALLOCATED) && !(v.flags & VALUEFLAGS_IS_MEMORY))
+				{
+					inst->type = X64_MOV;
+					inst->src.valueType = IRVALUETYPE_VALUE;
+				}
+			}
+		}
+
+		switch (inst->type)
+		{
+		// dst write, src read
+		case X64_MOVUPS:
+		{
+			// If aligned change to MOVAPS
+			ASSERT((inst->dst.valueType == IRVALUETYPE_VALUE ||
+				 inst->dst.valueType == IRVALUETYPE_VALUE_DEREFERENCE) &&
+				(inst->src.valueType == IRVALUETYPE_VALUE ||
+				 inst->src.valueType == IRVALUETYPE_VALUE_DEREFERENCE));
+
+			Value dst = IRGetValue(context, inst->dst.value.valueIdx);
+			Value src = IRGetValue(context, inst->src.value.valueIdx);
+			if (dst.flags & VALUEFLAGS_IS_ALLOCATED && src.flags & VALUEFLAGS_IS_ALLOCATED)
+			{
+				if (!(dst.flags & VALUEFLAGS_IS_MEMORY) ||
+					(dst.stackOffset & 15))
+					goto unalignedMovups;
+
+				if (!(src.flags & VALUEFLAGS_IS_MEMORY) ||
+					(src.stackOffset & 15))
+					goto unalignedMovups;
+
+				inst->type = X64_MOVAPS;
+			}
+unalignedMovups:;
+		} // fall through
+		case X64_MOV:
+		case X64_MOVSS:
+		case X64_MOVSD:
+		{
+			// Ignore mov thing into itself
+			if (inst->dst.valueType == IRVALUETYPE_VALUE &&
+				inst->src.valueType == IRVALUETYPE_VALUE)
+			{
+				Value dst = IRGetValue(context, inst->dst.value.valueIdx);
+				Value src = IRGetValue(context, inst->src.value.valueIdx);
+				if (dst.flags & VALUEFLAGS_IS_ALLOCATED && src.flags & VALUEFLAGS_IS_ALLOCATED)
+				{
+					// Value::stackOffset is alias of Value::allocatedRegister
+					if (dst.allocatedRegister == src.allocatedRegister)
+					{
+						inst->type = X64_Ignore;
+						break;
+					}
+				}
+			}
+		} // fall through
+		case X64_MOVZX:
+		case X64_MOVSX:
+		case X64_MOVSXD:
+		case X64_LEA:
+		case X64_SETE:
+		case X64_SETNE:
+		case X64_SETL:
+		case X64_SETLE:
+		case X64_SETG:
+		case X64_SETGE:
+		case X64_SETA:
+		case X64_SETAE:
+		case X64_SETB:
+		case X64_SETBE:
+		case X64_CVTSI2SS:
+		case X64_CVTSI2SD:
+		case X64_CVTTSS2SI:
+		case X64_CVTTSD2SI:
+		case X64_CVTSS2SD:
+		case X64_CVTSD2SS:
+		{
+			if (inst->dst.valueType == IRVALUETYPE_VALUE ||
+				inst->dst.valueType == IRVALUETYPE_VALUE_DEREFERENCE)
+			{
+				Value v = IRGetValue(context, inst->dst.value.valueIdx);
+				if (!(v.flags & (VALUEFLAGS_IS_USED | VALUEFLAGS_ON_STATIC_STORAGE)))
+					inst->type = X64_Ignore;
+			}
+		} break;
+		}
+
+		// Zero idioms
+		if (inst->type == X64_MOVSS || inst->type == X64_MOVSD)
+		{
+			if (inst->src.valueType == IRVALUETYPE_IMMEDIATE_INTEGER &&
+				inst->src.immediate == 0)
+			{
+				if (IsValueInMemory(context, inst->dst))
+					inst->type = X64_MOV;
+				else
+					*inst = { inst->type == X64_MOVSS ? X64_XORPS : X64_XORPD,
+						inst->dst, inst->dst };
+			}
+		}
+		else if (inst->type == X64_MOV)
+		{
+			if (inst->src.valueType == IRVALUETYPE_IMMEDIATE_INTEGER &&
+				inst->src.immediate == 0)
+			{
+				if (!IsValueInMemory(context, inst->dst))
+					*inst = { X64_XOR, inst->dst, inst->dst };
+			}
+		}
+
+		// Unnecessary jumps
+		if (nextInst && inst->type >= X64_Jump_Begin && inst->type <= X64_Jump_End &&
+			nextInst->type == X64_Label)
+		{
+			if (inst->label == nextInst->label)
+				inst->type = X64_Ignore;
+		}
+
+		// Replace CMP 0 with TEST
+		if (nextInst2 && nextInst2->type == X64_CMP)
+		{
+			if (nextInst2->src.valueType == IRVALUETYPE_IMMEDIATE_INTEGER &&
+				nextInst2->src.immediate == 0 && !IsValueInMemory(context, nextInst2->dst))
+			{
+				nextInst2->type = X64_TEST;
+				nextInst2->src = nextInst2->dst;
+			}
+			else if (nextInst2->dst.valueType == IRVALUETYPE_IMMEDIATE_INTEGER &&
+				nextInst2->dst.immediate == 0 && !IsValueInMemory(context, nextInst2->src))
+			{
+				nextInst2->type = X64_TEST;
+				nextInst2->dst = nextInst2->src;
+			}
+		}
+
+		// Avoid saving to bool then testing
+		// @Todo: do this sort of thing with IR, should catch a lot more cases.
+		if (nextInst2 && inst->type == X64_SETE && nextInst->type == X64_TEST &&
+				nextInst2->type == X64_JE)
+		{
+			if (inst->dst.value.valueIdx == nextInst->dst.value.valueIdx &&
+				inst->dst.value.valueIdx == nextInst->src.value.valueIdx)
+			{
+				inst->type = X64_Ignore;
+				nextInst->type = X64_Ignore;
+				nextInst2->type = X64_JE;
+			}
+		}
+
+		inst = nextInst;
+		nextInst = nextInst2;
+		nextInst2 = X64InstructionStreamAdvance(&stream);
+		while (nextInst2 && nextInst2->type >= X64_Count)
+			nextInst2 = X64InstructionStreamAdvance(&stream);
+	}
+
+	X64FinalProcedure finalProc;
+	finalProc.procedureIdx = procedureIdx;
+	finalProc.instructions = threadData->beInstructions;
+	finalProc.localValues = threadData->localValues;
+	finalProc.stackSize = threadData->stackSize;
+	auto finalProcs = context->beFinalProcedureData.GetForWrite();
+	*DynamicArrayAdd(&finalProcs) = finalProc;
 }
