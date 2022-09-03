@@ -1,3 +1,4 @@
+* Fix PrintIR, PrintAST and print asm before allocation.
 * #defined is set to 0 even if another #defined would potentially define what we are looking for. I
 	don't know how to solve this other than coming up with a complex dependency resolver. Right now
 	jobs just make their own thing and ocasionally check other jobs' states.

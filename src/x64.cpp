@@ -134,21 +134,23 @@ String X64IRValueToStr(Context *context, IRValue value,
 	bool isXMM;
 	size = typeInfo.size;
 	Value v;
-	if (value.value.valueIdx & 0x80000000)
-		v = GetGlobalValue(context, value.value.valueIdx);
-	else
-		v = (*localValues)[value.value.valueIdx];
-
 	s64 offset = 0;
-	if (value.valueType == IRVALUETYPE_VALUE || value.valueType == IRVALUETYPE_VALUE_DEREFERENCE)
-		offset = value.value.offset;
 
 	if (value.valueType == IRVALUETYPE_PROCEDURE)
 	{
 		result = GetProcedureRead(context, value.procedureIdx).name;
 		goto decoratePtr;
 	}
-	else if (v.flags & (VALUEFLAGS_ON_STATIC_STORAGE | VALUEFLAGS_IS_EXTERNAL))
+
+	if (value.valueType == IRVALUETYPE_VALUE || value.valueType == IRVALUETYPE_VALUE_DEREFERENCE)
+		offset = value.value.offset;
+
+	if (value.value.valueIdx & 0x80000000)
+		v = GetGlobalValue(context, value.value.valueIdx);
+	else
+		v = (*localValues)[value.value.valueIdx];
+
+	if (v.flags & (VALUEFLAGS_ON_STATIC_STORAGE | VALUEFLAGS_IS_EXTERNAL))
 	{
 		if (v.flags & VALUEFLAGS_IS_EXTERNAL)
 			result = v.name;
@@ -1911,7 +1913,7 @@ String X64InstructionToStr(Context *context, X64Instruction inst,
 	case X64_JBE:
 		goto printLabel;
 	case X64_Label:
-		return TPrintF("%S:", inst.label->name);
+		return TPrintF("L_%S_%llx:", inst.label->name, (u64)inst.label);
 	case X64_Comment:
 		return TPrintF("; %S", inst.comment);
 	case X64_Ignore:
@@ -1947,7 +1949,7 @@ printDstSrc:
 	}
 printLabel:
 	{
-		return TPrintF("%S %S", mnemonic, inst.label->name);
+		return TPrintF("%S L_%S_%llx", mnemonic, inst.label->name, (u64)inst.label);
 	}
 }
 
@@ -2060,7 +2062,7 @@ void X64PrintStaticData(Context *context, String name, IRValue value, u32 typeTa
 		X64StaticDataAlignTo(context, alignment, true);
 
 		bool isArray = false;
-		u32 elementTypeIdx = TYPETABLEIDX_UNSET;
+		u32 elementTypeIdx = TYPETABLEIDX_Unset;
 		if (typeTableIdx > 0)
 		{
 			TypeInfo typeInfo = GetTypeInfo(context, typeTableIdx);
@@ -2167,7 +2169,7 @@ void X64PrintStaticDataUninitialized(Context *context, String name, IRValue valu
 		X64StaticDataAlignTo(context, alignment, false);
 
 		bool isArray = false;
-		u32 elementTypeIdx = TYPETABLEIDX_UNSET;
+		u32 elementTypeIdx = TYPETABLEIDX_Unset;
 		if (typeTableIdx > 0)
 		{
 			TypeInfo typeInfo = GetTypeInfo(context, typeTableIdx);
@@ -2225,7 +2227,7 @@ void BackendMain(Context *context)
 		u32 voidPtrIdx = GetTypeInfoPointerOf(context, TYPETABLEIDX_VOID);
 
 		TypeInfo t = { TYPECATEGORY_PROCEDURE };
-		t.procedureInfo.returnTypeTableIdx = TYPETABLEIDX_UNSET;
+		t.procedureInfo.returnTypeTableIdx = TYPETABLEIDX_Unset;
 		ArrayInit(&t.procedureInfo.parameters, 3);
 		t.procedureInfo.parameters.size = 3;
 		t.procedureInfo.parameters[0] = { voidPtrIdx, {} };
@@ -2512,7 +2514,7 @@ void BackendGenerateOutputFile(Context *context)
 
 			IRStaticVariable newStaticVar = { typeInfo.valueIdx };
 			newStaticVar.initialValue.valueType = IRVALUETYPE_IMMEDIATE_GROUP;
-			newStaticVar.initialValue.typeTableIdx = TYPETABLEIDX_UNSET;
+			newStaticVar.initialValue.typeTableIdx = TYPETABLEIDX_Unset;
 
 			switch (typeInfo.typeCategory)
 			{
@@ -2546,7 +2548,7 @@ void BackendGenerateOutputFile(Context *context)
 						TYPETABLEIDX_TYPE_INFO_STRUCT_MEMBER_STRUCT, VALUEFLAGS_ON_STATIC_STORAGE);
 				IRStaticVariable membersStaticVar = { membersValueIdx };
 				membersStaticVar.initialValue.valueType = IRVALUETYPE_IMMEDIATE_GROUP;
-				membersStaticVar.initialValue.typeTableIdx = TYPETABLEIDX_UNSET;
+				membersStaticVar.initialValue.typeTableIdx = TYPETABLEIDX_Unset;
 				ArrayInit(&membersStaticVar.initialValue.immediateStructMembers,
 						typeInfo.structInfo.members.size);
 				for (s64 memberIdx = 0; memberIdx < (s64)typeInfo.structInfo.members.size; ++memberIdx)
@@ -2556,7 +2558,7 @@ void BackendGenerateOutputFile(Context *context)
 
 					IRValue memberImm;
 					memberImm.valueType = IRVALUETYPE_IMMEDIATE_GROUP;
-					memberImm.typeTableIdx = TYPETABLEIDX_UNSET;
+					memberImm.typeTableIdx = TYPETABLEIDX_Unset;
 					ArrayInit(&memberImm.immediateStructMembers, 4);
 					*ArrayAdd(&memberImm.immediateStructMembers) =
 						{ IRValueImmediateString(context, member.name) };
@@ -3099,7 +3101,11 @@ void BackendJobProc(Context *context, s32 procedureIdx)
 		// Replace LEAs with a register as a source with a MOV.
 		if (inst->type == X64_LEA)
 		{
-			if (inst->src.value.offset == 0 && inst->src.value.elementSize == 0)
+			if ((inst->src.valueType == IRVALUETYPE_VALUE ||
+				inst->src.valueType == IRVALUETYPE_VALUE_DEREFERENCE) &&
+				(inst->dst.valueType == IRVALUETYPE_VALUE ||
+				inst->dst.valueType == IRVALUETYPE_VALUE_DEREFERENCE) &&
+				inst->src.value.offset == 0 && inst->src.value.elementSize == 0)
 			{
 				Value v = IRGetValue(context, inst->src.value.valueIdx);
 				if ((v.flags & VALUEFLAGS_IS_ALLOCATED) && !(v.flags & VALUEFLAGS_IS_MEMORY))

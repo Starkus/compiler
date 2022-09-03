@@ -147,15 +147,16 @@ struct Context
 
 	// Parsing -----
 	DynamicArray<HANDLE, HeapAllocator> parseThreads;
-	RWContainer<DynamicArray<TCJobState, HeapAllocator>> parseJobStates;
+	SLContainer<DynamicArray<TCJobState, HeapAllocator>> parseJobStates;
 	DynamicArray<BucketArray<Token, HeapAllocator, 1024>, HeapAllocator> fileTokens;
 	DynamicArray<ASTRoot, HeapAllocator> fileASTRoots;
 	DynamicArray<RWContainer<BucketArray<ASTExpression, HeapAllocator, 1024>>, HeapAllocator> fileTreeNodes;
 	DynamicArray<RWContainer<BucketArray<ASTType, HeapAllocator, 1024>>, HeapAllocator> fileTypeNodes;
 
 	// Type check -----
-	RWContainer<DynamicArray<HANDLE, HeapAllocator>> tcThreads;
-	RWContainer<DynamicArray<TCJobState, HeapAllocator>> tcJobStates;
+	Array<TCScopeName, HeapAllocator> tcPrimitiveTypes;
+	SLContainer<DynamicArray<HANDLE, HeapAllocator>> tcThreads;
+	SLContainer<DynamicArray<TCJobState, HeapAllocator>> tcJobStates;
 	RWContainer<BucketArray<Value, HeapAllocator, 1024>> values;
 	RWContainer<BucketArray<Procedure, HeapAllocator, 512>> procedures;
 	RWContainer<BucketArray<Procedure, HeapAllocator, 128>> externalProcedures;
@@ -167,10 +168,10 @@ struct Context
 
 	RWContainer<TCScope> tcGlobalScope;
 	RWContainer<HashMap<String, CONDITION_VARIABLE, HeapAllocator>> tcConditionVariables;
+	HANDLE tcNewGlobalNameEvent;
 
 	// IR -----
-	RWContainer<DynamicArray<HANDLE, HeapAllocator>> irThreads;
-	SRWLOCK proceduresLock;
+	SLContainer<DynamicArray<HANDLE, HeapAllocator>> irThreads;
 	RWContainer<BucketArray<String, HeapAllocator, 1024>> stringLiterals;
 	RWContainer<DynamicArray<IRStaticVariable, HeapAllocator>> irStaticVariables;
 	RWContainer<DynamicArray<u32, HeapAllocator>> irExternalVariables;
@@ -307,7 +308,7 @@ bool CompilerAddSourceFile(Context *context, String filename, SourceLocation loc
 	BucketArrayInit(&newTypeNodes.content);
 	*DynamicArrayAdd(&context->fileTypeNodes) = newTypeNodes;
 
-	auto parseJobStates = context->parseJobStates.GetForWrite();
+	auto parseJobStates = context->parseJobStates.Get();
 	ParseJobArgs *args = ALLOC(PhaseAllocator::Alloc, ParseJobArgs);
 	u32 jobIdx = (u32)parseJobStates->size;
 	*args = { context, (u32)context->sourceFiles.size - 1, jobIdx };
@@ -411,6 +412,22 @@ int main(int argc, char **argv)
 
 	for (int threadIdx = 0; threadIdx < context.parseThreads.size; ++threadIdx)
 		WaitForSingleObject(context.parseThreads[threadIdx], INFINITE);
+
+	while (true)
+	{
+		WaitForMultipleObjects((DWORD)context.tcThreads.content.size,
+				context.tcThreads.content.data, false, INFINITE);
+		if (TCAreaAllJobFinished(&context))
+			break;
+		else if (!TCIsAnyJobRunning(&context))
+		{
+			auto conditionVariables = context.tcConditionVariables.GetForRead();
+			CONDITION_VARIABLE *values = HashMapValues(*conditionVariables);
+			for (u32 i = 0; i < (u32)conditionVariables->capacity; ++i)
+				if (HashMapSlotOccupied(*conditionVariables, i))
+					WakeAllConditionVariable(&values[i]);
+		}
+	}
 
 	// Unsafe reads!
 	for (int threadIdx = 0; threadIdx < context.tcThreads.content.size; ++threadIdx)

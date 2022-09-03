@@ -788,7 +788,7 @@ ASTExpression ParseExpression(Context *context, s32 precedence)
 {
 	ThreadData *threadData = (ThreadData *)TlsGetValue(context->tlsIndex);
 	ASTExpression result = {};
-	result.typeTableIdx = TYPETABLEIDX_UNSET;
+	result.typeTableIdx = TYPETABLEIDX_Unset;
 	result.any.loc = threadData->token->loc;
 
 	switch (threadData->token->type)
@@ -1086,7 +1086,7 @@ ASTStaticDefinition ParseStaticDefinition(Context *context)
 	Advance(context);
 
 	ASTExpression expression = {};
-	expression.typeTableIdx = TYPETABLEIDX_UNSET;
+	expression.typeTableIdx = TYPETABLEIDX_Unset;
 	expression.any.loc = threadData->token->loc;
 
 	bool isInline = false;
@@ -1201,7 +1201,7 @@ ASTExpression ParseStatement(Context *context)
 {
 	ThreadData *threadData = (ThreadData *)TlsGetValue(context->tlsIndex);
 	ASTExpression result = {};
-	result.typeTableIdx = TYPETABLEIDX_UNSET;
+	result.typeTableIdx = TYPETABLEIDX_Unset;
 	result.any.loc = threadData->token->loc;
 
 	switch (threadData->token->type)
@@ -1360,7 +1360,7 @@ ASTExpression ParseStaticStatement(Context *context)
 	ThreadData *threadData = (ThreadData *)TlsGetValue(context->tlsIndex);
 	ASTExpression result = {};
 	result.any.loc = threadData->token->loc;
-	result.typeTableIdx = TYPETABLEIDX_UNSET;
+	result.typeTableIdx = TYPETABLEIDX_Unset;
 
 	switch (threadData->token->type)
 	{
@@ -1503,7 +1503,7 @@ void ParseJobProc(void *args)
 	threadData.token = &context->fileTokens[fileIdx][0];
 	TlsSetValue(context->tlsIndex, &threadData);
 
-#if DEBUG_BUILD
+#if !FINAL_BUILD
 	HANDLE thread = GetCurrentThread();
 	SourceFile sourceFile;
 	{
@@ -1536,7 +1536,7 @@ void ParseJobProc(void *args)
 		GenerateTypeCheckJobs(context, statement);
 	}
 
-	(*context->parseJobStates.GetForWrite())[jobIdx] = TCJOBSTATE_DONE;
+	(*context->parseJobStates.Get())[jobIdx] = TCJOBSTATE_DONE;
 }
 
 void ParserMain(Context *context)
@@ -1550,5 +1550,5 @@ void ParserMain(Context *context)
 		DynamicArrayInit(&context->fileTypeNodes, 64);
 	}
 	DynamicArrayInit(&context->parseThreads, 64);
-	DynamicArrayInit(&context->parseJobStates.GetForWrite(), 64);
+	DynamicArrayInit(&context->parseJobStates.Get(), 64);
 }

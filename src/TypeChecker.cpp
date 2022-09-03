@@ -180,8 +180,21 @@ TCScope *GetTopMostScope(Context *context, TCJob *job)
 
 inline TypeInfo GetTypeInfo(Context *context, u32 typeTableIdx)
 {
-	auto typeTable = context->typeTable.GetForRead();
-	TypeInfo result = (*typeTable)[typeTableIdx];
+	TypeInfo result;
+	{
+		auto typeTable = context->typeTable.GetForRead();
+		result = (*typeTable)[typeTableIdx];
+	}
+
+	if (typeTableIdx > TYPETABLEIDX_PrimitiveEnd && typeTableIdx < TYPETABLEIDX_Count)
+		while (result.typeCategory == TYPECATEGORY_INVALID)
+		{
+			// @Speed: this is probably kinda bad... condition variable maybe?
+			Sleep(0);
+			auto typeTable = context->typeTable.GetForRead();
+			result = (*typeTable)[typeTableIdx];
+		}
+
 	return result;
 }
 
@@ -294,19 +307,38 @@ inline void PopTCScope(Context *context, TCJob *job)
 inline bool TCIsAnyJobRunning(Context *context)
 {
 	{
-		auto jobStates = context->tcJobStates.GetForRead();
+		auto jobStates = context->tcJobStates.Get();
 		for (int i = 0; i < (*jobStates).size; ++i)
 			if ((*jobStates)[i] == TCJOBSTATE_RUNNING ||
 				(*jobStates)[i] == TCJOBSTATE_WAITING_FOR_STOP)
 				return true;
 	}
+
 	{
-		auto jobStates = context->parseJobStates.GetForRead();
+		auto jobStates = context->parseJobStates.Get();
 		for (int i = 0; i < (*jobStates).size; ++i)
 			if ((*jobStates)[i] == TCJOBSTATE_RUNNING)
 				return true;
 	}
 	return false;
+}
+
+inline bool TCAreaAllJobFinished(Context *context)
+{
+	{
+		auto jobStates = context->tcJobStates.Get();
+		for (int i = 0; i < (*jobStates).size; ++i)
+			if ((*jobStates)[i] != TCJOBSTATE_DONE)
+				return false;
+	}
+
+	{
+		auto jobStates = context->parseJobStates.Get();
+		for (int i = 0; i < (*jobStates).size; ++i)
+			if ((*jobStates)[i] != TCJOBSTATE_DONE)
+				return false;
+	}
+	return true;
 }
 
 // Try to sleep and yield execution to other jobs.
@@ -320,7 +352,7 @@ bool TCYield(Context *context, TCJob *job)
 #endif
 
 	{
-		auto jobStates = context->tcJobStates.GetForWrite();
+		auto jobStates = context->tcJobStates.Get();
 		(*jobStates)[job->jobIdx] = TCJOBSTATE_SLEEPING;
 	}
 	if (!TCIsAnyJobRunning(context))
@@ -344,7 +376,7 @@ bool TCYield(Context *context, TCJob *job, String name, SRWLOCK *lock)
 #endif
 
 	{
-		auto jobStates = context->tcJobStates.GetForWrite();
+		auto jobStates = context->tcJobStates.Get();
 		(*jobStates)[job->jobIdx] = TCJOBSTATE_SLEEPING;
 	}
 	if (!TCIsAnyJobRunning(context))
@@ -379,7 +411,7 @@ bool TCYield(Context *context, TCJob *job, String name, SRWLOCK *lock)
 
 inline void TCResume(Context *context, TCJob *job)
 {
-	auto jobStates = context->tcJobStates.GetForWrite();
+	auto jobStates = context->tcJobStates.Get();
 	(*jobStates)[job->jobIdx] = TCJOBSTATE_RUNNING;
 }
 
@@ -413,7 +445,7 @@ TCScopeName TCFindScopeName(Context *context, TCJob *job, String name)
 			}
 		}
 		{
-			auto jobStates = context->tcJobStates.GetForWrite();
+			auto jobStates = context->tcJobStates.Get();
 			(*jobStates)[job->jobIdx] = TCJOBSTATE_SLEEPING;
 		}
 		if (!TCIsAnyJobRunning(context))
@@ -477,7 +509,7 @@ inline StaticDefinition TCGetStaticDefinition(Context *context, TCJob *job, u32 
 	{
 		staticDefinition = (*staticDefinitions)[staticDefinitionIdx];
 		if (staticDefinition.definitionType != STATICDEFINITIONTYPE_NOT_READY &&
-			(!ensureTypeChecked || staticDefinition.typeTableIdx != TYPETABLEIDX_UNSET))
+			(!ensureTypeChecked || staticDefinition.typeTableIdx != TYPETABLEIDX_Unset))
 			break;
 
 		if (!TCYield(context, job, staticDefinition.name, &context->staticDefinitions.rwLock))
@@ -509,7 +541,7 @@ inline void TCUpdateStaticDefinition(Context *context, TCJob *job, u32 staticDef
 
 u32 FindTypeInStackByName(Context *context, TCJob *job, SourceLocation loc, String name)
 {
-	u32 typeTableIdx = TYPETABLEIDX_UNSET;
+	u32 typeTableIdx = TYPETABLEIDX_Unset;
 
 	TCScopeName scopeName = TCFindScopeName(context, job, name);
 
@@ -577,16 +609,12 @@ inline void TCCheckIfNameAlreadyExists(Context *context, TCJob *job, String name
 	}
 
 	// Primitives
-	// @Speed: maybe keep these in a separate array?
+	for (int i = 0; i < context->tcPrimitiveTypes.size; ++i)
 	{
-		auto globalScope = context->tcGlobalScope.GetForRead();
-		for (int i = 0; i < globalScope->names.size; ++i)
-		{
-			const TCScopeName *currentName = &globalScope->names[i];
-			if (currentName->type == NAMETYPE_PRIMITIVE && StringEquals(name, currentName->name))
-				LogError(context, loc, TPrintF("Can not use name \"%S\", it is a language primitive",
-						name));
-		}
+		const TCScopeName *currentName = &context->tcPrimitiveTypes[i];
+		if (currentName->type == NAMETYPE_PRIMITIVE && StringEquals(name, currentName->name))
+			LogError(context, loc, TPrintF("Can not use name \"%S\", it is a language primitive",
+					name));
 	}
 }
 
@@ -857,8 +885,8 @@ TypeCheckResult CheckTypesMatchAndSpecialize(Context *context, u32 leftTableIdx,
 {
 	u32 rightTableIdx = rightHand->typeTableIdx;
 
-	ASSERT(leftTableIdx  != TYPETABLEIDX_UNSET);
-	ASSERT(rightTableIdx != TYPETABLEIDX_UNSET);
+	ASSERT(leftTableIdx  != TYPETABLEIDX_Unset);
+	ASSERT(rightTableIdx != TYPETABLEIDX_Unset);
 
 	// Get rid of aliases
 	if (leftTableIdx >= TYPETABLEIDX_Begin)
@@ -868,7 +896,7 @@ TypeCheckResult CheckTypesMatchAndSpecialize(Context *context, u32 leftTableIdx,
 
 	TypeCheckResult result = { TYPECHECK_COOL, leftTableIdx, rightTableIdx };
 
-	if (rightTableIdx == TYPETABLEIDX_STRUCT_LITERAL)
+	if (rightTableIdx == TYPETABLEIDX_StructLiteral)
 	{
 		ASSERT(rightHand->nodeType == ASTNODETYPE_LITERAL);
 		ASSERT(rightHand->literal.type == LITERALTYPE_GROUP);
@@ -1004,14 +1032,14 @@ TypeCheckResult CheckTypesMatchAndSpecialize(Context *context, u32 leftTableIdx,
 
 		return result;
 	}
-	if (rightTableIdx == TYPETABLEIDX_ANYTHING)
+	if (rightTableIdx == TYPETABLEIDX_Anything)
 	{
-		if (leftTableIdx == TYPETABLEIDX_ANYTHING)
+		if (leftTableIdx == TYPETABLEIDX_Anything)
 			result.errorCode = TYPECHECK_CANT_DEDUCE_TYPE;
 		result.rightTableIdx = leftTableIdx;
 		return result;
 	}
-	if (leftTableIdx == TYPETABLEIDX_ANYTHING)
+	if (leftTableIdx == TYPETABLEIDX_Anything)
 	{
 		result.leftTableIdx = rightTableIdx;
 		return result;
@@ -1129,7 +1157,7 @@ bool AreTypeInfosEqual(Context *context, TypeInfo a, TypeInfo b)
 
 inline u32 AddType(Context *context, TypeInfo typeInfo)
 {
-	typeInfo.valueIdx = NewGlobalValue(context, String{}, TYPETABLEIDX_UNSET, VALUEFLAGS_ON_STATIC_STORAGE);
+	typeInfo.valueIdx = NewGlobalValue(context, String{}, TYPETABLEIDX_Unset, VALUEFLAGS_ON_STATIC_STORAGE);
 
 	u32 typeTableIdx;
 	{
@@ -1699,8 +1727,8 @@ u32 TypeCheckType(Context *context, TCJob *job, String name, SourceLocation loc,
 			innerTypeIdx = TypeCheckType(context, job, {}, astTypeLoc,
 					astType->enumDeclaration.astType);
 
-			if (innerTypeIdx < TYPETABLEIDX_PRIMITIVE_BEGIN ||
-				innerTypeIdx > TYPETABLEIDX_PRIMITIVE_END)
+			if (innerTypeIdx < TYPETABLEIDX_PrimitiveBegin ||
+				innerTypeIdx > TYPETABLEIDX_PrimitiveEnd)
 				LogError(context, astTypeLoc, "Only primitive types are allowed as enum field types"_s);
 		}
 
@@ -1733,7 +1761,7 @@ u32 TypeCheckType(Context *context, TCJob *job, String name, SourceLocation loc,
 			StaticDefinition staticDefinition = {};
 			staticDefinition.name = astMember.name;
 			staticDefinition.definitionType = STATICDEFINITIONTYPE_CONSTANT;
-			staticDefinition.typeTableIdx = TYPETABLEIDX_UNSET;
+			staticDefinition.typeTableIdx = TYPETABLEIDX_Unset;
 
 			if (astMember.value)
 			{
@@ -1748,7 +1776,7 @@ u32 TypeCheckType(Context *context, TCJob *job, String name, SourceLocation loc,
 			}
 			staticDefinition.constant.type = CONSTANTTYPE_INTEGER;
 			staticDefinition.constant.valueAsInt = currentValue;
-			staticDefinition.constant.typeTableIdx = TYPETABLEIDX_UNSET;
+			staticDefinition.constant.typeTableIdx = TYPETABLEIDX_Unset;
 
 			u32 newStaticDefIdx = TCNewStaticDefinition(context, &staticDefinition);
 			*ArrayAdd(&valueStaticDefs) = newStaticDefIdx;
@@ -2133,12 +2161,14 @@ ASTExpression InlineProcedureCopyTreeBranch(Context *context, TCJob *job,
 	{
 		ASTVariableDeclaration varDecl = expression->variableDeclaration;
 
+		u32 flags = (context->config.dontPromoteMemoryToRegisters ? VALUEFLAGS_FORCE_MEMORY : 0) |
+					(varDecl.isStatic   ? VALUEFLAGS_ON_STATIC_STORAGE : 0) |
+					(varDecl.isExternal ? VALUEFLAGS_IS_EXTERNAL       : 0);
+
 		if (!varDecl.isStatic && !varDecl.isExternal)
-			varDecl.valueIdx = TCNewValue(context, job, varDecl.name, varDecl.typeTableIdx,
-					TCGetValue(context, job, varDecl.valueIdx)->flags);
+			varDecl.valueIdx = TCNewValue(context, job, varDecl.name, varDecl.typeTableIdx, flags);
 		else
-			varDecl.valueIdx = NewGlobalValue(context, varDecl.name, varDecl.typeTableIdx,
-					TCGetValue(context, job, varDecl.valueIdx)->flags);
+			varDecl.valueIdx = NewGlobalValue(context, varDecl.name, varDecl.typeTableIdx, flags);
 
 		if (varDecl.name.size)
 		{
@@ -2379,7 +2409,7 @@ ASTExpression InlineProcedureCopyTreeBranch(Context *context, TCJob *job,
 		astFor.range = e;
 
 		u32 oldForArray = job->currentForLoopArrayType;
-		job->currentForLoopArrayType = TYPETABLEIDX_UNSET;
+		job->currentForLoopArrayType = TYPETABLEIDX_Unset;
 
 		PushTCScope(context, job);
 
@@ -2720,13 +2750,13 @@ bool LookForOperatorOverload(Context *context, TCJob *job, ASTExpression *expres
 void GenerateTypeCheckJobs(Context *context, ASTExpression *expression);
 void TryTypeCheckExpression(Context *context, TCJob *job, ASTExpression *expression)
 {
-	ASSERT(expression->typeTableIdx == TYPETABLEIDX_UNSET);
+	ASSERT(expression->typeTableIdx == TYPETABLEIDX_Unset);
 
 	switch (expression->nodeType)
 	{
 	case ASTNODETYPE_GARBAGE:
 	{
-		expression->typeTableIdx = TYPETABLEIDX_ANYTHING;
+		expression->typeTableIdx = TYPETABLEIDX_Anything;
 	} break;
 	case ASTNODETYPE_BLOCK:
 	{
@@ -2810,7 +2840,7 @@ void TryTypeCheckExpression(Context *context, TCJob *job, ASTExpression *express
 			IRJobArgs *args = ALLOC(PhaseAllocator::Alloc, IRJobArgs);
 			*args = { context, 0, {}, expression };
 			{
-				auto irThreads = context->irThreads.GetForWrite();
+				auto irThreads = context->irThreads.Get();
 				*DynamicArrayAdd(&irThreads) = (HANDLE)_beginthread(IRJobExpression, 0, (void *)args);
 			}
 		}
@@ -2822,7 +2852,7 @@ void TryTypeCheckExpression(Context *context, TCJob *job, ASTExpression *express
 		TCCheckIfNameAlreadyExists(context, job, astStaticDef->name, astStaticDef->loc);
 
 		StaticDefinition newStaticDef = {};
-		newStaticDef.typeTableIdx = TYPETABLEIDX_UNSET;
+		newStaticDef.typeTableIdx = TYPETABLEIDX_Unset;
 		newStaticDef.name = astStaticDef->name;
 
 		u32 newStaticDefIdx = TCNewStaticDefinition(context, &newStaticDef);
@@ -2851,7 +2881,7 @@ void TryTypeCheckExpression(Context *context, TCJob *job, ASTExpression *express
 			ASTProcedureDeclaration *procDecl = &astStaticDef->expression->procedureDeclaration;
 
 			Procedure procedure = {};
-			procedure.typeTableIdx = TYPETABLEIDX_UNSET;
+			procedure.typeTableIdx = TYPETABLEIDX_Unset;
 			procedure.name = procDecl->name;
 			procedure.returnValueIdx = U32_MAX;
 			procedure.astBody = procDecl->astBody;
@@ -2879,13 +2909,6 @@ void TryTypeCheckExpression(Context *context, TCJob *job, ASTExpression *express
 
 			TCUpdateStaticDefinition(context, job, newStaticDefIdx, &newStaticDef);
 			UpdateProcedure(context, procedureIdx, &procedure);
-
-#if DEBUG_BUILD
-			{
-				TypeInfo storedTypeInfo = GetTypeInfo(context, typeTableIdx);
-				ASSERT(AreTypeInfosEqual(context, t, storedTypeInfo));
-			}
-#endif
 
 			// @Todo: don't add values for parameters/return if there's no body?
 			// Parameters
@@ -2939,7 +2962,7 @@ void TryTypeCheckExpression(Context *context, TCJob *job, ASTExpression *express
 			*args = { context, procedureIdx, job->localValues, nullptr };
 			job->localValues = {}; // Safety clear
 			{
-				auto irThreads = context->irThreads.GetForWrite();
+				auto irThreads = context->irThreads.Get();
 				*DynamicArrayAdd(&irThreads) = (HANDLE)_beginthread(IRJobProcedure, 0, (void *)args);
 			}
 
@@ -2985,7 +3008,7 @@ void TryTypeCheckExpression(Context *context, TCJob *job, ASTExpression *express
 			if (astStaticDef->expression->nodeType == ASTNODETYPE_IDENTIFIER &&
 				astStaticDef->expression->identifier.type == NAMETYPE_STATIC_DEFINITION)
 			{
-				ASSERT(astStaticDef->expression->typeTableIdx != TYPETABLEIDX_UNSET);
+				ASSERT(astStaticDef->expression->typeTableIdx != TYPETABLEIDX_Unset);
 				u32 identifierStaticDefIdx = astStaticDef->expression->identifier.staticDefinitionIdx;
 				newStaticDef = TCGetStaticDefinition(context, job, identifierStaticDefIdx, true);
 				newStaticDef.name = astStaticDef->name;
@@ -2999,7 +3022,7 @@ void TryTypeCheckExpression(Context *context, TCJob *job, ASTExpression *express
 				newStaticDef.constant = constant;
 				newStaticDef.definitionType = STATICDEFINITIONTYPE_CONSTANT;
 				u32 constantTypeIdx = astStaticDef->expression->typeTableIdx;
-				ASSERT(constantTypeIdx != TYPETABLEIDX_UNSET);
+				ASSERT(constantTypeIdx != TYPETABLEIDX_Unset);
 				expression->typeTableIdx = constantTypeIdx;
 				newStaticDef.typeTableIdx = constantTypeIdx;
 
@@ -3062,7 +3085,7 @@ void TryTypeCheckExpression(Context *context, TCJob *job, ASTExpression *express
 			u32 variableTypeIdx = scopeName.variableInfo.typeTableIdx;
 			while (true)
 			{
-				if (variableTypeIdx != TYPETABLEIDX_UNSET)
+				if (variableTypeIdx != TYPETABLEIDX_Unset)
 					break;
 
 				if (!TCYield(context, job))
@@ -3131,11 +3154,13 @@ void TryTypeCheckExpression(Context *context, TCJob *job, ASTExpression *express
 		s32 procedureIdx = S32_MIN;
 		u32 valueIdx = U32_MAX;
 		ASTExpression *astExpression = nullptr;
-		u32 procedureTypeIdx = TYPETABLEIDX_UNSET;
+		u32 procedureTypeIdx = TYPETABLEIDX_Unset;
 
 		TCScopeName scopeName = TCFindScopeName(context, job, procName);
 
-		if (scopeName.type == NAMETYPE_VARIABLE)
+		if (scopeName.type == NAMETYPE_INVALID)
+			LogError(context, expression->any.loc, TPrintF("Procedure \"%S\" not found!", procName));
+		else if (scopeName.type == NAMETYPE_VARIABLE)
 		{
 			callType = CALLTYPE_VALUE;
 			valueIdx = scopeName.variableInfo.valueIdx;
@@ -3179,7 +3204,7 @@ void TryTypeCheckExpression(Context *context, TCJob *job, ASTExpression *express
 		// @Todo: don't look up procedure again after this yields
 		while (true)
 		{
-			if (procedureTypeIdx != TYPETABLEIDX_UNSET)
+			if (procedureTypeIdx != TYPETABLEIDX_Unset)
 				break;
 			if (!TCYield(context, job))
 				LogError(context, expression->any.loc, TPrintF("COMPILER ERROR! Procedure "
@@ -3580,7 +3605,7 @@ void TryTypeCheckExpression(Context *context, TCJob *job, ASTExpression *express
 				else
 					TryTypeCheckExpression(context, job, memberExp);
 			}
-			expression->typeTableIdx = TYPETABLEIDX_STRUCT_LITERAL;
+			expression->typeTableIdx = TYPETABLEIDX_StructLiteral;
 			break;
 		default:
 			ASSERT(!"Unexpected literal type");
@@ -3808,13 +3833,20 @@ void TryTypeCheckExpression(Context *context, TCJob *job, ASTExpression *express
 	{
 		ASTOperatorOverload *astOverload = &expression->operatorOverload;
 
+		BucketArray<Value, HeapAllocator, 1024> oldLocalValues = job->localValues;
+		BucketArrayInit(&job->localValues);
+		*BucketArrayAdd(&job->localValues) = {}; // No value number 0?
+
+		bool oldOnStaticContext = job->onStaticContext;
+		job->onStaticContext = false;
+
 		static u64 overloadUniqueId = 0;
 
 		OperatorOverload overload = {};
 		overload.op = astOverload->op;
 
 		Procedure p = {};
-		p.typeTableIdx = TYPETABLEIDX_UNSET;
+		p.typeTableIdx = TYPETABLEIDX_Unset;
 		p.name = TPrintF("__overload%d_%d", overload.op, overloadUniqueId++);
 		p.returnValueIdx = U32_MAX;
 		p.astBody = astOverload->astBody;
@@ -3921,31 +3953,14 @@ void TryTypeCheckExpression(Context *context, TCJob *job, ASTExpression *express
 			else if (result == RETURNCHECKRESULT_NEVER)
 				LogError(context, expression->any.loc, "Procedure has to return a value"_s);
 		}
+
+		job->localValues = oldLocalValues;
+		job->onStaticContext = oldOnStaticContext;
 	} break;
 	case ASTNODETYPE_INCLUDE:
 	{
 		String filename = expression->include.filename;
-
-#if 1
 		CompilerAddSourceFile(context, filename, expression->any.loc);
-#else
-		// Lock so we don't generate multiple jobs from the same tree branch.
-		SYSMutexLock(context->tcMutex);
-
-		if (CompilerAddSourceFile(context, filename, expression->any.loc))
-		{
-			TokenizeFile(context, (int)context->sourceFiles.GetForRead()->size - 1);
-
-			while (context->token->type != TOKEN_END_OF_FILE)
-			{
-				ASTExpression *statement = DynamicArrayAdd(&context->astRoot->block.statements);
-				*statement = ParseStaticStatement(context);
-				GenerateTypeCheckJobs(context, statement);
-			}
-		}
-
-		SYSMutexUnlock(context->tcMutex);
-#endif
 	} break;
 	case ASTNODETYPE_LINKLIB:
 	{
@@ -3990,17 +4005,15 @@ void TryTypeCheckExpression(Context *context, TCJob *job, ASTExpression *express
 					}
 				}
 				{
-					auto jobStates = context->tcJobStates.GetForWrite();
+					auto jobStates = context->tcJobStates.Get();
 					(*jobStates)[job->jobIdx] = TCJOBSTATE_WAITING_FOR_STOP;
-				}
-				{
-					auto jobStates = context->tcJobStates.GetForRead();
+
 					for (int i = 0; i < (*jobStates).size; ++i)
 						if ((*jobStates)[i] == TCJOBSTATE_RUNNING)
 							goto sleep;
 				}
 				{
-					auto jobStates = context->parseJobStates.GetForRead();
+					auto jobStates = context->parseJobStates.Get();
 					for (int i = 0; i < (*jobStates).size; ++i)
 						if ((*jobStates)[i] == TCJOBSTATE_RUNNING)
 							goto sleep;
@@ -4030,13 +4043,13 @@ void TCJobProc(void *args)
 	ASTExpression *expression = argsStruct->expression;
 	TCJob job = { argsStruct->jobIdx, expression };
 	job.onStaticContext = true;
-	job.currentReturnType = TYPETABLEIDX_UNSET;
+	job.currentReturnType = TYPETABLEIDX_Unset;
 
 	ThreadData threadData = {};
 	threadData.fileIdx = expression->any.loc.fileIdx;
 	TlsSetValue(context->tlsIndex, &threadData);
 
-#if DEBUG_BUILD
+#if !FINAL_BUILD
 	String threadName = "???"_s;
 	HANDLE thread = GetCurrentThread();
 	switch (expression->nodeType)
@@ -4109,7 +4122,7 @@ void TCJobProc(void *args)
 	TryTypeCheckExpression(context, &job, expression);
 
 	{
-		auto jobStates = context->tcJobStates.GetForWrite();
+		auto jobStates = context->tcJobStates.Get();
 		(*jobStates)[job.jobIdx] = TCJOBSTATE_DONE;
 	}
 }
@@ -4130,13 +4143,13 @@ void GenerateTypeCheckJobs(Context *context, ASTExpression *expression)
 	case ASTNODETYPE_IF_STATIC:
 	case ASTNODETYPE_OPERATOR_OVERLOAD:
 	{
-		auto tcThreads = context->tcThreads.GetForWrite();
+		auto tcThreads = context->tcThreads.Get();
 		u32 jobIdx = (u32)tcThreads->size;
 
 		TCJobArgs *args = ALLOC(PhaseAllocator::Alloc, TCJobArgs);
 		*args = { context, jobIdx, expression };
 		{
-			auto jobStates = context->tcJobStates.GetForWrite();
+			auto jobStates = context->tcJobStates.Get();
 			ASSERT((*jobStates).size == tcThreads->size);
 			*DynamicArrayAdd(&jobStates) = TCJOBSTATE_RUNNING;
 		}
@@ -4174,6 +4187,13 @@ void GenerateTypeCheckJobs(Context *context, ASTExpression *expression)
 
 void TypeCheckMain(Context *context)
 {
+	SECURITY_ATTRIBUTES attr = {
+		sizeof(SECURITY_ATTRIBUTES),
+		nullptr,
+		true
+	};
+	context->tcNewGlobalNameEvent = CreateEventA(&attr, false, false, "tcNewGlobalNameEvent");
+
 	{
 		auto staticDefinitions = context->staticDefinitions.GetForWrite();
 		BucketArrayInit(&staticDefinitions);
@@ -4205,85 +4225,85 @@ void TypeCheckMain(Context *context)
 	{
 		auto typeTable = context->typeTable.GetForWrite();
 		BucketArrayInit(&typeTable);
-		for (int i = 0; i < TYPETABLEIDX_COUNT; ++i)
+		for (int i = 0; i < TYPETABLEIDX_Count; ++i)
 			BucketArrayAdd(&typeTable);
 
-		TypeInfo *typeTableFast = (TypeInfo *)(*typeTable).buckets[0].data;
+		TypeInfo *typeTableFast = (TypeInfo *)typeTable->buckets[0].data;
 
 		TypeInfo t;
 		t.typeCategory = TYPECATEGORY_INTEGER;
 		t.integerInfo.isSigned = true;
 
 		t.size = 1;
-		t.valueIdx = NewGlobalValue(context, "_typeInfo_s8"_s, TYPETABLEIDX_UNSET, VALUEFLAGS_ON_STATIC_STORAGE);
+		t.valueIdx = NewGlobalValue(context, "_typeInfo_s8"_s, TYPETABLEIDX_Unset, VALUEFLAGS_ON_STATIC_STORAGE);
 		typeTableFast[TYPETABLEIDX_S8]  = t;
 		t.size = 2;
-		t.valueIdx = NewGlobalValue(context, "_typeInfo_s16"_s, TYPETABLEIDX_UNSET, VALUEFLAGS_ON_STATIC_STORAGE);
+		t.valueIdx = NewGlobalValue(context, "_typeInfo_s16"_s, TYPETABLEIDX_Unset, VALUEFLAGS_ON_STATIC_STORAGE);
 		typeTableFast[TYPETABLEIDX_S16] = t;
 		t.size = 4;
-		t.valueIdx = NewGlobalValue(context, "_typeInfo_s32"_s, TYPETABLEIDX_UNSET, VALUEFLAGS_ON_STATIC_STORAGE);
+		t.valueIdx = NewGlobalValue(context, "_typeInfo_s32"_s, TYPETABLEIDX_Unset, VALUEFLAGS_ON_STATIC_STORAGE);
 		typeTableFast[TYPETABLEIDX_S32] = t;
 		t.size = 8;
-		t.valueIdx = NewGlobalValue(context, "_typeInfo_s64"_s, TYPETABLEIDX_UNSET, VALUEFLAGS_ON_STATIC_STORAGE);
+		t.valueIdx = NewGlobalValue(context, "_typeInfo_s64"_s, TYPETABLEIDX_Unset, VALUEFLAGS_ON_STATIC_STORAGE);
 		typeTableFast[TYPETABLEIDX_S64] = t;
-		t.valueIdx = NewGlobalValue(context, "_typeInfo_integer"_s, TYPETABLEIDX_UNSET, VALUEFLAGS_ON_STATIC_STORAGE);
+		t.valueIdx = NewGlobalValue(context, "_typeInfo_integer"_s, TYPETABLEIDX_Unset, VALUEFLAGS_ON_STATIC_STORAGE);
 		typeTableFast[TYPETABLEIDX_INTEGER] = t;
 
 		t.integerInfo.isSigned = false;
 
 		t.size = 1;
-		t.valueIdx = NewGlobalValue(context, "_typeInfo_u8"_s, TYPETABLEIDX_UNSET, VALUEFLAGS_ON_STATIC_STORAGE);
+		t.valueIdx = NewGlobalValue(context, "_typeInfo_u8"_s, TYPETABLEIDX_Unset, VALUEFLAGS_ON_STATIC_STORAGE);
 		typeTableFast[TYPETABLEIDX_U8]  = t;
-		t.valueIdx = NewGlobalValue(context, "_typeInfo_bool"_s, TYPETABLEIDX_UNSET, VALUEFLAGS_ON_STATIC_STORAGE);
+		t.valueIdx = NewGlobalValue(context, "_typeInfo_bool"_s, TYPETABLEIDX_Unset, VALUEFLAGS_ON_STATIC_STORAGE);
 		typeTableFast[TYPETABLEIDX_BOOL]  = t;
 		t.size = 2;
-		t.valueIdx = NewGlobalValue(context, "_typeInfo_u16"_s, TYPETABLEIDX_UNSET, VALUEFLAGS_ON_STATIC_STORAGE);
+		t.valueIdx = NewGlobalValue(context, "_typeInfo_u16"_s, TYPETABLEIDX_Unset, VALUEFLAGS_ON_STATIC_STORAGE);
 		typeTableFast[TYPETABLEIDX_U16] = t;
 		t.size = 4;
-		t.valueIdx = NewGlobalValue(context, "_typeInfo_u32"_s, TYPETABLEIDX_UNSET, VALUEFLAGS_ON_STATIC_STORAGE);
+		t.valueIdx = NewGlobalValue(context, "_typeInfo_u32"_s, TYPETABLEIDX_Unset, VALUEFLAGS_ON_STATIC_STORAGE);
 		typeTableFast[TYPETABLEIDX_U32] = t;
 		t.size = 8;
-		t.valueIdx = NewGlobalValue(context, "_typeInfo_u64"_s, TYPETABLEIDX_UNSET, VALUEFLAGS_ON_STATIC_STORAGE);
+		t.valueIdx = NewGlobalValue(context, "_typeInfo_u64"_s, TYPETABLEIDX_Unset, VALUEFLAGS_ON_STATIC_STORAGE);
 		typeTableFast[TYPETABLEIDX_U64] = t;
 
 		t.size = 16;
-		t.valueIdx = NewGlobalValue(context, "_typeInfo_128"_s, TYPETABLEIDX_UNSET, VALUEFLAGS_ON_STATIC_STORAGE);
+		t.valueIdx = NewGlobalValue(context, "_typeInfo_128"_s, TYPETABLEIDX_Unset, VALUEFLAGS_ON_STATIC_STORAGE);
 		typeTableFast[TYPETABLEIDX_128] = t;
 
 		t.typeCategory = TYPECATEGORY_FLOATING;
 		t.size = 4;
-		t.valueIdx = NewGlobalValue(context, "_typeInfo_f32"_s, TYPETABLEIDX_UNSET, VALUEFLAGS_ON_STATIC_STORAGE);
+		t.valueIdx = NewGlobalValue(context, "_typeInfo_f32"_s, TYPETABLEIDX_Unset, VALUEFLAGS_ON_STATIC_STORAGE);
 		typeTableFast[TYPETABLEIDX_F32] = t;
 		t.size = 8;
-		t.valueIdx = NewGlobalValue(context, "_typeInfo_f64"_s, TYPETABLEIDX_UNSET, VALUEFLAGS_ON_STATIC_STORAGE);
+		t.valueIdx = NewGlobalValue(context, "_typeInfo_f64"_s, TYPETABLEIDX_Unset, VALUEFLAGS_ON_STATIC_STORAGE);
 		typeTableFast[TYPETABLEIDX_F64] = t;
-		t.valueIdx = NewGlobalValue(context, "_typeInfo_floating"_s, TYPETABLEIDX_UNSET, VALUEFLAGS_ON_STATIC_STORAGE);
+		t.valueIdx = NewGlobalValue(context, "_typeInfo_floating"_s, TYPETABLEIDX_Unset, VALUEFLAGS_ON_STATIC_STORAGE);
 		typeTableFast[TYPETABLEIDX_FLOATING] = t;
 
 		t = {};
 		t.typeCategory = TYPECATEGORY_INVALID;
-		t.valueIdx = NewGlobalValue(context, "_typeInfo_void"_s, TYPETABLEIDX_UNSET, VALUEFLAGS_ON_STATIC_STORAGE);
+		t.valueIdx = NewGlobalValue(context, "_typeInfo_void"_s, TYPETABLEIDX_Unset, VALUEFLAGS_ON_STATIC_STORAGE);
 		typeTableFast[TYPETABLEIDX_VOID] = t;
 
-		t.valueIdx = NewGlobalValue(context, "_typeInfo_string_struct"_s, TYPETABLEIDX_UNSET, VALUEFLAGS_ON_STATIC_STORAGE);
+		t.valueIdx = NewGlobalValue(context, "_typeInfo_string_struct"_s, TYPETABLEIDX_Unset, VALUEFLAGS_ON_STATIC_STORAGE);
 		typeTableFast[TYPETABLEIDX_STRING_STRUCT] = t;
-		t.valueIdx = NewGlobalValue(context, "_typeInfo_array_struct"_s, TYPETABLEIDX_UNSET, VALUEFLAGS_ON_STATIC_STORAGE);
+		t.valueIdx = NewGlobalValue(context, "_typeInfo_array_struct"_s, TYPETABLEIDX_Unset, VALUEFLAGS_ON_STATIC_STORAGE);
 		typeTableFast[TYPETABLEIDX_ARRAY_STRUCT] = t;
-		t.valueIdx = NewGlobalValue(context, "_typeInfo_any_struct"_s, TYPETABLEIDX_UNSET, VALUEFLAGS_ON_STATIC_STORAGE);
+		t.valueIdx = NewGlobalValue(context, "_typeInfo_any_struct"_s, TYPETABLEIDX_Unset, VALUEFLAGS_ON_STATIC_STORAGE);
 		typeTableFast[TYPETABLEIDX_ANY_STRUCT] = t;
-		t.valueIdx = NewGlobalValue(context, "_typeInfo_type_info_struct"_s, TYPETABLEIDX_UNSET, VALUEFLAGS_ON_STATIC_STORAGE);
+		t.valueIdx = NewGlobalValue(context, "_typeInfo_type_info_struct"_s, TYPETABLEIDX_Unset, VALUEFLAGS_ON_STATIC_STORAGE);
 		typeTableFast[TYPETABLEIDX_TYPE_INFO_STRUCT] = t;
-		t.valueIdx = NewGlobalValue(context, "_typeInfo_type_info_integer_struct"_s, TYPETABLEIDX_UNSET, VALUEFLAGS_ON_STATIC_STORAGE);
+		t.valueIdx = NewGlobalValue(context, "_typeInfo_type_info_integer_struct"_s, TYPETABLEIDX_Unset, VALUEFLAGS_ON_STATIC_STORAGE);
 		typeTableFast[TYPETABLEIDX_TYPE_INFO_INTEGER_STRUCT] = t;
-		t.valueIdx = NewGlobalValue(context, "_typeInfo_type_info_struct_member_struct"_s, TYPETABLEIDX_UNSET, VALUEFLAGS_ON_STATIC_STORAGE);
+		t.valueIdx = NewGlobalValue(context, "_typeInfo_type_info_struct_member_struct"_s, TYPETABLEIDX_Unset, VALUEFLAGS_ON_STATIC_STORAGE);
 		typeTableFast[TYPETABLEIDX_TYPE_INFO_STRUCT_MEMBER_STRUCT] = t;
-		t.valueIdx = NewGlobalValue(context, "_typeInfo_type_info_struct_struct"_s, TYPETABLEIDX_UNSET, VALUEFLAGS_ON_STATIC_STORAGE);
+		t.valueIdx = NewGlobalValue(context, "_typeInfo_type_info_struct_struct"_s, TYPETABLEIDX_Unset, VALUEFLAGS_ON_STATIC_STORAGE);
 		typeTableFast[TYPETABLEIDX_TYPE_INFO_STRUCT_STRUCT] = t;
-		t.valueIdx = NewGlobalValue(context, "_typeInfo_type_info_enum_struct"_s, TYPETABLEIDX_UNSET, VALUEFLAGS_ON_STATIC_STORAGE);
+		t.valueIdx = NewGlobalValue(context, "_typeInfo_type_info_enum_struct"_s, TYPETABLEIDX_Unset, VALUEFLAGS_ON_STATIC_STORAGE);
 		typeTableFast[TYPETABLEIDX_TYPE_INFO_ENUM_STRUCT] = t;
-		t.valueIdx = NewGlobalValue(context, "_typeInfo_type_info_pointer_struct"_s, TYPETABLEIDX_UNSET, VALUEFLAGS_ON_STATIC_STORAGE);
+		t.valueIdx = NewGlobalValue(context, "_typeInfo_type_info_pointer_struct"_s, TYPETABLEIDX_Unset, VALUEFLAGS_ON_STATIC_STORAGE);
 		typeTableFast[TYPETABLEIDX_TYPE_INFO_POINTER_STRUCT] = t;
-		t.valueIdx = NewGlobalValue(context, "_typeInfo_type_info_array_struct"_s, TYPETABLEIDX_UNSET, VALUEFLAGS_ON_STATIC_STORAGE);
+		t.valueIdx = NewGlobalValue(context, "_typeInfo_type_info_array_struct"_s, TYPETABLEIDX_Unset, VALUEFLAGS_ON_STATIC_STORAGE);
 		typeTableFast[TYPETABLEIDX_TYPE_INFO_ARRAY_STRUCT] = t;
 	}
 
@@ -4295,10 +4315,13 @@ void TypeCheckMain(Context *context)
 	{
 		auto globalScope = &context->tcGlobalScope.GetForWrite();
 
+		ArrayInit(&context->tcPrimitiveTypes, TYPETABLEIDX_PrimitiveEnd -
+				TYPETABLEIDX_PrimitiveBegin);
+
 		DynamicArrayInit(&globalScope->names, 64);
 		DynamicArrayInit(&globalScope->typeIndices, 64);
 
-		for (int i = 0; i < TYPETABLEIDX_COUNT; ++i)
+		for (int i = 0; i < TYPETABLEIDX_Count; ++i)
 			*DynamicArrayAdd(&globalScope->typeIndices) = i;
 
 		TCScopeName scopeNamePrimitive;
@@ -4307,64 +4330,76 @@ void TypeCheckMain(Context *context)
 
 		scopeNamePrimitive.name = "s8"_s;
 		scopeNamePrimitive.primitiveTypeTableIdx = TYPETABLEIDX_S8;
+		*ArrayAdd(&context->tcPrimitiveTypes) = scopeNamePrimitive;
 		*DynamicArrayAdd(&globalScope->names) = scopeNamePrimitive;
 
 		scopeNamePrimitive.name = "s16"_s;
 		scopeNamePrimitive.primitiveTypeTableIdx = TYPETABLEIDX_S16;
+		*ArrayAdd(&context->tcPrimitiveTypes) = scopeNamePrimitive;
 		*DynamicArrayAdd(&globalScope->names) = scopeNamePrimitive;
 
 		scopeNamePrimitive.name = "s32"_s;
 		scopeNamePrimitive.primitiveTypeTableIdx = TYPETABLEIDX_S32;
+		*ArrayAdd(&context->tcPrimitiveTypes) = scopeNamePrimitive;
 		*DynamicArrayAdd(&globalScope->names) = scopeNamePrimitive;
 
 		scopeNamePrimitive.name = "s64"_s;
 		scopeNamePrimitive.primitiveTypeTableIdx = TYPETABLEIDX_S64;
+		*ArrayAdd(&context->tcPrimitiveTypes) = scopeNamePrimitive;
 		*DynamicArrayAdd(&globalScope->names) = scopeNamePrimitive;
 
 		scopeNamePrimitive.name = "u8"_s;
 		scopeNamePrimitive.primitiveTypeTableIdx = TYPETABLEIDX_U8;
+		*ArrayAdd(&context->tcPrimitiveTypes) = scopeNamePrimitive;
 		*DynamicArrayAdd(&globalScope->names) = scopeNamePrimitive;
 
 		scopeNamePrimitive.name = "u16"_s;
 		scopeNamePrimitive.primitiveTypeTableIdx = TYPETABLEIDX_U16;
+		*ArrayAdd(&context->tcPrimitiveTypes) = scopeNamePrimitive;
 		*DynamicArrayAdd(&globalScope->names) = scopeNamePrimitive;
 
 		scopeNamePrimitive.name = "u32"_s;
 		scopeNamePrimitive.primitiveTypeTableIdx = TYPETABLEIDX_U32;
+		*ArrayAdd(&context->tcPrimitiveTypes) = scopeNamePrimitive;
 		*DynamicArrayAdd(&globalScope->names) = scopeNamePrimitive;
 
 		scopeNamePrimitive.name = "u64"_s;
 		scopeNamePrimitive.primitiveTypeTableIdx = TYPETABLEIDX_U64;
+		*ArrayAdd(&context->tcPrimitiveTypes) = scopeNamePrimitive;
 		*DynamicArrayAdd(&globalScope->names) = scopeNamePrimitive;
 
 		scopeNamePrimitive.name = "f32"_s;
 		scopeNamePrimitive.primitiveTypeTableIdx = TYPETABLEIDX_F32;
+		*ArrayAdd(&context->tcPrimitiveTypes) = scopeNamePrimitive;
 		*DynamicArrayAdd(&globalScope->names) = scopeNamePrimitive;
 
 		scopeNamePrimitive.name = "f64"_s;
 		scopeNamePrimitive.primitiveTypeTableIdx = TYPETABLEIDX_F64;
+		*ArrayAdd(&context->tcPrimitiveTypes) = scopeNamePrimitive;
 		*DynamicArrayAdd(&globalScope->names) = scopeNamePrimitive;
 
 		scopeNamePrimitive.name = "bool"_s;
 		scopeNamePrimitive.primitiveTypeTableIdx = TYPETABLEIDX_BOOL;
+		*ArrayAdd(&context->tcPrimitiveTypes) = scopeNamePrimitive;
 		*DynamicArrayAdd(&globalScope->names) = scopeNamePrimitive;
 
 		scopeNamePrimitive.name = "void"_s;
 		scopeNamePrimitive.primitiveTypeTableIdx = TYPETABLEIDX_VOID;
+		*ArrayAdd(&context->tcPrimitiveTypes) = scopeNamePrimitive;
 		*DynamicArrayAdd(&globalScope->names) = scopeNamePrimitive;
 	}
 
 	{
-		auto tcThreads = context->tcThreads.GetForWrite();
+		auto tcThreads = context->tcThreads.Get();
 		DynamicArrayInit(&tcThreads, 128);
 	}
 	{
-		auto jobStates = context->tcJobStates.GetForWrite();
+		auto jobStates = context->tcJobStates.Get();
 		DynamicArrayInit(&jobStates, 128);
 	}
 
 	{
-		auto irThreads = context->irThreads.GetForWrite();
+		auto irThreads = context->irThreads.Get();
 		DynamicArrayInit(&irThreads, 128);
 	}
 }

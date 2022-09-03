@@ -449,16 +449,11 @@ void GenerateBasicBlocks(Context *context)
 			X64Instruction beginInstruction =
 				threadData->beInstructions[labelBlock->beginIdx];
 
-			if (beginInstruction.type == X64_Label)
+			if (beginInstruction.type == X64_Label && beginInstruction.label == label)
 			{
-				if (beginInstruction.label == label)
-				{
-					*DynamicArrayAdd(&jumpBlock->outputs) = labelBlock;
-					*DynamicArrayAdd(&labelBlock->inputs) = jumpBlock;
-					goto foundBlock;
-				}
-				else
-					ASSERT(!StringEquals(beginInstruction.label->name, label->name));
+				*DynamicArrayAdd(&jumpBlock->outputs) = labelBlock;
+				*DynamicArrayAdd(&labelBlock->inputs) = jumpBlock;
+				goto foundBlock;
 			}
 		}
 		ASSERT(!"Couldn't find basic block beggining with label!");
@@ -487,21 +482,20 @@ void ResolveStackOffsets(Context *context)
 	for (int spillIdx = 0; spillIdx < threadData->spilledValues.size; ++spillIdx)
 	{
 		u32 valueIdx = threadData->spilledValues[spillIdx];
-		Value value = IRGetValue(context, valueIdx);
-		ASSERT(!(value.flags & VALUEFLAGS_IS_ALLOCATED));
+		Value *value = IRGetLocalValue(context, valueIdx);
+		ASSERT(!(value->flags & VALUEFLAGS_IS_ALLOCATED));
 
 		// If the value has properly scoped allocation don't dumbly spill into stack.
-		if (value.flags & VALUEFLAGS_HAS_PUSH_INSTRUCTION)
+		if (value->flags & VALUEFLAGS_HAS_PUSH_INSTRUCTION)
 			continue;
 
-		u64 size = GetTypeInfo(context, value.typeTableIdx).size;
+		u64 size = GetTypeInfo(context, value->typeTableIdx).size;
 		int alignment = size > 8 ? 8 : NextPowerOf2((int)size);
 		if (stackCursor & (alignment - 1))
 			stackCursor = (stackCursor + alignment) & ~(alignment - 1);
 		ASSERT(stackCursor < S32_MAX);
-		value.stackOffset = (s32)stackCursor;
-		value.flags |= VALUEFLAGS_IS_ALLOCATED | VALUEFLAGS_IS_MEMORY;
-		IRUpdateValue(context, valueIdx, &value);
+		value->stackOffset = (s32)stackCursor;
+		value->flags |= VALUEFLAGS_IS_ALLOCATED | VALUEFLAGS_IS_MEMORY;
 		stackCursor += size;
 	}
 
@@ -515,25 +509,24 @@ void ResolveStackOffsets(Context *context)
 		{
 		case X64_Push_Value:
 		{
-			Value value = IRGetValue(context, inst->valueIdx);
-			ASSERT(value.flags & VALUEFLAGS_HAS_PUSH_INSTRUCTION);
-			if (value.flags & VALUEFLAGS_IS_ALLOCATED)
+			Value *value = IRGetLocalValue(context, inst->valueIdx);
+			ASSERT(value->flags & VALUEFLAGS_HAS_PUSH_INSTRUCTION);
+			if (value->flags & VALUEFLAGS_IS_ALLOCATED)
 			{
-				ASSERT(!(value.flags & VALUEFLAGS_IS_MEMORY));
+				ASSERT(!(value->flags & VALUEFLAGS_IS_MEMORY));
 				goto next;
 			}
 			// We don't allocate static values, the assembler/linker does.
-			ASSERT(!(value.flags & VALUEFLAGS_ON_STATIC_STORAGE));
-			ASSERT(!(value.flags & VALUEFLAGS_IS_EXTERNAL));
+			ASSERT(!(value->flags & VALUEFLAGS_ON_STATIC_STORAGE));
+			ASSERT(!(value->flags & VALUEFLAGS_IS_EXTERNAL));
 
-			u64 size = GetTypeInfo(context, value.typeTableIdx).size;
+			u64 size = GetTypeInfo(context, value->typeTableIdx).size;
 			int alignment = size > 8 ? 8 : NextPowerOf2((int)size);
 			if (stackCursor & (alignment - 1))
 				stackCursor = (stackCursor + alignment) & ~(alignment - 1);
 			ASSERT(stackCursor < S32_MAX);
-			value.stackOffset = (s32)stackCursor;
-			value.flags |= VALUEFLAGS_IS_ALLOCATED | VALUEFLAGS_IS_MEMORY;
-			IRUpdateValue(context, inst->valueIdx, &value);
+			value->stackOffset = (s32)stackCursor;
+			value->flags |= VALUEFLAGS_IS_ALLOCATED | VALUEFLAGS_IS_MEMORY;
 			stackCursor += size;
 		} break;
 		case X64_Push_Scope:
@@ -685,9 +678,8 @@ void X64AllocateRegisters(Context *context)
 	// Do liveness analisis, starting from all leaf blocks
 	BasicBlock *currentLeafBlock = threadData->beLeafBasicBlock;
 
-	String procName = GetProcedureRead(context, threadData->procedureIdx).name;
-
 #if USE_PROFILER_API
+	String procName = GetProcedureRead(context, threadData->procedureIdx).name;
 	performanceAPI.BeginEvent("Liveness analisis", StringToCStr(procName, PhaseAllocator::Alloc), PERFORMANCEAPI_DEFAULT_COLOR);
 #endif
 
@@ -752,7 +744,10 @@ void X64AllocateRegisters(Context *context)
 				continue;
 
 			u32 valueIdx = interferenceGraph.valueIndices[nodeIdx];
-			u32 vFlags = IRGetValue(context, valueIdx).flags;
+			// Skip physical register values
+			if (valueIdx >= RAX.value.valueIdx && valueIdx <= XMM15.value.valueIdx)
+				continue;
+			u32 vFlags = IRGetLocalValue(context, valueIdx)->flags;
 			if (vFlags & VALUEFLAGS_FORCE_REGISTER)
 				continue;
 
@@ -795,7 +790,7 @@ gotNodeToRemove:
 			{
 				// The only allocated things thus far should be physical register values and stack
 				// parameter values.
-				ASSERT(!(IRGetValue(context, valueIdx).flags & VALUEFLAGS_IS_ALLOCATED));
+				ASSERT(!(IRGetLocalValue(context, valueIdx)->flags & VALUEFLAGS_IS_ALLOCATED));
 				HashSetRemove(edges, valueIdx);
 			}
 		}
@@ -807,34 +802,44 @@ gotNodeToRemove:
 	{
 		u32 currentNodeIdx = nodeStack[nodeIdx];
 		u32 valueIdx = interferenceGraph.valueIndices[currentNodeIdx];
-		Value v = IRGetValue(context, valueIdx);
+
+		// Skip physical register values
+		if (valueIdx >= RAX.value.valueIdx && valueIdx <= XMM15.value.valueIdx)
+			continue;
+
+		Value *v = IRGetLocalValue(context, valueIdx);
 		const HashSet<u32, PhaseAllocator> edges = interferenceGraph.edges[currentNodeIdx];
 		const u32 *edgesKeys = HashSetKeys(edges);
 
 		// We don't allocate static values, the assembler/linker does.
-		ASSERT(!(v.flags & VALUEFLAGS_ON_STATIC_STORAGE));
-		ASSERT(!(v.flags & VALUEFLAGS_IS_EXTERNAL));
+		ASSERT(!(v->flags & VALUEFLAGS_ON_STATIC_STORAGE));
+		ASSERT(!(v->flags & VALUEFLAGS_IS_EXTERNAL));
 
-		if (v.flags & VALUEFLAGS_IS_ALLOCATED)
+		if (v->flags & VALUEFLAGS_IS_ALLOCATED)
 			continue;
 
 		bool isXMM = BitfieldGetBit(threadData->valueIsXmmBits, valueIdx);
 
-		if (v.flags & VALUEFLAGS_TRY_IMMITATE)
+		if (v->flags & VALUEFLAGS_TRY_IMMITATE)
 		{
-			u32 immitateValueIdx = v.tryImmitateValueIdx;
-			Value immitateValue = IRGetValue(context, immitateValueIdx);
+			u32 immitateValueIdx = v->tryImmitateValueIdx;
+
+			// Can't immitate a global value
+			if (immitateValueIdx & 0x80000000)
+				goto skipImmitate;
+
+			Value *immitateValue = IRGetLocalValue(context, immitateValueIdx);
 #if 0
-			while (immitateValue.flags & VALUEFLAGS_TRY_IMMITATE &&
-				   immitateValueIdx != immitateValue.tryImmitateValueIdx)
+			while (immitateValue->flags & VALUEFLAGS_TRY_IMMITATE &&
+				   immitateValueIdx != immitateValue->tryImmitateValueIdx)
 			{
-				immitateValueIdx = immitateValue.tryImmitateValueIdx;
-				immitateValue = IRGetValue(context, immitateValueIdx);
+				immitateValueIdx = immitateValue->tryImmitateValueIdx;
+				immitateValue = IRGetLocalValue(context, immitateValueIdx);
 			}
 #endif
 
-			if ((immitateValue.flags & VALUEFLAGS_IS_ALLOCATED) &&
-			  !(immitateValue.flags & VALUEFLAGS_IS_MEMORY))
+			if ((immitateValue->flags & VALUEFLAGS_IS_ALLOCATED) &&
+			  !(immitateValue->flags & VALUEFLAGS_IS_MEMORY))
 			{
 				bool isOtherXMM = BitfieldGetBit(threadData->valueIsXmmBits, immitateValueIdx);
 				if (isXMM != isOtherXMM)
@@ -842,7 +847,7 @@ gotNodeToRemove:
 
 				// Check the candidate is not used on any edge, and that the value we're trying
 				// to copy doesn't coexist with this one.
-				s32 candidate = immitateValue.allocatedRegister;
+				s32 candidate = immitateValue->allocatedRegister;
 				if (HashSetHas(edges, immitateValueIdx))
 					goto skipImmitate;
 
@@ -858,19 +863,17 @@ gotNodeToRemove:
 						goto skipImmitate;
 				}
 
-				v.allocatedRegister = candidate;
-				v.flags &= ~VALUEFLAGS_IS_MEMORY;
-				v.flags |= VALUEFLAGS_IS_ALLOCATED;
-				IRUpdateValue(context, valueIdx, &v);
+				v->allocatedRegister = candidate;
+				v->flags &= ~VALUEFLAGS_IS_MEMORY;
+				v->flags |= VALUEFLAGS_IS_ALLOCATED;
 				continue;
 			}
-			else if (!(immitateValue.flags & VALUEFLAGS_IS_ALLOCATED) &&
-					 !(immitateValue.flags & VALUEFLAGS_TRY_IMMITATE) &&
+			else if (!(immitateValue->flags & VALUEFLAGS_IS_ALLOCATED) &&
+					 !(immitateValue->flags & VALUEFLAGS_TRY_IMMITATE) &&
 					 CanBeRegister(context, immitateValueIdx))
 			{
-				immitateValue.flags |= VALUEFLAGS_TRY_IMMITATE;
-				immitateValue.tryImmitateValueIdx = valueIdx;
-				IRUpdateValue(context, immitateValueIdx, &immitateValue);
+				immitateValue->flags |= VALUEFLAGS_TRY_IMMITATE;
+				immitateValue->tryImmitateValueIdx = valueIdx;
 			}
 		}
 skipImmitate:
@@ -895,16 +898,15 @@ skipImmitate:
 			u64 registerBit = 1ull << candidate;
 			if (!(usedRegisters & registerBit))
 			{
-				v.allocatedRegister = candidate;
-				v.flags &= ~VALUEFLAGS_IS_MEMORY;
-				v.flags |= VALUEFLAGS_IS_ALLOCATED;
-				IRUpdateValue(context, valueIdx, &v);
+				v->allocatedRegister = candidate;
+				v->flags &= ~VALUEFLAGS_IS_MEMORY;
+				v->flags |= VALUEFLAGS_IS_ALLOCATED;
 				break;
 			}
 		}
-		if (!(v.flags & VALUEFLAGS_IS_ALLOCATED))
+		if (!(v->flags & VALUEFLAGS_IS_ALLOCATED))
 		{
-			if (v.flags & VALUEFLAGS_FORCE_REGISTER)
+			if (v->flags & VALUEFLAGS_FORCE_REGISTER)
 			{
 				ASSERT(!"Can't allocate value to register!");
 				continue;

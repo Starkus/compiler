@@ -381,6 +381,8 @@ void SYSRunLinker(String outputPath, bool makeLibrary, String extraArguments)
 
 	PROCESS_INFORMATION processInformation = {};
 
+	String workingPath = SYSExpandPathWorkingDirectoryRelative({});
+
 	if (!makeLibrary)
 	{
 		String commandLine = TPrintF(
@@ -396,14 +398,18 @@ void SYSRunLinker(String outputPath, bool makeLibrary, String extraArguments)
 				"/entry:__WindowsMain "
 				"/opt:ref "
 				"/incremental:no "
-				"/dynamicbase:no " // @Todo: remove
+#if !FINAL_BUILD
+				"/dynamicbase:no "
+#endif
 				"%S " // extraArguments
+				"/libpath:\"%S\" " // workingPath
 				"/libpath:\"%S\\lib\\x64\" " // msvcPath
 				"/libpath:\"%S\\lib\\%S\\ucrt\\x64\" " // windowsSDKPath, windowsSDKVersion
 				"/libpath:\"%S\\lib\\%S\\um\\x64\" " // windowsSDKPath, windowsSDKVersion
 				"/out:out.exe%c",
 				msvcPath,
 				extraArguments,
+				workingPath,
 				msvcPath,
 				windowsSDKPath, windowsSDKVersion,
 				windowsSDKPath, windowsSDKVersion,
@@ -443,12 +449,14 @@ void SYSRunLinker(String outputPath, bool makeLibrary, String extraArguments)
 				"out.obj "
 				"/nologo "
 				"%S " // extraArguments
+				"/libpath:\"%S\" " // workingPath
 				"/libpath:\"%S\\lib\\x64\" " // msvcPath
 				"/libpath:\"%S\\lib\\%S\\ucrt\\x64\" " // windowsSDKPath, windowsSDKVersion
 				"/libpath:\"%S\\lib\\%S\\um\\x64\" " // windowsSDKPath, windowsSDKVersion
 				"/out:out.a%c",
 				msvcPath,
 				extraArguments,
+				workingPath,
 				msvcPath,
 				windowsSDKPath, windowsSDKVersion,
 				windowsSDKPath, windowsSDKVersion,

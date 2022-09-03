@@ -60,6 +60,13 @@ inline Value IRGetValue(Context *context, u32 valueIdx)
 	}
 }
 
+inline Value *IRGetLocalValue(Context *context, u32 valueIdx)
+{
+	ASSERT(!(valueIdx & 0x80000000));
+	IRThreadData *threadData = (IRThreadData *)TlsGetValue(context->tlsIndex);
+	return &threadData->localValues[valueIdx];
+}
+
 inline void IRUpdateValue(Context *context, u32 valueIdx, Value *value)
 {
 	if (valueIdx & 0x80000000)
@@ -88,15 +95,13 @@ inline void IRSetValueFlags(Context *context, u32 valueIdx, u32 flags)
 	}
 }
 
-IRLabel *NewLabel(Context *context, String prefix)
+IRLabel *NewLabel(Context *context, String name)
 {
-	static u64 currentLabelId = 0;
-
 	IRThreadData *threadData = (IRThreadData *)TlsGetValue(context->tlsIndex);
 
 	IRLabel result = {};
 
-	result.name = TPrintF("%S%d", prefix, currentLabelId++);
+	result.name = name;
 	result.instructionIdx = -1;
 
 	IRLabel *newLabel = BucketArrayAdd(&threadData->irLabels);
@@ -1250,11 +1255,8 @@ skipGeneratingVarargsArray:
 	IRGenFromExpression(context, astProcCall.astBodyInlineCopy);
 
 	IRInstruction *returnLabelInst = AddInstruction(context);
-	{
-		ScopedLockRead proceduresLock(&context->proceduresLock);
-		returnLabel->instructionIdx =
-			BucketArrayCount(&threadData->irInstructions) - 1;
-	}
+	returnLabel->instructionIdx =
+		BucketArrayCount(&threadData->irInstructions) - 1;
 	returnLabelInst->type = IRINSTRUCTIONTYPE_LABEL;
 	returnLabelInst->label = returnLabel;
 
@@ -2121,7 +2123,7 @@ skipGeneratingVarargsArray:
 		IRValue indexValue = IRValueValue(context, indexValueIdx);
 
 		bool isThereItVariable = false;
-		u32 elementTypeIdx = TYPETABLEIDX_UNSET;
+		u32 elementTypeIdx = TYPETABLEIDX_Unset;
 
 		IRValue from = {}, to = {}, arrayValue = {};
 		if (astFor->range->nodeType == ASTNODETYPE_BINARY_OPERATION &&
@@ -2412,8 +2414,6 @@ skipGeneratingVarargsArray:
 
 void IRGenMain(Context *context)
 {
-	InitializeSRWLock(&context->proceduresLock);
-
 	{
 		auto staticVars = context->irStaticVariables.GetForWrite();
 		DynamicArrayInit(&staticVars, 64);
@@ -2436,7 +2436,7 @@ void IRJobProcedure(void *args)
 	Context *context = argsStruct->context;
 	s32 procedureIdx = argsStruct->procedureIdx;
 
-#if DEBUG_BUILD
+#if !FINAL_BUILD
 	String threadName = TPrintF("IR:%S", GetProcedureRead(context, procedureIdx).name);
 	HANDLE thread = GetCurrentThread();
 
@@ -2474,7 +2474,7 @@ void IRJobExpression(void *args)
 	IRJobArgs *argsStruct = (IRJobArgs *)args;
 	Context *context = argsStruct->context;
 
-#if DEBUG_BUILD
+#if !FINAL_BUILD
 	String threadName = "IR:Expression"_s;
 	HANDLE thread = GetCurrentThread();
 
