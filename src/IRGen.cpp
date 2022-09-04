@@ -244,7 +244,7 @@ IRValue IRValueImmediateFloat(Context *context, f64 f, u32 typeTableIdx = TYPETA
 
 	IRStaticVariable newStaticVar = {};
 	newStaticVar.valueIdx = NewGlobalValue(context,
-			TPrintF("_staticFloat%d", floatStaticVarUniqueID++), typeTableIdx,
+			SPrintF("_staticFloat%d", floatStaticVarUniqueID++), typeTableIdx,
 			VALUEFLAGS_ON_STATIC_STORAGE);
 	newStaticVar.initialValue.valueType = IRVALUETYPE_IMMEDIATE_FLOAT;
 	newStaticVar.initialValue.immediateFloat = f;
@@ -320,7 +320,7 @@ IRValue IRDereferenceValue(Context *context, IRValue in)
 
 		String srcName = IRGetValue(context, in.value.valueIdx).name;
 
-		String name = TPrintF("_deref_forcereg_%S", srcName);
+		String name = SPrintF("_deref_forcereg_%S", srcName);
 		u32 tempValueIdx = IRNewValue(context, name, in.typeTableIdx, VALUEFLAGS_TRY_IMMITATE |
 				VALUEFLAGS_FORCE_REGISTER, in.value.valueIdx);
 		IRValue tmpValue = IRValueValue(tempValueIdx, in.typeTableIdx);
@@ -330,7 +330,7 @@ IRValue IRDereferenceValue(Context *context, IRValue in)
 		inst.assignment.src = in;
 		*AddInstruction(context) = inst;
 
-		name = TPrintF("_deref_%S", srcName);
+		name = SPrintF("_deref_%S", srcName);
 		u32 newValueIdx = IRNewValue(context, name, in.typeTableIdx, VALUEFLAGS_TRY_IMMITATE,
 				in.value.valueIdx);
 		IRValue value = IRValueValue(newValueIdx, in.typeTableIdx);
@@ -368,7 +368,7 @@ IRValue IRDoMemberAccess(Context *context, IRValue structValue, StructMember str
 	ASSERT(structValue.valueType == IRVALUETYPE_VALUE ||
 		   structValue.valueType == IRVALUETYPE_VALUE_DEREFERENCE);
 
-	IRAddComment(context, TPrintF("Accessing struct member \"%S.%S\"",
+	IRAddComment(context, SPrintF("Accessing struct member \"%S.%S\"",
 				IRGetValue(context, structValue.value.valueIdx).name, structMember.name));
 
 	s64 offset = structMember.offset + structValue.value.offset;
@@ -523,7 +523,7 @@ void IRDoAssignment(Context *context, IRValue dstValue, IRValue srcValue)
 			if (IRShouldPassByCopy(context, dataValue.typeTableIdx))
 			{
 				static u64 tempVarForAnyUniqueID = 0;
-				String tempVarName = TPrintF("_tempVarForAny%llu", tempVarForAnyUniqueID++);
+				String tempVarName = SPrintF("_tempVarForAny%llu", tempVarForAnyUniqueID++);
 				u32 tempValue = IRAddTempValue(context, tempVarName, srcValue.typeTableIdx,
 						VALUEFLAGS_FORCE_MEMORY);
 				IRValue tempVarIRValue = IRValueValue(tempValue, srcValue.typeTableIdx);
@@ -680,7 +680,7 @@ IRValue IRInstructionFromBinaryOperation(Context *context, const ASTExpression *
 			structTypeInfo.typeCategory == TYPECATEGORY_POINTER)
 		{
 			// Dereference the pointer to the struct
-			String name = TPrintF("_derefstrctptr_%S", IRGetValue(context, irValue.value.valueIdx).name);
+			String name = SPrintF("_derefstrctptr_%S", IRGetValue(context, irValue.value.valueIdx).name);
 			u32 newValueIdx = IRNewValue(context, name, irValue.typeTableIdx,
 					VALUEFLAGS_FORCE_REGISTER);
 			IRValue newValue = IRValueValue(newValueIdx, irValue.typeTableIdx);
@@ -1311,7 +1311,7 @@ void IRFillValueWithGroupLiteral(Context *context, IRValue value, ASTLiteral ast
 			String name;
 			ASTExpression *expr;
 		};
-		DynamicArray<NamedMember, PhaseAllocator> namedMembers;
+		DynamicArray<NamedMember, ThreadAllocator> namedMembers;
 		DynamicArrayInit(&namedMembers, 8);
 		{
 			// Save the number of non-named members, and build an array with named ones
@@ -1343,7 +1343,7 @@ void IRFillValueWithGroupLiteral(Context *context, IRValue value, ASTLiteral ast
 			u32 structTypeIdx;
 			int idx;
 		};
-		DynamicArray<StructStackFrame, PhaseAllocator> structStack;
+		DynamicArray<StructStackFrame, ThreadAllocator> structStack;
 		DynamicArrayInit(&structStack, 8);
 		*DynamicArrayAdd(&structStack) = { value, groupTypeIdx, 0 };
 
@@ -2028,7 +2028,7 @@ skipGeneratingVarargsArray:
 
 			IRStaticVariable newStaticVar = {};
 			newStaticVar.valueIdx = NewGlobalValue(context,
-					TPrintF("staticString%d", stringStaticVarUniqueID++),
+					SPrintF("staticString%d", stringStaticVarUniqueID++),
 					TYPETABLEIDX_STRING_STRUCT, VALUEFLAGS_ON_STATIC_STORAGE);
 			newStaticVar.initialValue = IRValueImmediateString(context, expression->literal.string);
 			newStaticVar.initialValue.typeTableIdx = TYPETABLEIDX_STRING_STRUCT;
@@ -2436,6 +2436,15 @@ void IRJobProcedure(void *args)
 	Context *context = argsStruct->context;
 	s32 procedureIdx = argsStruct->procedureIdx;
 
+	IRThreadData threadData = {};
+	threadData.procedureIdx = procedureIdx;
+	threadData.returnValueIdx = GetProcedureRead(context, procedureIdx).returnValueIdx;
+	threadData.shouldReturnValueIdx = U32_MAX;
+	threadData.localValues = argsStruct->localValues;
+	TlsSetValue(context->tlsIndex, &threadData);
+
+	MemoryInitThread(1 * 1024 * 1024);
+
 #if !FINAL_BUILD
 	String threadName = TPrintF("IR:%S", GetProcedureRead(context, procedureIdx).name);
 	HANDLE thread = GetCurrentThread();
@@ -2453,26 +2462,27 @@ void IRJobProcedure(void *args)
 	SetThreadDescription(thread, (PCWSTR)buffer);
 #endif
 
-	IRThreadData threadData = {};
-	threadData.procedureIdx = procedureIdx;
-	threadData.returnValueIdx = GetProcedureRead(context, procedureIdx).returnValueIdx;
-	threadData.shouldReturnValueIdx = U32_MAX;
 	BucketArrayInit(&threadData.irInstructions);
 	DynamicArrayInit(&threadData.irStack, 64);
 	BucketArrayInit(&threadData.irLabels);
-	threadData.localValues = argsStruct->localValues;
-	TlsSetValue(context->tlsIndex, &threadData);
 
 	IRGenProcedure(context, procedureIdx, {});
 
 	if (GetProcedureRead(context, procedureIdx).astBody)
 		BackendJobProc(context, procedureIdx);
+
+	SYSFree(threadData.threadMem);
 }
 
 void IRJobExpression(void *args)
 {
 	IRJobArgs *argsStruct = (IRJobArgs *)args;
 	Context *context = argsStruct->context;
+
+	IRThreadData threadData = {};
+	TlsSetValue(context->tlsIndex, &threadData);
+
+	MemoryInitThread(512 * 1024);
 
 #if !FINAL_BUILD
 	String threadName = "IR:Expression"_s;
@@ -2491,7 +2501,7 @@ void IRJobExpression(void *args)
 	SetThreadDescription(thread, (PCWSTR)buffer);
 #endif
 
-	TlsSetValue(context->tlsIndex, nullptr);
-
 	IRGenFromExpression(context, argsStruct->expression);
+
+	SYSFree(threadData.threadMem);
 }

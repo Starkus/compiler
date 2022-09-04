@@ -28,7 +28,7 @@ String SYSExpandPathCompilerRelative(String relativePath)
 	char relativeCStr[SYS_MAX_PATH];
 	strncpy(relativeCStr, relativePath.data, relativePath.size);
 	relativeCStr[relativePath.size] = 0;
-	char *absolutePath = (char *)PhaseAllocator::Alloc(SYS_MAX_PATH);
+	char *absolutePath = (char *)ThreadAllocator::Alloc(SYS_MAX_PATH);
 	realpath(relativeCStr, absolutePath);
 
 	String result;
@@ -41,7 +41,7 @@ String SYSExpandPathWorkingDirectoryRelative(String relativePath)
 {
 	String result;
 
-	char *absolutePath = (char *)PhaseAllocator::Alloc(SYS_MAX_PATH);
+	char *absolutePath = (char *)ThreadAllocator::Alloc(SYS_MAX_PATH);
 	result.data = absolutePath;
 
 	ASSERT(getcwd(absolutePath, SYS_MAX_PATH));

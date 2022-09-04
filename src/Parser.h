@@ -143,4 +143,4 @@ struct Token
 	SourceLocation loc;
 };
 
-void ParseJobProc(void *);
+DWORD ParseJobProc(void *);

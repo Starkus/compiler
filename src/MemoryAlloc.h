@@ -1,6 +1,8 @@
 #define ALLOC(FUNC, TYPE) (TYPE *)FUNC(sizeof(TYPE))
 struct Memory
 {
+	u32 tlsIndex;
+
 	void *frameMem, *framePtr;
 	void *phaseMem, *phasePtr;
 	static const u64 frameSize = 64 * 1024 * 1024;
@@ -18,6 +20,15 @@ class FrameAllocator
 };
 
 class PhaseAllocator
+{
+	public:
+	static void *Alloc(u64 size);
+	static void *Realloc(void *ptr, u64 newSize);
+	static void Free(void *ptr);
+	static void Wipe();
+};
+
+class ThreadAllocator
 {
 	public:
 	static void *Alloc(u64 size);

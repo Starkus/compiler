@@ -64,6 +64,17 @@ T *ArrayAdd(Array<T, A> *array)
 	return result;
 }
 
+// Good for when another thread is reading this array and we don't want to use locks.
+template <typename T, typename A>
+void ArrayAddMT(Array<T, A> *array, T value)
+{
+	array->data[array->size + 1] = value;
+	++array->size;
+#if DEBUG_BUILD
+	ASSERT(array->size <= array->_capacity);
+#endif
+}
+
 template <typename T, typename A>
 inline T *ArrayBack(Array<T, A> *array)
 {
@@ -154,6 +165,20 @@ T *DynamicArrayAdd(DynamicArray<T, A> *array)
 		array->data = (T*)A::Realloc(array->data, array->capacity * sizeof(T));
 	}
 	return &array->data[array->size++];
+}
+
+// Good for when another thread is reading this array and we don't want to use locks.
+template <typename T, typename A>
+void DynamicArrayAddMT(DynamicArray<T, A> *array, T value)
+{
+	ASSERT(array->capacity != 0);
+	if (array->size >= array->capacity)
+	{
+		array->capacity *= 2;
+		array->data = (T*)A::Realloc(array->data, array->capacity * sizeof(T));
+	}
+	array->data[array->size + 1] = value;
+	++array->size;
 }
 
 template <typename T, typename A>
@@ -252,6 +277,23 @@ T *BucketArrayAdd(BucketArray<T, A, bucketSize> *bucketArray)
 	}
 
 	return ArrayAdd(lastBucket);
+}
+
+// Good for when another thread is reading this array and we don't want to use locks.
+template <typename T, typename A, u64 bucketSize>
+void BucketArrayAddMT(BucketArray<T, A, bucketSize> *bucketArray, T value)
+{
+	ASSERT(bucketArray->buckets.size > 0);
+	Array<T, A> *lastBucket = &bucketArray->buckets[bucketArray->buckets.size - 1];
+
+	if (lastBucket->size >= bucketSize)
+	{
+		Array<T, A> *newBucket = DynamicArrayAdd(&bucketArray->buckets);
+		ArrayInit(newBucket, bucketSize);
+		lastBucket = newBucket;
+	}
+
+	ArrayAddMT(lastBucket, value);
 }
 
 template <typename T, typename A, u64 bucketSize>

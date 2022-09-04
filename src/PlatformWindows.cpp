@@ -22,7 +22,7 @@ String SYSExpandPathCompilerRelative(String relativePath)
 {
 	String result;
 
-	char *absolutePath = (char *)PhaseAllocator::Alloc(SYS_MAX_PATH);
+	char *absolutePath = (char *)ThreadAllocator::Alloc(SYS_MAX_PATH);
 	result.data = absolutePath;
 
 	DWORD written = GetModuleFileNameA(nullptr, absolutePath, SYS_MAX_PATH);
@@ -47,7 +47,7 @@ String SYSExpandPathWorkingDirectoryRelative(String relativePath)
 {
 	String result;
 
-	char *absolutePath = (char *)PhaseAllocator::Alloc(SYS_MAX_PATH);
+	char *absolutePath = (char *)ThreadAllocator::Alloc(SYS_MAX_PATH);
 	result.data = absolutePath;
 
 	DWORD written = GetCurrentDirectory(MAX_PATH, absolutePath);
@@ -196,7 +196,7 @@ String SYSGetFullPathName(String filename)
 {
 	char filenameCStr[SYS_MAX_PATH];
 	strncpy(filenameCStr, filename.data, filename.size);
-	char *buffer = (char *)PhaseAllocator::Alloc(SYS_MAX_PATH);
+	char *buffer = (char *)ThreadAllocator::Alloc(SYS_MAX_PATH);
 	String outputPath;
 	outputPath.size = GetFullPathNameA(filenameCStr, SYS_MAX_PATH, buffer, nullptr);
 	outputPath.data = buffer;
@@ -204,9 +204,14 @@ String SYSGetFullPathName(String filename)
 }
 #endif
 
-void *SYSAlloc(u64 size)
+inline void *SYSAlloc(u64 size)
 {
 	return VirtualAlloc(0, size, MEM_COMMIT, PAGE_READWRITE);
+}
+
+inline void SYSFree(void *memory)
+{
+	VirtualFree(memory, 0, MEM_RELEASE);
 }
 
 void SYSCreateDirectory(String pathname)
@@ -224,14 +229,14 @@ void Win32FindVSAndWindowsSDK()
 {
 	PWSTR programFilesPathWstr;
 	SHGetKnownFolderPath(FOLDERID_ProgramFilesX86, 0, NULL, &programFilesPathWstr);
-	String programFilesPath = StupidStrToString(programFilesPathWstr, PhaseAllocator::Alloc);
+	String programFilesPath = StupidStrToString(programFilesPathWstr, ThreadAllocator::Alloc);
 
 	String visualStudioPath = TPrintF("%S\\Microsoft Visual Studio", programFilesPath);
 	{
 		// Get anything starting with 20...
 		String wildcard = TPrintF("%S\\20*", visualStudioPath);
 		WIN32_FIND_DATAA foundData = {};
-		HANDLE findHandle = FindFirstFileA(StringToCStr(wildcard, PhaseAllocator::Alloc), &foundData);
+		HANDLE findHandle = FindFirstFileA(StringToCStr(wildcard, ThreadAllocator::Alloc), &foundData);
 		const char *newestVersionStr = nullptr;
 		int newestVersion = 0;
 		if (findHandle != INVALID_HANDLE_VALUE) while (true)
@@ -253,19 +258,19 @@ void Win32FindVSAndWindowsSDK()
 		String enterprisePath = TPrintF("%S\\Enterprise", visualStudioPath);
 		String professionalPath = TPrintF("%S\\Professional", visualStudioPath);
 		String communityPath = TPrintF("%S\\Community", visualStudioPath);
-		if (GetFileAttributes(StringToCStr(buildToolsPath, PhaseAllocator::Alloc)) != INVALID_FILE_ATTRIBUTES)
+		if (GetFileAttributes(StringToCStr(buildToolsPath, ThreadAllocator::Alloc)) != INVALID_FILE_ATTRIBUTES)
 			msvcPath = buildToolsPath;
-		else if (GetFileAttributes(StringToCStr(enterprisePath, PhaseAllocator::Alloc)) != INVALID_FILE_ATTRIBUTES)
+		else if (GetFileAttributes(StringToCStr(enterprisePath, ThreadAllocator::Alloc)) != INVALID_FILE_ATTRIBUTES)
 			msvcPath = enterprisePath;
-		else if (GetFileAttributes(StringToCStr(professionalPath, PhaseAllocator::Alloc)) != INVALID_FILE_ATTRIBUTES)
+		else if (GetFileAttributes(StringToCStr(professionalPath, ThreadAllocator::Alloc)) != INVALID_FILE_ATTRIBUTES)
 			msvcPath = professionalPath;
-		else if (GetFileAttributes(StringToCStr(communityPath, PhaseAllocator::Alloc)) != INVALID_FILE_ATTRIBUTES)
+		else if (GetFileAttributes(StringToCStr(communityPath, ThreadAllocator::Alloc)) != INVALID_FILE_ATTRIBUTES)
 			msvcPath = communityPath;
 		msvcPath = TPrintF("%S\\VC\\Tools\\MSVC", msvcPath);
 
-		String wildcard = StringConcat(msvcPath, "\\*"_s);
+		String wildcard = TStringConcat(msvcPath, "\\*"_s);
 		WIN32_FIND_DATAA foundData = {};
-		HANDLE findHandle = FindFirstFileA(StringToCStr(wildcard, PhaseAllocator::Alloc), &foundData);
+		HANDLE findHandle = FindFirstFileA(StringToCStr(wildcard, ThreadAllocator::Alloc), &foundData);
 		if (findHandle != INVALID_HANDLE_VALUE)
 		{
 			while (foundData.cFileName[0] == '.')
@@ -279,7 +284,7 @@ void Win32FindVSAndWindowsSDK()
 	{
 		String wildcard = TPrintF("%S\\include\\10.*", windowsSDKPath);
 		WIN32_FIND_DATAA foundData = {};
-		HANDLE findHandle = FindFirstFileA(StringToCStr(wildcard, PhaseAllocator::Alloc), &foundData);
+		HANDLE findHandle = FindFirstFileA(StringToCStr(wildcard, ThreadAllocator::Alloc), &foundData);
 		s64 highestTuple[4] = {};
 		const char *latestVersionName = nullptr;
 		if (findHandle != INVALID_HANDLE_VALUE) while (true)
@@ -513,6 +518,9 @@ void SYSMutexUnlock(Mutex m)
 
 inline void SYSSpinlockLock(volatile u32 *locked)
 {
+#if USE_PROFILER_API
+	performanceAPI.BeginEvent("Spinlock acquiring", nullptr, PERFORMANCEAPI_MAKE_COLOR(0xA0, 0x30, 0x10));
+#endif
 	// Stupid MSVC uses long for this intrinsic but it's the same size as u32.
 	static_assert(sizeof(long) == sizeof(u32));
 	for (;;)
@@ -520,7 +528,9 @@ inline void SYSSpinlockLock(volatile u32 *locked)
 		long oldLocked = _InterlockedCompareExchange_HLEAcquire((volatile long *)locked, 1, 0);
 		if (!oldLocked)
 		{
-			//printf("[%d] Locked spinlock %llx\n", GetCurrentThreadId(), locked);
+#if USE_PROFILER_API
+			performanceAPI.EndEvent();
+#endif
 			return;
 		}
 

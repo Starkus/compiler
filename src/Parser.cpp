@@ -23,7 +23,7 @@ void AssertToken(Context *context, Token *token, int type)
 
 void Advance(Context *context)
 {
-	ThreadData *threadData = (ThreadData *)TlsGetValue(context->tlsIndex);
+	ParseThreadData *threadData = (ParseThreadData *)TlsGetValue(context->tlsIndex);
 	BucketArray<Token, HeapAllocator, 1024> &fileTokens = context->fileTokens[threadData->fileIdx];
 	ASSERT(threadData->token == &fileTokens[threadData->currentTokenIdx]);
 
@@ -37,7 +37,7 @@ inline ASTExpression *NewTreeNode(Context *context)
 {
 	ScopedLockSpin filesLock(&context->filesLock);
 
-	ThreadData *threadData = (ThreadData *)TlsGetValue(context->tlsIndex);
+	ParseThreadData *threadData = (ParseThreadData *)TlsGetValue(context->tlsIndex);
 	auto treeNodes = context->fileTreeNodes[threadData->fileIdx].GetForWrite();
 	return BucketArrayAdd(&treeNodes);
 }
@@ -46,7 +46,7 @@ inline ASTType *NewASTType(Context *context)
 {
 	ScopedLockSpin filesLock(&context->filesLock);
 
-	ThreadData *threadData = (ThreadData *)TlsGetValue(context->tlsIndex);
+	ParseThreadData *threadData = (ParseThreadData *)TlsGetValue(context->tlsIndex);
 	auto typeNodes = context->fileTypeNodes[threadData->fileIdx].GetForWrite();
 	return BucketArrayAdd(&typeNodes);
 }
@@ -71,7 +71,7 @@ inline s64 ParseInt(Context *context, String str)
 
 	if (parseResult.error)
 	{
-		ThreadData *threadData = (ThreadData *)TlsGetValue(context->tlsIndex);
+		ParseThreadData *threadData = (ParseThreadData *)TlsGetValue(context->tlsIndex);
 		switch (parseResult.error)
 		{
 		case PARSENUMBERRROR_OVERFLOW:
@@ -94,7 +94,7 @@ inline f64 ParseFloat(Context *context, String str)
 	ParseFloatResult parseResult = F64FromString(str);
 	if (parseResult.error)
 	{
-		ThreadData *threadData = (ThreadData *)TlsGetValue(context->tlsIndex);
+		ParseThreadData *threadData = (ParseThreadData *)TlsGetValue(context->tlsIndex);
 		switch (parseResult.error)
 		{
 		case PARSENUMBERRROR_OVERFLOW:
@@ -120,7 +120,7 @@ ASTEnumDeclaration ParseEnumDeclaration(Context *context);
 ASTProcedurePrototype ParseProcedurePrototype(Context *context);
 ASTType ParseType(Context *context)
 {
-	ThreadData *threadData = (ThreadData *)TlsGetValue(context->tlsIndex);
+	ParseThreadData *threadData = (ParseThreadData *)TlsGetValue(context->tlsIndex);
 
 	ASTType astType;
 	astType.loc = threadData->token->loc;
@@ -187,7 +187,7 @@ ASTType ParseType(Context *context)
 
 bool TryParseUnaryOperation(Context *context, s32 prevPrecedence, ASTUnaryOperation *result)
 {
-	ThreadData *threadData = (ThreadData *)TlsGetValue(context->tlsIndex);
+	ParseThreadData *threadData = (ParseThreadData *)TlsGetValue(context->tlsIndex);
 
 	if (!IsOperatorToken(threadData->token))
 		return false;
@@ -226,7 +226,7 @@ bool TryParseUnaryOperation(Context *context, s32 prevPrecedence, ASTUnaryOperat
 bool TryParseBinaryOperation(Context *context, ASTExpression leftHand, s32 prevPrecedence,
 		ASTBinaryOperation *result)
 {
-	ThreadData *threadData = (ThreadData *)TlsGetValue(context->tlsIndex);
+	ParseThreadData *threadData = (ParseThreadData *)TlsGetValue(context->tlsIndex);
 
 	if (!IsOperatorToken(threadData->token))
 		return false;
@@ -322,7 +322,7 @@ bool TryParseBinaryOperation(Context *context, ASTExpression leftHand, s32 prevP
 
 ASTIf ParseIf(Context *context, bool onStaticContext)
 {
-	ThreadData *threadData = (ThreadData *)TlsGetValue(context->tlsIndex);
+	ParseThreadData *threadData = (ParseThreadData *)TlsGetValue(context->tlsIndex);
 	ASSERT(threadData->token->type == TOKEN_KEYWORD_IF ||
 		   threadData->token->type == TOKEN_DIRECTIVE_IF);
 	Advance(context);
@@ -363,7 +363,7 @@ ASTIf ParseIf(Context *context, bool onStaticContext)
 
 ASTWhile ParseWhile(Context *context)
 {
-	ThreadData *threadData = (ThreadData *)TlsGetValue(context->tlsIndex);
+	ParseThreadData *threadData = (ParseThreadData *)TlsGetValue(context->tlsIndex);
 	ASSERT(threadData->token->type == TOKEN_KEYWORD_WHILE);
 
 	ASTWhile whileNode = {};
@@ -390,7 +390,7 @@ ASTWhile ParseWhile(Context *context)
 
 ASTFor ParseFor(Context *context)
 {
-	ThreadData *threadData = (ThreadData *)TlsGetValue(context->tlsIndex);
+	ParseThreadData *threadData = (ParseThreadData *)TlsGetValue(context->tlsIndex);
 	ASSERT(threadData->token->type == TOKEN_KEYWORD_FOR);
 
 	ASTFor forNode = {};
@@ -467,7 +467,7 @@ ASTFor ParseFor(Context *context)
 
 ASTStructMemberDeclaration ParseStructMemberDeclaration(Context *context)
 {
-	ThreadData *threadData = (ThreadData *)TlsGetValue(context->tlsIndex);
+	ParseThreadData *threadData = (ParseThreadData *)TlsGetValue(context->tlsIndex);
 	ASTStructMemberDeclaration structMem = {};
 	structMem.loc = threadData->token->loc;
 
@@ -512,7 +512,7 @@ ASTStructMemberDeclaration ParseStructMemberDeclaration(Context *context)
 
 ASTEnumDeclaration ParseEnumDeclaration(Context *context)
 {
-	ThreadData *threadData = (ThreadData *)TlsGetValue(context->tlsIndex);
+	ParseThreadData *threadData = (ParseThreadData *)TlsGetValue(context->tlsIndex);
 	SourceLocation loc = threadData->token->loc;
 
 	AssertToken(context, threadData->token, TOKEN_KEYWORD_ENUM);
@@ -562,7 +562,7 @@ ASTEnumDeclaration ParseEnumDeclaration(Context *context)
 
 ASTStructDeclaration ParseStructOrUnion(Context *context)
 {
-	ThreadData *threadData = (ThreadData *)TlsGetValue(context->tlsIndex);
+	ParseThreadData *threadData = (ParseThreadData *)TlsGetValue(context->tlsIndex);
 	SourceLocation loc = threadData->token->loc;
 
 	ASSERT(threadData->token->type == TOKEN_KEYWORD_STRUCT ||
@@ -590,7 +590,7 @@ ASTStructDeclaration ParseStructOrUnion(Context *context)
 
 Array<ASTExpression *, FrameAllocator> ParseGroupLiteral(Context *context)
 {
-	ThreadData *threadData = (ThreadData *)TlsGetValue(context->tlsIndex);
+	ParseThreadData *threadData = (ParseThreadData *)TlsGetValue(context->tlsIndex);
 	DynamicArray<ASTExpression *, FrameAllocator> members;
 	DynamicArrayInit(&members, 8);
 
@@ -623,7 +623,7 @@ Array<ASTExpression *, FrameAllocator> ParseGroupLiteral(Context *context)
 
 ASTVariableDeclaration ParseVariableDeclaration(Context *context)
 {
-	ThreadData *threadData = (ThreadData *)TlsGetValue(context->tlsIndex);
+	ParseThreadData *threadData = (ParseThreadData *)TlsGetValue(context->tlsIndex);
 	ASTVariableDeclaration varDecl = {};
 	varDecl.loc = threadData->token->loc;
 
@@ -668,7 +668,7 @@ ASTVariableDeclaration ParseVariableDeclaration(Context *context)
 
 ASTProcedureParameter ParseProcedureParameter(Context *context)
 {
-	ThreadData *threadData = (ThreadData *)TlsGetValue(context->tlsIndex);
+	ParseThreadData *threadData = (ParseThreadData *)TlsGetValue(context->tlsIndex);
 	ASTProcedureParameter astParameter = {};
 	astParameter.loc = threadData->token->loc;
 
@@ -712,7 +712,7 @@ ASTProcedureParameter ParseProcedureParameter(Context *context)
 
 ASTProcedurePrototype ParseProcedurePrototype(Context *context)
 {
-	ThreadData *threadData = (ThreadData *)TlsGetValue(context->tlsIndex);
+	ParseThreadData *threadData = (ParseThreadData *)TlsGetValue(context->tlsIndex);
 	ASTProcedurePrototype prototype = {};
 	prototype.loc = threadData->token->loc;
 	prototype.callingConvention = CC_DEFAULT;
@@ -786,7 +786,7 @@ ASTProcedurePrototype ParseProcedurePrototype(Context *context)
 
 ASTExpression ParseExpression(Context *context, s32 precedence)
 {
-	ThreadData *threadData = (ThreadData *)TlsGetValue(context->tlsIndex);
+	ParseThreadData *threadData = (ParseThreadData *)TlsGetValue(context->tlsIndex);
 	ASTExpression result = {};
 	result.typeTableIdx = TYPETABLEIDX_Unset;
 	result.any.loc = threadData->token->loc;
@@ -1075,7 +1075,7 @@ ASTExpression ParseExpression(Context *context, s32 precedence)
 
 ASTStaticDefinition ParseStaticDefinition(Context *context)
 {
-	ThreadData *threadData = (ThreadData *)TlsGetValue(context->tlsIndex);
+	ParseThreadData *threadData = (ParseThreadData *)TlsGetValue(context->tlsIndex);
 	ASTStaticDefinition result = {};
 
 	AssertToken(context, threadData->token, TOKEN_IDENTIFIER);
@@ -1199,7 +1199,7 @@ ASTStaticDefinition ParseStaticDefinition(Context *context)
 
 ASTExpression ParseStatement(Context *context)
 {
-	ThreadData *threadData = (ThreadData *)TlsGetValue(context->tlsIndex);
+	ParseThreadData *threadData = (ParseThreadData *)TlsGetValue(context->tlsIndex);
 	ASTExpression result = {};
 	result.typeTableIdx = TYPETABLEIDX_Unset;
 	result.any.loc = threadData->token->loc;
@@ -1357,7 +1357,7 @@ ASTExpression ParseStatement(Context *context)
 
 ASTExpression ParseStaticStatement(Context *context)
 {
-	ThreadData *threadData = (ThreadData *)TlsGetValue(context->tlsIndex);
+	ParseThreadData *threadData = (ParseThreadData *)TlsGetValue(context->tlsIndex);
 	ASTExpression result = {};
 	result.any.loc = threadData->token->loc;
 	result.typeTableIdx = TYPETABLEIDX_Unset;
@@ -1464,44 +1464,20 @@ ASTExpression ParseStaticStatement(Context *context)
 	return result;
 }
 
-#if 0
-ASTRoot *GenerateSyntaxTree(Context *context)
-{
-	ThreadData *threadData = (ThreadData *)TlsGetValue(context->tlsIndex);
-
-	ASTRoot *root = ALLOC(FrameAllocator::Alloc, ASTRoot);
-	context->astRoot = root;
-	DynamicArrayInit(&root->block.statements, 4096);
-	BucketArrayInit(&context->treeNodes);
-	BucketArrayInit(&context->astTypeNodes);
-	BucketArrayInit(&context->stringLiterals);
-
-	// Empty string
-	*BucketArrayAdd(&context->stringLiterals) = {};
-
-	context->currentTokenIdx = 0;
-	threadData->token = &threadData->tokens[0];
-	while (threadData->token->type != TOKEN_END_OF_FILE)
-	{
-		*DynamicArrayAdd(&root->block.statements) = ParseStaticStatement(context);
-	}
-
-	return root;
-}
-#endif
-
-void ParseJobProc(void *args)
+DWORD ParseJobProc(void *args)
 {
 	ParseJobArgs *argsStruct = (ParseJobArgs *)args;
 	Context *context = argsStruct->context;
 	u32 fileIdx = argsStruct->fileIdx;
 	u32 jobIdx = argsStruct->fileIdx;
 
-	ThreadData threadData;
+	ParseThreadData threadData;
 	threadData.fileIdx = fileIdx;
 	threadData.currentTokenIdx = 0;
 	threadData.token = &context->fileTokens[fileIdx][0];
 	TlsSetValue(context->tlsIndex, &threadData);
+
+	MemoryInitThread(1 * 1024 * 1024);
 
 #if !FINAL_BUILD
 	HANDLE thread = GetCurrentThread();
@@ -1537,6 +1513,8 @@ void ParseJobProc(void *args)
 	}
 
 	(*context->parseJobStates.Get())[jobIdx] = TCJOBSTATE_DONE;
+	SYSFree(threadData.threadMem);
+	return 0;
 }
 
 void ParserMain(Context *context)
@@ -1549,6 +1527,6 @@ void ParserMain(Context *context)
 		DynamicArrayInit(&context->fileTreeNodes, 64);
 		DynamicArrayInit(&context->fileTypeNodes, 64);
 	}
-	DynamicArrayInit(&context->parseThreads, 64);
+	DynamicArrayInit(&context->parseThreads.Get(), 64);
 	DynamicArrayInit(&context->parseJobStates.Get(), 64);
 }

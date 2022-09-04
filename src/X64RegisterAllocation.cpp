@@ -17,12 +17,12 @@ struct BasicBlock
 	s64 beginIdx;
 	s64 endIdx;
 	bool livenessAnalizedOnce;
-	DynamicArray<BasicBlock *, PhaseAllocator> inputs;
-	DynamicArray<BasicBlock *, PhaseAllocator> outputs;
+	DynamicArray<BasicBlock *, ThreadAllocator> inputs;
+	DynamicArray<BasicBlock *, ThreadAllocator> outputs;
 
 	// @Todo: bitmaps
-	DynamicArray<u32, PhaseAllocator> liveValuesAtInput;
-	DynamicArray<u32, PhaseAllocator> liveValuesAtOutput;
+	DynamicArray<u32, ThreadAllocator> liveValuesAtInput;
+	DynamicArray<u32, ThreadAllocator> liveValuesAtOutput;
 };
 
 void X64Patch(Context *context, X64Instruction *original, X64Instruction newInst)
@@ -40,7 +40,7 @@ void X64Patch(Context *context, X64Instruction *original, X64Instruction newInst
 }
 
 BasicBlock *PushBasicBlock(BasicBlock *currentBasicBlock,
-		BucketArray<BasicBlock, PhaseAllocator, 512> *basicBlocks)
+		BucketArray<BasicBlock, ThreadAllocator, 512> *basicBlocks)
 {
 	s64 endOfLastBlock = -1;
 	if (currentBasicBlock)
@@ -82,7 +82,7 @@ bool CanBeRegister(Context *context, u32 valueIdx)
 	return true;
 }
 
-inline bool AddValue(Context *context, u32 valueIdx, DynamicArray<u32, PhaseAllocator> *array)
+inline bool AddValue(Context *context, u32 valueIdx, DynamicArray<u32, ThreadAllocator> *array)
 {
 	IRSetValueFlags(context, valueIdx, VALUEFLAGS_IS_USED);
 
@@ -103,7 +103,7 @@ inline bool AddValue(Context *context, u32 valueIdx, DynamicArray<u32, PhaseAllo
 }
 
 // @Speed: delete? this will most likely get inlined anyways
-inline bool AddIfValue(Context *context, IRValue irValue, DynamicArray<u32, PhaseAllocator> *array)
+inline bool AddIfValue(Context *context, IRValue irValue, DynamicArray<u32, ThreadAllocator> *array)
 {
 	if (irValue.valueType != IRVALUETYPE_VALUE &&
 			irValue.valueType != IRVALUETYPE_VALUE_DEREFERENCE)
@@ -119,7 +119,7 @@ inline bool AddIfValue(Context *context, IRValue irValue, DynamicArray<u32, Phas
 }
 
 inline void RemoveIfValue(Context *context, IRValue irValue,
-		DynamicArray<u32, PhaseAllocator> *array)
+		DynamicArray<u32, ThreadAllocator> *array)
 {
 	if (irValue.valueType == IRVALUETYPE_VALUE)
 	{
@@ -151,7 +151,7 @@ inline bool IsXMMFast(IRThreadData *threadData, u32 valueIdx)
 }
 
 void DoLivenessAnalisisOnInstruction(Context *context, BasicBlock *basicBlock, X64Instruction *inst,
-		DynamicArray<u32, PhaseAllocator> *liveValues)
+		DynamicArray<u32, ThreadAllocator> *liveValues)
 {
 	IRThreadData *threadData = (IRThreadData *)TlsGetValue(context->tlsIndex);
 
@@ -278,15 +278,15 @@ void DoLivenessAnalisisOnInstruction(Context *context, BasicBlock *basicBlock, X
 			{
 				threadData->beInterferenceGraph.capacity *= 2;
 				threadData->beInterferenceGraph.valueIndices = (u32 *)
-						PhaseAllocator::Realloc(threadData->beInterferenceGraph.valueIndices,
+						ThreadAllocator::Realloc(threadData->beInterferenceGraph.valueIndices,
 						sizeof(threadData->beInterferenceGraph.valueIndices[0]) *
 						threadData->beInterferenceGraph.capacity);
 				threadData->beInterferenceGraph.removed = (u8 *)
-						PhaseAllocator::Realloc(threadData->beInterferenceGraph.removed,
+						ThreadAllocator::Realloc(threadData->beInterferenceGraph.removed,
 						sizeof(threadData->beInterferenceGraph.removed[0]) *
 						threadData->beInterferenceGraph.capacity);
-				threadData->beInterferenceGraph.edges = (HashSet<u32, PhaseAllocator> *)
-						PhaseAllocator::Realloc(threadData->beInterferenceGraph.edges,
+				threadData->beInterferenceGraph.edges = (HashSet<u32, ThreadAllocator> *)
+						ThreadAllocator::Realloc(threadData->beInterferenceGraph.edges,
 						sizeof(threadData->beInterferenceGraph.edges[0]) *
 						threadData->beInterferenceGraph.capacity);
 			}
@@ -297,7 +297,7 @@ void DoLivenessAnalisisOnInstruction(Context *context, BasicBlock *basicBlock, X
 			*HashMapGetOrAdd(&threadData->beInterferenceGraph.valueToNodeMap, valueIdx) = nodeIdx;
 		}
 
-		HashSet<u32, PhaseAllocator> *edges = &threadData->beInterferenceGraph.edges[nodeIdx];
+		HashSet<u32, ThreadAllocator> *edges = &threadData->beInterferenceGraph.edges[nodeIdx];
 		bool isXMM = IsXMMFast(threadData, valueIdx);
 		for (int j = 0; j < liveValuesCount; ++j)
 		{
@@ -322,7 +322,7 @@ void DoLivenessAnalisisOnInstruction(Context *context, BasicBlock *basicBlock, X
 }
 
 void DoLivenessAnalisis(Context *context, BasicBlock *basicBlock,
-		DynamicArray<u32, PhaseAllocator> *liveValues)
+		DynamicArray<u32, ThreadAllocator> *liveValues)
 {
 	IRThreadData *threadData = (IRThreadData *)TlsGetValue(context->tlsIndex);
 
@@ -363,7 +363,7 @@ void DoLivenessAnalisis(Context *context, BasicBlock *basicBlock,
 	{
 		BasicBlock *inputBlock = basicBlock->inputs[i];
 		// Copy live registers array
-		DynamicArray<u32, PhaseAllocator> liveValuesCopy;
+		DynamicArray<u32, ThreadAllocator> liveValuesCopy;
 		DynamicArrayInit(&liveValuesCopy, liveValues->capacity);
 		DynamicArrayCopy(&liveValuesCopy, liveValues);
 
@@ -466,7 +466,7 @@ void ResolveStackOffsets(Context *context)
 {
 	IRThreadData *threadData = (IRThreadData *)TlsGetValue(context->tlsIndex);
 
-	DynamicArray<s64, PhaseAllocator> stack;
+	DynamicArray<s64, ThreadAllocator> stack;
 	DynamicArrayInit(&stack, 16);
 
 	s64 stackCursor = 0;
@@ -637,11 +637,11 @@ void X64AllocateRegisters(Context *context)
 	threadData->beInterferenceGraph = {};
 	threadData->beInterferenceGraph.capacity = 128;
 	threadData->beInterferenceGraph.valueIndices = (u32 *)
-		PhaseAllocator::Alloc(sizeof(InterferenceGraph::valueIndices[0]) * 128);
+		ThreadAllocator::Alloc(sizeof(InterferenceGraph::valueIndices[0]) * 128);
 	threadData->beInterferenceGraph.removed = (u8 *)
-		PhaseAllocator::Alloc(sizeof(InterferenceGraph::removed[0]) * 128);
-	threadData->beInterferenceGraph.edges = (HashSet<u32, PhaseAllocator> *)
-		PhaseAllocator::Alloc(sizeof(InterferenceGraph::edges[0]) * 128);
+		ThreadAllocator::Alloc(sizeof(InterferenceGraph::removed[0]) * 128);
+	threadData->beInterferenceGraph.edges = (HashSet<u32, ThreadAllocator> *)
+		ThreadAllocator::Alloc(sizeof(InterferenceGraph::edges[0]) * 128);
 
 	HashMapInit(&threadData->beInterferenceGraph.valueToNodeMap, 256);
 
@@ -680,14 +680,14 @@ void X64AllocateRegisters(Context *context)
 
 #if USE_PROFILER_API
 	String procName = GetProcedureRead(context, threadData->procedureIdx).name;
-	performanceAPI.BeginEvent("Liveness analisis", StringToCStr(procName, PhaseAllocator::Alloc), PERFORMANCEAPI_DEFAULT_COLOR);
+	performanceAPI.BeginEvent("Liveness analisis", StringToCStr(procName, ThreadAllocator::Alloc), PERFORMANCEAPI_DEFAULT_COLOR);
 #endif
 
 	threadData->beInterferenceGraph.count = 0;
 	HashMapClear(threadData->beInterferenceGraph.valueToNodeMap);
 
 	// @Todo: iterative instead of recursive?
-	DynamicArray<u32, PhaseAllocator> liveValues;
+	DynamicArray<u32, ThreadAllocator> liveValues;
 	DynamicArrayInit(&liveValues, 32);
 	DoLivenessAnalisis(context, currentLeafBlock, &liveValues);
 
@@ -702,7 +702,7 @@ void X64AllocateRegisters(Context *context)
 		for (u32 nodeIdx = 0; nodeIdx < interferenceGraph.count; ++nodeIdx)
 		{
 			u32 currentNodeValueIdx = interferenceGraph.valueIndices[nodeIdx];
-			HashSet<u32, PhaseAllocator> currentNodeEdges = interferenceGraph.edges[nodeIdx];
+			HashSet<u32, ThreadAllocator> currentNodeEdges = interferenceGraph.edges[nodeIdx];
 			Print("Value %S coexists with: ", X64IRValueToStr(context,
 						IRValueValue(context, currentNodeValueIdx), &threadData->localValues));
 
@@ -715,7 +715,7 @@ void X64AllocateRegisters(Context *context)
 		}
 	}
 
-	Array<u32, PhaseAllocator> nodeStack;
+	Array<u32, ThreadAllocator> nodeStack;
 	ArrayInit(&nodeStack, interferenceGraph.count);
 
 	// Allocate values to registers when possible
@@ -774,7 +774,7 @@ gotNodeToRemove:
 
 		u32 nodeCount = interferenceGraph.count;
 		u32 parameterValuesBegin = threadData->x64SpilledParametersRead[0];
-		u32 parameterValuesEnd = threadData->x64SpilledParametersWrite[32];
+		u32 parameterValuesEnd = threadData->x64SpilledParametersWrite[31];
 		// We assume we allocated the read parameter values first...
 		ASSERT(threadData->x64SpilledParametersRead[0] < threadData->x64SpilledParametersWrite[0]);
 		for (u32 nodeIdx = 0; nodeIdx < nodeCount; ++nodeIdx)
@@ -782,7 +782,7 @@ gotNodeToRemove:
 			if (interferenceGraph.removed[nodeIdx])
 				continue;
 
-			HashSet<u32, PhaseAllocator> *edges = &interferenceGraph.edges[nodeIdx];
+			HashSet<u32, ThreadAllocator> *edges = &interferenceGraph.edges[nodeIdx];
 			u32 valueIdx = interferenceGraph.valueIndices[nodeToRemoveIdx];
 			if (!(valueIdx & 0x80000000) &&
 				(valueIdx < parameterValuesBegin || valueIdx > parameterValuesEnd) &&
@@ -808,7 +808,7 @@ gotNodeToRemove:
 			continue;
 
 		Value *v = IRGetLocalValue(context, valueIdx);
-		const HashSet<u32, PhaseAllocator> edges = interferenceGraph.edges[currentNodeIdx];
+		const HashSet<u32, ThreadAllocator> edges = interferenceGraph.edges[currentNodeIdx];
 		const u32 *edgesKeys = HashSetKeys(edges);
 
 		// We don't allocate static values, the assembler/linker does.

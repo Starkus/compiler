@@ -14,8 +14,22 @@ void MemoryInit(Memory *memory)
 	memory->phaseMutex = SYSCreateMutex();
 }
 
+void MemoryInitThread(u64 size)
+{
+	ThreadDataCommon *threadData = (ThreadDataCommon *)TlsGetValue(g_memory->tlsIndex);
+	threadData->threadMem = SYSAlloc(size);
+	threadData->threadMemPtr = threadData->threadMem;
+	threadData->threadMemSize = size;
+#if DEBUG_BUILD
+	memset(threadData->threadMem, 0x55, size);
+#endif
+}
+
 void *FrameAllocator::Alloc(u64 size)
 {
+#if USE_PROFILER_API
+	performanceAPI.BeginEvent("Linear Alloc", nullptr, PERFORMANCEAPI_MAKE_COLOR(0xBB, 0xBB, 0x10));
+#endif
 	SYSMutexLock(g_memory->frameMutex);
 
 #if DEBUG_BUILD
@@ -36,6 +50,10 @@ void *FrameAllocator::Alloc(u64 size)
 	g_memory->framePtr = (u8 *)g_memory->framePtr + size;
 
 	SYSMutexUnlock(g_memory->frameMutex);
+
+#if USE_PROFILER_API
+	performanceAPI.EndEvent();
+#endif
 
 	return result;
 }
@@ -65,6 +83,10 @@ void FrameAllocator::Wipe()
 
 void *PhaseAllocator::Alloc(u64 size)
 {
+#if USE_PROFILER_API
+	performanceAPI.BeginEvent("Phase Alloc", nullptr, PERFORMANCEAPI_MAKE_COLOR(0xBB, 0xBB, 0x10));
+#endif
+
 	SYSMutexLock(g_memory->phaseMutex);
 
 #if DEBUG_BUILD
@@ -85,6 +107,10 @@ void *PhaseAllocator::Alloc(u64 size)
 	g_memory->phasePtr = (u8 *)g_memory->phasePtr + size;
 
 	SYSMutexUnlock(g_memory->phaseMutex);
+
+#if USE_PROFILER_API
+	performanceAPI.EndEvent();
+#endif
 
 	return result;
 }
@@ -110,6 +136,53 @@ void PhaseAllocator::Wipe()
 #endif
 
 	g_memory->phasePtr = g_memory->phaseMem;
+}
+
+void *ThreadAllocator::Alloc(u64 size)
+{
+#if USE_PROFILER_API
+	performanceAPI.BeginEvent("Thread Alloc", nullptr, PERFORMANCEAPI_MAKE_COLOR(0xBB, 0xBB, 0x10));
+#endif
+	ThreadDataCommon *threadData = (ThreadDataCommon *)TlsGetValue(g_memory->tlsIndex);
+
+#if DEBUG_BUILD
+	if (*((u64 *)threadData->threadMemPtr) != 0x5555555555555555) CRASH; // Watch for memory corruption
+	ASSERT((u8 *)threadData->threadMemPtr + size < (u8 *)threadData->threadMem +
+			threadData->threadMemSize); // Out of memory!
+#endif
+	void *result;
+
+#if ENABLE_ALIGNMENT
+	// Alignment
+	int alignment = size > 16 ? 16 : NextPowerOf2((int)size);
+	int alignmentMask = alignment - 1;
+	if ((u64)threadData->threadMemPtr & alignmentMask)
+		threadData->threadMemPtr = (void *)(((u64)threadData->threadMemPtr & ~alignmentMask) + alignment);
+#endif
+
+	result = threadData->threadMemPtr;
+	threadData->threadMemPtr = (u8 *)threadData->threadMemPtr + size;
+
+#if USE_PROFILER_API
+	performanceAPI.EndEvent();
+#endif
+
+	return result;
+}
+void *ThreadAllocator::Realloc(void *ptr, u64 newSize)
+{
+	void *newBlock = Alloc(newSize);
+	memcpy(newBlock, ptr, newSize);
+
+	return newBlock;
+}
+void ThreadAllocator::Free(void *ptr)
+{
+	(void) ptr;
+}
+void ThreadAllocator::Wipe()
+{
+	ASSERT(false);
 }
 
 void *HeapAllocator::Alloc(u64 size)

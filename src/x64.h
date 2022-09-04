@@ -162,7 +162,7 @@ typedef BEInstruction X64Instruction;
 struct BEFinalProcedure
 {
 	s32 procedureIdx;
-	BucketArray<X64Instruction, PhaseAllocator, 1024> instructions;
+	BucketArray<X64Instruction, HeapAllocator, 1024> instructions;
 	u64 stackSize;
 	BucketArray<Value, HeapAllocator, 1024> localValues;
 };
@@ -183,7 +183,7 @@ struct X64InstructionStream
 		s64 idx;
 	};
 
-	BucketArray<X64Instruction, PhaseAllocator, 1024> *instructionArray;
+	BucketArray<X64Instruction, HeapAllocator, 1024> *instructionArray;
 	s64 idx;
 	s64 instructionArrayCount;
 	FixedArray<Frame, 16> stack;

@@ -10,7 +10,7 @@ String ASTTypeToString(ASTType *type)
 	case ASTTYPENODETYPE_IDENTIFIER:
 		return type->name;
 	case ASTTYPENODETYPE_POINTER:
-		return StringConcat("^"_s, ASTTypeToString(type->pointedType));
+		return TStringConcat("^"_s, ASTTypeToString(type->pointedType));
 	case ASTTYPENODETYPE_ARRAY:
 	{
 		String typeStr = ASTTypeToString(type->arrayType);

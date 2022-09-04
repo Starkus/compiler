@@ -183,8 +183,14 @@ struct TCScopeName
 };
 struct TCScope
 {
-	DynamicArray<TCScopeName, PhaseAllocator> names;
-	DynamicArray<u32, PhaseAllocator> typeIndices;
+	DynamicArray<TCScopeName, ThreadAllocator> names;
+	DynamicArray<u32, ThreadAllocator> typeIndices;
+};
+
+struct TCGlobalScope
+{
+	DynamicArray<TCScopeName, FrameAllocator> names;
+	DynamicArray<u32, FrameAllocator> typeIndices;
 };
 
 struct Procedure
@@ -198,17 +204,6 @@ struct Procedure
 	bool isBodyTypeChecked;
 	u32 returnValueIdx;
 	u32 typeTableIdx; // Type of the procedure
-};
-
-struct TCJob
-{
-	u32 jobIdx;
-	ASTExpression *expression;
-	bool onStaticContext;
-	DynamicArray<TCScope, PhaseAllocator> scopeStack;
-	u32 currentReturnType;
-	u32 currentForLoopArrayType;
-	BucketArray<Value, HeapAllocator, 1024> localValues;
 };
 
 struct TCResultWithType

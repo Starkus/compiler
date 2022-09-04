@@ -168,11 +168,17 @@ public:
 	const T &Lock()
 	{
 		SYSSpinlockLock(&lock);
+#if USE_PROFILER_API
+		performanceAPI.BeginEvent("Spinlock locked", nullptr, PERFORMANCEAPI_MAKE_COLOR(0xA0, 0x30, 0x10));
+#endif
 		return content;
 	}
 
 	void Unlock()
 	{
+#if USE_PROFILER_API
+		performanceAPI.EndEvent();
+#endif
 		SYSSpinlockUnlock(&lock);
 	}
 

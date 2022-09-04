@@ -1,5 +1,5 @@
 X64InstructionStream X64InstructionStreamBegin(
-		BucketArray<X64Instruction, PhaseAllocator, 1024> *instructionArray)
+		BucketArray<X64Instruction, HeapAllocator, 1024> *instructionArray)
 {
 	X64InstructionStream stream;
 	stream.idx = -1;
@@ -155,7 +155,7 @@ String X64IRValueToStr(Context *context, IRValue value,
 		if (v.flags & VALUEFLAGS_IS_EXTERNAL)
 			result = v.name;
 		else
-			result = StringConcat("g_"_s, v.name);
+			result = TStringConcat("g_"_s, v.name);
 
 		if (offset > 0)
 			result = TPrintF("%S+0%xh", result, offset);
@@ -778,14 +778,14 @@ bool X64WinABIShouldPassByCopy(Context *context, u32 typeTableIdx)
 			typeInfo.size != 8);
 }
 
-Array<u32, PhaseAllocator> X64ReadyWin64Parameters(Context *context,
+Array<u32, ThreadAllocator> X64ReadyWin64Parameters(Context *context,
 		ArrayView<IRValue> parameters, bool isCaller)
 {
 	IRThreadData *threadData = (IRThreadData *)TlsGetValue(context->tlsIndex);
 
 	int parameterCount = (int)parameters.size;
 
-	Array<u32, PhaseAllocator> parameterValues;
+	Array<u32, ThreadAllocator> parameterValues;
 	ArrayInit(&parameterValues, parameterCount * 2);
 
 	for (int i = 0; i < parameterCount; ++i)
@@ -866,14 +866,14 @@ Array<u32, PhaseAllocator> X64ReadyWin64Parameters(Context *context,
 	return parameterValues;
 }
 
-Array<u32, PhaseAllocator> X64ReadyLinuxParameters(Context *context,
+Array<u32, ThreadAllocator> X64ReadyLinuxParameters(Context *context,
 		ArrayView<IRValue> parameters, bool isCaller)
 {
 	IRThreadData *threadData = (IRThreadData *)TlsGetValue(context->tlsIndex);
 
 	int parameterCount = (int)parameters.size;
 
-	Array<u32, PhaseAllocator> parameterValues;
+	Array<u32, ThreadAllocator> parameterValues;
 	ArrayInit(&parameterValues, parameterCount * 2);
 
 	s32 numberOfGPR = 0;
@@ -1492,7 +1492,7 @@ void X64ConvertInstruction(Context *context, IRInstruction inst)
 		// @Improve: dynamic array.
 		ArrayInit(&result.parameterValues, inst.procedureCall.parameters.size * 2);
 
-		Array<u32, PhaseAllocator> paramValues;
+		Array<u32, ThreadAllocator> paramValues;
 		switch (callingConvention)
 		{
 			case CC_WIN64:
@@ -2544,7 +2544,7 @@ void BackendGenerateOutputFile(Context *context)
 				if (!structName.size)
 					structName = "<anonymous struct>"_s;
 
-				u32 membersValueIdx = NewGlobalValue(context, TPrintF("_members_%lld", typeTableIdx),
+				u32 membersValueIdx = NewGlobalValue(context, SPrintF("_members_%lld", typeTableIdx),
 						TYPETABLEIDX_TYPE_INFO_STRUCT_MEMBER_STRUCT, VALUEFLAGS_ON_STATIC_STORAGE);
 				IRStaticVariable membersStaticVar = { membersValueIdx };
 				membersStaticVar.initialValue.valueType = IRVALUETYPE_IMMEDIATE_GROUP;
@@ -2593,7 +2593,7 @@ void BackendGenerateOutputFile(Context *context)
 
 				TypeInfo enumType = GetTypeInfo(context, typeInfo.enumInfo.typeTableIdx);
 
-				u32 namesValueIdx = NewGlobalValue(context, TPrintF("_names_%lld", typeTableIdx),
+				u32 namesValueIdx = NewGlobalValue(context, SPrintF("_names_%lld", typeTableIdx),
 						TYPETABLEIDX_STRING_STRUCT, VALUEFLAGS_ON_STATIC_STORAGE);
 				IRStaticVariable namesStaticVar = { namesValueIdx };
 				namesStaticVar.initialValue.valueType = IRVALUETYPE_IMMEDIATE_GROUP;
@@ -2607,7 +2607,7 @@ void BackendGenerateOutputFile(Context *context)
 				}
 				*DynamicArrayAdd(&context->irStaticVariables.GetForWrite()) = namesStaticVar;
 
-				u32 valuesValueIdx = NewGlobalValue(context, TPrintF("_values_%lld", typeTableIdx),
+				u32 valuesValueIdx = NewGlobalValue(context, SPrintF("_values_%lld", typeTableIdx),
 						TYPETABLEIDX_S64, VALUEFLAGS_ON_STATIC_STORAGE);
 				IRStaticVariable valuesStaticVar = { valuesValueIdx };
 				valuesStaticVar.initialValue.valueType = IRVALUETYPE_IMMEDIATE_GROUP;
@@ -2670,7 +2670,7 @@ void BackendGenerateOutputFile(Context *context)
 				u32 parametersValueIdx = 0;
 				if (typeInfo.procedureInfo.parameters.size > 0)
 				{
-					parametersValueIdx = NewGlobalValue(context, TPrintF("_params_%lld", typeTableIdx),
+					parametersValueIdx = NewGlobalValue(context, SPrintF("_params_%lld", typeTableIdx),
 							pointerToTypeInfoIdx, VALUEFLAGS_ON_STATIC_STORAGE);
 					IRStaticVariable paramsStaticVar = { parametersValueIdx };
 					paramsStaticVar.initialValue.valueType = IRVALUETYPE_IMMEDIATE_GROUP;
@@ -2831,7 +2831,7 @@ void BackendGenerateOutputFile(Context *context)
 
 				String name = value.name;
 				if (!(value.flags & VALUEFLAGS_IS_EXTERNAL))
-					name = StringConcat("g_"_s, name);
+					name = TStringConcat("g_"_s, name);
 
 				X64PrintStaticData(context, name, staticVar.initialValue, value.typeTableIdx, 16);
 			}
@@ -2856,7 +2856,7 @@ void BackendGenerateOutputFile(Context *context)
 
 				String name = value.name;
 				if (!(value.flags & VALUEFLAGS_IS_EXTERNAL))
-					name = StringConcat("g_"_s, name);
+					name = TStringConcat("g_"_s, name);
 
 				X64PrintStaticDataUninitialized(context, name,
 						staticVar.initialValue, value.typeTableIdx, 16);
@@ -3004,7 +3004,7 @@ void BackendJobProc(Context *context, s32 procedureIdx)
 	for (int paramIdx = 0; paramIdx < 32; ++paramIdx)
 	{
 		Value newValue = {};
-		newValue.name = TPrintF("_param%d", paramIdx);
+		newValue.name = SPrintF("_param%d", paramIdx);
 		newValue.typeTableIdx = TYPETABLEIDX_S64;
 		newValue.flags = VALUEFLAGS_IS_ALLOCATED | VALUEFLAGS_IS_MEMORY | VALUEFLAGS_BASE_RELATIVE;
 		newValue.stackOffset = 16 + paramIdx * 8; // Add 16, 8 for return address, and 8 because we push RBP
@@ -3015,7 +3015,7 @@ void BackendJobProc(Context *context, s32 procedureIdx)
 	for (int paramIdx = 0; paramIdx < 32; ++paramIdx)
 	{
 		Value newValue = {};
-		newValue.name = TPrintF("_param%d", paramIdx);
+		newValue.name = SPrintF("_param%d", paramIdx);
 		newValue.typeTableIdx = TYPETABLEIDX_S64;
 		newValue.flags = VALUEFLAGS_IS_ALLOCATED | VALUEFLAGS_IS_MEMORY;
 		newValue.stackOffset = paramIdx * 8; // Add 16, 8 for return address, and 8 because we push RBP
@@ -3040,7 +3040,7 @@ void BackendJobProc(Context *context, s32 procedureIdx)
 	int paramCount = (int)proc.parameterValues.size;
 
 	// Allocate parameters
-	Array<IRValue, PhaseAllocator> params;
+	Array<IRValue, ThreadAllocator> params;
 	ArrayInit(&params, paramCount + returnByCopy);
 
 	// Pointer to return value
