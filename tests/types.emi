@@ -23,6 +23,9 @@ Main :: () -> s64
 	}
 	//outOfScope : ScopedType;
 
+	sizeOfS32 := sizeof(s32);
+	PrintF("Size of s32 is %\n", sizeOfS32);
+
 	Print("Test ok\n");
 	return 0;
 }

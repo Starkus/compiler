@@ -43,9 +43,9 @@ s64 Print(const char *format, ...)
 	// Log file
 	static FileHandle logFileHandle = SYSOpenFileWrite("output/log.txt"_s);
 
-	SYSMutexLock(g_memory->phaseMutex);
+	ThreadDataCommon *threadData = (ThreadDataCommon *)TlsGetValue(g_memory->tlsIndex);
 
-	char *buffer = (char *)g_memory->phasePtr;
+	char *buffer = (char *)threadData->threadMemPtr;
 
 	va_list args;
 	va_start(args, format);
@@ -62,10 +62,8 @@ s64 Print(const char *format, ...)
 	SYSWriteFile(logFileHandle, buffer, strlen(buffer));
 
 #if DEBUG_BUILD
-	memset(g_memory->phasePtr, 0x55, size + 1);
+	memset(threadData->threadMemPtr, 0x55, size + 1);
 #endif
-
-	SYSMutexUnlock(g_memory->phaseMutex);
 
 	va_end(args);
 	return size;
@@ -87,20 +85,20 @@ const String TPrintF(const char *format, ...)
 	return { size, buffer };
 }
 
-const String SPrintF(const char *format, ...)
+const String SNPrintF(const char *format, int maxSize, ...)
 {
-	SYSMutexLock(g_memory->frameMutex);
+	//SYSMutexLock(g_memory->linearMemMutex);
 
-	char *buffer = (char *)g_memory->framePtr;
+	char *buffer = (char *)LinearAllocator::Alloc(maxSize);
 
 	va_list args;
-	va_start(args, format);
-	s64 size = stbsp_vsprintf(buffer, format, args);
+	va_start(args, maxSize);
+	s64 size = stbsp_vsnprintf(buffer, maxSize, format, args);
 	va_end(args);
 
-	g_memory->framePtr = (u8 *)g_memory->framePtr + size + 1;
+	//g_memory->linearMemPtr = (u8 *)g_memory->linearMemPtr + size + 1;
 
-	SYSMutexUnlock(g_memory->frameMutex);
+	//SYSMutexUnlock(g_memory->linearMemMutex);
 
 	return { size, buffer };
 }
@@ -162,13 +160,15 @@ struct Context
 
 	u32 tlsIndex;
 
+	Mutex consoleMutex;
+
 	volatile u32 filesLock;
 	DynamicArray<SourceFile, HeapAllocator> sourceFiles;
 	DynamicArray<String, HeapAllocator> libsToLink;
 
 	// Parsing -----
-	SLContainer<DynamicArray<HANDLE, HeapAllocator>> parseThreads; // Lock only to add
-	SLContainer<DynamicArray<TCJobState, HeapAllocator>> parseJobStates; // Lock only to add
+	SLContainer<DynamicArray<HANDLE, HeapAllocator>> parseThreads; // Lock only to write
+	SLContainer<DynamicArray<JobState, HeapAllocator>> parseJobStates; // Lock only to write
 	DynamicArray<BucketArray<Token, HeapAllocator, 1024>, HeapAllocator> fileTokens;
 	DynamicArray<ASTRoot, HeapAllocator> fileASTRoots;
 	DynamicArray<RWContainer<BucketArray<ASTExpression, HeapAllocator, 1024>>, HeapAllocator> fileTreeNodes;
@@ -176,13 +176,14 @@ struct Context
 
 	// Type check -----
 	Array<TCScopeName, HeapAllocator> tcPrimitiveTypes;
-	SLContainer<DynamicArray<HANDLE, HeapAllocator>> tcThreads; // Lock only to add
-	SLContainer<DynamicArray<TCJobState, HeapAllocator>> tcJobStates; // Lock only to add
-	RWContainer<BucketArray<Value, HeapAllocator, 1024>> values;
+	SLContainer<DynamicArray<HANDLE, HeapAllocator>> tcThreads; // Lock only to write
+	SLContainer<DynamicArray<JobState, HeapAllocator>> tcJobStates; // Lock only to write
+	RWContainer<BucketArray<Value, HeapAllocator, 1024>> globalValues;
 	RWContainer<BucketArray<Procedure, HeapAllocator, 512>> procedures;
 	RWContainer<BucketArray<Procedure, HeapAllocator, 128>> externalProcedures;
 	RWContainer<DynamicArray<OperatorOverload, HeapAllocator>> operatorOverloads;
 	RWContainer<BucketArray<StaticDefinition, HeapAllocator, 512>> staticDefinitions;
+	CONDITION_VARIABLE operatorOverloadsConditionVariable;
 
 	/* Don't add types to the type table by hand without checking what AddType() does! */
 	RWContainer<BucketArray<const TypeInfo, HeapAllocator, 1024>> typeTable;
@@ -192,7 +193,7 @@ struct Context
 	HANDLE tcNewGlobalNameEvent;
 
 	// IR -----
-	SLContainer<DynamicArray<HANDLE, HeapAllocator>> irThreads; // Lock only to add
+	SLContainer<DynamicArray<HANDLE, HeapAllocator>> irThreads; // Lock only to write
 	RWContainer<BucketArray<String, HeapAllocator, 1024>> stringLiterals;
 	RWContainer<DynamicArray<IRStaticVariable, HeapAllocator>> irStaticVariables;
 	RWContainer<DynamicArray<u32, HeapAllocator>> irExternalVariables;
@@ -222,8 +223,8 @@ struct TCThreadData : ParseThreadData
 
 struct IRThreadData : ThreadDataCommon
 {
-	s32 procedureIdx;
-	BucketArray<IRInstruction, FrameAllocator, 256> irInstructions;
+	u32 procedureIdx;
+	BucketArray<IRInstruction, LinearAllocator, 256> irInstructions;
 	DynamicArray<IRScope, ThreadAllocator> irStack;
 	BucketArray<IRLabel, HeapAllocator, 1024> irLabels;
 	IRLabel *returnLabel;
@@ -261,9 +262,13 @@ void __Log(Context *context, SourceLocation loc, String str, const char *inFile,
 	// Info
 	SourceFile sourceFile;
 	{
+		// @Speed: shouldn't need this lock
 		ScopedLockSpin filesLock(&context->filesLock);
 		sourceFile = context->sourceFiles[loc.fileIdx];
 	}
+
+	ScopedLockMutex lock(context->consoleMutex);
+
 	Print("%S %d:%d %S\n", sourceFile.name, fatLoc.line, fatLoc.character, str);
 
 	// Source line
@@ -323,7 +328,7 @@ bool CompilerAddSourceFile(Context *context, String filename, SourceLocation loc
 	}
 
 	SourceFile newSourceFile = { filename, loc };
-	SYSReadEntireFile(file, &newSourceFile.buffer, &newSourceFile.size, FrameAllocator::Alloc);
+	SYSReadEntireFile(file, &newSourceFile.buffer, &newSourceFile.size, LinearAllocator::Alloc);
 
 	*DynamicArrayAdd(&context->sourceFiles) = newSourceFile;
 
@@ -346,10 +351,10 @@ bool CompilerAddSourceFile(Context *context, String filename, SourceLocation loc
 		auto parseJobStates = context->parseJobStates.Get();
 		jobIdx = (u32)parseJobStates->size;
 		DynamicArrayAddMT(&parseThreads, INVALID_HANDLE_VALUE);
-		DynamicArrayAddMT(&parseJobStates, TCJOBSTATE_RUNNING);
+		DynamicArrayAddMT(&parseJobStates, JOBSTATE_RUNNING);
 	}
 
-	ParseJobArgs *args = ALLOC(FrameAllocator::Alloc, ParseJobArgs);
+	ParseJobArgs *args = ALLOC(LinearAllocator::Alloc, ParseJobArgs);
 	*args = { context, (u32)context->sourceFiles.size - 1, jobIdx };
 	HANDLE parseThread = CreateThread(nullptr, 0, ParseJobProc, (void *)args, 0, nullptr);
 	context->parseThreads.content[jobIdx] = parseThread;
@@ -383,13 +388,13 @@ int main(int argc, char **argv)
 
 	Context context = {};
 	context.tlsIndex = TlsAlloc();
+	context.consoleMutex = SYSCreateMutex();
 
 	// Allocate memory
 	Memory memory;
 	g_memory = &memory;
 	memory.tlsIndex = context.tlsIndex;
-	memory.frameMem = SYSAlloc(Memory::frameSize);
-	memory.phaseMem = SYSAlloc(Memory::phaseSize);
+	memory.linearMem = SYSAlloc(Memory::linearMemSize);
 	MemoryInit(&memory);
 
 	ThreadDataCommon threadData = {};
@@ -405,7 +410,7 @@ int main(int argc, char **argv)
 	DynamicArrayInit(&context.sourceFiles, 16);
 	DynamicArrayInit(&context.libsToLink, 8);
 
-	DynamicArray<String, FrameAllocator> inputFiles;
+	DynamicArray<String, LinearAllocator> inputFiles;
 	DynamicArrayInit(&inputFiles, 16);
 	*DynamicArrayAdd(&inputFiles) = "core/basic.emi"_s;
 	*DynamicArrayAdd(&inputFiles) = "core/print.emi"_s;
@@ -455,7 +460,8 @@ int main(int argc, char **argv)
 	for (u64 threadIdx = 0; threadIdx < context.parseThreads.content.size; ++threadIdx)
 	{
 		HANDLE thread = context.parseThreads.content[threadIdx];
-		WaitForSingleObject(thread, INFINITE);
+		if (thread != INVALID_HANDLE_VALUE)
+			WaitForSingleObject(thread, INFINITE);
 	}
 
 	while (true)
@@ -471,15 +477,25 @@ int main(int argc, char **argv)
 			for (u32 i = 0; i < (u32)conditionVariables->capacity; ++i)
 				if (HashMapSlotOccupied(*conditionVariables, i))
 					WakeAllConditionVariable(&values[i]);
+
+			WakeAllConditionVariable(&context.operatorOverloadsConditionVariable);
 		}
 	}
 
 	// Unsafe reads!
 	for (u64 threadIdx = 0; threadIdx < context.tcThreads.content.size; ++threadIdx)
-		WaitForSingleObject(context.tcThreads.content[threadIdx], INFINITE);
+	{
+		HANDLE thread = context.tcThreads.content[threadIdx];
+		if (thread != INVALID_HANDLE_VALUE)
+			WaitForSingleObject(thread, INFINITE);
+	}
 
 	for (u64 threadIdx = 0; threadIdx < context.irThreads.content.size; ++threadIdx)
-		WaitForSingleObject(context.irThreads.content[threadIdx], INFINITE);
+	{
+		HANDLE thread = context.irThreads.content[threadIdx];
+		if (thread != INVALID_HANDLE_VALUE)
+			WaitForSingleObject(thread, INFINITE);
+	}
 
 	BackendGenerateOutputFile(&context);
 

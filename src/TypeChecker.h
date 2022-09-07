@@ -1,4 +1,6 @@
 const u32 VALUE_INVALID_IDX = U32_MAX;
+const u32 VALUE_GLOBAL_BIT  = 0x80000000;
+const u32 VALUE_GLOBAL_MASK = 0x7FFFFFFF;
 enum ValueFlags
 {
 	VALUEFLAGS_IS_USED              = 1,
@@ -43,7 +45,7 @@ struct Constant
 	{
 		s64 valueAsInt;
 		f64 valueAsFloat;
-		Array<Constant, FrameAllocator> valueAsGroup;
+		Array<Constant, LinearAllocator> valueAsGroup;
 	};
 	u32 typeTableIdx;
 };
@@ -79,15 +81,15 @@ struct StructMember
 struct TypeInfoStruct
 {
 	String name;
-	Array<StructMember, FrameAllocator> members;
+	Array<StructMember, LinearAllocator> members;
 };
 
 struct TypeInfoEnum
 {
 	String name;
 	u32 typeTableIdx;
-	Array<String, FrameAllocator> names;
-	Array<s64, FrameAllocator> values;
+	Array<String, LinearAllocator> names;
+	Array<s64, LinearAllocator> values;
 };
 
 struct TypeInfoPointer
@@ -110,7 +112,7 @@ struct TypeInfoProcedure
 {
 	u32 returnTypeTableIdx;
 	bool isVarargs;
-	Array<ProcedureParameter, FrameAllocator> parameters;
+	Array<ProcedureParameter, LinearAllocator> parameters;
 	CallingConvention callingConvention;
 };
 
@@ -152,7 +154,7 @@ struct StaticDefinition
 	u32 typeTableIdx;
 	union
 	{
-		s32 procedureIdx;
+		u32 procedureIdx;
 		Constant constant;
 	};
 };
@@ -160,7 +162,7 @@ struct StaticDefinition
 struct OperatorOverload
 {
 	enum TokenType op;
-	s32 procedureIdx;
+	u32 procedureIdx;
 };
 
 struct TCScopeName
@@ -189,14 +191,16 @@ struct TCScope
 
 struct TCGlobalScope
 {
-	DynamicArray<TCScopeName, FrameAllocator> names;
-	DynamicArray<u32, FrameAllocator> typeIndices;
+	DynamicArray<TCScopeName, LinearAllocator> names;
+	DynamicArray<u32, LinearAllocator> typeIndices;
 };
 
+const u32 PROCEDURE_EXTERNAL_BIT  = 0x80000000;
+const u32 PROCEDURE_EXTERNAL_MASK = 0x7FFFFFFF;
 struct Procedure
 {
 	String name;
-	DynamicArray<u32, FrameAllocator> parameterValues;
+	DynamicArray<u32, LinearAllocator> parameterValues;
 	ASTExpression *astBody;
 	ASTProcedurePrototype astPrototype;
 	bool isInline;
@@ -204,12 +208,6 @@ struct Procedure
 	bool isBodyTypeChecked;
 	u32 returnValueIdx;
 	u32 typeTableIdx; // Type of the procedure
-};
-
-struct TCResultWithType
-{
-	bool success;
-	u32 typeTableIdx;
 };
 
 struct Context;
@@ -220,15 +218,15 @@ struct TCJobArgs
 	ASTExpression *expression;
 };
 
-enum TCJobState
+enum JobState
 {
-	TCJOBSTATE_RUNNING,
-	TCJOBSTATE_SLEEPING,
+	JOBSTATE_RUNNING,
+	JOBSTATE_SLEEPING,
 	// WAITING_FOR_STOP jobs want to wait until no jobs are running to make a decision.
 	// As of time of write, only #defined does this to determine if something isn't defined anywhere
 	// before continuing.
-	TCJOBSTATE_WAITING_FOR_STOP,
-	TCJOBSTATE_DONE,
+	JOBSTATE_WAITING_FOR_STOP,
+	JOBSTATE_DONE,
 };
 
 void GenerateTypeCheckJobs(Context *context, ASTExpression *expression);

@@ -1,6 +1,7 @@
 Main :: () -> s64
 {
 	// Invalid kind of operand
+	bar := 5;
 	bar / MyProcedure;
 	return 0;
 }

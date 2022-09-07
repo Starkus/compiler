@@ -374,7 +374,7 @@ void PrintExpression(Context *context, const ASTExpression *e)
 		++indentLevels;
 		for (int i = 0; i < e->procedureCall.arguments.size; ++i)
 		{
-			PrintExpression(context, &e->procedureCall.arguments[i]);
+			PrintExpression(context, e->procedureCall.arguments[i]);
 		}
 		--indentLevels;
 	} break;

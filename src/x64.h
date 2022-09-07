@@ -120,8 +120,8 @@ enum X64InstructionType
 	X64_FullCount
 };
 
-s32 copyMemoryProcIdx;
-s32 zeroMemoryProcIdx;
+u32 copyMemoryProcIdx;
+u32 zeroMemoryProcIdx;
 
 struct BEInstruction
 {
@@ -139,13 +139,13 @@ struct BEInstruction
 			// Proc call info
 			union
 			{
-				s32 procedureIdx;
+				u32 procedureIdx;
 				IRValue procedureIRValue;
 			};
-			Array<u32, PhaseAllocator> liveValues;
+			Array<u32, ThreadAllocator> liveValues;
 
 			// These tell the liveness analisis what registers to flag as live.
-			Array<u32, PhaseAllocator> parameterValues;
+			Array<u32, ThreadAllocator> parameterValues;
 		};
 		u32 valueIdx;
 		struct
@@ -153,7 +153,7 @@ struct BEInstruction
 			BEInstruction *patch1;
 			BEInstruction *patch2;
 		};
-		Array<BEInstruction, PhaseAllocator> patchInstructions;
+		Array<BEInstruction, LinearAllocator> patchInstructions;
 		String comment;
 	};
 };
@@ -161,7 +161,7 @@ typedef BEInstruction X64Instruction;
 
 struct BEFinalProcedure
 {
-	s32 procedureIdx;
+	u32 procedureIdx;
 	BucketArray<X64Instruction, HeapAllocator, 1024> instructions;
 	u64 stackSize;
 	BucketArray<Value, HeapAllocator, 1024> localValues;

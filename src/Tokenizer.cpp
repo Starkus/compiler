@@ -130,11 +130,7 @@ void ProcessCComment(Tokenizer *tokenizer)
 
 String TokenToString(Context *context, Token token)
 {
-	SourceFile sourceFile;
-	{
-		ScopedLockSpin filesLock(&context->filesLock);
-		sourceFile = context->sourceFiles[token.loc.fileIdx];
-	}
+	SourceFile sourceFile = context->sourceFiles[token.loc.fileIdx];
 	String result = { token.size, (const char *)sourceFile.buffer + token.loc.character };
 	if (token.type == TOKEN_LITERAL_STRING || token.type == TOKEN_LITERAL_CHARACTER)
 	{
@@ -229,7 +225,7 @@ String TokenTypeToString(s32 type)
 	if (type >= TOKEN_OP_Begin && type <= TOKEN_OP_End)
 		return "<Operator>"_s;
 
-	char *str = (char *)FrameAllocator::Alloc(5);
+	char *str = (char *)ThreadAllocator::Alloc(5);
 	strncpy(str, "<'~'>", 5);
 	str[2] = (char)type;
 	return { 5, str };

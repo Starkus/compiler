@@ -51,7 +51,7 @@ u32 IRNewValue(Context *context, Value value)
 
 inline Value IRGetValue(Context *context, u32 valueIdx)
 {
-	if (valueIdx & 0x80000000)
+	if (valueIdx & VALUE_GLOBAL_BIT)
 		return GetGlobalValue(context, valueIdx);
 	else
 	{
@@ -62,17 +62,17 @@ inline Value IRGetValue(Context *context, u32 valueIdx)
 
 inline Value *IRGetLocalValue(Context *context, u32 valueIdx)
 {
-	ASSERT(!(valueIdx & 0x80000000));
+	ASSERT(!(valueIdx & VALUE_GLOBAL_BIT));
 	IRThreadData *threadData = (IRThreadData *)TlsGetValue(context->tlsIndex);
 	return &threadData->localValues[valueIdx];
 }
 
 inline void IRUpdateValue(Context *context, u32 valueIdx, Value *value)
 {
-	if (valueIdx & 0x80000000)
+	if (valueIdx & VALUE_GLOBAL_BIT)
 	{
-		auto values = context->values.GetForWrite();
-		(*values)[valueIdx & 0x7FFFFFFF] = *value;
+		auto globalValues = context->globalValues.GetForWrite();
+		(*globalValues)[valueIdx & VALUE_GLOBAL_MASK] = *value;
 	}
 	else
 	{
@@ -83,10 +83,10 @@ inline void IRUpdateValue(Context *context, u32 valueIdx, Value *value)
 
 inline void IRSetValueFlags(Context *context, u32 valueIdx, u32 flags)
 {
-	if (valueIdx & 0x80000000)
+	if (valueIdx & VALUE_GLOBAL_BIT)
 	{
-		auto values = context->values.GetForWrite();
-		(*values)[valueIdx & 0x7FFFFFFF].flags |= flags;
+		auto globalValues = context->globalValues.GetForWrite();
+		(*globalValues)[valueIdx & VALUE_GLOBAL_MASK].flags |= flags;
 	}
 	else
 	{
@@ -244,7 +244,7 @@ IRValue IRValueImmediateFloat(Context *context, f64 f, u32 typeTableIdx = TYPETA
 
 	IRStaticVariable newStaticVar = {};
 	newStaticVar.valueIdx = NewGlobalValue(context,
-			SPrintF("_staticFloat%d", floatStaticVarUniqueID++), typeTableIdx,
+			SNPrintF("_staticFloat%d", 18, floatStaticVarUniqueID++), typeTableIdx,
 			VALUEFLAGS_ON_STATIC_STORAGE);
 	newStaticVar.initialValue.valueType = IRVALUETYPE_IMMEDIATE_FLOAT;
 	newStaticVar.initialValue.immediateFloat = f;
@@ -254,7 +254,7 @@ IRValue IRValueImmediateFloat(Context *context, f64 f, u32 typeTableIdx = TYPETA
 	return IRValueValue(newStaticVar.valueIdx, typeTableIdx);
 }
 
-IRValue IRValueProcedure(Context *context, s32 procedureIdx)
+IRValue IRValueProcedure(Context *context, u32 procedureIdx)
 {
 	IRValue result = {};
 	result.valueType = IRVALUETYPE_PROCEDURE;
@@ -320,7 +320,7 @@ IRValue IRDereferenceValue(Context *context, IRValue in)
 
 		String srcName = IRGetValue(context, in.value.valueIdx).name;
 
-		String name = SPrintF("_deref_forcereg_%S", srcName);
+		String name = SStringConcat("_deref_forcereg_"_s, srcName);
 		u32 tempValueIdx = IRNewValue(context, name, in.typeTableIdx, VALUEFLAGS_TRY_IMMITATE |
 				VALUEFLAGS_FORCE_REGISTER, in.value.valueIdx);
 		IRValue tmpValue = IRValueValue(tempValueIdx, in.typeTableIdx);
@@ -330,7 +330,7 @@ IRValue IRDereferenceValue(Context *context, IRValue in)
 		inst.assignment.src = in;
 		*AddInstruction(context) = inst;
 
-		name = SPrintF("_deref_%S", srcName);
+		name = SStringConcat("_deref_"_s, srcName);
 		u32 newValueIdx = IRNewValue(context, name, in.typeTableIdx, VALUEFLAGS_TRY_IMMITATE,
 				in.value.valueIdx);
 		IRValue value = IRValueValue(newValueIdx, in.typeTableIdx);
@@ -368,8 +368,10 @@ IRValue IRDoMemberAccess(Context *context, IRValue structValue, StructMember str
 	ASSERT(structValue.valueType == IRVALUETYPE_VALUE ||
 		   structValue.valueType == IRVALUETYPE_VALUE_DEREFERENCE);
 
-	IRAddComment(context, SPrintF("Accessing struct member \"%S.%S\"",
-				IRGetValue(context, structValue.value.valueIdx).name, structMember.name));
+	String structValueName = IRGetValue(context, structValue.value.valueIdx).name;
+	IRAddComment(context, SNPrintF("Accessing struct member \"%S.%S\"",
+				28 + (int)structValueName.size + (int)structMember.name.size,
+				structValueName, structMember.name));
 
 	s64 offset = structMember.offset + structValue.value.offset;
 	IRValue result = IRValueDereference(structValue.value.valueIdx, structMember.typeTableIdx,
@@ -523,7 +525,7 @@ void IRDoAssignment(Context *context, IRValue dstValue, IRValue srcValue)
 			if (IRShouldPassByCopy(context, dataValue.typeTableIdx))
 			{
 				static u64 tempVarForAnyUniqueID = 0;
-				String tempVarName = SPrintF("_tempVarForAny%llu", tempVarForAnyUniqueID++);
+				String tempVarName = SNPrintF("_tempVarForAny%llu", 20, tempVarForAnyUniqueID++);
 				u32 tempValue = IRAddTempValue(context, tempVarName, srcValue.typeTableIdx,
 						VALUEFLAGS_FORCE_MEMORY);
 				IRValue tempVarIRValue = IRValueValue(tempValue, srcValue.typeTableIdx);
@@ -680,7 +682,7 @@ IRValue IRInstructionFromBinaryOperation(Context *context, const ASTExpression *
 			structTypeInfo.typeCategory == TYPECATEGORY_POINTER)
 		{
 			// Dereference the pointer to the struct
-			String name = SPrintF("_derefstrctptr_%S", IRGetValue(context, irValue.value.valueIdx).name);
+			String name = SStringConcat("_derefstrctptr_"_s, IRGetValue(context, irValue.value.valueIdx).name);
 			u32 newValueIdx = IRNewValue(context, name, irValue.typeTableIdx,
 					VALUEFLAGS_FORCE_REGISTER);
 			IRValue newValue = IRValueValue(newValueIdx, irValue.typeTableIdx);
@@ -1125,7 +1127,7 @@ IRValue IRDoInlineProcedureCall(Context *context, ASTProcedureCall astProcCall)
 	s64 normalArgumentsCount = Min(callParamCount, procParamCount);
 	for (int argIdx = 0; argIdx < normalArgumentsCount; ++argIdx)
 	{
-		ASTExpression *arg = &astProcCall.arguments[argIdx];
+		ASTExpression *arg = astProcCall.arguments[argIdx];
 		IRValue argValue = IRGenFromExpression(context, arg);
 
 		u32 paramValueIdx = astProcCall.inlineParameterValues[argIdx];
@@ -1167,7 +1169,7 @@ IRValue IRDoInlineProcedureCall(Context *context, ASTProcedureCall astProcCall)
 
 		if (varargsCount == 1)
 		{
-			ASTExpression *varargsArrayExp = &astProcCall.arguments[procParamCount];
+			ASTExpression *varargsArrayExp = astProcCall.arguments[procParamCount];
 			if (varargsArrayExp->typeTableIdx == arrayOfAnyTypeIdx)
 			{
 				IRAddComment(context, "Forwarding varargs array"_s);
@@ -1198,7 +1200,7 @@ IRValue IRDoInlineProcedureCall(Context *context, ASTProcedureCall astProcCall)
 			int nonVarargs = (int)procParamCount;
 			for (int argIdx = 0; argIdx < varargsCount; ++argIdx)
 			{
-				ASTExpression *arg = &astProcCall.arguments[argIdx + nonVarargs];
+				ASTExpression *arg = astProcCall.arguments[argIdx + nonVarargs];
 
 				IRValue bufferIndexValue = IRValueImmediate(argIdx);
 				IRValue bufferSlotValue = IRDoArrayAccess(context, bufferIRValue, bufferIndexValue,
@@ -1437,7 +1439,7 @@ void IRAssignmentFromExpression(Context *context, IRValue dstValue, ASTExpressio
 	}
 }
 
-void IRGenProcedure(Context *context, s32 procedureIdx, SourceLocation loc)
+void IRGenProcedure(Context *context, u32 procedureIdx, SourceLocation loc)
 {
 	IRThreadData *threadData = (IRThreadData *)TlsGetValue(context->tlsIndex);
 	Procedure procedure = GetProcedureRead(context, procedureIdx);
@@ -1456,7 +1458,7 @@ void IRGenProcedure(Context *context, s32 procedureIdx, SourceLocation loc)
 		IRPushValueIntoStack(context, paramValueIdx);
 	}
 
-	s32 returnValueIdx = procedure.returnValueIdx;
+	u32 returnValueIdx = procedure.returnValueIdx;
 	Value returnValue = IRGetValue(context, returnValueIdx);
 	if (IRShouldPassByCopy(context, returnValue.typeTableIdx))
 	{
@@ -1509,16 +1511,6 @@ IRValue IRGenFromExpression(Context *context, const ASTExpression *expression)
 		// @Cleanup
 		if (expression->staticDefinition.expression->nodeType == ASTNODETYPE_PROCEDURE_DECLARATION)
 			IRGenFromExpression(context, expression->staticDefinition.expression);
-	} break;
-	case ASTNODETYPE_PROCEDURE_DECLARATION:
-	{
-		//s32 procedureIdx = expression->procedureDeclaration.procedureIdx;
-		//IRGenProcedure(context, procedureIdx, expression->any.loc);
-	} break;
-	case ASTNODETYPE_OPERATOR_OVERLOAD:
-	{
-		//s32 procedureIdx = expression->operatorOverload.procedureIdx;
-		//IRGenProcedure(context, procedureIdx, expression->any.loc);
 	} break;
 	case ASTNODETYPE_BLOCK:
 	{
@@ -1808,7 +1800,7 @@ IRValue IRGenFromExpression(Context *context, const ASTExpression *expression)
 		s64 normalArgumentsCount = Min(callParamCount, procParamCount);
 		for (int argIdx = 0; argIdx < normalArgumentsCount; ++argIdx)
 		{
-			const ASTExpression *arg = &astProcCall->arguments[argIdx];
+			const ASTExpression *arg = astProcCall->arguments[argIdx];
 			u32 argTypeTableIdx = procTypeInfo.parameters[argIdx].typeTableIdx;
 
 			IRValue param = IRGenFromExpression(context, arg);
@@ -1844,7 +1836,7 @@ IRValue IRGenFromExpression(Context *context, const ASTExpression *expression)
 
 			if (varargsCount == 1)
 			{
-				const ASTExpression *varargsArrayExp = &astProcCall->arguments[procParamCount];
+				const ASTExpression *varargsArrayExp = astProcCall->arguments[procParamCount];
 				if (varargsArrayExp->typeTableIdx == arrayOfAnyTypeIdx)
 				{
 					IRAddComment(context, "Forwarding varargs array"_s);
@@ -1873,7 +1865,7 @@ IRValue IRGenFromExpression(Context *context, const ASTExpression *expression)
 				int nonVarargs = (int)procParamCount;
 				for (int argIdx = 0; argIdx < varargsCount; ++argIdx)
 				{
-					const ASTExpression *arg = &astProcCall->arguments[argIdx + nonVarargs];
+					const ASTExpression *arg = astProcCall->arguments[argIdx + nonVarargs];
 
 					IRValue bufferIndexValue = IRValueImmediate(argIdx);
 					IRValue bufferSlotValue = IRDoArrayAccess(context, bufferIRValue, bufferIndexValue,
@@ -2028,7 +2020,7 @@ skipGeneratingVarargsArray:
 
 			IRStaticVariable newStaticVar = {};
 			newStaticVar.valueIdx = NewGlobalValue(context,
-					SPrintF("staticString%d", stringStaticVarUniqueID++),
+					SNPrintF("staticString%d", 18, stringStaticVarUniqueID++),
 					TYPETABLEIDX_STRING_STRUCT, VALUEFLAGS_ON_STATIC_STORAGE);
 			newStaticVar.initialValue = IRValueImmediateString(context, expression->literal.string);
 			newStaticVar.initialValue.typeTableIdx = TYPETABLEIDX_STRING_STRUCT;
@@ -2397,6 +2389,8 @@ skipGeneratingVarargsArray:
 		// @Check: only for variable declarations?
 		IRGenFromExpression(context, expression->usingNode.expression);
 	} break;
+	case ASTNODETYPE_PROCEDURE_DECLARATION:
+	case ASTNODETYPE_OPERATOR_OVERLOAD:
 	case ASTNODETYPE_INCLUDE:
 	case ASTNODETYPE_LINKLIB:
 	{
@@ -2404,6 +2398,10 @@ skipGeneratingVarargsArray:
 	case ASTNODETYPE_GARBAGE:
 	{
 		ASSERT(!"Shouldn't attempt to generate IR from GARBAGE node");
+	} break;
+	case ASTNODETYPE_TYPE:
+	{
+		LogError(context, expression->any.loc, "COMPILER ERROR! Type found while generating IR."_s);
 	} break;
 	default:
 		ASSERT(!"Unknown ast node found type while generating IR");
@@ -2430,11 +2428,11 @@ void IRGenMain(Context *context)
 	}
 }
 
-void IRJobProcedure(void *args)
+DWORD IRJobProcedure(void *args)
 {
 	IRJobArgs *argsStruct = (IRJobArgs *)args;
 	Context *context = argsStruct->context;
-	s32 procedureIdx = argsStruct->procedureIdx;
+	u32 procedureIdx = argsStruct->procedureIdx;
 
 	IRThreadData threadData = {};
 	threadData.procedureIdx = procedureIdx;
@@ -2472,9 +2470,10 @@ void IRJobProcedure(void *args)
 		BackendJobProc(context, procedureIdx);
 
 	SYSFree(threadData.threadMem);
+	return 0;
 }
 
-void IRJobExpression(void *args)
+DWORD IRJobExpression(void *args)
 {
 	IRJobArgs *argsStruct = (IRJobArgs *)args;
 	Context *context = argsStruct->context;
@@ -2504,4 +2503,5 @@ void IRJobExpression(void *args)
 	IRGenFromExpression(context, argsStruct->expression);
 
 	SYSFree(threadData.threadMem);
+	return 0;
 }

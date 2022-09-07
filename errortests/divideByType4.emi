@@ -1,6 +1,7 @@
 Main :: () -> s64
 {
 	// Invalid kind of operand
+	bar := 5;
 	bar / #type struct { field1 : s32; field2 : s32; };
 	return 0;
 }

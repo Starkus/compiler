@@ -64,7 +64,7 @@ bool CanBeRegister(Context *context, u32 valueIdx)
 	if ((v.flags & (VALUEFLAGS_IS_MEMORY | VALUEFLAGS_IS_ALLOCATED)) == VALUEFLAGS_IS_ALLOCATED)
 		// Allocated on register
 		return true;
-	if (valueIdx & 0x80000000)
+	if (valueIdx & VALUE_GLOBAL_BIT)
 		return false; // Global values can't be registers (other than physical registers, checked above)
 	if (v.flags & (VALUEFLAGS_FORCE_MEMORY | VALUEFLAGS_ON_STATIC_STORAGE |
 				VALUEFLAGS_IS_EXTERNAL))
@@ -784,7 +784,7 @@ gotNodeToRemove:
 
 			HashSet<u32, ThreadAllocator> *edges = &interferenceGraph.edges[nodeIdx];
 			u32 valueIdx = interferenceGraph.valueIndices[nodeToRemoveIdx];
-			if (!(valueIdx & 0x80000000) &&
+			if (!(valueIdx & VALUE_GLOBAL_BIT) &&
 				(valueIdx < parameterValuesBegin || valueIdx > parameterValuesEnd) &&
 				HashSetHas(*edges, valueIdx))
 			{
@@ -825,7 +825,7 @@ gotNodeToRemove:
 			u32 immitateValueIdx = v->tryImmitateValueIdx;
 
 			// Can't immitate a global value
-			if (immitateValueIdx & 0x80000000)
+			if (immitateValueIdx & VALUE_GLOBAL_BIT)
 				goto skipImmitate;
 
 			Value *immitateValue = IRGetLocalValue(context, immitateValueIdx);

@@ -35,8 +35,6 @@ void Advance(Context *context)
 
 inline ASTExpression *NewTreeNode(Context *context)
 {
-	ScopedLockSpin filesLock(&context->filesLock);
-
 	ParseThreadData *threadData = (ParseThreadData *)TlsGetValue(context->tlsIndex);
 	auto treeNodes = context->fileTreeNodes[threadData->fileIdx].GetForWrite();
 	return BucketArrayAdd(&treeNodes);
@@ -44,8 +42,6 @@ inline ASTExpression *NewTreeNode(Context *context)
 
 inline ASTType *NewASTType(Context *context)
 {
-	ScopedLockSpin filesLock(&context->filesLock);
-
 	ParseThreadData *threadData = (ParseThreadData *)TlsGetValue(context->tlsIndex);
 	auto typeNodes = context->fileTypeNodes[threadData->fileIdx].GetForWrite();
 	return BucketArrayAdd(&typeNodes);
@@ -588,10 +584,10 @@ ASTStructDeclaration ParseStructOrUnion(Context *context)
 	return structDeclaration;
 }
 
-Array<ASTExpression *, FrameAllocator> ParseGroupLiteral(Context *context)
+Array<ASTExpression *, LinearAllocator> ParseGroupLiteral(Context *context)
 {
 	ParseThreadData *threadData = (ParseThreadData *)TlsGetValue(context->tlsIndex);
-	DynamicArray<ASTExpression *, FrameAllocator> members;
+	DynamicArray<ASTExpression *, LinearAllocator> members;
 	DynamicArrayInit(&members, 8);
 
 	while (true)
@@ -612,7 +608,7 @@ Array<ASTExpression *, FrameAllocator> ParseGroupLiteral(Context *context)
 		LogError(context, threadData->token->loc, TPrintF("Parsing struct literal. Expected ',' or '}' but got %S", tokenStr));
 	}
 
-	Array<ASTExpression *, FrameAllocator> result;
+	Array<ASTExpression *, LinearAllocator> result;
 	result.data = members.data;
 	result.size = members.size;
 #if DEBUG_BUILD
@@ -833,15 +829,15 @@ ASTExpression ParseExpression(Context *context, s32 precedence)
 			// Procedure call
 			result.nodeType = ASTNODETYPE_PROCEDURE_CALL;
 			result.procedureCall.name = identifier;
-			result.procedureCall.procedureFound = false;
-			DynamicArrayInit(&result.procedureCall.arguments, 4);
+			HybridArrayInit(&result.procedureCall.arguments);
 
 			// Parse arguments
 			Advance(context);
 			while (threadData->token->type != ')')
 			{
-				ASTExpression arg = ParseExpression(context, -1);
-				*DynamicArrayAdd(&result.procedureCall.arguments) = arg;
+				ASTExpression *arg = NewTreeNode(context);
+				*arg = ParseExpression(context, -1);
+				*HybridArrayAdd(&result.procedureCall.arguments) = arg;
 
 				if (threadData->token->type != ')')
 				{
@@ -1006,6 +1002,12 @@ ASTExpression ParseExpression(Context *context, s32 precedence)
 		AssertToken(context, threadData->token, ')');
 		Advance(context);
 	} break;
+	case TOKEN_DIRECTIVE_TYPE:
+	{
+		Advance(context);
+		result.nodeType = ASTNODETYPE_TYPE;
+		result.astType = ParseType(context);
+	} break;
 	case TOKEN_KEYWORD_IF:
 	{
 		LogError(context, threadData->token->loc, "'if' only valid at statement level!"_s);
@@ -1033,10 +1035,6 @@ ASTExpression ParseExpression(Context *context, s32 precedence)
 	case TOKEN_KEYWORD_UNION:
 	{
 		LogError(context, threadData->token->loc, "'union' not valid on this context!"_s);
-	} break;
-	case TOKEN_DIRECTIVE_TYPE:
-	{
-		LogError(context, threadData->token->loc, "Not a valid type context!"_s);
 	} break;
 	default:
 	{
@@ -1092,24 +1090,28 @@ ASTStaticDefinition ParseStaticDefinition(Context *context)
 	bool isInline = false;
 	bool isExternal = false;
 	bool isExported = false;
+	SourceLocation isInlineLoc = {}, isExternalLoc = {}, isExportedLoc = {};
 	while (true)
 	{
 		if (threadData->token->type == TOKEN_DIRECTIVE_INLINE)
 		{
 			if (isInline) LogError(context, threadData->token->loc, "'inline' used twice"_s);
 			isInline = true;
+			isInlineLoc = threadData->token->loc;
 			Advance(context);
 		}
 		else if (threadData->token->type == TOKEN_DIRECTIVE_EXTERNAL)
 		{
 			if (isExternal) LogError(context, threadData->token->loc, "'external' used twice"_s);
 			isExternal = true;
+			isExternalLoc = threadData->token->loc;
 			Advance(context);
 		}
 		else if (threadData->token->type == TOKEN_DIRECTIVE_EXPORT)
 		{
 			if (isExported) LogError(context, threadData->token->loc, "'export' used twice"_s);
 			isExported = true;
+			isExportedLoc = threadData->token->loc;
 			Advance(context);
 		}
 		else
@@ -1145,11 +1147,11 @@ ASTStaticDefinition ParseStaticDefinition(Context *context)
 	else
 	{
 		if (isInline)
-			LogError(context, threadData->token->loc, "'inline' specified for a non-procedure!"_s);
+			LogError(context, isInlineLoc, "'inline' specified for a non-procedure!"_s);
 		if (isExternal)
-			LogError(context, threadData->token->loc, "'external' specified for a non-procedure!"_s);
+			LogError(context, isExternalLoc, "'external' specified for a non-procedure!"_s);
 		if (isExported)
-			LogError(context, threadData->token->loc, "'external' specified for a non-procedure!"_s);
+			LogError(context, isExportedLoc, "'external' specified for a non-procedure!"_s);
 
 		switch (threadData->token->type)
 		{
@@ -1503,7 +1505,7 @@ DWORD ParseJobProc(void *args)
 
 	TokenizeFile(context, fileIdx);
 
-	DynamicArray<ASTExpression, FrameAllocator> *statements =
+	DynamicArray<ASTExpression, LinearAllocator> *statements =
 		&context->fileASTRoots[fileIdx].block.statements;
 	while (threadData.token->type != TOKEN_END_OF_FILE)
 	{
@@ -1512,7 +1514,7 @@ DWORD ParseJobProc(void *args)
 		GenerateTypeCheckJobs(context, statement);
 	}
 
-	(*context->parseJobStates.Get())[jobIdx] = TCJOBSTATE_DONE;
+	(*context->parseJobStates.Get())[jobIdx] = JOBSTATE_DONE;
 	SYSFree(threadData.threadMem);
 	return 0;
 }

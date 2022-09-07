@@ -231,6 +231,74 @@ void DynamicArrayCopy(DynamicArray<T, A> *dst,
 	memcpy(dst->data, src->data, src->size * sizeof(T));
 }
 
+template <typename T, u64 bufferCapacity, typename A>
+struct HybridArray
+{
+	T fixedBuffer[bufferCapacity];
+	T *extendedBuffer;
+	u64 size;
+	u64 capacity;
+
+	T &operator[](s64 idx)
+	{
+		ASSERT(idx >= 0 && (u64)idx < size);
+		if (idx < bufferCapacity)
+			return fixedBuffer[idx];
+		else
+			return extendedBuffer[idx - bufferCapacity];
+	}
+
+	const T &operator[](s64 idx) const
+	{
+		ASSERT(idx >= 0 && (u64)idx < size);
+		if (idx < bufferCapacity)
+			return fixedBuffer[idx];
+		else
+			return extendedBuffer[idx - bufferCapacity];
+	}
+};
+
+template <typename T, u64 bufferCapacity, typename A>
+void HybridArrayInit(HybridArray<T, bufferCapacity, A> *array)
+{
+	array->extendedBuffer = 0;
+	array->size = 0;
+	array->capacity = bufferCapacity;
+}
+
+template <typename T, u64 bufferCapacity, typename A>
+void HybridArrayInit(HybridArray<T, bufferCapacity, A> *array, u64 initialCapacity)
+{
+	array->extendedBuffer = 0;
+	array->size = 0;
+	array->capacity = initialCapacity;
+	if (initialCapacity > bufferCapacity)
+	{
+		u64 allocSize = (initialCapacity - bufferCapacity) * sizeof(T);
+		array->extendedBuffer = (T*)A::Alloc(allocSize);
+	}
+}
+
+template <typename T, u64 bufferCapacity, typename A>
+T *HybridArrayAdd(HybridArray<T, bufferCapacity, A> *array)
+{
+	if (array->size >= array->capacity)
+	{
+		array->capacity *= 2;
+		u64 newSize = (array->capacity - bufferCapacity) * sizeof(T);
+		array->extendedBuffer = (T*)A::Realloc(array->extendedBuffer, newSize);
+	}
+	T *result = &(*array)[array->size++];
+	return result;
+}
+
+template <typename T, u64 bufferCapacity, typename A>
+inline T *HybridArrayBack(HybridArray<T, bufferCapacity, A> *array)
+{
+	ASSERT(array->size > 0);
+	return &(*array)[array->size - 1];
+}
+
 template <typename T, typename A, u64 bucketSize>
 struct BucketArray
 {

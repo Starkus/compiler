@@ -22,7 +22,7 @@ struct ASTLiteral : ASTBase
 		f64 floating;
 		char character;
 		String string;
-		Array<ASTExpression *, FrameAllocator> members;
+		Array<ASTExpression *, LinearAllocator> members;
 	};
 };
 
@@ -67,11 +67,7 @@ struct ASTIdentifier : ASTBase
 
 struct ASTBlock : ASTBase
 {
-	DynamicArray<ASTExpression, FrameAllocator> statements;
-
-	// Type check
-	bool scopePushed;
-	s32 typeCheckingIdx;
+	DynamicArray<ASTExpression, LinearAllocator> statements;
 };
 
 struct ASTType;
@@ -86,7 +82,7 @@ struct ASTStructMemberDeclaration : ASTBase
 };
 struct ASTStructDeclaration : ASTBase
 {
-	DynamicArray<ASTStructMemberDeclaration, FrameAllocator> members;
+	DynamicArray<ASTStructMemberDeclaration, LinearAllocator> members;
 };
 
 struct ASTEnumMember
@@ -98,7 +94,7 @@ struct ASTEnumMember
 struct ASTEnumDeclaration : ASTBase
 {
 	ASTType *astType;
-	DynamicArray<ASTEnumMember, FrameAllocator> members;
+	DynamicArray<ASTEnumMember, LinearAllocator> members;
 };
 
 enum CallingConvention : u8
@@ -112,7 +108,7 @@ struct ASTType;
 struct ASTProcedureParameter;
 struct ASTProcedurePrototype : ASTBase
 {
-	DynamicArray<ASTProcedureParameter, FrameAllocator> astParameters;
+	DynamicArray<ASTProcedureParameter, LinearAllocator> astParameters;
 	ASTType *astReturnType;
 
 	String varargsName;
@@ -163,7 +159,6 @@ struct ASTVariableDeclaration : ASTBase
 	bool isExternal;
 
 	// TypeCheck
-	bool addedScopeName;
 	u32 valueIdx;
 	u32 typeTableIdx;
 };
@@ -190,7 +185,7 @@ struct ASTProcedureDeclaration : ASTBase
 	bool isExported;
 
 	// Type check
-	s32 procedureIdx;
+	u32 procedureIdx;
 };
 
 struct ASTOperatorOverload : ASTBase
@@ -201,7 +196,7 @@ struct ASTOperatorOverload : ASTBase
 	bool isInline;
 
 	// Type check
-	s32 procedureIdx;
+	u32 procedureIdx;
 };
 
 struct ASTStaticDefinition : ASTBase
@@ -222,20 +217,19 @@ enum ProcedureCallType
 struct ASTProcedureCall : ASTBase
 {
 	String name;
-	DynamicArray<ASTExpression, FrameAllocator> arguments;
+	HybridArray<ASTExpression *, 4, LinearAllocator> arguments;
 
 	// Type check
 	u32 procedureTypeIdx;
 	ProcedureCallType callType;
-	bool procedureFound;
 	union
 	{
-		s32 procedureIdx;
+		u32 procedureIdx;
 		u32 valueIdx;
 		ASTExpression *expression;
 	};
 	ASTExpression *astBodyInlineCopy;
-	Array<u32, FrameAllocator> inlineParameterValues;
+	Array<u32, LinearAllocator> inlineParameterValues;
 };
 
 enum IntrinsicType
@@ -248,7 +242,7 @@ enum IntrinsicType
 struct ASTIntrinsic : ASTBase
 {
 	String name;
-	DynamicArray<ASTExpression, FrameAllocator> arguments;
+	DynamicArray<ASTExpression, LinearAllocator> arguments;
 
 	// Type check
 	IntrinsicType type;
@@ -285,7 +279,6 @@ struct ASTFor : ASTBase
 	ASTExpression *body;
 
 	// Type check
-	bool scopePushed;
 	u32 indexValueIdx;
 	u32 elementValueIdx;
 	u32 elementTypeTableIdx;

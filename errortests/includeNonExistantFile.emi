@@ -1,5 +1,5 @@
 // Include non existent source file
-#include "noexist.emi"
+#include "noexist.emi";
 
 Main :: () -> s64
 {

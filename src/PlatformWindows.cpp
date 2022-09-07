@@ -62,9 +62,37 @@ String SYSExpandPathWorkingDirectoryRelative(String relativePath)
 
 FileHandle SYSOpenFileRead(String filename)
 {
-	String absolutePath = SYSExpandPathWorkingDirectoryRelative(filename);
-
+	const char *cFilename = StringToCStr(filename, ThreadAllocator::Alloc);
 	HANDLE file = CreateFileA(
+			cFilename,
+			GENERIC_READ,
+			FILE_SHARE_READ,
+			nullptr,
+			OPEN_EXISTING,
+			FILE_ATTRIBUTE_NORMAL,
+			nullptr
+			);
+	DWORD error = GetLastError();
+	if (error == ERROR_SUCCESS && file != INVALID_HANDLE_VALUE)
+		return file;
+
+	String absolutePath = SYSExpandPathWorkingDirectoryRelative(filename);
+	file = CreateFileA(
+			absolutePath.data, // We know this string is null terminated.
+			GENERIC_READ,
+			FILE_SHARE_READ,
+			nullptr,
+			OPEN_EXISTING,
+			FILE_ATTRIBUTE_NORMAL,
+			nullptr
+			);
+	error = GetLastError();
+	if (error == ERROR_SUCCESS && file != INVALID_HANDLE_VALUE)
+		return file;
+
+	// This exe's full name, up to second-to-last slash, plus filename.
+	absolutePath = SYSExpandPathCompilerRelative(filename);
+	file = CreateFileA(
 			absolutePath.data, // We know this string is null terminated.
 			GENERIC_READ,
 			FILE_SHARE_READ,
@@ -74,38 +102,27 @@ FileHandle SYSOpenFileRead(String filename)
 			nullptr
 			);
 
-	DWORD error = GetLastError();
-	if (error != ERROR_SUCCESS || file == INVALID_HANDLE_VALUE)
-	{
-		// This exe's full name, up to second-to-last slash, plus filename.
-		absolutePath = SYSExpandPathCompilerRelative(filename);
-
-		file = CreateFileA(
-				absolutePath.data, // We know this string is null terminated.
-				GENERIC_READ,
-				FILE_SHARE_READ,
-				nullptr,
-				OPEN_EXISTING,
-				FILE_ATTRIBUTE_NORMAL,
-				nullptr
-				);
-	}
-
-	error = GetLastError();
-	if (error != ERROR_SUCCESS || file == INVALID_HANDLE_VALUE)
-	{
-		Print("Failed to read file \"%S\"", filename);
-		PANIC;
-	}
-
 	return file;
 }
 
 FileHandle SYSOpenFileWrite(String filename)
 {
-	String absolutePath = SYSExpandPathWorkingDirectoryRelative(filename);
+	const char *cFilename = StringToCStr(filename, ThreadAllocator::Alloc);
+	HANDLE file = CreateFileA(
+			cFilename,
+			GENERIC_WRITE,
+			0,
+			nullptr,
+			CREATE_ALWAYS,
+			FILE_ATTRIBUTE_NORMAL,
+			nullptr
+			);
+	DWORD error = GetLastError();
+	if ((error == ERROR_SUCCESS || error == ERROR_ALREADY_EXISTS) && file != INVALID_HANDLE_VALUE)
+		return file;
 
-	HANDLE result = CreateFileA(
+	String absolutePath = SYSExpandPathWorkingDirectoryRelative(filename);
+	file = CreateFileA(
 			absolutePath.data,
 			GENERIC_WRITE,
 			0,
@@ -114,7 +131,8 @@ FileHandle SYSOpenFileWrite(String filename)
 			FILE_ATTRIBUTE_NORMAL,
 			nullptr
 			);
-	return result;
+
+	return file;
 }
 
 s64 SYSWriteFile(FileHandle file, void *buffer, s64 size)
@@ -321,7 +339,7 @@ nextTuple:
 			if (!FindNextFileA(findHandle, &foundData)) break;
 		}
 		windowsSDKVersion.size = strlen(latestVersionName);
-		char *buffer = (char *)FrameAllocator::Alloc(windowsSDKVersion.size);
+		char *buffer = (char *)LinearAllocator::Alloc(windowsSDKVersion.size);
 		memcpy(buffer, latestVersionName, windowsSDKVersion.size);
 		windowsSDKVersion.data = buffer;
 	}

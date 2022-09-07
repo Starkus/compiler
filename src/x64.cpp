@@ -74,7 +74,8 @@ X64Instruction *X64InstructionStreamAdvance(X64InstructionStream *iterator)
 
 s64 PrintOut(Context *context, const char *format, ...)
 {
-	char *buffer = (char *)g_memory->framePtr;
+	ThreadDataCommon *threadData = (ThreadDataCommon *)TlsGetValue(g_memory->tlsIndex);
+	char *buffer = (char *)threadData->threadMemPtr;
 
 	va_list args;
 	va_start(args, format);
@@ -108,7 +109,7 @@ s64 PrintOut(Context *context, const char *format, ...)
 	}
 
 #if DEBUG_BUILD
-	memset(g_memory->framePtr, 0xCD, size + 1);
+	memset(threadData->threadMemPtr, 0x55, size + 1);
 #endif
 
 	va_end(args);
@@ -145,7 +146,7 @@ String X64IRValueToStr(Context *context, IRValue value,
 	if (value.valueType == IRVALUETYPE_VALUE || value.valueType == IRVALUETYPE_VALUE_DEREFERENCE)
 		offset = value.value.offset;
 
-	if (value.value.valueIdx & 0x80000000)
+	if (value.value.valueIdx & VALUE_GLOBAL_BIT)
 		v = GetGlobalValue(context, value.value.valueIdx);
 	else
 		v = (*localValues)[value.value.valueIdx];
@@ -889,7 +890,7 @@ Array<u32, ThreadAllocator> X64ReadyLinuxParameters(Context *context,
 			(paramTypeInfo.typeCategory == TYPECATEGORY_ARRAY && paramTypeInfo.arrayInfo.count == 0);
 		if (isStruct && paramTypeInfo.size <= 16)
 		{
-			Array<StructMember, FrameAllocator> members;
+			ArrayView<StructMember> members;
 			if (paramTypeInfo.typeCategory == TYPECATEGORY_ARRAY)
 				members = GetTypeInfo(context, TYPETABLEIDX_ARRAY_STRUCT).structInfo.members;
 			else
@@ -2070,7 +2071,7 @@ void X64PrintStaticData(Context *context, String name, IRValue value, u32 typeTa
 			elementTypeIdx = typeInfo.arrayInfo.elementTypeTableIdx;
 		}
 
-		Array<IRValue, FrameAllocator> members = value.immediateStructMembers;
+		ArrayView<IRValue> members = value.immediateStructMembers;
 		for (int memberIdx = 0; memberIdx < members.size; ++memberIdx)
 		{
 			String memberName = memberIdx ? "   "_s : name;
@@ -2177,7 +2178,7 @@ void X64PrintStaticDataUninitialized(Context *context, String name, IRValue valu
 			elementTypeIdx = typeInfo.arrayInfo.elementTypeTableIdx;
 		}
 
-		Array<IRValue, FrameAllocator> members = value.immediateStructMembers;
+		ArrayView<IRValue> members = value.immediateStructMembers;
 		for (int memberIdx = 0; memberIdx < members.size; ++memberIdx)
 		{
 			String memberName = memberIdx ? "   "_s : name;
@@ -2236,14 +2237,14 @@ void BackendMain(Context *context)
 		u32 typeTableIdx = FindOrAddTypeTableIdx(context, t);
 
 		auto externalProcedures = context->externalProcedures.GetForWrite();
-		copyMemoryProcIdx = -(s32)BucketArrayCount(&externalProcedures);
+		copyMemoryProcIdx = (u32)BucketArrayCount(&externalProcedures) | PROCEDURE_EXTERNAL_BIT;
 		Procedure *copyMemory = BucketArrayAdd(&externalProcedures);
 		*copyMemory = {};
 		copyMemory->name = "CopyMemory"_s;
 		copyMemory->typeTableIdx = typeTableIdx;
 		copyMemory->returnValueIdx = U32_MAX;
 
-		zeroMemoryProcIdx = -(s32)BucketArrayCount(&externalProcedures);
+		zeroMemoryProcIdx = (u32)BucketArrayCount(&externalProcedures) | PROCEDURE_EXTERNAL_BIT;
 		Procedure *zeroMemory = BucketArrayAdd(&externalProcedures);
 		*zeroMemory = {};
 		zeroMemory->name = "ZeroMemory"_s;
@@ -2544,7 +2545,7 @@ void BackendGenerateOutputFile(Context *context)
 				if (!structName.size)
 					structName = "<anonymous struct>"_s;
 
-				u32 membersValueIdx = NewGlobalValue(context, SPrintF("_members_%lld", typeTableIdx),
+				u32 membersValueIdx = NewGlobalValue(context, SNPrintF("_members_%lld", 16, typeTableIdx),
 						TYPETABLEIDX_TYPE_INFO_STRUCT_MEMBER_STRUCT, VALUEFLAGS_ON_STATIC_STORAGE);
 				IRStaticVariable membersStaticVar = { membersValueIdx };
 				membersStaticVar.initialValue.valueType = IRVALUETYPE_IMMEDIATE_GROUP;
@@ -2593,7 +2594,7 @@ void BackendGenerateOutputFile(Context *context)
 
 				TypeInfo enumType = GetTypeInfo(context, typeInfo.enumInfo.typeTableIdx);
 
-				u32 namesValueIdx = NewGlobalValue(context, SPrintF("_names_%lld", typeTableIdx),
+				u32 namesValueIdx = NewGlobalValue(context, SNPrintF("_names_%lld", 12, typeTableIdx),
 						TYPETABLEIDX_STRING_STRUCT, VALUEFLAGS_ON_STATIC_STORAGE);
 				IRStaticVariable namesStaticVar = { namesValueIdx };
 				namesStaticVar.initialValue.valueType = IRVALUETYPE_IMMEDIATE_GROUP;
@@ -2607,7 +2608,7 @@ void BackendGenerateOutputFile(Context *context)
 				}
 				*DynamicArrayAdd(&context->irStaticVariables.GetForWrite()) = namesStaticVar;
 
-				u32 valuesValueIdx = NewGlobalValue(context, SPrintF("_values_%lld", typeTableIdx),
+				u32 valuesValueIdx = NewGlobalValue(context, SNPrintF("_values_%lld", 14, typeTableIdx),
 						TYPETABLEIDX_S64, VALUEFLAGS_ON_STATIC_STORAGE);
 				IRStaticVariable valuesStaticVar = { valuesValueIdx };
 				valuesStaticVar.initialValue.valueType = IRVALUETYPE_IMMEDIATE_GROUP;
@@ -2670,7 +2671,7 @@ void BackendGenerateOutputFile(Context *context)
 				u32 parametersValueIdx = 0;
 				if (typeInfo.procedureInfo.parameters.size > 0)
 				{
-					parametersValueIdx = NewGlobalValue(context, SPrintF("_params_%lld", typeTableIdx),
+					parametersValueIdx = NewGlobalValue(context, SNPrintF("_params_%lld", 14, typeTableIdx),
 							pointerToTypeInfoIdx, VALUEFLAGS_ON_STATIC_STORAGE);
 					IRStaticVariable paramsStaticVar = { parametersValueIdx };
 					paramsStaticVar.initialValue.valueType = IRVALUETYPE_IMMEDIATE_GROUP;
@@ -2747,6 +2748,7 @@ void BackendGenerateOutputFile(Context *context)
 #endif
 
 	// String literals
+	IRThreadData *threadData = (IRThreadData *)TlsGetValue(context->tlsIndex);
 	{
 		auto stringLiterals = context->stringLiterals.GetForRead();
 		s64 strCount = (s64)BucketArrayCount(&stringLiterals);
@@ -2757,8 +2759,8 @@ void BackendGenerateOutputFile(Context *context)
 			String str = (*stringLiterals)[stringLiteralIdx];
 			s64 size = str.size;
 			bool first = true;
-			u8 *buffer = (u8 *)g_memory->framePtr;
-			u8 *out = buffer;
+			char *buffer = (char *)threadData->threadMemPtr;
+			char *out = buffer;
 			const u8 *in = (const u8 *)str.data;
 			for (int i = 0; i < str.size; ++i)
 			{
@@ -2799,7 +2801,7 @@ void BackendGenerateOutputFile(Context *context)
 					if (i == str.size - 1 || *in == '\\' || *in == '\'')
 					{
 						*out++ = 0;
-						g_memory->framePtr = out;
+						threadData->threadMemPtr = out;
 
 						if (!first) PrintOut(context, ", ");
 						PrintOut(context, "'%s'", buffer);
@@ -2810,7 +2812,7 @@ void BackendGenerateOutputFile(Context *context)
 				}
 			}
 			PrintOut(context, "\n");
-			g_memory->framePtr = buffer;
+			threadData->threadMemPtr = buffer;
 			bytesWritten += size;
 		}
 	}
@@ -2903,10 +2905,11 @@ void BackendGenerateOutputFile(Context *context)
 	{
 		auto externalProcedures = context->externalProcedures.GetForRead();
 		u64 externalProcedureCount = BucketArrayCount(&externalProcedures);
-		for (int procedureIdx = 1; procedureIdx < externalProcedureCount; ++procedureIdx)
+		for (u32 procedureIdx = 1; procedureIdx < externalProcedureCount; ++procedureIdx)
 		{
 			// Don't declare hard-coded procedures that are already included in the asm file.
-			if (procedureIdx == -copyMemoryProcIdx || procedureIdx == -zeroMemoryProcIdx)
+			u32 externalProcIdx = procedureIdx | PROCEDURE_EXTERNAL_BIT;
+			if (externalProcIdx == copyMemoryProcIdx || externalProcIdx == zeroMemoryProcIdx)
 				continue;
 
 			String procName = (*externalProcedures)[procedureIdx].name;
@@ -2996,7 +2999,7 @@ void BackendGenerateOutputFile(Context *context)
 	}
 }
 
-void BackendJobProc(Context *context, s32 procedureIdx)
+void BackendJobProc(Context *context, u32 procedureIdx)
 {
 	IRThreadData *threadData = (IRThreadData *)TlsGetValue(context->tlsIndex);
 
@@ -3004,7 +3007,7 @@ void BackendJobProc(Context *context, s32 procedureIdx)
 	for (int paramIdx = 0; paramIdx < 32; ++paramIdx)
 	{
 		Value newValue = {};
-		newValue.name = SPrintF("_param%d", paramIdx);
+		newValue.name = SNPrintF("_param%d", 8, paramIdx);
 		newValue.typeTableIdx = TYPETABLEIDX_S64;
 		newValue.flags = VALUEFLAGS_IS_ALLOCATED | VALUEFLAGS_IS_MEMORY | VALUEFLAGS_BASE_RELATIVE;
 		newValue.stackOffset = 16 + paramIdx * 8; // Add 16, 8 for return address, and 8 because we push RBP
@@ -3015,7 +3018,7 @@ void BackendJobProc(Context *context, s32 procedureIdx)
 	for (int paramIdx = 0; paramIdx < 32; ++paramIdx)
 	{
 		Value newValue = {};
-		newValue.name = SPrintF("_param%d", paramIdx);
+		newValue.name = SNPrintF("_param%d", 8, paramIdx);
 		newValue.typeTableIdx = TYPETABLEIDX_S64;
 		newValue.flags = VALUEFLAGS_IS_ALLOCATED | VALUEFLAGS_IS_MEMORY;
 		newValue.stackOffset = paramIdx * 8; // Add 16, 8 for return address, and 8 because we push RBP

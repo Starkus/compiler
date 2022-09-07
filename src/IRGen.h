@@ -1,7 +1,7 @@
 struct IRJobArgs
 {
 	Context *context;
-	s32 procedureIdx;
+	u32 procedureIdx;
 	BucketArray<Value, HeapAllocator, 1024> localValues;
 	const ASTExpression *expression;
 };
@@ -25,8 +25,8 @@ struct IRValue
 		s64 immediate;
 		f64 immediateFloat;
 		u32 immediateStringIdx;
-		Array<IRValue, FrameAllocator> immediateStructMembers;
-		s32 procedureIdx;
+		Array<IRValue, LinearAllocator> immediateStructMembers;
+		u32 procedureIdx;
 		struct
 		{
 			u32 valueIdx;
@@ -66,10 +66,10 @@ struct IRProcedureCall
 {
 	union
 	{
-		s32 procedureIdx;
+		u32 procedureIdx;
 		IRValue procIRValue;
 	};
-	Array<IRValue, FrameAllocator> parameters;
+	Array<IRValue, LinearAllocator> parameters;
 	IRValue out;
 
 	// Filled during register allocation
@@ -79,7 +79,7 @@ struct IRProcedureCall
 struct IRIntrinsic
 {
 	IntrinsicType type;
-	Array<IRValue, FrameAllocator> parameters;
+	Array<IRValue, LinearAllocator> parameters;
 };
 
 struct IRPushValue
@@ -210,7 +210,7 @@ struct IRInstruction
 struct IRScope
 {
 	IRLabel *closeLabel;
-	DynamicArray<ASTExpression *, PhaseAllocator> deferredStatements;
+	DynamicArray<ASTExpression *, ThreadAllocator> deferredStatements;
 };
 
 struct IRStaticVariable
@@ -219,5 +219,5 @@ struct IRStaticVariable
 	IRValue initialValue;
 };
 
-void IRJobProcedure(void *args);
-void IRJobExpression(void *args);
+DWORD IRJobProcedure(void *args);
+DWORD IRJobExpression(void *args);

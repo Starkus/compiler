@@ -47,6 +47,21 @@ public:
 	}
 };
 
+class [[nodiscard]] ScopedLockMutex
+{
+public:
+	Mutex mutex;
+	ScopedLockMutex(Mutex aMutex)
+	{
+		mutex = aMutex;
+		SYSMutexLock(mutex);
+	}
+	~ScopedLockMutex()
+	{
+		SYSMutexUnlock(mutex);
+	}
+};
+
 template <typename T>
 class RWContainer
 {

@@ -16,7 +16,7 @@ inline String TStringConcat(String a, String b)
 inline String SStringConcat(String a, String b)
 {
 	s64 size = a.size + b.size;
-	char *buffer = (char *)FrameAllocator::Alloc(size);
+	char *buffer = (char *)LinearAllocator::Alloc(size);
 	String result = { size, buffer };
 	memcpy(buffer, a.data, a.size);
 	memcpy(buffer + a.size, b.data, b.size);
