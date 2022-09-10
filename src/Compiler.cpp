@@ -43,7 +43,7 @@ s64 Print(const char *format, ...)
 	// Log file
 	static FileHandle logFileHandle = SYSOpenFileWrite("output/log.txt"_s);
 
-	ThreadDataCommon *threadData = (ThreadDataCommon *)TlsGetValue(g_memory->tlsIndex);
+	ThreadDataCommon *threadData = (ThreadDataCommon *)SYSGetThreadData(g_memory->tlsIndex);
 
 	char *buffer = (char *)threadData->threadMemPtr;
 
@@ -71,7 +71,7 @@ s64 Print(const char *format, ...)
 
 const String TPrintF(const char *format, ...)
 {
-	ThreadDataCommon *threadData = (ThreadDataCommon *)TlsGetValue(g_memory->tlsIndex);
+	ThreadDataCommon *threadData = (ThreadDataCommon *)SYSGetThreadData(g_memory->tlsIndex);
 
 	char *buffer = (char *)threadData->threadMemPtr;
 
@@ -167,7 +167,7 @@ struct Context
 	DynamicArray<String, HeapAllocator> libsToLink;
 
 	// Parsing -----
-	SLContainer<DynamicArray<HANDLE, HeapAllocator>> parseThreads; // Lock only to write
+	SLContainer<DynamicArray<ThreadHandle, HeapAllocator>> parseThreads; // Lock only to write
 	SLContainer<DynamicArray<JobState, HeapAllocator>> parseJobStates; // Lock only to write
 	DynamicArray<BucketArray<Token, HeapAllocator, 1024>, HeapAllocator> fileTokens;
 	DynamicArray<ASTRoot, HeapAllocator> fileASTRoots;
@@ -178,7 +178,7 @@ struct Context
 	Array<TCScopeName, HeapAllocator> tcPrimitiveTypes;
 
 	volatile u32 tcThreadsLock;
-	DynamicArray<HANDLE, HeapAllocator> tcThreads; // Lock only to write
+	DynamicArray<ThreadHandle, HeapAllocator> tcThreads; // Lock only to write
 	DynamicArray<JobState, HeapAllocator> tcJobStates; // Lock only to write
 
 	RWContainer<BucketArray<Value, HeapAllocator, 1024>> globalValues;
@@ -186,17 +186,16 @@ struct Context
 	RWContainer<BucketArray<Procedure, HeapAllocator, 128>> externalProcedures;
 	RWContainer<DynamicArray<OperatorOverload, HeapAllocator>> operatorOverloads;
 	RWContainer<BucketArray<StaticDefinition, HeapAllocator, 512>> staticDefinitions;
-	CONDITION_VARIABLE operatorOverloadsConditionVariable;
+	ConditionVariable operatorOverloadsConditionVariable;
 
 	/* Don't add types to the type table by hand without checking what AddType() does! */
 	RWContainer<BucketArray<const TypeInfo, HeapAllocator, 1024>> typeTable;
 
 	RWContainer<TCGlobalScope> tcGlobalScope;
 	RWContainer<HashMap<String, CONDITION_VARIABLE, HeapAllocator>> tcConditionVariables;
-	HANDLE tcNewGlobalNameEvent;
 
 	// IR -----
-	SLContainer<DynamicArray<HANDLE, HeapAllocator>> irThreads; // Lock only to write
+	SLContainer<DynamicArray<ThreadHandle, HeapAllocator>> irThreads; // Lock only to write
 	RWContainer<BucketArray<String, HeapAllocator, 1024>> stringLiterals;
 	RWContainer<DynamicArray<IRStaticVariable, HeapAllocator>> irStaticVariables;
 	RWContainer<DynamicArray<u32, HeapAllocator>> irExternalVariables;
@@ -353,13 +352,13 @@ bool CompilerAddSourceFile(Context *context, String filename, SourceLocation loc
 		auto parseThreads = context->parseThreads.Get();
 		auto parseJobStates = context->parseJobStates.Get();
 		jobIdx = (u32)parseJobStates->size;
-		DynamicArrayAddMT(&parseThreads, INVALID_HANDLE_VALUE);
+		DynamicArrayAddMT(&parseThreads, SYS_INVALID_THREAD_HANDLE);
 		DynamicArrayAddMT(&parseJobStates, JOBSTATE_RUNNING);
 	}
 
 	ParseJobArgs *args = ALLOC(LinearAllocator::Alloc, ParseJobArgs);
 	*args = { context, (u32)context->sourceFiles.size - 1, jobIdx };
-	HANDLE parseThread = CreateThread(nullptr, 0, ParseJobProc, (void *)args, 0, nullptr);
+	ThreadHandle parseThread = SYSCreateThread(ParseJobProc, (void *)args);
 	context->parseThreads.content[jobIdx] = parseThread;
 
 	return true;
@@ -390,7 +389,7 @@ int main(int argc, char **argv)
 #endif
 
 	Context context = {};
-	context.tlsIndex = TlsAlloc();
+	context.tlsIndex = SYSAllocThreadData();
 	context.consoleMutex = SYSCreateMutex();
 
 	// Allocate memory
@@ -401,7 +400,7 @@ int main(int argc, char **argv)
 	MemoryInit(&memory);
 
 	ThreadDataCommon threadData = {};
-	TlsSetValue(context.tlsIndex, &threadData);
+	SYSSetThreadData(context.tlsIndex, &threadData);
 	MemoryInitThread(1 * 1024 * 1024);
 
 	if (argc < 2)
@@ -462,23 +461,23 @@ int main(int argc, char **argv)
 	// Unsafe reads!
 	for (u64 threadIdx = 0; threadIdx < context.parseThreads.content.size; ++threadIdx)
 	{
-		HANDLE thread = context.parseThreads.content[threadIdx];
-		if (thread != INVALID_HANDLE_VALUE)
-			WaitForSingleObject(thread, INFINITE);
+		ThreadHandle thread = context.parseThreads.content[threadIdx];
+		if (thread != SYS_INVALID_THREAD_HANDLE)
+			SYSWaitForThread(thread);
 	}
 
 	for (u64 threadIdx = 0; threadIdx < context.tcThreads.size; ++threadIdx)
 	{
-		HANDLE thread = context.tcThreads[threadIdx];
-		if (thread != INVALID_HANDLE_VALUE)
-			WaitForSingleObject(thread, INFINITE);
+		ThreadHandle thread = context.tcThreads[threadIdx];
+		if (thread != SYS_INVALID_THREAD_HANDLE)
+			SYSWaitForThread(thread);
 	}
 
 	for (u64 threadIdx = 0; threadIdx < context.irThreads.content.size; ++threadIdx)
 	{
-		HANDLE thread = context.irThreads.content[threadIdx];
-		if (thread != INVALID_HANDLE_VALUE)
-			WaitForSingleObject(thread, INFINITE);
+		ThreadHandle thread = context.irThreads.content[threadIdx];
+		if (thread != SYS_INVALID_THREAD_HANDLE)
+			SYSWaitForThread(thread);
 	}
 
 	BackendGenerateOutputFile(&context);

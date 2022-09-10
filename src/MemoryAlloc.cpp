@@ -11,7 +11,7 @@ void MemoryInit(Memory *memory)
 
 void MemoryInitThread(u64 size)
 {
-	ThreadDataCommon *threadData = (ThreadDataCommon *)TlsGetValue(g_memory->tlsIndex);
+	ThreadDataCommon *threadData = (ThreadDataCommon *)SYSGetThreadData(g_memory->tlsIndex);
 	threadData->threadMem = SYSAlloc(size);
 	threadData->threadMemPtr = threadData->threadMem;
 	threadData->threadMemSize = size;
@@ -89,7 +89,7 @@ void *ThreadAllocator::Alloc(u64 size)
 #if USE_PROFILER_API
 	performanceAPI.BeginEvent("Thread Alloc", nullptr, PERFORMANCEAPI_MAKE_COLOR(0xBB, 0xBB, 0x10));
 #endif
-	ThreadDataCommon *threadData = (ThreadDataCommon *)TlsGetValue(g_memory->tlsIndex);
+	ThreadDataCommon *threadData = (ThreadDataCommon *)SYSGetThreadData(g_memory->tlsIndex);
 
 #if DEBUG_BUILD
 	if (*((u64 *)threadData->threadMemPtr) != 0x5555555555555555) CRASH; // Watch for memory corruption

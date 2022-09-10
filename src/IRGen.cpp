@@ -3,7 +3,7 @@ u32 IRNewValue(Context *context, u32 typeTableIdx, u32 flags, u32 immitateValueI
 	ASSERT(typeTableIdx != 0);
 	ASSERT(!(flags & VALUEFLAGS_TRY_IMMITATE) || immitateValueIdx != U32_MAX);
 
-	IRThreadData *threadData = (IRThreadData *)TlsGetValue(context->tlsIndex);
+	IRThreadData *threadData = (IRThreadData *)SYSGetThreadData(context->tlsIndex);
 
 	u64 idx = BucketArrayCount(&threadData->localValues);
 	Value *result = BucketArrayAdd(&threadData->localValues);
@@ -21,7 +21,7 @@ u32 IRNewValue(Context *context, String name, u32 typeTableIdx, u32 flags, u32 i
 	ASSERT(typeTableIdx != 0);
 	ASSERT(!(flags & VALUEFLAGS_TRY_IMMITATE) || immitateValueIdx != U32_MAX);
 
-	IRThreadData *threadData = (IRThreadData *)TlsGetValue(context->tlsIndex);
+	IRThreadData *threadData = (IRThreadData *)SYSGetThreadData(context->tlsIndex);
 
 	u64 idx = BucketArrayCount(&threadData->localValues);
 	Value *result = BucketArrayAdd(&threadData->localValues);
@@ -39,7 +39,7 @@ u32 IRNewValue(Context *context, Value value)
 	ASSERT(value.typeTableIdx != 0);
 	ASSERT(!(value.flags & VALUEFLAGS_TRY_IMMITATE) || value.tryImmitateValueIdx != U32_MAX);
 
-	IRThreadData *threadData = (IRThreadData *)TlsGetValue(context->tlsIndex);
+	IRThreadData *threadData = (IRThreadData *)SYSGetThreadData(context->tlsIndex);
 
 	u64 idx = BucketArrayCount(&threadData->localValues);
 	Value *result = BucketArrayAdd(&threadData->localValues);
@@ -55,7 +55,7 @@ inline Value IRGetValue(Context *context, u32 valueIdx)
 		return GetGlobalValue(context, valueIdx);
 	else
 	{
-		IRThreadData *threadData = (IRThreadData *)TlsGetValue(context->tlsIndex);
+		IRThreadData *threadData = (IRThreadData *)SYSGetThreadData(context->tlsIndex);
 		return threadData->localValues[valueIdx];
 	}
 }
@@ -63,7 +63,7 @@ inline Value IRGetValue(Context *context, u32 valueIdx)
 inline Value *IRGetLocalValue(Context *context, u32 valueIdx)
 {
 	ASSERT(!(valueIdx & VALUE_GLOBAL_BIT));
-	IRThreadData *threadData = (IRThreadData *)TlsGetValue(context->tlsIndex);
+	IRThreadData *threadData = (IRThreadData *)SYSGetThreadData(context->tlsIndex);
 	return &threadData->localValues[valueIdx];
 }
 
@@ -76,7 +76,7 @@ inline void IRUpdateValue(Context *context, u32 valueIdx, Value *value)
 	}
 	else
 	{
-		IRThreadData *threadData = (IRThreadData *)TlsGetValue(context->tlsIndex);
+		IRThreadData *threadData = (IRThreadData *)SYSGetThreadData(context->tlsIndex);
 		threadData->localValues[valueIdx] = *value;
 	}
 }
@@ -90,14 +90,14 @@ inline void IRSetValueFlags(Context *context, u32 valueIdx, u32 flags)
 	}
 	else
 	{
-		IRThreadData *threadData = (IRThreadData *)TlsGetValue(context->tlsIndex);
+		IRThreadData *threadData = (IRThreadData *)SYSGetThreadData(context->tlsIndex);
 		threadData->localValues[valueIdx].flags |= flags;
 	}
 }
 
 IRLabel *NewLabel(Context *context, String name)
 {
-	IRThreadData *threadData = (IRThreadData *)TlsGetValue(context->tlsIndex);
+	IRThreadData *threadData = (IRThreadData *)SYSGetThreadData(context->tlsIndex);
 
 	IRLabel result = {};
 
@@ -111,7 +111,7 @@ IRLabel *NewLabel(Context *context, String name)
 
 void PushIRScope(Context *context)
 {
-	IRThreadData *threadData = (IRThreadData *)TlsGetValue(context->tlsIndex);
+	IRThreadData *threadData = (IRThreadData *)SYSGetThreadData(context->tlsIndex);
 	IRScope newScope = {};
 	DynamicArrayInit(&newScope.deferredStatements, 4);
 	*DynamicArrayAdd(&threadData->irStack) = newScope;
@@ -119,14 +119,14 @@ void PushIRScope(Context *context)
 
 inline void PopIRScope(Context *context)
 {
-	IRThreadData *threadData = (IRThreadData *)TlsGetValue(context->tlsIndex);
+	IRThreadData *threadData = (IRThreadData *)SYSGetThreadData(context->tlsIndex);
 	ASSERT(threadData->irStack.size);
 	--threadData->irStack.size;
 }
 
 inline IRInstruction *AddInstruction(Context *context)
 {
-	IRThreadData *threadData = (IRThreadData *)TlsGetValue(context->tlsIndex);
+	IRThreadData *threadData = (IRThreadData *)SYSGetThreadData(context->tlsIndex);
 	return BucketArrayAdd(&threadData->irInstructions);
 }
 
@@ -649,7 +649,7 @@ void IRDoAssignment(Context *context, IRValue dstValue, IRValue srcValue)
 
 void IRInsertLabelInstruction(Context *context, IRLabel *label)
 {
-	IRThreadData *threadData = (IRThreadData *)TlsGetValue(context->tlsIndex);
+	IRThreadData *threadData = (IRThreadData *)SYSGetThreadData(context->tlsIndex);
 	label->instructionIdx = BucketArrayCount(&threadData->irInstructions);
 	IRInstruction result;
 	result.type = IRINSTRUCTIONTYPE_LABEL;
@@ -1092,7 +1092,7 @@ insertSimpleJump:
 
 IRValue IRDoInlineProcedureCall(Context *context, ASTProcedureCall astProcCall)
 {
-	IRThreadData *threadData = (IRThreadData *)TlsGetValue(context->tlsIndex);
+	IRThreadData *threadData = (IRThreadData *)SYSGetThreadData(context->tlsIndex);
 
 	ASSERT(astProcCall.callType == CALLTYPE_STATIC);
 	Procedure procedure = GetProcedureRead(context, astProcCall.procedureIdx);
@@ -1441,7 +1441,7 @@ void IRAssignmentFromExpression(Context *context, IRValue dstValue, ASTExpressio
 
 void IRGenProcedure(Context *context, u32 procedureIdx, SourceLocation loc)
 {
-	IRThreadData *threadData = (IRThreadData *)TlsGetValue(context->tlsIndex);
+	IRThreadData *threadData = (IRThreadData *)SYSGetThreadData(context->tlsIndex);
 	Procedure procedure = GetProcedureRead(context, procedureIdx);
 
 	ASSERT(procedure.astBody);
@@ -1483,7 +1483,7 @@ void IRGenProcedure(Context *context, u32 procedureIdx, SourceLocation loc)
 
 IRValue IRGenFromExpression(Context *context, const ASTExpression *expression)
 {
-	IRThreadData *threadData = (IRThreadData *)TlsGetValue(context->tlsIndex);
+	IRThreadData *threadData = (IRThreadData *)SYSGetThreadData(context->tlsIndex);
 #if DEBUG_BUILD
 	if (threadData && threadData->procedureIdx != 0)
 	{
@@ -2427,7 +2427,7 @@ void IRGenMain(Context *context)
 	}
 }
 
-DWORD IRJobProcedure(void *args)
+int IRJobProcedure(void *args)
 {
 	IRJobArgs *argsStruct = (IRJobArgs *)args;
 	Context *context = argsStruct->context;
@@ -2438,7 +2438,7 @@ DWORD IRJobProcedure(void *args)
 	threadData.returnValueIdx = GetProcedureRead(context, procedureIdx).returnValueIdx;
 	threadData.shouldReturnValueIdx = U32_MAX;
 	threadData.localValues = argsStruct->localValues;
-	TlsSetValue(context->tlsIndex, &threadData);
+	SYSSetThreadData(context->tlsIndex, &threadData);
 
 	MemoryInitThread(1 * 1024 * 1024);
 
@@ -2473,13 +2473,13 @@ DWORD IRJobProcedure(void *args)
 	return 0;
 }
 
-DWORD IRJobExpression(void *args)
+int IRJobExpression(void *args)
 {
 	IRJobArgs *argsStruct = (IRJobArgs *)args;
 	Context *context = argsStruct->context;
 
 	IRThreadData threadData = {};
-	TlsSetValue(context->tlsIndex, &threadData);
+	SYSSetThreadData(context->tlsIndex, &threadData);
 
 	MemoryInitThread(512 * 1024);
 

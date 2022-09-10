@@ -219,5 +219,5 @@ struct IRStaticVariable
 	IRValue initialValue;
 };
 
-DWORD IRJobProcedure(void *args);
-DWORD IRJobExpression(void *args);
+int IRJobProcedure(void *args);
+int IRJobExpression(void *args);

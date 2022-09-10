@@ -5,30 +5,30 @@ void SYSMutexUnlock(Mutex m);
 class [[nodiscard]] ScopedLockRead
 {
 public:
-	SRWLOCK *lock;
-	ScopedLockRead(SRWLOCK *aLock)
+	RWLock *lock;
+	ScopedLockRead(RWLock *aLock)
 	{
 		lock = aLock;
-		AcquireSRWLockShared(lock);
+		SYSLockForRead(lock);
 	}
 	~ScopedLockRead()
 	{
-		ReleaseSRWLockShared(lock);
+		SYSUnlockForRead(lock);
 	}
 };
 
 class [[nodiscard]] ScopedLockWrite
 {
 public:
-	SRWLOCK *lock;
-	ScopedLockWrite(SRWLOCK *aLock)
+	RWLock *lock;
+	ScopedLockWrite(RWLock *aLock)
 	{
 		lock = aLock;
-		AcquireSRWLockExclusive(lock);
+		SYSLockForWrite(lock);
 	}
 	~ScopedLockWrite()
 	{
-		ReleaseSRWLockExclusive(lock);
+		SYSUnlockForWrite(lock);
 	}
 };
 
@@ -67,33 +67,33 @@ class RWContainer
 {
 public:
 	T content;
-	SRWLOCK rwLock;
+	RWLock rwLock;
 
 	RWContainer()
 	{
-		InitializeSRWLock(&rwLock);
+		SYSCreateRWLock(&rwLock);
 	}
 
 	const T &LockForRead()
 	{
-		AcquireSRWLockShared(&rwLock);
+		SYSLockForRead(&rwLock);
 		return content;
 	}
 
 	void UnlockForRead()
 	{
-		ReleaseSRWLockShared(&rwLock);
+		SYSUnlockForRead(&rwLock);
 	}
 
 	T &LockForWrite()
 	{
-		AcquireSRWLockExclusive(&rwLock);
+		SYSLockForWrite(&rwLock);
 		return content;
 	}
 
 	void UnlockForWrite()
 	{
-		ReleaseSRWLockExclusive(&rwLock);
+		SYSUnlockForWrite(&rwLock);
 	}
 
 	template <typename T>

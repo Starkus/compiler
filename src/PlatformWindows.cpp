@@ -518,20 +518,104 @@ void SYSRunLinker(String outputPath, bool makeLibrary, String extraArguments)
 	CloseHandle(processInformation.hThread);
 }
 
-Mutex SYSCreateMutex()
+inline ThreadHandle SYSCreateThread(int (*start)(void *), void *args)
+{
+	return CreateThread(nullptr, 0, (DWORD (*)(void *))start, args, 0, nullptr);
+}
+
+inline void SYSWaitForThread(ThreadHandle thread)
+{
+	WaitForSingleObject(thread, INFINITE);
+}
+
+inline ThreadHandle SYSGetCurrentThread()
+{
+	return GetCurrentThread();
+}
+
+inline u32 SYSAllocThreadData()
+{
+	return TlsAlloc();
+}
+
+inline void *SYSGetThreadData(u32 key)
+{
+	return TlsGetValue(key);
+}
+
+inline bool SYSSetThreadData(u32 key, void *value)
+{
+	return TlsSetValue(key, value);
+}
+
+void SYSSetThreadDescription(ThreadHandle thread, String string)
+{
+	char buffer[512];
+	char *dst = buffer;
+	const char *src = string.data;
+	for (int i = 0; i < string.size; ++i)
+	{
+		*dst++ = *src++;
+		*dst++ = 0;
+	}
+	*dst++ = 0;
+	*dst++ = 0;
+	SetThreadDescription(thread, (PCWSTR)buffer);
+}
+
+inline Mutex SYSCreateMutex()
 {
 	return { CreateMutexA(nullptr, false, nullptr) };
 }
 
-void SYSMutexLock(Mutex m, u64 timeout = 0)
+inline void SYSMutexLock(Mutex mutex)
 {
-	if (timeout == 0) timeout = INFINITE;
-	WaitForSingleObject(m.mutexHandle, (DWORD)timeout);
+	WaitForSingleObject(mutex.mutexHandle, INFINITE);
 }
 
-void SYSMutexUnlock(Mutex m)
+inline void SYSMutexUnlock(Mutex mutex)
 {
-	ReleaseMutex(m.mutexHandle);
+	ReleaseMutex(mutex.mutexHandle);
+}
+
+inline void SYSCreateRWLock(RWLock *lock)
+{
+	InitializeSRWLock(lock);
+}
+
+inline void SYSLockForRead(RWLock *lock)
+{
+	AcquireSRWLockShared(lock);
+}
+
+inline void SYSUnlockForRead(RWLock *lock)
+{
+	ReleaseSRWLockShared(lock);
+}
+
+inline void SYSLockForWrite(RWLock *lock)
+{
+	AcquireSRWLockExclusive(lock);
+}
+
+inline void SYSUnlockForWrite(RWLock *lock)
+{
+	ReleaseSRWLockExclusive(lock);
+}
+
+inline void SYSCreateConditionVariable(ConditionVariable *conditionVar)
+{
+	InitializeConditionVariable(conditionVar);
+}
+
+inline void SYSSleepConditionVariableRead(ConditionVariable *conditionVar, RWLock *lock)
+{
+	SleepConditionVariableSRW(conditionVar, lock, INFINITE, CONDITION_VARIABLE_LOCKMODE_SHARED);
+}
+
+inline void SYSWakeAllConditionVariable(ConditionVariable *conditionVar)
+{
+	WakeAllConditionVariable(conditionVar);
 }
 
 inline void SYSSpinlockLock(volatile u32 *locked)

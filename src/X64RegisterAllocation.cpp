@@ -27,7 +27,7 @@ struct BasicBlock
 
 void X64Patch(Context *context, X64Instruction *original, X64Instruction newInst)
 {
-	IRThreadData *threadData = (IRThreadData *)TlsGetValue(context->tlsIndex);
+	IRThreadData *threadData = (IRThreadData *)SYSGetThreadData(context->tlsIndex);
 	X64Instruction *patch1 = BucketArrayAdd(&threadData->bePatchedInstructions);
 	*patch1 = newInst;
 	X64Instruction *patch2 = BucketArrayAdd(&threadData->bePatchedInstructions);
@@ -93,7 +93,7 @@ inline bool AddValue(Context *context, u32 valueIdx, DynamicArray<u32, ThreadAll
 		if (!(valueFlags & VALUEFLAGS_ON_STATIC_STORAGE |
 					VALUEFLAGS_IS_EXTERNAL))
 		{
-			IRThreadData *threadData = (IRThreadData *)TlsGetValue(context->tlsIndex);
+			IRThreadData *threadData = (IRThreadData *)SYSGetThreadData(context->tlsIndex);
 			DynamicArrayAddUnique(&threadData->spilledValues, valueIdx);
 		}
 		return false;
@@ -153,7 +153,7 @@ inline bool IsXMMFast(IRThreadData *threadData, u32 valueIdx)
 void DoLivenessAnalisisOnInstruction(Context *context, BasicBlock *basicBlock, X64Instruction *inst,
 		DynamicArray<u32, ThreadAllocator> *liveValues)
 {
-	IRThreadData *threadData = (IRThreadData *)TlsGetValue(context->tlsIndex);
+	IRThreadData *threadData = (IRThreadData *)SYSGetThreadData(context->tlsIndex);
 
 	if (context->config.logAllocationInfo)
 	{
@@ -324,7 +324,7 @@ void DoLivenessAnalisisOnInstruction(Context *context, BasicBlock *basicBlock, X
 void DoLivenessAnalisis(Context *context, BasicBlock *basicBlock,
 		DynamicArray<u32, ThreadAllocator> *liveValues)
 {
-	IRThreadData *threadData = (IRThreadData *)TlsGetValue(context->tlsIndex);
+	IRThreadData *threadData = (IRThreadData *)SYSGetThreadData(context->tlsIndex);
 
 	if (context->config.logAllocationInfo)
 		Print("Doing liveness analisis on block %S %d-%d\n",
@@ -373,7 +373,7 @@ void DoLivenessAnalisis(Context *context, BasicBlock *basicBlock,
 
 void GenerateBasicBlocks(Context *context)
 {
-	IRThreadData *threadData = (IRThreadData *)TlsGetValue(context->tlsIndex);
+	IRThreadData *threadData = (IRThreadData *)SYSGetThreadData(context->tlsIndex);
 
 	if (context->config.logAllocationInfo)
 		Print("GENERATING BASIC BLOCKS FOR %S\n",
@@ -464,7 +464,7 @@ foundBlock:
 
 void ResolveStackOffsets(Context *context)
 {
-	IRThreadData *threadData = (IRThreadData *)TlsGetValue(context->tlsIndex);
+	IRThreadData *threadData = (IRThreadData *)SYSGetThreadData(context->tlsIndex);
 
 	DynamicArray<s64, ThreadAllocator> stack;
 	DynamicArrayInit(&stack, 16);
@@ -630,7 +630,7 @@ inline u64 RegisterSavingInstruction(Context *context, X64Instruction *inst, u64
 
 void X64AllocateRegisters(Context *context)
 {
-	IRThreadData *threadData = (IRThreadData *)TlsGetValue(context->tlsIndex);
+	IRThreadData *threadData = (IRThreadData *)SYSGetThreadData(context->tlsIndex);
 
 	BucketArrayInit(&threadData->beBasicBlocks);
 

@@ -5,7 +5,11 @@
 #include <process.h>
 
 typedef HANDLE FileHandle;
+typedef HANDLE ThreadHandle;
+typedef SRWLOCK RWLock;
+typedef CONDITION_VARIABLE ConditionVariable;
 #define SYS_INVALID_FILE_HANDLE INVALID_HANDLE_VALUE
+#define SYS_INVALID_THREAD_HANDLE INVALID_HANDLE_VALUE
 #define SYS_MAX_PATH MAX_PATH
 #if DEBUG_BUILD
 #define BREAK __debugbreak()

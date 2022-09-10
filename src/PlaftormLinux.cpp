@@ -229,3 +229,144 @@ void SYSRunLinker(String outputPath, bool makeLibrary, String extraArguments)
 	}
 #endif
 }
+
+inline ThreadHandle SYSCreateThread(int (*start)(void *), void *args)
+{
+	return CreateThread(nullptr, 0, (DWORD (*)(void *))start, args, 0, nullptr);
+}
+
+inline void SYSWaitForThread(ThreadHandle thread)
+{
+	WaitForSingleObject(thread, INFINITE);
+}
+
+inline ThreadHandle SYSGetCurrentThread()
+{
+	return GetCurrentThread();
+}
+
+inline u32 SYSAllocThreadData()
+{
+	u32 key;
+	ASSERT(pthread_key_create(&key, nullptr) == 0);
+	return key;
+}
+
+inline void *SYSGetThreadData(u32 key)
+{
+	return pthread_get_specific(key);
+}
+
+inline bool SYSSetThreadData(u32 key, void *value)
+{
+	return pthread_set_specific(key, value) == 0;
+}
+
+void SYSSetThreadDescription(ThreadHandle thread, String string)
+{
+	char buffer[32];
+	strncpy(buffer, string.data, string.size);
+	if (string.size < 32)
+		buffer[string.size] = 0;
+	pthread_setname_np(thread, buffer);
+}
+
+inline Mutex SYSCreateMutex()
+{
+	Mutex mutex;
+	ASSERT(pthread_mutex_init(&mutex) == 0);
+	return mutex;
+}
+
+inline void SYSMutexLock(Mutex &mutex)
+{
+	pthread_mutex_lock(&mutex);
+}
+
+inline void SYSMutexUnlock(Mutex &mutex)
+{
+	pthread_mutex_unlock(&mutex);
+}
+
+inline void SYSCreateRWLock(RWLock *lock)
+{
+	pthread_rwlock_init(lock, nullptr);
+}
+
+inline void SYSLockForRead(RWLock *lock)
+{
+	pthread_rwlock_rdlock(lock);
+}
+
+inline void SYSUnlockForRead(RWLock *lock)
+{
+	pthread_rwlock_unlock(lock);
+}
+
+inline void SYSLockForWrite(RWLock *lock)
+{
+	pthread_rwlock_wrlock(lock);
+}
+
+inline void SYSUnlockForWrite(RWLock *lock)
+{
+	pthread_rwlock_unlock(lock);
+}
+
+struct ConditionVariable
+{
+	pthread_mutex_t mutex;
+	DynamicArray<sem_t, LinearAllocator> semaphores;
+};
+
+inline void SYSCreateConditionVariable(ConditionVariable *conditionVar)
+{
+	ASSERT(pthread_mutex_init(&conditionVar->mutex) == 0);
+	DynamicArrayInit(&conditionVar->semaphores, 8);
+}
+
+inline void SYSSleepConditionVariableRead(ConditionVariable *conditionVar, RWLock *lock)
+{
+	pthread_mutex_lock(&conditionVar->mutex);
+	sem_t *newSemaphore = DynamicArrayAdd(&conditionVar->semaphores);
+	sem_init(newSemaphore, 0, 0);
+	pthread_mutex_unlock(&conditionVar->mutex);
+
+	SYSLockForRead(lock);
+	sem_wait(newSemaphore);
+	SYSUnlockForRead(lock);
+}
+
+inline void SYSWakeAllConditionVariable(ConditionVariable *conditionVar)
+{
+	pthread_mutex_lock(&conditionVar->mutex);
+	for (int i = 0; i < conditionVar->semaphores.size; ++i)
+		sem_post(&conditionVar->semaphores[i]);
+	pthread_mutex_unlock(&conditionVar->mutex);
+}
+
+inline void SYSSpinlockLock(volatile u32 *locked)
+{
+	int oldLocked = 1;
+retry:
+	int eax = 0;
+	asm volatile("xacquire lock cmpxchg %2, %1"
+					: "+a" (eax), "+m" (*locked)
+					: "r" (oldLocked) : "memory", "cc");
+	if (eax)
+		goto ret;
+
+pause:
+	if (!*locked)
+		goto retry;
+	_mm_pause();
+	goto pause;
+
+ret:
+	return;
+}
+
+inline void SYSSpinlockUnlock(volatile u32 *locked)
+{
+    asm volatile("xrelease movl %1, %0" : "+m"(*locked) : "i"(0) : "memory");
+}

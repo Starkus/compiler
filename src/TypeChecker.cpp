@@ -1,6 +1,6 @@
 u32 TCNewValue(Context *context, u32 typeTableIdx, u32 flags, u32 immitateValueIdx = U32_MAX)
 {
-	TCThreadData *threadData = (TCThreadData *)TlsGetValue(context->tlsIndex);
+	TCThreadData *threadData = (TCThreadData *)SYSGetThreadData(context->tlsIndex);
 
 	ASSERT(typeTableIdx != 0);
 	ASSERT(!(flags & VALUEFLAGS_TRY_IMMITATE) || immitateValueIdx != U32_MAX);
@@ -18,7 +18,7 @@ u32 TCNewValue(Context *context, u32 typeTableIdx, u32 flags, u32 immitateValueI
 
 u32 TCNewValue(Context *context, String name, u32 typeTableIdx, u32 flags, u32 immitateValueIdx = U32_MAX)
 {
-	TCThreadData *threadData = (TCThreadData *)TlsGetValue(context->tlsIndex);
+	TCThreadData *threadData = (TCThreadData *)SYSGetThreadData(context->tlsIndex);
 
 	ASSERT(typeTableIdx != 0);
 	ASSERT(!(flags & VALUEFLAGS_TRY_IMMITATE) || immitateValueIdx != U32_MAX);
@@ -36,7 +36,7 @@ u32 TCNewValue(Context *context, String name, u32 typeTableIdx, u32 flags, u32 i
 
 u32 TCNewValue(Context *context, Value value)
 {
-	TCThreadData *threadData = (TCThreadData *)TlsGetValue(context->tlsIndex);
+	TCThreadData *threadData = (TCThreadData *)SYSGetThreadData(context->tlsIndex);
 
 	ASSERT(value.typeTableIdx != 0);
 	ASSERT(!(value.flags & VALUEFLAGS_TRY_IMMITATE) || value.tryImmitateValueIdx != U32_MAX);
@@ -51,7 +51,7 @@ u32 TCNewValue(Context *context, Value value)
 
 inline Value *TCGetValue(Context *context, u32 valueIdx)
 {
-	TCThreadData *threadData = (TCThreadData *)TlsGetValue(context->tlsIndex);
+	TCThreadData *threadData = (TCThreadData *)SYSGetThreadData(context->tlsIndex);
 	ASSERT(!(valueIdx & VALUE_GLOBAL_BIT));
 	return &threadData->localValues[valueIdx];
 }
@@ -134,7 +134,7 @@ inline void TCSetValueFlags(Context *context, u32 valueIdx, u32 flags)
 	}
 	else
 	{
-		TCThreadData *threadData = (TCThreadData *)TlsGetValue(context->tlsIndex);
+		TCThreadData *threadData = (TCThreadData *)SYSGetThreadData(context->tlsIndex);
 		threadData->localValues[valueIdx].flags |= flags;
 	}
 }
@@ -145,7 +145,7 @@ inline Value TCGetValueRead(Context *context, u32 valueIdx)
 		return GetGlobalValue(context, valueIdx);
 	else
 	{
-		TCThreadData *threadData = (TCThreadData *)TlsGetValue(context->tlsIndex);
+		TCThreadData *threadData = (TCThreadData *)SYSGetThreadData(context->tlsIndex);
 		return threadData->localValues[valueIdx];
 	}
 }
@@ -185,7 +185,7 @@ inline void UpdateProcedure(Context *context, u32 procedureIdx, Procedure *value
 
 TCScope *GetTopMostScope(Context *context)
 {
-	TCThreadData *threadData = (TCThreadData *)TlsGetValue(context->tlsIndex);
+	TCThreadData *threadData = (TCThreadData *)SYSGetThreadData(context->tlsIndex);
 	if (threadData->scopeStack.size > 0)
 		return DynamicArrayBack(&threadData->scopeStack);
 	else
@@ -307,7 +307,7 @@ String TypeInfoToString(Context *context, u32 typeTableIdx)
 
 inline void PushTCScope(Context *context)
 {
-	TCThreadData *threadData = (TCThreadData *)TlsGetValue(context->tlsIndex);
+	TCThreadData *threadData = (TCThreadData *)SYSGetThreadData(context->tlsIndex);
 
 	TCScope *newScope = DynamicArrayAdd(&threadData->scopeStack);
 
@@ -317,7 +317,7 @@ inline void PushTCScope(Context *context)
 
 inline void PopTCScope(Context *context)
 {
-	TCThreadData *threadData = (TCThreadData *)TlsGetValue(context->tlsIndex);
+	TCThreadData *threadData = (TCThreadData *)SYSGetThreadData(context->tlsIndex);
 	--threadData->scopeStack.size;
 }
 
@@ -371,7 +371,7 @@ inline bool TCAreaAllJobFinished(Context *context)
 // Returns true if it signaled a dead stop, so we don't go to sleep right after the wake
 bool TCSetJobState(Context *context, JobState jobState)
 {
-	TCThreadData *threadData = (TCThreadData *)TlsGetValue(context->tlsIndex);
+	TCThreadData *threadData = (TCThreadData *)SYSGetThreadData(context->tlsIndex);
 
 	if (context->tcJobStates[threadData->jobIdx] != jobState)
 	{
@@ -386,12 +386,12 @@ bool TCSetJobState(Context *context, JobState jobState)
 	{
 		// Signal dead stop
 		auto conditionVariables = context->tcConditionVariables.GetForRead();
-		CONDITION_VARIABLE *values = HashMapValues(*conditionVariables);
+		ConditionVariable *values = HashMapValues(*conditionVariables);
 		for (u32 i = 0; i < (u32)conditionVariables->capacity; ++i)
 			if (HashMapSlotOccupied(*conditionVariables, i))
-				WakeAllConditionVariable(&values[i]);
+				SYSWakeAllConditionVariable(&values[i]);
 
-		WakeAllConditionVariable(&context->operatorOverloadsConditionVariable);
+		SYSWakeAllConditionVariable(&context->operatorOverloadsConditionVariable);
 		return true;
 	}
 	return false;
@@ -437,7 +437,7 @@ bool TCYieldIdentifier(Context *context, String name, SRWLOCK *lock)
 #endif
 		return false;
 	}
-	CONDITION_VARIABLE *conditionVar = nullptr;
+	ConditionVariable *conditionVar = nullptr;
 	{
 		auto conditionVariables = context->tcConditionVariables.GetForRead();
 		conditionVar = HashMapGet(*conditionVariables, name);
@@ -449,7 +449,7 @@ bool TCYieldIdentifier(Context *context, String name, SRWLOCK *lock)
 		if (!conditionVar)
 		{
 			conditionVar = HashMapGetOrAdd(&conditionVariables, name);
-			InitializeConditionVariable(conditionVar);
+			SYSCreateConditionVariable(conditionVar);
 		}
 	}
 	SleepConditionVariableSRW(conditionVar, lock, INFINITE,
@@ -462,7 +462,7 @@ bool TCYieldIdentifier(Context *context, String name, SRWLOCK *lock)
 
 TCScopeName TCFindScopeName(Context *context, String name)
 {
-	TCThreadData *threadData = (TCThreadData *)TlsGetValue(context->tlsIndex);
+	TCThreadData *threadData = (TCThreadData *)SYSGetThreadData(context->tlsIndex);
 
 	// Current stack
 	ArrayView<TCScope> scopeStack = threadData->scopeStack;
@@ -495,7 +495,7 @@ TCScopeName TCFindScopeName(Context *context, String name)
 			TCSetJobState(context, JOBSTATE_RUNNING);
 			return { NAMETYPE_INVALID };
 		}
-		CONDITION_VARIABLE *conditionVar = nullptr;
+		ConditionVariable *conditionVar = nullptr;
 		{
 			auto conditionVariables = context->tcConditionVariables.GetForRead();
 			conditionVar = HashMapGet(*conditionVariables, name);
@@ -507,7 +507,7 @@ TCScopeName TCFindScopeName(Context *context, String name)
 			if (!conditionVar)
 			{
 				conditionVar = HashMapGetOrAdd(&conditionVariables, name);
-				InitializeConditionVariable(conditionVar);
+				SYSCreateConditionVariable(conditionVar);
 			}
 		}
 		SleepConditionVariableSRW(conditionVar, &context->tcGlobalScope.rwLock, INFINITE,
@@ -523,7 +523,7 @@ inline u32 TCNewStaticDefinition(Context *context, StaticDefinition *value)
 	*BucketArrayAdd(&staticDefinitions) = *value;
 	ASSERT(result < U32_MAX);
 
-	CONDITION_VARIABLE *conditionVar = nullptr;
+	ConditionVariable *conditionVar = nullptr;
 	{
 		auto conditionVariables = context->tcConditionVariables.GetForWrite();
 		conditionVar = HashMapGet(*conditionVariables, value->name);
@@ -531,7 +531,7 @@ inline u32 TCNewStaticDefinition(Context *context, StaticDefinition *value)
 			HashMapRemove(&conditionVariables, value->name);
 	}
 	if (conditionVar)
-		WakeAllConditionVariable(conditionVar);
+		SYSWakeAllConditionVariable(conditionVar);
 
 	return (u32)result;
 }
@@ -570,7 +570,7 @@ inline void TCUpdateStaticDefinition(Context *context, u32 staticDefinitionIdx,
 		(*staticDefinitions)[staticDefinitionIdx] = *value;
 	}
 
-	CONDITION_VARIABLE *conditionVar = nullptr;
+	ConditionVariable *conditionVar = nullptr;
 	{
 		auto conditionVariables = context->tcConditionVariables.GetForWrite();
 		conditionVar = HashMapGet(*conditionVariables, value->name);
@@ -578,7 +578,7 @@ inline void TCUpdateStaticDefinition(Context *context, u32 staticDefinitionIdx,
 			HashMapRemove(&conditionVariables, value->name);
 	}
 	if (conditionVar)
-		WakeAllConditionVariable(conditionVar);
+		SYSWakeAllConditionVariable(conditionVar);
 }
 
 u32 FindTypeInStackByName(Context *context, SourceLocation loc, String name)
@@ -1718,7 +1718,7 @@ inline void TCAddScopeName(Context *context, TCScopeName scopeName)
 			*DynamicArrayAdd(&globalScope->names) = scopeName;
 		}
 
-		CONDITION_VARIABLE *conditionVar = nullptr;
+		ConditionVariable *conditionVar = nullptr;
 		{
 			auto conditionVariables = context->tcConditionVariables.GetForWrite();
 			conditionVar = HashMapGet(*conditionVariables, scopeName.name);
@@ -1726,7 +1726,7 @@ inline void TCAddScopeName(Context *context, TCScopeName scopeName)
 				HashMapRemove(&conditionVariables, scopeName.name);
 		}
 		if (conditionVar)
-			WakeAllConditionVariable(conditionVar);
+			SYSWakeAllConditionVariable(conditionVar);
 	}
 }
 
@@ -2478,7 +2478,7 @@ ASTExpression InlineProcedureCopyTreeBranch(Context *context, const ASTExpressio
 	}
 	case ASTNODETYPE_FOR:
 	{
-		TCThreadData *threadData = (TCThreadData *)TlsGetValue(context->tlsIndex);
+		TCThreadData *threadData = (TCThreadData *)SYSGetThreadData(context->tlsIndex);
 
 		ASTFor astFor = expression->forNode;
 
@@ -2915,7 +2915,7 @@ bool LookForOperatorOverload(Context *context, ASTExpression *expression)
 
 		if (!TCSetJobState(context, JOBSTATE_WAITING_FOR_STOP))
 		{
-			CONDITION_VARIABLE *conditionVar = &context->operatorOverloadsConditionVariable;
+			ConditionVariable *conditionVar = &context->operatorOverloadsConditionVariable;
 			SleepConditionVariableSRW(conditionVar, &context->operatorOverloads.rwLock, INFINITE,
 					CONDITION_VARIABLE_LOCKMODE_SHARED);
 		}
@@ -2927,7 +2927,7 @@ bool LookForOperatorOverload(Context *context, ASTExpression *expression)
 void GenerateTypeCheckJobs(Context *context, ASTExpression *expression);
 void TryTypeCheckExpression(Context *context, ASTExpression *expression)
 {
-	TCThreadData *threadData = (TCThreadData *)TlsGetValue(context->tlsIndex);
+	TCThreadData *threadData = (TCThreadData *)SYSGetThreadData(context->tlsIndex);
 
 	ASSERT(expression->typeTableIdx == TYPETABLEIDX_Unset);
 
@@ -3003,7 +3003,7 @@ void TryTypeCheckExpression(Context *context, ASTExpression *expression)
 		{
 			IRJobArgs *args = ALLOC(LinearAllocator::Alloc, IRJobArgs);
 			*args = { context, 0, {}, expression };
-			HANDLE irThread = CreateThread(nullptr, 0, IRJobExpression, (void *)args, 0, nullptr);
+			ThreadHandle irThread = SYSCreateThread(IRJobExpression, (void *)args);
 			{
 				auto irThreads = context->irThreads.Get();
 				*DynamicArrayAdd(&irThreads) = irThread;
@@ -3132,7 +3132,7 @@ void TryTypeCheckExpression(Context *context, ASTExpression *expression)
 				IRJobArgs *args = ALLOC(LinearAllocator::Alloc, IRJobArgs);
 				*args = { context, procedureIdx, threadData->localValues, nullptr };
 				threadData->localValues = {}; // Safety clear
-				HANDLE irThread = CreateThread(nullptr, 0, IRJobProcedure, (void *)args, 0, nullptr);
+				ThreadHandle irThread = SYSCreateThread(IRJobProcedure, (void *)args);
 				{
 					auto irThreads = context->irThreads.Get();
 					*DynamicArrayAdd(&irThreads) = irThread;
@@ -4099,7 +4099,7 @@ void TryTypeCheckExpression(Context *context, ASTExpression *expression)
 			auto operatorOverloads = context->operatorOverloads.GetForWrite();
 			*DynamicArrayAdd(&operatorOverloads) = overload;
 		}
-		WakeAllConditionVariable(&context->operatorOverloadsConditionVariable);
+		SYSWakeAllConditionVariable(&context->operatorOverloadsConditionVariable);
 
 		for (int i = 0; i < paramCount; ++i)
 		{
@@ -4197,7 +4197,7 @@ void TryTypeCheckExpression(Context *context, ASTExpression *expression)
 				isDefined = false;
 				goto done;
 sleep:
-				CONDITION_VARIABLE *conditionVar = nullptr;
+				ConditionVariable *conditionVar = nullptr;
 				{
 					auto conditionVariables = context->tcConditionVariables.GetForRead();
 					conditionVar = HashMapGet(*conditionVariables, identifier);
@@ -4209,7 +4209,7 @@ sleep:
 					if (!conditionVar)
 					{
 						conditionVar = HashMapGetOrAdd(&conditionVariables, identifier);
-						InitializeConditionVariable(conditionVar);
+						SYSCreateConditionVariable(conditionVar);
 					}
 				}
 				SleepConditionVariableSRW(conditionVar, &context->tcGlobalScope.rwLock, INFINITE,
@@ -4228,7 +4228,7 @@ done:
 	}
 }
 
-DWORD TCJobProc(void *args)
+int TCJobProc(void *args)
 {
 	TCJobArgs *argsStruct = (TCJobArgs *)args;
 	Context *context = argsStruct->context;
@@ -4238,13 +4238,13 @@ DWORD TCJobProc(void *args)
 	threadData.fileIdx = expression->any.loc.fileIdx;
 	threadData.onStaticContext = true;
 	threadData.currentReturnType = TYPETABLEIDX_Unset;
-	TlsSetValue(context->tlsIndex, &threadData);
+	SYSSetThreadData(context->tlsIndex, &threadData);
 
 	MemoryInitThread(1 * 1024 * 1024);
 
 #if !FINAL_BUILD
-	String threadName = "???"_s;
-	HANDLE thread = GetCurrentThread();
+	String threadName = "TC:???"_s;
+	ThreadHandle thread = SYSGetCurrentThread();
 	switch (expression->nodeType)
 	{
 	case ASTNODETYPE_STATIC_DEFINITION:
@@ -4275,18 +4275,7 @@ DWORD TCJobProc(void *args)
 		threadName = "TC:Static if"_s;
 	} break;
 	}
-
-	char buffer[512];
-	char *dst = buffer;
-	const char *src = threadName.data;
-	for (int i = 0; i < threadName.size; ++i)
-	{
-		*dst++ = *src++;
-		*dst++ = 0;
-	}
-	*dst++ = 0;
-	*dst++ = 0;
-	SetThreadDescription(thread, (PCWSTR)buffer);
+	SYSSetThreadDescription(thread, threadName);
 #endif
 
 	switch (expression->nodeType)
@@ -4346,7 +4335,7 @@ void GenerateTypeCheckJobs(Context *context, ASTExpression *expression)
 
 		TCJobArgs *args = ALLOC(LinearAllocator::Alloc, TCJobArgs);
 		*args = { context, jobIdx, expression };
-		HANDLE tcThread = CreateThread(nullptr, 0, TCJobProc, (void *)args, 0, nullptr);
+		ThreadHandle tcThread = SYSCreateThread(TCJobProc, (void *)args);
 
 		{
 			ScopedLockSpin threadsLock(&context->tcThreadsLock);
@@ -4390,8 +4379,7 @@ void TypeCheckMain(Context *context)
 		nullptr,
 		true
 	};
-	context->tcNewGlobalNameEvent = CreateEventA(&attr, false, false, "tcNewGlobalNameEvent");
-	InitializeConditionVariable(&context->operatorOverloadsConditionVariable);
+	SYSCreateConditionVariable(&context->operatorOverloadsConditionVariable);
 
 	{
 		auto staticDefinitions = context->staticDefinitions.GetForWrite();

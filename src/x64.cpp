@@ -74,7 +74,7 @@ X64Instruction *X64InstructionStreamAdvance(X64InstructionStream *iterator)
 
 s64 PrintOut(Context *context, const char *format, ...)
 {
-	ThreadDataCommon *threadData = (ThreadDataCommon *)TlsGetValue(g_memory->tlsIndex);
+	ThreadDataCommon *threadData = (ThreadDataCommon *)SYSGetThreadData(g_memory->tlsIndex);
 	char *buffer = (char *)threadData->threadMemPtr;
 
 	va_list args;
@@ -475,7 +475,7 @@ bool CanValueBeMemory(Context *context, IRValue value)
 void X64Mov(Context *context, IRValue dst, IRValue src);
 void X64MovNoTmp(Context *context, IRValue dst, IRValue src)
 {
-	IRThreadData *threadData = (IRThreadData *)TlsGetValue(context->tlsIndex);
+	IRThreadData *threadData = (IRThreadData *)SYSGetThreadData(context->tlsIndex);
 
 	X64Instruction result;
 	TypeInfo dstType = GetTypeInfo(context, StripAllAliases(context, dst.typeTableIdx));
@@ -637,7 +637,7 @@ void X64Mov(Context *context, IRValue dst, IRValue src)
 
 void X64Test(Context *context, IRValue value)
 {
-	IRThreadData *threadData = (IRThreadData *)TlsGetValue(context->tlsIndex);
+	IRThreadData *threadData = (IRThreadData *)SYSGetThreadData(context->tlsIndex);
 
 	X64FloatingType floatingType = X64FLOATINGTYPE_NONE;
 	TypeInfo typeInfo = GetTypeInfo(context, value.typeTableIdx);
@@ -706,7 +706,7 @@ IRValue X64PushRegisterParameter(u32 typeTableIdx, s32 *numberOfGPR, s32 *number
 
 void X64CopyMemory(Context *context, IRValue dst, IRValue src, IRValue size)
 {
-	IRThreadData *threadData = (IRThreadData *)TlsGetValue(context->tlsIndex);
+	IRThreadData *threadData = (IRThreadData *)SYSGetThreadData(context->tlsIndex);
 
 	ASSERT(dst.valueType == IRVALUETYPE_VALUE ||
 		   dst.valueType == IRVALUETYPE_VALUE_DEREFERENCE);
@@ -782,7 +782,7 @@ bool X64WinABIShouldPassByCopy(Context *context, u32 typeTableIdx)
 Array<u32, ThreadAllocator> X64ReadyWin64Parameters(Context *context,
 		ArrayView<IRValue> parameters, bool isCaller)
 {
-	IRThreadData *threadData = (IRThreadData *)TlsGetValue(context->tlsIndex);
+	IRThreadData *threadData = (IRThreadData *)SYSGetThreadData(context->tlsIndex);
 
 	int parameterCount = (int)parameters.size;
 
@@ -870,7 +870,7 @@ Array<u32, ThreadAllocator> X64ReadyWin64Parameters(Context *context,
 Array<u32, ThreadAllocator> X64ReadyLinuxParameters(Context *context,
 		ArrayView<IRValue> parameters, bool isCaller)
 {
-	IRThreadData *threadData = (IRThreadData *)TlsGetValue(context->tlsIndex);
+	IRThreadData *threadData = (IRThreadData *)SYSGetThreadData(context->tlsIndex);
 
 	int parameterCount = (int)parameters.size;
 
@@ -1071,7 +1071,7 @@ Array<u32, ThreadAllocator> X64ReadyLinuxParameters(Context *context,
 
 void X64ConvertInstruction(Context *context, IRInstruction inst)
 {
-	IRThreadData *threadData = (IRThreadData *)TlsGetValue(context->tlsIndex);
+	IRThreadData *threadData = (IRThreadData *)SYSGetThreadData(context->tlsIndex);
 	X64Instruction result = {};
 
 	X64FloatingType floatingType = X64FLOATINGTYPE_NONE;
@@ -2748,7 +2748,7 @@ void BackendGenerateOutputFile(Context *context)
 #endif
 
 	// String literals
-	IRThreadData *threadData = (IRThreadData *)TlsGetValue(context->tlsIndex);
+	IRThreadData *threadData = (IRThreadData *)SYSGetThreadData(context->tlsIndex);
 	{
 		auto stringLiterals = context->stringLiterals.GetForRead();
 		s64 strCount = (s64)BucketArrayCount(&stringLiterals);
@@ -3001,7 +3001,7 @@ void BackendGenerateOutputFile(Context *context)
 
 void BackendJobProc(Context *context, u32 procedureIdx)
 {
-	IRThreadData *threadData = (IRThreadData *)TlsGetValue(context->tlsIndex);
+	IRThreadData *threadData = (IRThreadData *)SYSGetThreadData(context->tlsIndex);
 
 	// Initialize generic parameter values
 	for (int paramIdx = 0; paramIdx < 32; ++paramIdx)
