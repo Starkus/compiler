@@ -1403,7 +1403,7 @@ ASTExpression ParseStaticStatement(Context *context)
 		}
 
 		ASTOperatorOverload overload = {};
-		overload.loc = threadData->token->loc;
+		overload.loc = result.any.loc;
 		overload.op = op;
 		overload.isInline = isInline;
 		overload.prototype = ParseProcedurePrototype(context);

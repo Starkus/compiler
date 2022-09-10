@@ -1444,8 +1444,7 @@ void IRGenProcedure(Context *context, u32 procedureIdx, SourceLocation loc)
 	IRThreadData *threadData = (IRThreadData *)TlsGetValue(context->tlsIndex);
 	Procedure procedure = GetProcedureRead(context, procedureIdx);
 
-	if (!procedure.astBody)
-		return;
+	ASSERT(procedure.astBody);
 
 	BucketArrayInit(&threadData->irInstructions);
 
@@ -2460,14 +2459,15 @@ DWORD IRJobProcedure(void *args)
 	SetThreadDescription(thread, (PCWSTR)buffer);
 #endif
 
+	ASSERT(GetProcedureRead(context, procedureIdx).astBody != nullptr);
+
 	BucketArrayInit(&threadData.irInstructions);
 	DynamicArrayInit(&threadData.irStack, 64);
 	BucketArrayInit(&threadData.irLabels);
 
 	IRGenProcedure(context, procedureIdx, {});
 
-	if (GetProcedureRead(context, procedureIdx).astBody)
-		BackendJobProc(context, procedureIdx);
+	BackendJobProc(context, procedureIdx);
 
 	SYSFree(threadData.threadMem);
 	return 0;

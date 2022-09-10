@@ -68,7 +68,7 @@ T *ArrayAdd(Array<T, A> *array)
 template <typename T, typename A>
 void ArrayAddMT(Array<T, A> *array, T value)
 {
-	array->data[array->size + 1] = value;
+	array->data[array->size] = value;
 	++array->size;
 #if DEBUG_BUILD
 	ASSERT(array->size <= array->_capacity);
@@ -177,7 +177,7 @@ void DynamicArrayAddMT(DynamicArray<T, A> *array, T value)
 		array->capacity *= 2;
 		array->data = (T*)A::Realloc(array->data, array->capacity * sizeof(T));
 	}
-	array->data[array->size + 1] = value;
+	array->data[array->size] = value;
 	++array->size;
 }
 

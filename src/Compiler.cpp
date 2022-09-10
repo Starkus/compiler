@@ -176,8 +176,11 @@ struct Context
 
 	// Type check -----
 	Array<TCScopeName, HeapAllocator> tcPrimitiveTypes;
-	SLContainer<DynamicArray<HANDLE, HeapAllocator>> tcThreads; // Lock only to write
-	SLContainer<DynamicArray<JobState, HeapAllocator>> tcJobStates; // Lock only to write
+
+	volatile u32 tcThreadsLock;
+	DynamicArray<HANDLE, HeapAllocator> tcThreads; // Lock only to write
+	DynamicArray<JobState, HeapAllocator> tcJobStates; // Lock only to write
+
 	RWContainer<BucketArray<Value, HeapAllocator, 1024>> globalValues;
 	RWContainer<BucketArray<Procedure, HeapAllocator, 512>> procedures;
 	RWContainer<BucketArray<Procedure, HeapAllocator, 128>> externalProcedures;
@@ -464,28 +467,9 @@ int main(int argc, char **argv)
 			WaitForSingleObject(thread, INFINITE);
 	}
 
-	while (true)
+	for (u64 threadIdx = 0; threadIdx < context.tcThreads.size; ++threadIdx)
 	{
-		WaitForMultipleObjects((DWORD)context.tcThreads.content.size,
-				context.tcThreads.content.data, false, INFINITE);
-		if (TCAreaAllJobFinished(&context))
-			break;
-		else if (!TCIsAnyJobRunning(&context))
-		{
-			auto conditionVariables = context.tcConditionVariables.GetForRead();
-			CONDITION_VARIABLE *values = HashMapValues(*conditionVariables);
-			for (u32 i = 0; i < (u32)conditionVariables->capacity; ++i)
-				if (HashMapSlotOccupied(*conditionVariables, i))
-					WakeAllConditionVariable(&values[i]);
-
-			WakeAllConditionVariable(&context.operatorOverloadsConditionVariable);
-		}
-	}
-
-	// Unsafe reads!
-	for (u64 threadIdx = 0; threadIdx < context.tcThreads.content.size; ++threadIdx)
-	{
-		HANDLE thread = context.tcThreads.content[threadIdx];
+		HANDLE thread = context.tcThreads[threadIdx];
 		if (thread != INVALID_HANDLE_VALUE)
 			WaitForSingleObject(thread, INFINITE);
 	}
