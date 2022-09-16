@@ -47,7 +47,7 @@ struct Array
 template <typename T, typename A>
 void ArrayInit(Array<T, A> *array, u64 capacity)
 {
-	array->data = (T*)A::Alloc(sizeof(T) * capacity);
+	array->data = (T*)A::Alloc(sizeof(T) * capacity, alignof(T));
 	array->size = 0;
 #if DEBUG_BUILD
 	array->_capacity = capacity;
@@ -150,7 +150,7 @@ template <typename T, typename A>
 void DynamicArrayInit(DynamicArray<T, A> *array, u64 initialCapacity)
 {
 	ASSERT(initialCapacity);
-	array->data = (T*)A::Alloc(sizeof(T) * initialCapacity);
+	array->data = (T*)A::Alloc(sizeof(T) * initialCapacity, alignof(T));
 	array->size = 0;
 	array->capacity = initialCapacity;
 }
@@ -162,7 +162,7 @@ T *DynamicArrayAdd(DynamicArray<T, A> *array)
 	if (array->size >= array->capacity)
 	{
 		array->capacity *= 2;
-		array->data = (T*)A::Realloc(array->data, array->capacity * sizeof(T));
+		array->data = (T*)A::Realloc(array->data, array->capacity * sizeof(T), alignof(T));
 	}
 	return &array->data[array->size++];
 }
@@ -175,7 +175,7 @@ void DynamicArrayAddMT(DynamicArray<T, A> *array, T value)
 	if (array->size >= array->capacity)
 	{
 		array->capacity *= 2;
-		array->data = (T*)A::Realloc(array->data, array->capacity * sizeof(T));
+		array->data = (T*)A::Realloc(array->data, array->capacity * sizeof(T), alignof(T));
 	}
 	array->data[array->size] = value;
 	++array->size;
@@ -191,7 +191,7 @@ T *DynamicArrayAddMany(DynamicArray<T, A> *array, s64 count)
 		array->capacity *= 2;
 	}
 	if (reallocate)
-		array->data = (T*)A::Realloc(array->data, array->capacity * sizeof(T));
+		array->data = (T*)A::Realloc(array->data, array->capacity * sizeof(T), alignof(T));
 
 	T *first = &array->data[array->size];
 	array->size = newSize;
@@ -209,7 +209,7 @@ bool DynamicArrayAddUnique(DynamicArray<T, A> *array, T value)
 	if (array->size >= array->capacity)
 	{
 		array->capacity *= 2;
-		array->data = (T*)A::Realloc(array->data, array->capacity * sizeof(T));
+		array->data = (T*)A::Realloc(array->data, array->capacity * sizeof(T), alignof(T));
 	}
 	array->data[array->size++] = value;
 	return true;
@@ -275,7 +275,7 @@ void HybridArrayInit(HybridArray<T, bufferCapacity, A> *array, u64 initialCapaci
 	if (initialCapacity > bufferCapacity)
 	{
 		u64 allocSize = (initialCapacity - bufferCapacity) * sizeof(T);
-		array->extendedBuffer = (T*)A::Alloc(allocSize);
+		array->extendedBuffer = (T*)A::Alloc(allocSize, alignof(T));
 	}
 }
 
@@ -286,7 +286,7 @@ T *HybridArrayAdd(HybridArray<T, bufferCapacity, A> *array)
 	{
 		array->capacity *= 2;
 		u64 newSize = (array->capacity - bufferCapacity) * sizeof(T);
-		array->extendedBuffer = (T*)A::Realloc(array->extendedBuffer, newSize);
+		array->extendedBuffer = (T*)A::Realloc(array->extendedBuffer, newSize, alignof(T));
 	}
 	T *result = &(*array)[array->size++];
 	return result;
@@ -493,7 +493,7 @@ inline void HashSetInit(HashSet<K,A> *hashSet, u32 capacity)
 
 	u64 bookkeepSize = capacity >> 3; // divide by 8
 	u64 keyMemorySize = capacity * sizeof(K);
-	hashSet->memory = A::Alloc(bookkeepSize + keyMemorySize);
+	hashSet->memory = A::Alloc(bookkeepSize + keyMemorySize, 1); // @Todo: alignment!
 	hashSet->capacity = capacity;
 
 	HashSetClear(*hashSet);
@@ -655,7 +655,7 @@ inline void HashMapInit(HashMap<K,V,A> *hashMap, u32 capacity)
 	u64 bookkeepSize = capacity >> 3;
 	u64 keyMemorySize = capacity * sizeof(K);
 	u64 valueMemorySize = capacity * sizeof(V);
-	hashMap->memory = A::Alloc(bookkeepSize + keyMemorySize + valueMemorySize);
+	hashMap->memory = A::Alloc(bookkeepSize + keyMemorySize + valueMemorySize, 1); // @Todo: alignment!
 	hashMap->capacity = capacity;
 
 	HashMapClear(*hashMap);

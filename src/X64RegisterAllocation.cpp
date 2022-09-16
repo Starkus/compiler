@@ -280,15 +280,15 @@ void DoLivenessAnalisisOnInstruction(Context *context, BasicBlock *basicBlock, X
 				threadData->beInterferenceGraph.valueIndices = (u32 *)
 						ThreadAllocator::Realloc(threadData->beInterferenceGraph.valueIndices,
 						sizeof(threadData->beInterferenceGraph.valueIndices[0]) *
-						threadData->beInterferenceGraph.capacity);
+						threadData->beInterferenceGraph.capacity, alignof(u32));
 				threadData->beInterferenceGraph.removed = (u8 *)
 						ThreadAllocator::Realloc(threadData->beInterferenceGraph.removed,
 						sizeof(threadData->beInterferenceGraph.removed[0]) *
-						threadData->beInterferenceGraph.capacity);
+						threadData->beInterferenceGraph.capacity, alignof(u8));
 				threadData->beInterferenceGraph.edges = (HashSet<u32, ThreadAllocator> *)
 						ThreadAllocator::Realloc(threadData->beInterferenceGraph.edges,
 						sizeof(threadData->beInterferenceGraph.edges[0]) *
-						threadData->beInterferenceGraph.capacity);
+						threadData->beInterferenceGraph.capacity, alignof(HashSet<u32, ThreadAllocator>));
 			}
 			threadData->beInterferenceGraph.valueIndices[nodeIdx] = valueIdx;
 			threadData->beInterferenceGraph.removed[nodeIdx]      = false;
@@ -637,11 +637,11 @@ void X64AllocateRegisters(Context *context)
 	threadData->beInterferenceGraph = {};
 	threadData->beInterferenceGraph.capacity = 128;
 	threadData->beInterferenceGraph.valueIndices = (u32 *)
-		ThreadAllocator::Alloc(sizeof(InterferenceGraph::valueIndices[0]) * 128);
+		ThreadAllocator::Alloc(sizeof(u32) * 128, alignof(u32));
 	threadData->beInterferenceGraph.removed = (u8 *)
-		ThreadAllocator::Alloc(sizeof(InterferenceGraph::removed[0]) * 128);
+		ThreadAllocator::Alloc(sizeof(u8) * 128, alignof(u8));
 	threadData->beInterferenceGraph.edges = (HashSet<u32, ThreadAllocator> *)
-		ThreadAllocator::Alloc(sizeof(InterferenceGraph::edges[0]) * 128);
+		ThreadAllocator::Alloc(sizeof(HashSet<u32, ThreadAllocator>) * 128, alignof(HashSet<u32, ThreadAllocator>));
 
 	HashMapInit(&threadData->beInterferenceGraph.valueToNodeMap, 256);
 

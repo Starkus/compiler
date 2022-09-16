@@ -225,7 +225,7 @@ String TokenTypeToString(s32 type)
 	if (type >= TOKEN_OP_Begin && type <= TOKEN_OP_End)
 		return "<Operator>"_s;
 
-	char *str = (char *)ThreadAllocator::Alloc(5);
+	char *str = (char *)ThreadAllocator::Alloc(5, 1);
 	strncpy(str, "<'~'>", 5);
 	str[2] = (char)type;
 	return { 5, str };

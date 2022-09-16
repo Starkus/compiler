@@ -6,7 +6,7 @@ inline String operator""_s(const char *str, u64 size)
 inline String TStringConcat(String a, String b)
 {
 	s64 size = a.size + b.size;
-	char *buffer = (char *)ThreadAllocator::Alloc(size);
+	char *buffer = (char *)ThreadAllocator::Alloc(size, 1);
 	String result = { size, buffer };
 	memcpy(buffer, a.data, a.size);
 	memcpy(buffer + a.size, b.data, b.size);
@@ -16,16 +16,16 @@ inline String TStringConcat(String a, String b)
 inline String SStringConcat(String a, String b)
 {
 	s64 size = a.size + b.size;
-	char *buffer = (char *)LinearAllocator::Alloc(size);
+	char *buffer = (char *)LinearAllocator::Alloc(size, 1);
 	String result = { size, buffer };
 	memcpy(buffer, a.data, a.size);
 	memcpy(buffer + a.size, b.data, b.size);
 	return result;
 }
 
-const char *StringToCStr(String str, void *(*allocFunc)(u64))
+const char *StringToCStr(String str, void *(*allocFunc)(u64, int))
 {
-	char *buffer = (char *)allocFunc(str.size + 1);
+	char *buffer = (char *)allocFunc(str.size + 1, 1);
 	strncpy(buffer, str.data, str.size);
 	buffer[str.size] = 0;
 	return buffer;

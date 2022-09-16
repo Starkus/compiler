@@ -89,7 +89,7 @@ const String SNPrintF(const char *format, int maxSize, ...)
 {
 	//SYSMutexLock(g_memory->linearMemMutex);
 
-	char *buffer = (char *)LinearAllocator::Alloc(maxSize);
+	char *buffer = (char *)LinearAllocator::Alloc(maxSize, 1);
 
 	va_list args;
 	va_start(args, maxSize);
@@ -154,6 +154,7 @@ struct TypeInfo;
 struct OperatorOverload;
 struct StaticDefinition;
 struct TCScope;
+struct TCScopeName;
 struct Context
 {
 	Config config;
@@ -191,8 +192,9 @@ struct Context
 	/* Don't add types to the type table by hand without checking what AddType() does! */
 	RWContainer<BucketArray<const TypeInfo, HeapAllocator, 1024>> typeTable;
 
-	RWContainer<TCGlobalScope> tcGlobalScope;
-	RWContainer<HashMap<String, CONDITION_VARIABLE, HeapAllocator>> tcConditionVariables;
+	RWContainer<DynamicArray<TCScopeName, LinearAllocator>> tcGlobalNames;
+	MXContainer<HashMap<String, CONDITION_VARIABLE, HeapAllocator>> tcConditionVariables;
+	RWContainer<DynamicArray<u32, LinearAllocator>> tcGlobalTypeIndices;
 
 	// IR -----
 	SLContainer<DynamicArray<ThreadHandle, HeapAllocator>> irThreads; // Lock only to write
@@ -356,7 +358,7 @@ bool CompilerAddSourceFile(Context *context, String filename, SourceLocation loc
 		DynamicArrayAddMT(&parseJobStates, JOBSTATE_RUNNING);
 	}
 
-	ParseJobArgs *args = ALLOC(LinearAllocator::Alloc, ParseJobArgs);
+	ParseJobArgs *args = ALLOC(LinearAllocator, ParseJobArgs);
 	*args = { context, (u32)context->sourceFiles.size - 1, jobIdx };
 	ThreadHandle parseThread = SYSCreateThread(ParseJobProc, (void *)args);
 	context->parseThreads.content[jobIdx] = parseThread;

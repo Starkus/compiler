@@ -368,10 +368,12 @@ IRValue IRDoMemberAccess(Context *context, IRValue structValue, StructMember str
 	ASSERT(structValue.valueType == IRVALUETYPE_VALUE ||
 		   structValue.valueType == IRVALUETYPE_VALUE_DEREFERENCE);
 
+#if DEBUG_BUILD
 	String structValueName = IRGetValue(context, structValue.value.valueIdx).name;
 	IRAddComment(context, SNPrintF("Accessing struct member \"%S.%S\"",
 				28 + (int)structValueName.size + (int)structMember.name.size,
 				structValueName, structMember.name));
+#endif
 
 	s64 offset = structMember.offset + structValue.value.offset;
 	IRValue result = IRValueDereference(structValue.value.valueIdx, structMember.typeTableIdx,
@@ -1856,8 +1858,9 @@ IRValue IRGenFromExpression(Context *context, const ASTExpression *expression)
 			if (varargsCount > 0)
 			{
 				// Allocate stack space for buffer
-				u32 bufferValueIdx = IRAddTempValue(context, "_varargsBuffer%llu"_s,
-						GetTypeInfoArrayOf(context, TYPETABLEIDX_ANY_STRUCT, varargsCount), VALUEFLAGS_FORCE_MEMORY);
+				u32 bufferValueIdx = IRAddTempValue(context, "_varargsBuffer"_s,
+						GetTypeInfoArrayOf(context, TYPETABLEIDX_ANY_STRUCT, varargsCount),
+						VALUEFLAGS_FORCE_MEMORY);
 				IRValue bufferIRValue = IRValueValue(context, bufferValueIdx);
 
 				// Fill the buffer

@@ -385,7 +385,7 @@ bool TCSetJobState(Context *context, JobState jobState)
 	if (!TCIsAnyJobRunning(context))
 	{
 		// Signal dead stop
-		auto conditionVariables = context->tcConditionVariables.GetForRead();
+		auto conditionVariables = context->tcConditionVariables.Get();
 		ConditionVariable *values = HashMapValues(*conditionVariables);
 		for (u32 i = 0; i < (u32)conditionVariables->capacity; ++i)
 			if (HashMapSlotOccupied(*conditionVariables, i))
@@ -422,6 +422,7 @@ bool TCYield(Context *context)
 	return true;
 }
 
+// Lock should be locked when calling this procedure!
 bool TCYieldIdentifier(Context *context, String name, SRWLOCK *lock)
 {
 #if USE_PROFILER_API
@@ -437,14 +438,9 @@ bool TCYieldIdentifier(Context *context, String name, SRWLOCK *lock)
 #endif
 		return false;
 	}
-	ConditionVariable *conditionVar = nullptr;
+	ConditionVariable *conditionVar;
 	{
-		auto conditionVariables = context->tcConditionVariables.GetForRead();
-		conditionVar = HashMapGet(*conditionVariables, name);
-	}
-	if (!conditionVar)
-	{
-		auto conditionVariables = context->tcConditionVariables.GetForWrite();
+		auto conditionVariables = context->tcConditionVariables.Get();
 		conditionVar = HashMapGet(*conditionVariables, name);
 		if (!conditionVar)
 		{
@@ -452,8 +448,7 @@ bool TCYieldIdentifier(Context *context, String name, SRWLOCK *lock)
 			SYSCreateConditionVariable(conditionVar);
 		}
 	}
-	SleepConditionVariableSRW(conditionVar, lock, INFINITE,
-			CONDITION_VARIABLE_LOCKMODE_SHARED);
+	SleepConditionVariableSRW(conditionVar, lock, INFINITE, CONDITION_VARIABLE_LOCKMODE_SHARED);
 #if USE_PROFILER_API
 	performanceAPI.EndEvent();
 #endif
@@ -477,12 +472,12 @@ TCScopeName TCFindScopeName(Context *context, String name)
 		}
 	}
 	// Global scope
-	auto globalScope = context->tcGlobalScope.GetForRead();
+	auto globalNames = context->tcGlobalNames.GetForRead();
 	while (true)
 	{
-		for (int i = 0; i < globalScope->names.size; ++i)
+		for (int i = 0; i < globalNames->size; ++i)
 		{
-			const TCScopeName *currentName = &globalScope->names[i];
+			const TCScopeName *currentName = &(*globalNames)[i];
 			if (StringEquals(name, currentName->name))
 			{
 				TCSetJobState(context, JOBSTATE_RUNNING);
@@ -497,12 +492,7 @@ TCScopeName TCFindScopeName(Context *context, String name)
 		}
 		ConditionVariable *conditionVar = nullptr;
 		{
-			auto conditionVariables = context->tcConditionVariables.GetForRead();
-			conditionVar = HashMapGet(*conditionVariables, name);
-		}
-		if (!conditionVar)
-		{
-			auto conditionVariables = context->tcConditionVariables.GetForWrite();
+			auto conditionVariables = context->tcConditionVariables.Get();
 			conditionVar = HashMapGet(*conditionVariables, name);
 			if (!conditionVar)
 			{
@@ -510,9 +500,8 @@ TCScopeName TCFindScopeName(Context *context, String name)
 				SYSCreateConditionVariable(conditionVar);
 			}
 		}
-		SleepConditionVariableSRW(conditionVar, &context->tcGlobalScope.rwLock, INFINITE,
+		SleepConditionVariableSRW(conditionVar, &context->tcGlobalNames.rwLock, INFINITE,
 				CONDITION_VARIABLE_LOCKMODE_SHARED);
-
 	}
 }
 
@@ -522,16 +511,6 @@ inline u32 TCNewStaticDefinition(Context *context, StaticDefinition *value)
 	u64 result = BucketArrayCount(&staticDefinitions);
 	*BucketArrayAdd(&staticDefinitions) = *value;
 	ASSERT(result < U32_MAX);
-
-	ConditionVariable *conditionVar = nullptr;
-	{
-		auto conditionVariables = context->tcConditionVariables.GetForWrite();
-		conditionVar = HashMapGet(*conditionVariables, value->name);
-		if (conditionVar)
-			HashMapRemove(&conditionVariables, value->name);
-	}
-	if (conditionVar)
-		SYSWakeAllConditionVariable(conditionVar);
 
 	return (u32)result;
 }
@@ -570,9 +549,9 @@ inline void TCUpdateStaticDefinition(Context *context, u32 staticDefinitionIdx,
 		(*staticDefinitions)[staticDefinitionIdx] = *value;
 	}
 
-	ConditionVariable *conditionVar = nullptr;
+	ConditionVariable *conditionVar;
 	{
-		auto conditionVariables = context->tcConditionVariables.GetForWrite();
+		auto conditionVariables = context->tcConditionVariables.Get();
 		conditionVar = HashMapGet(*conditionVariables, value->name);
 		if (conditionVar)
 			HashMapRemove(&conditionVariables, value->name);
@@ -603,61 +582,6 @@ u32 FindTypeInStackByName(Context *context, SourceLocation loc, String name)
 
 	typeTableIdx = staticDefinition.typeTableIdx;
 	return typeTableIdx;
-}
-
-inline void TCCheckIfNameAlreadyExists(Context *context, String name, SourceLocation loc)
-{
-	TCScope *stackTop = GetTopMostScope(context);
-	if (stackTop)
-	{
-		for (int i = 0; i < stackTop->names.size; ++i)
-		{
-			TCScopeName *currentName = &stackTop->names[i];
-			if (!StringEquals(name, currentName->name))
-				continue;
-
-			if (currentName->type == NAMETYPE_PRIMITIVE)
-				LogError(context, loc, TPrintF("Can not use name \"%S\", it is a language primitive",
-						name));
-			else
-			{
-				LogErrorNoCrash(context, loc, TPrintF("Duplicate static definition \"%S\"", name));
-				LogNote(context, currentName->loc, "First defined here"_s);
-				PANIC;
-			}
-			break;
-		}
-	}
-	else
-	{
-		auto globalScope = context->tcGlobalScope.GetForRead();
-		for (int i = 0; i < globalScope->names.size; ++i)
-		{
-			const TCScopeName *currentName = &globalScope->names[i];
-			if (!StringEquals(name, currentName->name))
-				continue;
-
-			if (currentName->type == NAMETYPE_PRIMITIVE)
-				LogError(context, loc, TPrintF("Can not use name \"%S\", it is a language primitive",
-						name));
-			else
-			{
-				LogErrorNoCrash(context, loc, TPrintF("Duplicate static definition \"%S\"", name));
-				LogNote(context, currentName->loc, "First defined here"_s);
-				PANIC;
-			}
-			break;
-		}
-	}
-
-	// Primitives
-	for (int i = 0; i < context->tcPrimitiveTypes.size; ++i)
-	{
-		const TCScopeName *currentName = &context->tcPrimitiveTypes[i];
-		if (currentName->type == NAMETYPE_PRIMITIVE && StringEquals(name, currentName->name))
-			LogError(context, loc, TPrintF("Can not use name \"%S\", it is a language primitive",
-					name));
-	}
 }
 
 enum TypeCheckErrorCode
@@ -905,7 +829,7 @@ const StructMember *FindStructMemberByName(Context *context, TypeInfo structType
 				if (currentMember->offset)
 				{
 					// Copy struct member and add the parent member's offset.
-					StructMember *shiftedMember = (StructMember *)LinearAllocator::Alloc(sizeof(StructMember));
+					StructMember *shiftedMember = ALLOC(LinearAllocator, StructMember);
 					memcpy(shiftedMember, found, sizeof(StructMember));
 					shiftedMember->offset += currentMember->offset;
 					return shiftedMember;
@@ -1430,8 +1354,8 @@ u32 TypeCheckStructDeclaration(Context *context, String name, bool isUnion,
 		*DynamicArrayAdd(&stackTop->typeIndices) = typeTableIdx;
 	else
 	{
-		auto globalScope = context->tcGlobalScope.GetForWrite();
-		*DynamicArrayAdd(&globalScope->typeIndices) = typeTableIdx;
+		auto globalTypes = context->tcGlobalTypeIndices.GetForWrite();
+		*DynamicArrayAdd(&globalTypes) = typeTableIdx;
 	}
 	return typeTableIdx;
 }
@@ -1708,19 +1632,58 @@ error:
 
 inline void TCAddScopeName(Context *context, TCScopeName scopeName)
 {
+	// Primitives
+	for (int i = 0; i < context->tcPrimitiveTypes.size; ++i)
+	{
+		const TCScopeName *currentName = &context->tcPrimitiveTypes[i];
+		if (currentName->type == NAMETYPE_PRIMITIVE && StringEquals(scopeName.name, currentName->name))
+			LogError(context, scopeName.loc, TPrintF("Can not use name \"%S\", it is a language primitive",
+					scopeName.name));
+	}
+
 	TCScope *stackTop = GetTopMostScope(context);
 	if (stackTop)
+	{
+		// Check if already exists
+		for (int i = 0; i < stackTop->names.size; ++i)
+		{
+			TCScopeName *currentName = &stackTop->names[i];
+			if (!StringEquals(scopeName.name, currentName->name))
+				continue;
+
+			LogErrorNoCrash(context, scopeName.loc, TPrintF("Name \"%S\" already assigned",
+						scopeName.name));
+			LogNote(context, currentName->loc, "First defined here"_s);
+			PANIC;
+			break;
+		}
+
 		*DynamicArrayAdd(&stackTop->names) = scopeName;
+	}
 	else
 	{
 		{
-			auto globalScope = context->tcGlobalScope.GetForWrite();
-			*DynamicArrayAdd(&globalScope->names) = scopeName;
+			auto globalNames = context->tcGlobalNames.GetForWrite();
+
+			// Check if already exists
+			for (int i = 0; i < globalNames->size; ++i)
+			{
+				const TCScopeName *currentName = &(*globalNames)[i];
+				if (!StringEquals(scopeName.name, currentName->name))
+					continue;
+
+				LogErrorNoCrash(context, scopeName.loc, TPrintF("Name \"%S\" already assigned",
+							scopeName.name));
+				LogNote(context, currentName->loc, "First defined here"_s);
+				PANIC;
+			}
+
+			*DynamicArrayAdd(&globalNames) = scopeName;
 		}
 
 		ConditionVariable *conditionVar = nullptr;
 		{
-			auto conditionVariables = context->tcConditionVariables.GetForWrite();
+			auto conditionVariables = context->tcConditionVariables.Get();
 			conditionVar = HashMapGet(*conditionVariables, scopeName.name);
 			if (conditionVar)
 				HashMapRemove(&conditionVariables, scopeName.name);
@@ -1865,8 +1828,8 @@ u32 TypeCheckType(Context *context, String name, SourceLocation loc,
 			*DynamicArrayAdd(&stackTop->typeIndices) = typeTableIdx;
 		else
 		{
-			auto globalScope = context->tcGlobalScope.GetForWrite();
-			*DynamicArrayAdd(&globalScope->typeIndices) = typeTableIdx;
+			auto globalTypes = context->tcGlobalTypeIndices.GetForWrite();
+			*DynamicArrayAdd(&globalTypes) = typeTableIdx;
 		}
 
 		return typeTableIdx;
@@ -1949,8 +1912,6 @@ void AddStructMembersToScope(Context *context, SourceLocation loc, ASTExpression
 
 		if (member->name.size && !member->isUsing)
 		{
-			TCCheckIfNameAlreadyExists(context, member->name, loc);
-
 			TCScopeName newScopeName;
 			newScopeName.type = NAMETYPE_ASTEXPRESSION;
 			newScopeName.name = member->name;
@@ -1993,9 +1954,6 @@ bool IsExpressionAType(Context *context, ASTExpression *expression)
 
 void TypeCheckVariableDeclaration(Context *context, ASTVariableDeclaration *varDecl)
 {
-	if (varDecl->name.size)
-		TCCheckIfNameAlreadyExists(context, varDecl->name, varDecl->loc);
-
 	if (varDecl->astType)
 	{
 		varDecl->typeTableIdx = TypeCheckType(context, {}, varDecl->loc, varDecl->astType);
@@ -2042,9 +2000,6 @@ void TypeCheckVariableDeclaration(Context *context, ASTVariableDeclaration *varD
 
 void TypeCheckProcedureParameter(Context *context, ASTProcedureParameter *astParam)
 {
-	if (astParam->name.size)
-		TCCheckIfNameAlreadyExists(context, astParam->name, astParam->loc);
-
 	if (astParam->astType)
 	{
 		astParam->typeTableIdx = TypeCheckType(context, {}, astParam->loc, astParam->astType);
@@ -3001,7 +2956,7 @@ void TryTypeCheckExpression(Context *context, ASTExpression *expression)
 
 		if (threadData->onStaticContext)
 		{
-			IRJobArgs *args = ALLOC(LinearAllocator::Alloc, IRJobArgs);
+			IRJobArgs *args = ALLOC(LinearAllocator, IRJobArgs);
 			*args = { context, 0, {}, expression };
 			ThreadHandle irThread = SYSCreateThread(IRJobExpression, (void *)args);
 			{
@@ -3014,27 +2969,9 @@ void TryTypeCheckExpression(Context *context, ASTExpression *expression)
 	{
 		ASTStaticDefinition *astStaticDef = &expression->staticDefinition;
 
-		TCCheckIfNameAlreadyExists(context, astStaticDef->name, astStaticDef->loc);
-
-		StaticDefinition newStaticDef = {};
-		newStaticDef.typeTableIdx = TYPETABLEIDX_Unset;
-		newStaticDef.name = astStaticDef->name;
-
-		u32 newStaticDefIdx = TCNewStaticDefinition(context, &newStaticDef);
-
-		// Add scope name
+		switch (astStaticDef->expression->nodeType)
 		{
-			TCScopeName staticDefScopeName;
-			staticDefScopeName.type = NAMETYPE_STATIC_DEFINITION;
-			staticDefScopeName.name = astStaticDef->name;
-			staticDefScopeName.staticDefinitionIdx = newStaticDefIdx;
-			staticDefScopeName.loc = astStaticDef->loc;
-			TCAddScopeName(context, staticDefScopeName);
-		}
-
-		astStaticDef->staticDefinitionIdx = newStaticDefIdx;
-
-		if (astStaticDef->expression->nodeType == ASTNODETYPE_PROCEDURE_DECLARATION)
+		case ASTNODETYPE_PROCEDURE_DECLARATION:
 		{
 			BucketArray<Value, HeapAllocator, 1024> oldLocalValues = threadData->localValues;
 
@@ -3044,26 +2981,41 @@ void TryTypeCheckExpression(Context *context, ASTExpression *expression)
 			bool oldOnStaticContext = threadData->onStaticContext;
 			threadData->onStaticContext = false;
 
-			// Add all information we can, that doesn't depend on others
-			newStaticDef.definitionType = STATICDEFINITIONTYPE_PROCEDURE;
-			ASTProcedureDeclaration *procDecl = &astStaticDef->expression->procedureDeclaration;
+			ASTProcedureDeclaration *astProcDecl = &astStaticDef->expression->procedureDeclaration;
+			ASTProcedurePrototype *astPrototype = &astProcDecl->prototype;
 
 			Procedure procedure = {};
 			procedure.typeTableIdx = TYPETABLEIDX_Unset;
-			procedure.name = procDecl->name;
+			procedure.name = astProcDecl->name;
 			procedure.returnValueIdx = U32_MAX;
-			procedure.astBody = procDecl->astBody;
-			procedure.isInline = procDecl->isInline;
-			procedure.isExported = procDecl->isExported;
-			procedure.astPrototype = procDecl->prototype;
+			procedure.astBody = astProcDecl->astBody;
+			procedure.isInline = astProcDecl->isInline;
+			procedure.isExported = astProcDecl->isExported;
+			procedure.astPrototype = astProcDecl->prototype;
 			DynamicArrayInit(&procedure.parameterValues, 8);
-			u32 procedureIdx = NewProcedure(context, procedure, procDecl->isExternal);
+			u32 procedureIdx = NewProcedure(context, procedure, astProcDecl->isExternal);
+			astProcDecl->procedureIdx = procedureIdx;
+
+			StaticDefinition newStaticDef = {};
+			newStaticDef.typeTableIdx = TYPETABLEIDX_Unset;
+			newStaticDef.name = astStaticDef->name;
+			newStaticDef.definitionType = STATICDEFINITIONTYPE_PROCEDURE;
+			newStaticDef.procedureIdx = procedureIdx;
+
+			u32 newStaticDefIdx = TCNewStaticDefinition(context, &newStaticDef);
+			astStaticDef->staticDefinitionIdx = newStaticDefIdx;
+
+			// Add scope name
+			{
+				TCScopeName staticDefScopeName;
+				staticDefScopeName.type = NAMETYPE_STATIC_DEFINITION;
+				staticDefScopeName.name = astStaticDef->name;
+				staticDefScopeName.staticDefinitionIdx = newStaticDefIdx;
+				staticDefScopeName.loc = astStaticDef->loc;
+				TCAddScopeName(context, staticDefScopeName);
+			}
 
 			PushTCScope(context);
-
-			newStaticDef.procedureIdx = procedureIdx;
-			procDecl->procedureIdx = procedureIdx;
-			ASTProcedurePrototype *astPrototype = &procDecl->prototype;
 
 			TypeCheckProcedurePrototype(context, astPrototype);
 			TypeInfo t = TypeInfoFromASTProcedurePrototype(context, astPrototype);
@@ -3098,7 +3050,7 @@ void TryTypeCheckExpression(Context *context, ASTExpression *expression)
 					*DynamicArrayAdd(&procedure.parameterValues) = valueIdx;
 				}
 
-				TCAddParametersToScope(context, procedure.parameterValues, &procDecl->prototype);
+				TCAddParametersToScope(context, procedure.parameterValues, &astProcDecl->prototype);
 
 				procedure.returnValueIdx = TCNewValue(context, "_returnValue"_s, returnType, 0);
 
@@ -3129,7 +3081,7 @@ void TryTypeCheckExpression(Context *context, ASTExpression *expression)
 				}
 
 				// Code gen!
-				IRJobArgs *args = ALLOC(LinearAllocator::Alloc, IRJobArgs);
+				IRJobArgs *args = ALLOC(LinearAllocator, IRJobArgs);
 				*args = { context, procedureIdx, threadData->localValues, nullptr };
 				threadData->localValues = {}; // Safety clear
 				ThreadHandle irThread = SYSCreateThread(IRJobProcedure, (void *)args);
@@ -3141,11 +3093,27 @@ void TryTypeCheckExpression(Context *context, ASTExpression *expression)
 
 			threadData->localValues = oldLocalValues;
 			threadData->onStaticContext = oldOnStaticContext;
-		}
-		else if (astStaticDef->expression->nodeType == ASTNODETYPE_TYPE ||
-				 astStaticDef->expression->nodeType == ASTNODETYPE_ALIAS)
+		} break;
+		case ASTNODETYPE_TYPE:
+		case ASTNODETYPE_ALIAS:
 		{
+			StaticDefinition newStaticDef = {};
+			newStaticDef.typeTableIdx = TYPETABLEIDX_Unset;
+			newStaticDef.name = astStaticDef->name;
 			newStaticDef.definitionType = STATICDEFINITIONTYPE_TYPE;
+
+			u32 newStaticDefIdx = TCNewStaticDefinition(context, &newStaticDef);
+			astStaticDef->staticDefinitionIdx = newStaticDefIdx;
+
+			// Add scope name
+			{
+				TCScopeName staticDefScopeName;
+				staticDefScopeName.type = NAMETYPE_STATIC_DEFINITION;
+				staticDefScopeName.name = astStaticDef->name;
+				staticDefScopeName.staticDefinitionIdx = newStaticDefIdx;
+				staticDefScopeName.loc = astStaticDef->loc;
+				TCAddScopeName(context, staticDefScopeName);
+			}
 
 			u32 result = TypeCheckType(context, astStaticDef->name,
 					expression->any.loc, &astStaticDef->expression->astType);
@@ -3173,8 +3141,8 @@ void TryTypeCheckExpression(Context *context, ASTExpression *expression)
 			newStaticDef.typeTableIdx = newTypeIdx;
 			expression->typeTableIdx = newTypeIdx;
 			TCUpdateStaticDefinition(context, newStaticDefIdx, &newStaticDef);
-		}
-		else
+		} break;
+		default:
 		{
 			TryTypeCheckExpression(context, astStaticDef->expression);
 
@@ -3183,27 +3151,57 @@ void TryTypeCheckExpression(Context *context, ASTExpression *expression)
 			{
 				ASSERT(astStaticDef->expression->typeTableIdx != TYPETABLEIDX_Unset);
 				u32 identifierStaticDefIdx = astStaticDef->expression->identifier.staticDefinitionIdx;
-				newStaticDef = TCGetStaticDefinition(context, identifierStaticDefIdx, true);
+				StaticDefinition newStaticDef = TCGetStaticDefinition(context, identifierStaticDefIdx, true);
 				newStaticDef.name = astStaticDef->name;
 				newStaticDef.typeTableIdx = astStaticDef->expression->typeTableIdx;
 				expression->typeTableIdx = astStaticDef->expression->typeTableIdx;
+
+				u32 newStaticDefIdx = TCNewStaticDefinition(context, &newStaticDef);
+				astStaticDef->staticDefinitionIdx = newStaticDefIdx;
+
+				// Add scope name
+				{
+					TCScopeName staticDefScopeName;
+					staticDefScopeName.type = NAMETYPE_STATIC_DEFINITION;
+					staticDefScopeName.name = astStaticDef->name;
+					staticDefScopeName.staticDefinitionIdx = newStaticDefIdx;
+					staticDefScopeName.loc = astStaticDef->loc;
+					TCAddScopeName(context, staticDefScopeName);
+				}
 			}
 			else
 			{
 				Constant constant = TryEvaluateConstant(context, astStaticDef->expression);
 
-				newStaticDef.constant = constant;
+				if (constant.type == CONSTANTTYPE_INVALID)
+					LogError(context, astStaticDef->expression->any.loc,
+							"Failed to evaluate constant"_s);
+
+				StaticDefinition newStaticDef = {};
+				newStaticDef.typeTableIdx = TYPETABLEIDX_Unset;
+				newStaticDef.name = astStaticDef->name;
 				newStaticDef.definitionType = STATICDEFINITIONTYPE_CONSTANT;
+				newStaticDef.constant = constant;
+
 				u32 constantTypeIdx = astStaticDef->expression->typeTableIdx;
 				ASSERT(constantTypeIdx != TYPETABLEIDX_Unset);
 				expression->typeTableIdx = constantTypeIdx;
 				newStaticDef.typeTableIdx = constantTypeIdx;
 
-				if (newStaticDef.constant.type == CONSTANTTYPE_INVALID)
-					LogError(context, astStaticDef->expression->any.loc,
-							"Failed to evaluate constant"_s);
+				u32 newStaticDefIdx = TCNewStaticDefinition(context, &newStaticDef);
+				astStaticDef->staticDefinitionIdx = newStaticDefIdx;
+
+				// Add scope name
+				{
+					TCScopeName staticDefScopeName;
+					staticDefScopeName.type = NAMETYPE_STATIC_DEFINITION;
+					staticDefScopeName.name = astStaticDef->name;
+					staticDefScopeName.staticDefinitionIdx = newStaticDefIdx;
+					staticDefScopeName.loc = astStaticDef->loc;
+					TCAddScopeName(context, staticDefScopeName);
+				}
 			}
-			TCUpdateStaticDefinition(context, newStaticDefIdx, &newStaticDef);
+		} break;
 		}
 	} break;
 	case ASTNODETYPE_RETURN:
@@ -4176,12 +4174,12 @@ void TryTypeCheckExpression(Context *context, ASTExpression *expression)
 		}
 		// Global scope
 		{
-			auto globalScope = context->tcGlobalScope.GetForRead();
+			auto globalNames = context->tcGlobalNames.GetForRead();
 			while (true)
 			{
-				for (int i = 0; i < globalScope->names.size; ++i)
+				for (int i = 0; i < globalNames->size; ++i)
 				{
-					const TCScopeName *currentName = &globalScope->names[i];
+					const TCScopeName *currentName = &(*globalNames)[i];
 					if (StringEquals(identifier, currentName->name))
 					{
 						TCSetJobState(context, JOBSTATE_RUNNING);
@@ -4199,12 +4197,7 @@ void TryTypeCheckExpression(Context *context, ASTExpression *expression)
 sleep:
 				ConditionVariable *conditionVar = nullptr;
 				{
-					auto conditionVariables = context->tcConditionVariables.GetForRead();
-					conditionVar = HashMapGet(*conditionVariables, identifier);
-				}
-				if (!conditionVar)
-				{
-					auto conditionVariables = context->tcConditionVariables.GetForWrite();
+					auto conditionVariables = context->tcConditionVariables.Get();
 					conditionVar = HashMapGet(*conditionVariables, identifier);
 					if (!conditionVar)
 					{
@@ -4212,7 +4205,7 @@ sleep:
 						SYSCreateConditionVariable(conditionVar);
 					}
 				}
-				SleepConditionVariableSRW(conditionVar, &context->tcGlobalScope.rwLock, INFINITE,
+				SleepConditionVariableSRW(conditionVar, &context->tcGlobalNames.rwLock, INFINITE,
 						CONDITION_VARIABLE_LOCKMODE_SHARED);
 			}
 		}
@@ -4333,7 +4326,7 @@ void GenerateTypeCheckJobs(Context *context, ASTExpression *expression)
 			DynamicArrayAddMT(&context->tcJobStates, JOBSTATE_RUNNING);
 		}
 
-		TCJobArgs *args = ALLOC(LinearAllocator::Alloc, TCJobArgs);
+		TCJobArgs *args = ALLOC(LinearAllocator, TCJobArgs);
 		*args = { context, jobIdx, expression };
 		ThreadHandle tcThread = SYSCreateThread(TCJobProc, (void *)args);
 
@@ -4495,21 +4488,24 @@ void TypeCheckMain(Context *context)
 	}
 
 	{
-		auto conditionVariables = context->tcConditionVariables.GetForWrite();
+		auto conditionVariables = context->tcConditionVariables.Get();
 		HashMapInit(&conditionVariables, 256);
 	}
 
 	{
-		auto globalScope = &context->tcGlobalScope.GetForWrite();
+		auto globalTypes = context->tcGlobalTypeIndices.GetForWrite();
+		DynamicArrayInit(&globalTypes, 64);
+		for (int i = 0; i < TYPETABLEIDX_Count; ++i)
+			*DynamicArrayAdd(&globalTypes) = i;
+	}
+
+	{
+		auto globalNames = context->tcGlobalNames.GetForWrite();
 
 		ArrayInit(&context->tcPrimitiveTypes, TYPETABLEIDX_PrimitiveEnd -
 				TYPETABLEIDX_PrimitiveBegin);
 
-		DynamicArrayInit(&globalScope->names, 64);
-		DynamicArrayInit(&globalScope->typeIndices, 64);
-
-		for (int i = 0; i < TYPETABLEIDX_Count; ++i)
-			*DynamicArrayAdd(&globalScope->typeIndices) = i;
+		DynamicArrayInit(&globalNames, 64);
 
 		TCScopeName scopeNamePrimitive;
 		scopeNamePrimitive.type = NAMETYPE_PRIMITIVE;
@@ -4518,62 +4514,62 @@ void TypeCheckMain(Context *context)
 		scopeNamePrimitive.name = "s8"_s;
 		scopeNamePrimitive.primitiveTypeTableIdx = TYPETABLEIDX_S8;
 		*ArrayAdd(&context->tcPrimitiveTypes) = scopeNamePrimitive;
-		*DynamicArrayAdd(&globalScope->names) = scopeNamePrimitive;
+		*DynamicArrayAdd(&globalNames) = scopeNamePrimitive;
 
 		scopeNamePrimitive.name = "s16"_s;
 		scopeNamePrimitive.primitiveTypeTableIdx = TYPETABLEIDX_S16;
 		*ArrayAdd(&context->tcPrimitiveTypes) = scopeNamePrimitive;
-		*DynamicArrayAdd(&globalScope->names) = scopeNamePrimitive;
+		*DynamicArrayAdd(&globalNames) = scopeNamePrimitive;
 
 		scopeNamePrimitive.name = "s32"_s;
 		scopeNamePrimitive.primitiveTypeTableIdx = TYPETABLEIDX_S32;
 		*ArrayAdd(&context->tcPrimitiveTypes) = scopeNamePrimitive;
-		*DynamicArrayAdd(&globalScope->names) = scopeNamePrimitive;
+		*DynamicArrayAdd(&globalNames) = scopeNamePrimitive;
 
 		scopeNamePrimitive.name = "s64"_s;
 		scopeNamePrimitive.primitiveTypeTableIdx = TYPETABLEIDX_S64;
 		*ArrayAdd(&context->tcPrimitiveTypes) = scopeNamePrimitive;
-		*DynamicArrayAdd(&globalScope->names) = scopeNamePrimitive;
+		*DynamicArrayAdd(&globalNames) = scopeNamePrimitive;
 
 		scopeNamePrimitive.name = "u8"_s;
 		scopeNamePrimitive.primitiveTypeTableIdx = TYPETABLEIDX_U8;
 		*ArrayAdd(&context->tcPrimitiveTypes) = scopeNamePrimitive;
-		*DynamicArrayAdd(&globalScope->names) = scopeNamePrimitive;
+		*DynamicArrayAdd(&globalNames) = scopeNamePrimitive;
 
 		scopeNamePrimitive.name = "u16"_s;
 		scopeNamePrimitive.primitiveTypeTableIdx = TYPETABLEIDX_U16;
 		*ArrayAdd(&context->tcPrimitiveTypes) = scopeNamePrimitive;
-		*DynamicArrayAdd(&globalScope->names) = scopeNamePrimitive;
+		*DynamicArrayAdd(&globalNames) = scopeNamePrimitive;
 
 		scopeNamePrimitive.name = "u32"_s;
 		scopeNamePrimitive.primitiveTypeTableIdx = TYPETABLEIDX_U32;
 		*ArrayAdd(&context->tcPrimitiveTypes) = scopeNamePrimitive;
-		*DynamicArrayAdd(&globalScope->names) = scopeNamePrimitive;
+		*DynamicArrayAdd(&globalNames) = scopeNamePrimitive;
 
 		scopeNamePrimitive.name = "u64"_s;
 		scopeNamePrimitive.primitiveTypeTableIdx = TYPETABLEIDX_U64;
 		*ArrayAdd(&context->tcPrimitiveTypes) = scopeNamePrimitive;
-		*DynamicArrayAdd(&globalScope->names) = scopeNamePrimitive;
+		*DynamicArrayAdd(&globalNames) = scopeNamePrimitive;
 
 		scopeNamePrimitive.name = "f32"_s;
 		scopeNamePrimitive.primitiveTypeTableIdx = TYPETABLEIDX_F32;
 		*ArrayAdd(&context->tcPrimitiveTypes) = scopeNamePrimitive;
-		*DynamicArrayAdd(&globalScope->names) = scopeNamePrimitive;
+		*DynamicArrayAdd(&globalNames) = scopeNamePrimitive;
 
 		scopeNamePrimitive.name = "f64"_s;
 		scopeNamePrimitive.primitiveTypeTableIdx = TYPETABLEIDX_F64;
 		*ArrayAdd(&context->tcPrimitiveTypes) = scopeNamePrimitive;
-		*DynamicArrayAdd(&globalScope->names) = scopeNamePrimitive;
+		*DynamicArrayAdd(&globalNames) = scopeNamePrimitive;
 
 		scopeNamePrimitive.name = "bool"_s;
 		scopeNamePrimitive.primitiveTypeTableIdx = TYPETABLEIDX_BOOL;
 		*ArrayAdd(&context->tcPrimitiveTypes) = scopeNamePrimitive;
-		*DynamicArrayAdd(&globalScope->names) = scopeNamePrimitive;
+		*DynamicArrayAdd(&globalNames) = scopeNamePrimitive;
 
 		scopeNamePrimitive.name = "void"_s;
 		scopeNamePrimitive.primitiveTypeTableIdx = TYPETABLEIDX_VOID;
 		*ArrayAdd(&context->tcPrimitiveTypes) = scopeNamePrimitive;
-		*DynamicArrayAdd(&globalScope->names) = scopeNamePrimitive;
+		*DynamicArrayAdd(&globalNames) = scopeNamePrimitive;
 	}
 
 	ASSERT(!context->tcThreadsLock);

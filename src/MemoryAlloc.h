@@ -1,4 +1,4 @@
-#define ALLOC(FUNC, TYPE) (TYPE *)FUNC(sizeof(TYPE))
+#define ALLOC(ALLOCATOR, TYPE) (TYPE *)ALLOCATOR::Alloc(sizeof(TYPE), alignof(TYPE))
 struct Memory
 {
 	u32 tlsIndex;
@@ -11,8 +11,8 @@ struct Memory
 class LinearAllocator
 {
 	public:
-	static void *Alloc(u64 size);
-	static void *Realloc(void *ptr, u64 newSize);
+	static void *Alloc(u64 size, int alignment);
+	static void *Realloc(void *ptr, u64 newSize, int alignment);
 	static void Free(void *ptr);
 	static void Wipe();
 };
@@ -20,8 +20,8 @@ class LinearAllocator
 class ThreadAllocator
 {
 	public:
-	static void *Alloc(u64 size);
-	static void *Realloc(void *ptr, u64 newSize);
+	static void *Alloc(u64 size, int alignment);
+	static void *Realloc(void *ptr, u64 newSize, int alignment);
 	static void Free(void *ptr);
 	static void Wipe();
 };
@@ -29,8 +29,8 @@ class ThreadAllocator
 class HeapAllocator
 {
 	public:
-	static void *Alloc(u64 size);
-	static void *Realloc(void *ptr, u64 newSize);
+	static void *Alloc(u64 size, int alignment);
+	static void *Realloc(void *ptr, u64 newSize, int alignment);
 	static void Free(void *ptr);
 	static void Wipe();
 };

@@ -2507,7 +2507,7 @@ void BackendGenerateOutputFile(Context *context)
 		u64 tableSize = BucketArrayCount(&typeTable);
 		for (u32 typeTableIdx = TYPETABLEIDX_Begin; typeTableIdx < tableSize; ++typeTableIdx)
 		{
-			TypeInfo typeInfo = GetTypeInfo(context, typeTableIdx);
+			TypeInfo typeInfo = typeTable[typeTableIdx];
 
 			Value v = GetGlobalValue(context, typeInfo.valueIdx);
 			v.typeTableIdx = TYPETABLEIDX_TYPE_INFO_STRUCT;
@@ -2555,7 +2555,7 @@ void BackendGenerateOutputFile(Context *context)
 				for (s64 memberIdx = 0; memberIdx < (s64)typeInfo.structInfo.members.size; ++memberIdx)
 				{
 					StructMember member = typeInfo.structInfo.members[memberIdx];
-					TypeInfo memberType = GetTypeInfo(context, member.typeTableIdx);
+					TypeInfo memberType = typeTable[member.typeTableIdx];
 
 					IRValue memberImm;
 					memberImm.valueType = IRVALUETYPE_IMMEDIATE_GROUP;
@@ -2592,7 +2592,7 @@ void BackendGenerateOutputFile(Context *context)
 				if (!enumName.size)
 					enumName = "<anonymous enum>"_s;
 
-				TypeInfo enumType = GetTypeInfo(context, typeInfo.enumInfo.typeTableIdx);
+				TypeInfo enumType = typeTable[typeInfo.enumInfo.typeTableIdx];
 
 				u32 namesValueIdx = NewGlobalValue(context, SNPrintF("_names_%lld", 12, typeTableIdx),
 						TYPETABLEIDX_STRING_STRUCT, VALUEFLAGS_ON_STATIC_STORAGE);
@@ -2642,7 +2642,7 @@ void BackendGenerateOutputFile(Context *context)
 			} break;
 			case TYPECATEGORY_POINTER:
 			{
-				TypeInfo pointedType = GetTypeInfo(context, typeInfo.pointerInfo.pointedTypeTableIdx);
+				TypeInfo pointedType = typeTable[typeInfo.pointerInfo.pointedTypeTableIdx];
 
 				ArrayInit(&newStaticVar.initialValue.immediateStructMembers, 3);
 				*ArrayAdd(&newStaticVar.initialValue.immediateStructMembers) =
@@ -2654,7 +2654,7 @@ void BackendGenerateOutputFile(Context *context)
 			} break;
 			case TYPECATEGORY_ARRAY:
 			{
-				TypeInfo elementType = GetTypeInfo(context, typeInfo.arrayInfo.elementTypeTableIdx);
+				TypeInfo elementType = typeTable[typeInfo.arrayInfo.elementTypeTableIdx];
 
 				ArrayInit(&newStaticVar.initialValue.immediateStructMembers, 4);
 				*ArrayAdd(&newStaticVar.initialValue.immediateStructMembers) =
@@ -2681,7 +2681,7 @@ void BackendGenerateOutputFile(Context *context)
 							++paramIdx)
 					{
 						TypeInfo paramType =
-							GetTypeInfo(context, typeInfo.procedureInfo.parameters[paramIdx].typeTableIdx);
+							typeTable[typeInfo.procedureInfo.parameters[paramIdx].typeTableIdx];
 						IRValue paramImm = IRValueDereference(paramType.valueIdx, pointerToTypeInfoIdx);
 						*ArrayAdd(&paramsStaticVar.initialValue.immediateStructMembers) = paramImm;
 					}
@@ -2706,7 +2706,7 @@ void BackendGenerateOutputFile(Context *context)
 			} break;
 			case TYPECATEGORY_ALIAS:
 			{
-				TypeInfo aliasedType = GetTypeInfo(context, typeInfo.aliasInfo.aliasedTypeIdx);
+				TypeInfo aliasedType = typeTable[typeInfo.aliasInfo.aliasedTypeIdx];
 
 				ArrayInit(&newStaticVar.initialValue.immediateStructMembers, 3);
 				*ArrayAdd(&newStaticVar.initialValue.immediateStructMembers) =

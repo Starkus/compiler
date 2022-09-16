@@ -1,11 +1,11 @@
 #include <intrin.h>
 
-String StupidStrToString(const wchar_t *wstr, void *(*allocFunc)(u64))
+String StupidStrToString(const wchar_t *wstr, void *(*allocFunc)(u64, int))
 {
 	s64 size = 0;
 	for (const wchar_t *scan = wstr; *scan; ++scan)
 		++size;
-	char *buffer = (char *)allocFunc(size);
+	char *buffer = (char *)allocFunc(size, 1);
 	char *dstScan = buffer;
 	for (const wchar_t *scan = wstr; *scan; ++scan)
 		*dstScan++ = (char)*scan;
@@ -22,7 +22,7 @@ String SYSExpandPathCompilerRelative(String relativePath)
 {
 	String result;
 
-	char *absolutePath = (char *)ThreadAllocator::Alloc(SYS_MAX_PATH);
+	char *absolutePath = (char *)ThreadAllocator::Alloc(SYS_MAX_PATH, 1);
 	result.data = absolutePath;
 
 	DWORD written = GetModuleFileNameA(nullptr, absolutePath, SYS_MAX_PATH);
@@ -47,7 +47,7 @@ String SYSExpandPathWorkingDirectoryRelative(String relativePath)
 {
 	String result;
 
-	char *absolutePath = (char *)ThreadAllocator::Alloc(SYS_MAX_PATH);
+	char *absolutePath = (char *)ThreadAllocator::Alloc(SYS_MAX_PATH, 1);
 	result.data = absolutePath;
 
 	DWORD written = GetCurrentDirectory(MAX_PATH, absolutePath);
@@ -150,7 +150,8 @@ u64 SYSGetFileSize(FileHandle file)
 	return (u64)fileSizeDword;
 }
 
-void SYSReadEntireFile(FileHandle file, const char **fileBuffer, u64 *fileSize, void *(*allocFunc)(u64))
+void SYSReadEntireFile(FileHandle file, const char **fileBuffer, u64 *fileSize,
+		void *(*allocFunc)(u64, int))
 {
 	if (file == INVALID_HANDLE_VALUE)
 		*fileBuffer = nullptr;
@@ -161,7 +162,7 @@ void SYSReadEntireFile(FileHandle file, const char **fileBuffer, u64 *fileSize, 
 		DWORD error = GetLastError();
 		ASSERT(error == ERROR_SUCCESS);
 
-		char *buffer = (char *)allocFunc(*fileSize);
+		char *buffer = (char *)allocFunc(*fileSize, 1);
 		DWORD bytesRead;
 		bool success = ReadFile(
 				file,
@@ -214,7 +215,7 @@ String SYSGetFullPathName(String filename)
 {
 	char filenameCStr[SYS_MAX_PATH];
 	strncpy(filenameCStr, filename.data, filename.size);
-	char *buffer = (char *)ThreadAllocator::Alloc(SYS_MAX_PATH);
+	char *buffer = (char *)ThreadAllocator::Alloc(SYS_MAX_PATH, 1);
 	String outputPath;
 	outputPath.size = GetFullPathNameA(filenameCStr, SYS_MAX_PATH, buffer, nullptr);
 	outputPath.data = buffer;
@@ -339,7 +340,7 @@ nextTuple:
 			if (!FindNextFileA(findHandle, &foundData)) break;
 		}
 		windowsSDKVersion.size = strlen(latestVersionName);
-		char *buffer = (char *)LinearAllocator::Alloc(windowsSDKVersion.size);
+		char *buffer = (char *)LinearAllocator::Alloc(windowsSDKVersion.size, 1);
 		memcpy(buffer, latestVersionName, windowsSDKVersion.size);
 		windowsSDKVersion.data = buffer;
 	}
@@ -621,7 +622,7 @@ inline void SYSWakeAllConditionVariable(ConditionVariable *conditionVar)
 inline void SYSSpinlockLock(volatile u32 *locked)
 {
 #if USE_PROFILER_API
-	performanceAPI.BeginEvent("Spinlock acquiring", nullptr, PERFORMANCEAPI_MAKE_COLOR(0xA0, 0x30, 0x10));
+	//performanceAPI.BeginEvent("Spinlock acquiring", nullptr, PERFORMANCEAPI_MAKE_COLOR(0xA0, 0x30, 0x10));
 #endif
 	// Stupid MSVC uses long for this intrinsic but it's the same size as u32.
 	static_assert(sizeof(long) == sizeof(u32));
@@ -631,7 +632,7 @@ inline void SYSSpinlockLock(volatile u32 *locked)
 		if (!oldLocked)
 		{
 #if USE_PROFILER_API
-			performanceAPI.EndEvent();
+			//performanceAPI.EndEvent();
 #endif
 			return;
 		}

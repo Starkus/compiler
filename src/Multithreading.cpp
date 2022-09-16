@@ -184,7 +184,7 @@ public:
 	{
 		SYSSpinlockLock(&lock);
 #if USE_PROFILER_API
-		performanceAPI.BeginEvent("Spinlock locked", nullptr, PERFORMANCEAPI_MAKE_COLOR(0xA0, 0x30, 0x10));
+		//performanceAPI.BeginEvent("Spinlock locked", nullptr, PERFORMANCEAPI_MAKE_COLOR(0xA0, 0x30, 0x10));
 #endif
 		return content;
 	}
@@ -192,7 +192,7 @@ public:
 	void Unlock()
 	{
 #if USE_PROFILER_API
-		performanceAPI.EndEvent();
+		//performanceAPI.EndEvent();
 #endif
 		SYSSpinlockUnlock(&lock);
 	}
@@ -204,6 +204,68 @@ public:
 		SLContainer<T> *safeContainer;
 
 		Handle(SLContainer<T> *safe)
+		{
+			safe->Lock();
+			safeContainer = safe;
+		}
+
+		~Handle()
+		{
+			safeContainer->Unlock();
+		}
+
+		T &operator*()
+		{
+			return safeContainer->content;
+		}
+
+		T *operator->()
+		{
+			return &safeContainer->content;
+		}
+
+		T *operator&()
+		{
+			return &safeContainer->content;
+		}
+	};
+
+	Handle<T> Get()
+	{
+		return Handle(this);
+	}
+};
+
+template <typename T>
+class MXContainer
+{
+public:
+	T content;
+	Mutex lock;
+
+	MXContainer()
+	{
+		lock = SYSCreateMutex();
+	}
+
+	const T &Lock()
+	{
+		SYSMutexLock(lock);
+		return content;
+	}
+
+	void Unlock()
+	{
+		SYSMutexUnlock(lock);
+	}
+
+	template <typename T>
+	class Handle
+	{
+	public:
+		MXContainer<T> *safeContainer;
+
+		Handle(MXContainer<T> *safe)
 		{
 			safe->Lock();
 			safeContainer = safe;
