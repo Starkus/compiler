@@ -109,7 +109,7 @@ struct ASTProcedureParameter;
 struct ASTProcedurePrototype : ASTBase
 {
 	DynamicArray<ASTProcedureParameter, LinearAllocator> astParameters;
-	ASTType *astReturnType;
+	DynamicArray<ASTType *, LinearAllocator> astReturnTypes;
 
 	String varargsName;
 	SourceLocation varargsLoc;
@@ -117,7 +117,7 @@ struct ASTProcedurePrototype : ASTBase
 	CallingConvention callingConvention;
 
 	// Type check
-	u32 returnTypeIdx;
+	DynamicArray<u32, LinearAllocator> returnTypeIndices;
 };
 
 enum ASTTypeNodeType
@@ -306,6 +306,11 @@ struct ASTDefined : ASTBase
 	bool isDefined;
 };
 
+struct ASTMultipleExpressions : ASTBase
+{
+	DynamicArray<ASTExpression *, LinearAllocator> array;
+};
+
 struct ASTRoot : ASTBase
 {
 	ASTBlock block;
@@ -319,6 +324,7 @@ enum ASTNodeType : u8
 	ASTNODETYPE_TYPE,
 	ASTNODETYPE_ALIAS,
 	ASTNODETYPE_BLOCK,
+	ASTNODETYPE_MULTIPLE_EXPRESSIONS,
 	ASTNODETYPE_INCLUDE,
 	ASTNODETYPE_LINKLIB,
 	ASTNODETYPE_UNARY_OPERATION,
@@ -380,6 +386,7 @@ struct ASTExpression
 		ASTSimple sizeOfNode;
 		ASTDefined definedNode;
 		ASTCast castNode;
+		ASTMultipleExpressions multipleExpressions;
 	};
 };
 

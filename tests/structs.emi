@@ -47,9 +47,9 @@ Main :: () -> s64
 		PrintF("Couple: %\n", couple);
 
 	structByValue(a);
-	PrintF("A id:% age:% height:%\n", a.id, a.age, a.height);
+	PrintF("Struct by value: id:% age:% height:%\n", a.id, a.age, a.height);
 	structByPointer(^b);
-	PrintF("B id:% age:% height:%\n", b.id, b.age, b.height);
+	PrintF("Struct by pointer: id:% age:% height:%\n", b.id, b.age, b.height);
 
 	pointerToA := ^a;
 	pointerToA.age = 64;

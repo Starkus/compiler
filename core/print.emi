@@ -166,18 +166,17 @@ PrintF :: (format : String, ..args)
 			}
 			Print(" }");
 		}
-		else if typeInfo.typeKind == TypeKind_Enum
-		{
+		else if typeInfo.typeKind == TypeKind_Enum {
 			enumInfo := cast(^TypeInfoEnum) typeInfo;
 			num := arg.asS64;
-			for (enumInfo.values)
-			{
-				if @it == num
-				{
+			for (enumInfo.values) {
+				if @it == num {
 					Print(enumInfo.names[i]);
-					break;
+					return;
 				}
 			}
+			// Default to printing the number
+			PrintArgument(num);
 		}
 		else if typeInfo.typeKind == TypeKind_Array
 		{

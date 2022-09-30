@@ -1493,22 +1493,55 @@ void X64ConvertInstruction(Context *context, IRInstruction inst)
 		// @Improve: dynamic array.
 		ArrayInit(&result.parameterValues, inst.procedureCall.parameters.size * 2);
 
+		FixedArray<IRValue, 32> paramSources;
+		paramSources.size = 0;
+
+		bool isReturnByCopy = false;
+
+		if (inst.procedureCall.returnValues.size)
+		{
+			IRValue returnValue = inst.procedureCall.returnValues[0];
+			isReturnByCopy = IRShouldPassByCopy(context, returnValue.typeTableIdx);
+			if (isReturnByCopy)
+			{
+				static u32 voidPtrTypeIdx = GetTypeInfoPointerOf(context, TYPETABLEIDX_VOID);
+
+				u32 tmpValueIdx = IRNewValue(context, "returncpy"_s, returnValue.typeTableIdx, 0);
+				IRValue tmpValue = IRValueValue(tmpValueIdx, voidPtrTypeIdx);
+
+				X64Instruction pushInst = { X64_Push_Value };
+				pushInst.valueIdx = tmpValueIdx;
+				*BucketArrayAdd(&threadData->beInstructions) = pushInst;
+
+				IRValue ptr = IRValueNewValue(context, "returnptr"_s, TYPETABLEIDX_S64, 0);
+				*BucketArrayAdd(&threadData->beInstructions) = { X64_LEA, ptr, tmpValue };
+
+				*FixedArrayAdd(&paramSources) = ptr;
+			}
+		}
+
+		for (int i = 0; i < inst.procedureCall.parameters.size; ++i)
+			*FixedArrayAdd(&paramSources) = inst.procedureCall.parameters[i];
+
 		Array<u32, ThreadAllocator> paramValues;
 		switch (callingConvention)
 		{
 			case CC_WIN64:
 				paramValues =
-					X64ReadyWin64Parameters(context, inst.procedureCall.parameters, true);
+					X64ReadyWin64Parameters(context, paramSources, true);
 				break;
 			case CC_DEFAULT:
 			case CC_LINUX64:
 			default:
 				paramValues =
-					X64ReadyLinuxParameters(context, inst.procedureCall.parameters, true);
+					X64ReadyLinuxParameters(context, paramSources, true);
 		}
 
 		result.parameterValues.data = paramValues.data;
 		result.parameterValues.size = paramValues.size;
+#if DEBUG_BUILD
+		result.parameterValues._capacity = paramValues._capacity;
+#endif
 
 #if !_MSC_VER
 		// Check syscalls
@@ -1530,17 +1563,60 @@ void X64ConvertInstruction(Context *context, IRInstruction inst)
 
 		*BucketArrayAdd(&threadData->beInstructions) = result;
 
-		if (inst.procedureCall.out.valueType != IRVALUETYPE_INVALID)
+		u64 returnValueCount = inst.procedureCall.returnValues.size;
+		if (returnValueCount)
 		{
-			u32 returnTypeIdx = inst.procedureCall.out.typeTableIdx;
-			if (GetTypeInfo(context, returnTypeIdx).typeCategory == TYPECATEGORY_FLOATING)
+			if (callingConvention == CC_DEFAULT)
 			{
-				IRValue typedXmm0 = XMM0;
-				typedXmm0.typeTableIdx = returnTypeIdx;
-				X64Mov(context, inst.procedureCall.out, typedXmm0);
+				static IRValue integerReturnRegisters[]  = { RAX, RDI, RSI, RDX, RCX, R8, R9 };
+				static IRValue floatingReturnRegisters[] = {
+					XMM0, XMM1, XMM2, XMM3, XMM4, XMM5, XMM6, XMM7, XMM8 };
+
+				int integerIdx = 0;
+				int floatingIdx = 0;
+				for (int i = 0; i < returnValueCount; ++i)
+				{
+					IRValue slot;
+					IRValue out = inst.procedureCall.returnValues[i];
+					u32 returnTypeIdx = out.typeTableIdx;
+					TypeInfo returnTypeInfo = GetTypeInfo(context, returnTypeIdx);
+					if (returnTypeInfo.typeCategory == TYPECATEGORY_FLOATING)
+					{
+						slot = floatingReturnRegisters[floatingIdx++];
+						X64Mov(context, out, slot);
+					}
+					else
+					{
+						slot = integerReturnRegisters[integerIdx++];
+
+						if (IRShouldPassByCopy(context, returnTypeIdx))
+						{
+							IRValue ptr = IRValueNewValue(context, "paramptr"_s, TYPETABLEIDX_S64, 0);
+							IRValue outButS64 = out;
+							outButS64.typeTableIdx = TYPETABLEIDX_S64;
+							*BucketArrayAdd(&threadData->beInstructions) = { X64_LEA, ptr, outButS64 };
+
+							X64CopyMemory(context, ptr, slot, IRValueImmediate(returnTypeInfo.size));
+						}
+						else
+							X64Mov(context, out, slot);
+					}
+				}
 			}
 			else
-				X64Mov(context, inst.procedureCall.out, RAX);
+			{
+				ASSERT(returnValueCount == 1);
+				IRValue out = inst.procedureCall.returnValues[0];
+				u32 returnTypeIdx = out.typeTableIdx;
+				if (GetTypeInfo(context, returnTypeIdx).typeCategory == TYPECATEGORY_FLOATING)
+				{
+					IRValue typedXmm0 = XMM0;
+					typedXmm0.typeTableIdx = returnTypeIdx;
+					X64Mov(context, out, typedXmm0);
+				}
+				else
+					X64Mov(context, out, RAX);
+			}
 		}
 		return;
 	}
@@ -2057,21 +2133,21 @@ void X64PrintStaticData(Context *context, String name, IRValue value, u32 typeTa
 			break;
 		}
 	} break;
-	case IRVALUETYPE_IMMEDIATE_GROUP:
+	case IRVALUETYPE_TUPLE:
 	{
 		int alignment = alignmentOverride < 0 ? 8 : alignmentOverride;
 		X64StaticDataAlignTo(context, alignment, true);
 
 		bool isArray = false;
 		u32 elementTypeIdx = TYPETABLEIDX_Unset;
-		if (typeTableIdx > 0)
+		if (typeTableIdx > TYPETABLEIDX_Unset)
 		{
 			TypeInfo typeInfo = GetTypeInfo(context, typeTableIdx);
 			isArray = typeInfo.typeCategory == TYPECATEGORY_ARRAY;
 			elementTypeIdx = typeInfo.arrayInfo.elementTypeTableIdx;
 		}
 
-		ArrayView<IRValue> members = value.immediateStructMembers;
+		ArrayView<IRValue> members = value.tuple;
 		for (int memberIdx = 0; memberIdx < members.size; ++memberIdx)
 		{
 			String memberName = memberIdx ? "   "_s : name;
@@ -2164,7 +2240,7 @@ void X64PrintStaticDataUninitialized(Context *context, String name, IRValue valu
 		PrintOut(context, "%S: RESB 0%llxH\n", name, typeInfo.size);
 #endif
 	} break;
-	case IRVALUETYPE_IMMEDIATE_GROUP:
+	case IRVALUETYPE_TUPLE:
 	{
 		int alignment = alignmentOverride < 0 ? 8 : alignmentOverride;
 		X64StaticDataAlignTo(context, alignment, false);
@@ -2178,7 +2254,7 @@ void X64PrintStaticDataUninitialized(Context *context, String name, IRValue valu
 			elementTypeIdx = typeInfo.arrayInfo.elementTypeTableIdx;
 		}
 
-		ArrayView<IRValue> members = value.immediateStructMembers;
+		ArrayView<IRValue> members = value.tuple;
 		for (int memberIdx = 0; memberIdx < members.size; ++memberIdx)
 		{
 			String memberName = memberIdx ? "   "_s : name;
@@ -2228,7 +2304,6 @@ void BackendMain(Context *context)
 		u32 voidPtrIdx = GetTypeInfoPointerOf(context, TYPETABLEIDX_VOID);
 
 		TypeInfo t = { TYPECATEGORY_PROCEDURE };
-		t.procedureInfo.returnTypeTableIdx = TYPETABLEIDX_Unset;
 		ArrayInit(&t.procedureInfo.parameters, 3);
 		t.procedureInfo.parameters.size = 3;
 		t.procedureInfo.parameters[0] = { voidPtrIdx, {} };
@@ -2242,14 +2317,12 @@ void BackendMain(Context *context)
 		*copyMemory = {};
 		copyMemory->name = "CopyMemory"_s;
 		copyMemory->typeTableIdx = typeTableIdx;
-		copyMemory->returnValueIdx = U32_MAX;
 
 		zeroMemoryProcIdx = (u32)BucketArrayCount(&externalProcedures) | PROCEDURE_EXTERNAL_BIT;
 		Procedure *zeroMemory = BucketArrayAdd(&externalProcedures);
 		*zeroMemory = {};
 		zeroMemory->name = "ZeroMemory"_s;
 		zeroMemory->typeTableIdx = typeTableIdx;
-		zeroMemory->returnValueIdx = U32_MAX;
 	}
 
 	x64InstructionInfos[X64_INT] =       { "int"_s,       OPERANDTYPE_IMMEDIATE, OPERANDACCESS_READ };
@@ -2514,28 +2587,28 @@ void BackendGenerateOutputFile(Context *context)
 			IRUpdateValue(context, typeInfo.valueIdx, &v);
 
 			IRStaticVariable newStaticVar = { typeInfo.valueIdx };
-			newStaticVar.initialValue.valueType = IRVALUETYPE_IMMEDIATE_GROUP;
+			newStaticVar.initialValue.valueType = IRVALUETYPE_TUPLE;
 			newStaticVar.initialValue.typeTableIdx = TYPETABLEIDX_Unset;
 
 			switch (typeInfo.typeCategory)
 			{
 			case TYPECATEGORY_INTEGER:
 			{
-				ArrayInit(&newStaticVar.initialValue.immediateStructMembers, 3);
-				*ArrayAdd(&newStaticVar.initialValue.immediateStructMembers) =
+				ArrayInit(&newStaticVar.initialValue.tuple, 3);
+				*ArrayAdd(&newStaticVar.initialValue.tuple) =
 					{ IRValueImmediate(0, TYPETABLEIDX_S8) };
-				*ArrayAdd(&newStaticVar.initialValue.immediateStructMembers) =
+				*ArrayAdd(&newStaticVar.initialValue.tuple) =
 					{ IRValueImmediate(typeInfo.size, TYPETABLEIDX_S64) };
-				*ArrayAdd(&newStaticVar.initialValue.immediateStructMembers) =
+				*ArrayAdd(&newStaticVar.initialValue.tuple) =
 					{ IRValueImmediate(typeInfo.integerInfo.isSigned, TYPETABLEIDX_S32) };
 			} break;
 			case TYPECATEGORY_FLOATING:
 			{
 				newStaticVar.initialValue.typeTableIdx = TYPETABLEIDX_TYPE_INFO_STRUCT;
-				ArrayInit(&newStaticVar.initialValue.immediateStructMembers, 2);
-				*ArrayAdd(&newStaticVar.initialValue.immediateStructMembers) =
+				ArrayInit(&newStaticVar.initialValue.tuple, 2);
+				*ArrayAdd(&newStaticVar.initialValue.tuple) =
 					{ IRValueImmediate(1, TYPETABLEIDX_S8) };
-				*ArrayAdd(&newStaticVar.initialValue.immediateStructMembers) =
+				*ArrayAdd(&newStaticVar.initialValue.tuple) =
 					{ IRValueImmediate(typeInfo.size, TYPETABLEIDX_S64) };
 			} break;
 			case TYPECATEGORY_STRUCT:
@@ -2548,9 +2621,9 @@ void BackendGenerateOutputFile(Context *context)
 				u32 membersValueIdx = NewGlobalValue(context, SNPrintF("_members_%lld", 16, typeTableIdx),
 						TYPETABLEIDX_TYPE_INFO_STRUCT_MEMBER_STRUCT, VALUEFLAGS_ON_STATIC_STORAGE);
 				IRStaticVariable membersStaticVar = { membersValueIdx };
-				membersStaticVar.initialValue.valueType = IRVALUETYPE_IMMEDIATE_GROUP;
+				membersStaticVar.initialValue.valueType = IRVALUETYPE_TUPLE;
 				membersStaticVar.initialValue.typeTableIdx = TYPETABLEIDX_Unset;
-				ArrayInit(&membersStaticVar.initialValue.immediateStructMembers,
+				ArrayInit(&membersStaticVar.initialValue.tuple,
 						typeInfo.structInfo.members.size);
 				for (s64 memberIdx = 0; memberIdx < (s64)typeInfo.structInfo.members.size; ++memberIdx)
 				{
@@ -2558,32 +2631,32 @@ void BackendGenerateOutputFile(Context *context)
 					TypeInfo memberType = typeTable[member.typeTableIdx];
 
 					IRValue memberImm;
-					memberImm.valueType = IRVALUETYPE_IMMEDIATE_GROUP;
+					memberImm.valueType = IRVALUETYPE_TUPLE;
 					memberImm.typeTableIdx = TYPETABLEIDX_Unset;
-					ArrayInit(&memberImm.immediateStructMembers, 4);
-					*ArrayAdd(&memberImm.immediateStructMembers) =
+					ArrayInit(&memberImm.tuple, 4);
+					*ArrayAdd(&memberImm.tuple) =
 						{ IRValueImmediateString(context, member.name) };
-					*ArrayAdd(&memberImm.immediateStructMembers) =
+					*ArrayAdd(&memberImm.tuple) =
 						{ IRValueDereference(memberType.valueIdx, pointerToTypeInfoIdx) };
-					*ArrayAdd(&memberImm.immediateStructMembers) =
+					*ArrayAdd(&memberImm.tuple) =
 						{ IRValueImmediate(member.offset, TYPETABLEIDX_S64) };
 
-					*ArrayAdd(&membersStaticVar.initialValue.immediateStructMembers) = memberImm;
+					*ArrayAdd(&membersStaticVar.initialValue.tuple) = memberImm;
 				}
 				*DynamicArrayAdd(&context->irStaticVariables.GetForWrite()) = membersStaticVar;
 
-				ArrayInit(&newStaticVar.initialValue.immediateStructMembers, 6);
-				*ArrayAdd(&newStaticVar.initialValue.immediateStructMembers) =
+				ArrayInit(&newStaticVar.initialValue.tuple, 6);
+				*ArrayAdd(&newStaticVar.initialValue.tuple) =
 					{ IRValueImmediate(2, TYPETABLEIDX_S8) };
-				*ArrayAdd(&newStaticVar.initialValue.immediateStructMembers) =
+				*ArrayAdd(&newStaticVar.initialValue.tuple) =
 					{ IRValueImmediate(typeInfo.size, TYPETABLEIDX_S64) };
-				*ArrayAdd(&newStaticVar.initialValue.immediateStructMembers) =
+				*ArrayAdd(&newStaticVar.initialValue.tuple) =
 					{ IRValueImmediateString(context, structName) };
-				*ArrayAdd(&newStaticVar.initialValue.immediateStructMembers) =
+				*ArrayAdd(&newStaticVar.initialValue.tuple) =
 					{ IRValueImmediate(typeInfo.typeCategory == TYPECATEGORY_UNION, TYPETABLEIDX_S32) };
-				*ArrayAdd(&newStaticVar.initialValue.immediateStructMembers) =
+				*ArrayAdd(&newStaticVar.initialValue.tuple) =
 					{ IRValueImmediate(typeInfo.structInfo.members.size, TYPETABLEIDX_S64) };
-				*ArrayAdd(&newStaticVar.initialValue.immediateStructMembers) =
+				*ArrayAdd(&newStaticVar.initialValue.tuple) =
 					{ IRValueDereference(membersValueIdx, pointerToStructMemberInfoIdx) };
 			} break;
 			case TYPECATEGORY_ENUM:
@@ -2597,73 +2670,73 @@ void BackendGenerateOutputFile(Context *context)
 				u32 namesValueIdx = NewGlobalValue(context, SNPrintF("_names_%lld", 12, typeTableIdx),
 						TYPETABLEIDX_STRING_STRUCT, VALUEFLAGS_ON_STATIC_STORAGE);
 				IRStaticVariable namesStaticVar = { namesValueIdx };
-				namesStaticVar.initialValue.valueType = IRVALUETYPE_IMMEDIATE_GROUP;
-				ArrayInit(&namesStaticVar.initialValue.immediateStructMembers,
+				namesStaticVar.initialValue.valueType = IRVALUETYPE_TUPLE;
+				ArrayInit(&namesStaticVar.initialValue.tuple,
 						typeInfo.enumInfo.names.size);
 				for (s64 nameIdx = 0; nameIdx < (s64)typeInfo.enumInfo.names.size; ++nameIdx)
 				{
 					IRValue nameImm = IRValueImmediateString(context,
 							typeInfo.enumInfo.names[nameIdx]);
-					*ArrayAdd(&namesStaticVar.initialValue.immediateStructMembers) = nameImm;
+					*ArrayAdd(&namesStaticVar.initialValue.tuple) = nameImm;
 				}
 				*DynamicArrayAdd(&context->irStaticVariables.GetForWrite()) = namesStaticVar;
 
 				u32 valuesValueIdx = NewGlobalValue(context, SNPrintF("_values_%lld", 14, typeTableIdx),
 						TYPETABLEIDX_S64, VALUEFLAGS_ON_STATIC_STORAGE);
 				IRStaticVariable valuesStaticVar = { valuesValueIdx };
-				valuesStaticVar.initialValue.valueType = IRVALUETYPE_IMMEDIATE_GROUP;
-				ArrayInit(&valuesStaticVar.initialValue.immediateStructMembers,
+				valuesStaticVar.initialValue.valueType = IRVALUETYPE_TUPLE;
+				ArrayInit(&valuesStaticVar.initialValue.tuple,
 						typeInfo.enumInfo.values.size);
 				for (s64 valueIdx = 0; valueIdx < (s64)typeInfo.enumInfo.values.size; ++valueIdx)
 				{
 					IRValue valueImm = IRValueImmediate(typeInfo.enumInfo.values[valueIdx],
 							TYPETABLEIDX_S64);
-					*ArrayAdd(&valuesStaticVar.initialValue.immediateStructMembers) = valueImm;
+					*ArrayAdd(&valuesStaticVar.initialValue.tuple) = valueImm;
 				}
 				*DynamicArrayAdd(&context->irStaticVariables.GetForWrite()) = valuesStaticVar;
 
-				ArrayInit(&newStaticVar.initialValue.immediateStructMembers, 8);
-				*ArrayAdd(&newStaticVar.initialValue.immediateStructMembers) =
+				ArrayInit(&newStaticVar.initialValue.tuple, 8);
+				*ArrayAdd(&newStaticVar.initialValue.tuple) =
 				{ IRValueImmediate(3, TYPETABLEIDX_S8) };
-				*ArrayAdd(&newStaticVar.initialValue.immediateStructMembers) =
+				*ArrayAdd(&newStaticVar.initialValue.tuple) =
 				{ IRValueImmediate(typeInfo.size, TYPETABLEIDX_S64) };
-				*ArrayAdd(&newStaticVar.initialValue.immediateStructMembers) =
+				*ArrayAdd(&newStaticVar.initialValue.tuple) =
 				{ IRValueImmediateString(context, enumName) };
-				*ArrayAdd(&newStaticVar.initialValue.immediateStructMembers) =
+				*ArrayAdd(&newStaticVar.initialValue.tuple) =
 				{ IRValueDereference(enumType.valueIdx, pointerToTypeInfoIdx) };
-				*ArrayAdd(&newStaticVar.initialValue.immediateStructMembers) =
+				*ArrayAdd(&newStaticVar.initialValue.tuple) =
 				{ IRValueImmediate(typeInfo.enumInfo.names.size, TYPETABLEIDX_S64) };
-				*ArrayAdd(&newStaticVar.initialValue.immediateStructMembers) =
+				*ArrayAdd(&newStaticVar.initialValue.tuple) =
 				{ IRValueDereference(namesValueIdx, pointerToStringIdx) };
-				*ArrayAdd(&newStaticVar.initialValue.immediateStructMembers) =
+				*ArrayAdd(&newStaticVar.initialValue.tuple) =
 				{ IRValueImmediate(typeInfo.enumInfo.values.size, TYPETABLEIDX_S64) };
-				*ArrayAdd(&newStaticVar.initialValue.immediateStructMembers) =
+				*ArrayAdd(&newStaticVar.initialValue.tuple) =
 				{ IRValueDereference(valuesValueIdx, pointerToS64Idx) };
 			} break;
 			case TYPECATEGORY_POINTER:
 			{
 				TypeInfo pointedType = typeTable[typeInfo.pointerInfo.pointedTypeTableIdx];
 
-				ArrayInit(&newStaticVar.initialValue.immediateStructMembers, 3);
-				*ArrayAdd(&newStaticVar.initialValue.immediateStructMembers) =
+				ArrayInit(&newStaticVar.initialValue.tuple, 3);
+				*ArrayAdd(&newStaticVar.initialValue.tuple) =
 				{ IRValueImmediate(4, TYPETABLEIDX_S8) };
-				*ArrayAdd(&newStaticVar.initialValue.immediateStructMembers) =
+				*ArrayAdd(&newStaticVar.initialValue.tuple) =
 				{ IRValueImmediate(typeInfo.size, TYPETABLEIDX_S64) };
-				*ArrayAdd(&newStaticVar.initialValue.immediateStructMembers) =
+				*ArrayAdd(&newStaticVar.initialValue.tuple) =
 				{ IRValueDereference(pointedType.valueIdx, pointerToTypeInfoIdx) };
 			} break;
 			case TYPECATEGORY_ARRAY:
 			{
 				TypeInfo elementType = typeTable[typeInfo.arrayInfo.elementTypeTableIdx];
 
-				ArrayInit(&newStaticVar.initialValue.immediateStructMembers, 4);
-				*ArrayAdd(&newStaticVar.initialValue.immediateStructMembers) =
+				ArrayInit(&newStaticVar.initialValue.tuple, 4);
+				*ArrayAdd(&newStaticVar.initialValue.tuple) =
 				{ IRValueImmediate(5, TYPETABLEIDX_S8) };
-				*ArrayAdd(&newStaticVar.initialValue.immediateStructMembers) =
+				*ArrayAdd(&newStaticVar.initialValue.tuple) =
 				{ IRValueImmediate(typeInfo.size, TYPETABLEIDX_S64) };
-				*ArrayAdd(&newStaticVar.initialValue.immediateStructMembers) =
+				*ArrayAdd(&newStaticVar.initialValue.tuple) =
 				{ IRValueImmediate(typeInfo.arrayInfo.count, TYPETABLEIDX_S64) };
-				*ArrayAdd(&newStaticVar.initialValue.immediateStructMembers) =
+				*ArrayAdd(&newStaticVar.initialValue.tuple) =
 				{ IRValueDereference(elementType.valueIdx, pointerToTypeInfoIdx) };
 			} break;
 			case TYPECATEGORY_PROCEDURE:
@@ -2674,8 +2747,8 @@ void BackendGenerateOutputFile(Context *context)
 					parametersValueIdx = NewGlobalValue(context, SNPrintF("_params_%lld", 14, typeTableIdx),
 							pointerToTypeInfoIdx, VALUEFLAGS_ON_STATIC_STORAGE);
 					IRStaticVariable paramsStaticVar = { parametersValueIdx };
-					paramsStaticVar.initialValue.valueType = IRVALUETYPE_IMMEDIATE_GROUP;
-					ArrayInit(&paramsStaticVar.initialValue.immediateStructMembers,
+					paramsStaticVar.initialValue.valueType = IRVALUETYPE_TUPLE;
+					ArrayInit(&paramsStaticVar.initialValue.tuple,
 							typeInfo.procedureInfo.parameters.size);
 					for (s64 paramIdx = 0; paramIdx < (s64)typeInfo.procedureInfo.parameters.size;
 							++paramIdx)
@@ -2683,43 +2756,43 @@ void BackendGenerateOutputFile(Context *context)
 						TypeInfo paramType =
 							typeTable[typeInfo.procedureInfo.parameters[paramIdx].typeTableIdx];
 						IRValue paramImm = IRValueDereference(paramType.valueIdx, pointerToTypeInfoIdx);
-						*ArrayAdd(&paramsStaticVar.initialValue.immediateStructMembers) = paramImm;
+						*ArrayAdd(&paramsStaticVar.initialValue.tuple) = paramImm;
 					}
 					*DynamicArrayAdd(&context->irStaticVariables.GetForWrite()) = paramsStaticVar;
 				}
 
-				ArrayInit(&newStaticVar.initialValue.immediateStructMembers, 5);
-				*ArrayAdd(&newStaticVar.initialValue.immediateStructMembers) =
+				ArrayInit(&newStaticVar.initialValue.tuple, 5);
+				*ArrayAdd(&newStaticVar.initialValue.tuple) =
 				{ IRValueImmediate(6, TYPETABLEIDX_S8) };
-				*ArrayAdd(&newStaticVar.initialValue.immediateStructMembers) =
+				*ArrayAdd(&newStaticVar.initialValue.tuple) =
 				{ IRValueImmediate(typeInfo.size, TYPETABLEIDX_S64) };
-				*ArrayAdd(&newStaticVar.initialValue.immediateStructMembers) =
+				*ArrayAdd(&newStaticVar.initialValue.tuple) =
 				{ IRValueImmediate(typeInfo.procedureInfo.parameters.size, TYPETABLEIDX_S64) };
 				if (parametersValueIdx)
-					*ArrayAdd(&newStaticVar.initialValue.immediateStructMembers) =
+					*ArrayAdd(&newStaticVar.initialValue.tuple) =
 					{ IRValueDereference(parametersValueIdx, pointerToTypeInfoIdx) };
 				else
-					*ArrayAdd(&newStaticVar.initialValue.immediateStructMembers) =
+					*ArrayAdd(&newStaticVar.initialValue.tuple) =
 					{ IRValueImmediate(0, pointerToTypeInfoIdx) };
-				*ArrayAdd(&newStaticVar.initialValue.immediateStructMembers) =
+				*ArrayAdd(&newStaticVar.initialValue.tuple) =
 				{ IRValueImmediate(typeInfo.procedureInfo.isVarargs, TYPETABLEIDX_BOOL) };
 			} break;
 			case TYPECATEGORY_ALIAS:
 			{
 				TypeInfo aliasedType = typeTable[typeInfo.aliasInfo.aliasedTypeIdx];
 
-				ArrayInit(&newStaticVar.initialValue.immediateStructMembers, 3);
-				*ArrayAdd(&newStaticVar.initialValue.immediateStructMembers) =
+				ArrayInit(&newStaticVar.initialValue.tuple, 3);
+				*ArrayAdd(&newStaticVar.initialValue.tuple) =
 				{ IRValueImmediate(7, TYPETABLEIDX_S8) };
-				*ArrayAdd(&newStaticVar.initialValue.immediateStructMembers) =
+				*ArrayAdd(&newStaticVar.initialValue.tuple) =
 				{ IRValueImmediate(typeInfo.size, TYPETABLEIDX_S64) };
-				*ArrayAdd(&newStaticVar.initialValue.immediateStructMembers) =
+				*ArrayAdd(&newStaticVar.initialValue.tuple) =
 				{ IRValueDereference(aliasedType.valueIdx, pointerToTypeInfoIdx) };
 			} break;
 			case TYPECATEGORY_INVALID:
 			{
-				ArrayInit(&newStaticVar.initialValue.immediateStructMembers, 1);
-				*ArrayAdd(&newStaticVar.initialValue.immediateStructMembers) =
+				ArrayInit(&newStaticVar.initialValue.tuple, 1);
+				*ArrayAdd(&newStaticVar.initialValue.tuple) =
 				{ IRValueImmediate(8, TYPETABLEIDX_S8) };
 			} break;
 			default:
@@ -3033,22 +3106,25 @@ void BackendJobProc(Context *context, u32 procedureIdx)
 
 	BucketArrayInit(&threadData->beInstructions);
 	threadData->allocatedParameterCount = 0;
-	threadData->returnValueIdx = proc.returnValueIdx;
+	threadData->returnValueIndices = proc.returnValueIndices;
 	threadData->stackSize = 0;
 	DynamicArrayInit(&threadData->spilledValues, 8);
 	BucketArrayInit(&threadData->bePatchedInstructions);
 
-	bool returnByCopy = procTypeInfo.returnTypeTableIdx != TYPETABLEIDX_VOID &&
-			IRShouldPassByCopy(context, procTypeInfo.returnTypeTableIdx);
-	int paramCount = (int)proc.parameterValues.size;
-
 	// Allocate parameters
+	int paramCount = (int)proc.parameterValues.size;
 	Array<IRValue, ThreadAllocator> params;
-	ArrayInit(&params, paramCount + returnByCopy);
+	ArrayInit(&params, paramCount + 1);
 
-	// Pointer to return value
-	if (returnByCopy)
-		*ArrayAdd(&params) = IRValueValue(proc.returnValueIdx, TYPETABLEIDX_S64);
+	if (procTypeInfo.callingConvention != CC_DEFAULT)
+	{
+		bool returnByCopy = procTypeInfo.returnTypeIndices.size &&
+				IRShouldPassByCopy(context, procTypeInfo.returnTypeIndices[0]);
+
+		// Pointer to return value
+		if (returnByCopy)
+			*ArrayAdd(&params) = IRValueValue(proc.returnValueIndices[0], TYPETABLEIDX_S64);
+	}
 
 	for (int paramIdx = 0; paramIdx < paramCount; ++paramIdx)
 		*ArrayAdd(&params) = IRValueValue(context, proc.parameterValues[paramIdx]);
@@ -3070,25 +3146,61 @@ void BackendJobProc(Context *context, u32 procedureIdx)
 		X64ConvertInstruction(context, inst);
 	}
 
-	if (procTypeInfo.returnTypeTableIdx != TYPETABLEIDX_VOID)
+	u64 returnValueCount = procTypeInfo.returnTypeIndices.size;
+	if (returnValueCount)
 	{
-		u32 returnTypeTableIdx = IRGetValue(context, proc.returnValueIdx).typeTableIdx;
-		if (returnByCopy)
+		if (procTypeInfo.callingConvention == CC_DEFAULT)
 		{
-			IRValue returnValue = IRValueValue(proc.returnValueIdx, returnTypeTableIdx);
-			*BucketArrayAdd(&threadData->beInstructions) = { X64_LEA, RAX, returnValue };
+			static IRValue integerReturnRegisters[]  = { RAX, RDI, RSI, RDX, RCX, R8, R9 };
+			static IRValue floatingReturnRegisters[] = {
+				XMM0, XMM1, XMM2, XMM3, XMM4, XMM5, XMM6, XMM7, XMM8 };
+
+			int integerIdx = 0;
+			int floatingIdx = 0;
+			for (int i = 0; i < returnValueCount; ++i)
+			{
+				IRValue slot;
+				u32 returnTypeIdx = procTypeInfo.returnTypeIndices[i];
+				IRValue out = IRValueValue(proc.returnValueIndices[i], returnTypeIdx, 0);
+				TypeInfo returnTypeInfo = GetTypeInfo(context, returnTypeIdx);
+				if (returnTypeInfo.typeCategory == TYPECATEGORY_FLOATING)
+				{
+					slot = floatingReturnRegisters[floatingIdx++];
+					X64Mov(context, slot, out);
+				}
+				else
+				{
+					slot = integerReturnRegisters[integerIdx++];
+
+					if (IRShouldPassByCopy(context, returnTypeIdx))
+					{
+						IRValue outButS64 = out;
+						outButS64.typeTableIdx = TYPETABLEIDX_S64;
+						*BucketArrayAdd(&threadData->beInstructions) = { X64_LEA, slot, outButS64 };
+					}
+					else
+						X64Mov(context, slot, out);
+				}
+			}
 		}
 		else
 		{
-			IRValue returnValue = IRValueValue(proc.returnValueIdx, returnTypeTableIdx);
-			if (GetTypeInfo(context, returnTypeTableIdx).typeCategory == TYPECATEGORY_FLOATING)
+			u32 returnTypeIdx = procTypeInfo.returnTypeIndices[0];
+			IRValue returnValue = IRValueValue(proc.returnValueIndices[0], returnTypeIdx);
+			bool returnByCopy = IRShouldPassByCopy(context, returnTypeIdx);
+			if (returnByCopy && procTypeInfo.callingConvention != CC_DEFAULT)
+				*BucketArrayAdd(&threadData->beInstructions) = { X64_LEA, RAX, returnValue };
+			else if (!returnByCopy)
 			{
-				IRValue typedXmm0 = XMM0;
-				typedXmm0.typeTableIdx = returnTypeTableIdx;
-				X64Mov(context, typedXmm0, returnValue);
+				if (GetTypeInfo(context, returnTypeIdx).typeCategory == TYPECATEGORY_FLOATING)
+				{
+					IRValue typedXmm0 = XMM0;
+					typedXmm0.typeTableIdx = returnTypeIdx;
+					X64Mov(context, typedXmm0, returnValue);
+				}
+				else
+					X64Mov(context, RAX, returnValue);
 			}
-			else
-				X64Mov(context, RAX, returnValue);
 		}
 	}
 

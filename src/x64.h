@@ -228,6 +228,49 @@ enum X64Register
 	X64REGISTER_Count
 };
 
+const u64 RAX_bit	= 1llu << RAX_idx;
+const u64 RCX_bit	= 1llu << RCX_idx;
+const u64 RDX_bit	= 1llu << RDX_idx;
+const u64 RBX_bit	= 1llu << RBX_idx;
+const u64 RSI_bit	= 1llu << RSI_idx;
+const u64 RDI_bit	= 1llu << RDI_idx;
+const u64 RSP_bit	= 1llu << RSP_idx;
+const u64 RBP_bit	= 1llu << RBP_idx;
+const u64 R8_bit	= 1llu << R8_idx;
+const u64 R9_bit	= 1llu << R9_idx;
+const u64 R10_bit	= 1llu << R10_idx;
+const u64 R11_bit	= 1llu << R11_idx;
+const u64 R12_bit	= 1llu << R12_idx;
+const u64 R13_bit	= 1llu << R13_idx;
+const u64 R14_bit	= 1llu << R14_idx;
+const u64 R15_bit	= 1llu << R15_idx;
+const u64 XMM0_bit	= 1llu << XMM0_idx;
+const u64 XMM1_bit	= 1llu << XMM1_idx;
+const u64 XMM2_bit	= 1llu << XMM2_idx;
+const u64 XMM3_bit	= 1llu << XMM3_idx;
+const u64 XMM4_bit	= 1llu << XMM4_idx;
+const u64 XMM5_bit	= 1llu << XMM5_idx;
+const u64 XMM6_bit	= 1llu << XMM6_idx;
+const u64 XMM7_bit	= 1llu << XMM7_idx;
+const u64 XMM8_bit	= 1llu << XMM8_idx;
+const u64 XMM9_bit	= 1llu << XMM9_idx;
+const u64 XMM10_bit	= 1llu << XMM10_idx;
+const u64 XMM11_bit	= 1llu << XMM11_idx;
+const u64 XMM12_bit	= 1llu << XMM12_idx;
+const u64 XMM13_bit	= 1llu << XMM13_idx;
+const u64 XMM14_bit	= 1llu << XMM14_idx;
+const u64 XMM15_bit	= 1llu << XMM15_idx;
+
+const u64 callerSaveRegisters = RCX_bit  | RDX_bit  | R8_bit   | R9_bit   |
+								R10_bit  | R11_bit  | XMM1_bit | XMM2_bit |
+								XMM3_bit | XMM4_bit | XMM5_bit;
+
+const u64 calleeSaveRegisters = RBX_bit   | RSI_bit   | RDI_bit   | RSP_bit   |
+								RBP_bit   | R12_bit   | R13_bit   | R14_bit   |
+								R15_bit   | XMM6_bit  | XMM7_bit  | XMM8_bit  |
+								XMM8_bit  | XMM9_bit  | XMM10_bit | XMM11_bit |
+								XMM12_bit | XMM13_bit | XMM14_bit | XMM15_bit;
+
 X64Register x64ScratchRegisters[] = {
 	RAX_idx, RBX_idx, RCX_idx, RDX_idx,
 	RSI_idx, RDI_idx, R8_idx,  R9_idx,

@@ -10,7 +10,7 @@ inline bool IsOperatorToken(Token *token)
 
 const int PRECEDENCE_UNARY_SUBTRACT = TOKEN_OP_End+1; // @Hack
 
-int GetOperatorPrecedence(s32 op)
+constexpr int GetOperatorPrecedence(s32 op)
 {
 	// Even means evaluated left to right with things of same precedence.
 	// Odd means evaluated right to left with things of same precedence.
@@ -18,9 +18,11 @@ int GetOperatorPrecedence(s32 op)
 		return 1;
 	else switch (op)
 	{
+		case ',':
+			return 2;
 		case TOKEN_OP_AND:
 		case TOKEN_OP_OR:
-			return 2;
+			return 4;
 		case TOKEN_OP_EQUALS:
 		case TOKEN_OP_NOT_EQUALS:
 		case TOKEN_OP_GREATER_THAN:
@@ -28,31 +30,31 @@ int GetOperatorPrecedence(s32 op)
 		case TOKEN_OP_LESS_THAN:
 		case TOKEN_OP_LESS_THAN_OR_EQUAL:
 		case TOKEN_OP_RANGE:
-			return 4;
+			return 6;
 		case TOKEN_OP_PLUS:
 		case TOKEN_OP_MINUS:
-			return 6;
+			return 8;
 		case TOKEN_OP_MULTIPLY:
 		case TOKEN_OP_DIVIDE:
 		case TOKEN_OP_MODULO:
-			return 8;
+			return 10;
 		case TOKEN_OP_SHIFT_LEFT:
 		case TOKEN_OP_SHIFT_RIGHT:
 		case TOKEN_OP_BITWISE_AND:
 		case TOKEN_OP_BITWISE_OR:
-			return 10;
+			return 12;
 		case TOKEN_OP_NOT:
 		case TOKEN_OP_BITWISE_NOT:
 		case PRECEDENCE_UNARY_SUBTRACT:
-			return 12;
+			return 14;
 		case TOKEN_OP_POINTER_TO:
 		case TOKEN_OP_DEREFERENCE:
-			return 14;
-		case TOKEN_KEYWORD_CAST:
 			return 16;
+		case TOKEN_KEYWORD_CAST:
+			return 18;
 		case TOKEN_OP_ARRAY_ACCESS:
 		case TOKEN_OP_MEMBER_ACCESS:
-			return 18;
+			return 20;
 		default:
 			ASSERT(false);
 	}

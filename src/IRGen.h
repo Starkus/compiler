@@ -12,10 +12,10 @@ enum IRValueType
 	IRVALUETYPE_VALUE,
 	IRVALUETYPE_VALUE_DEREFERENCE,
 	IRVALUETYPE_PROCEDURE,
+	IRVALUETYPE_TUPLE,
 	IRVALUETYPE_IMMEDIATE_INTEGER,
 	IRVALUETYPE_IMMEDIATE_FLOAT,
-	IRVALUETYPE_IMMEDIATE_STRING,
-	IRVALUETYPE_IMMEDIATE_GROUP
+	IRVALUETYPE_IMMEDIATE_STRING
 };
 struct IRValue
 {
@@ -25,7 +25,7 @@ struct IRValue
 		s64 immediate;
 		f64 immediateFloat;
 		u32 immediateStringIdx;
-		Array<IRValue, LinearAllocator> immediateStructMembers;
+		Array<IRValue, LinearAllocator> tuple;
 		u32 procedureIdx;
 		struct
 		{
@@ -70,7 +70,7 @@ struct IRProcedureCall
 		IRValue procIRValue;
 	};
 	Array<IRValue, LinearAllocator> parameters;
-	IRValue out;
+	Array<IRValue, LinearAllocator> returnValues;
 
 	// Filled during register allocation
 	u64 liveRegisters;

@@ -220,7 +220,7 @@ struct TCThreadData : ParseThreadData
 	ASTExpression *expression;
 	bool onStaticContext;
 	DynamicArray<TCScope, ThreadAllocator> scopeStack;
-	u32 currentReturnType;
+	ArrayView<u32> currentReturnTypes;
 	u32 currentForLoopArrayType;
 	BucketArray<Value, HeapAllocator, 1024> localValues;
 };
@@ -239,7 +239,7 @@ struct IRThreadData : ThreadDataCommon
 		IRValue arrayValue;
 		IRValue indexValue;
 	} irCurrentForLoopInfo;
-	u32 returnValueIdx;
+	ArrayView<u32> returnValueIndices;
 	u32 shouldReturnValueIdx;
 	BucketArray<Value, HeapAllocator, 1024> localValues;
 

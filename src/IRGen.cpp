@@ -51,6 +51,7 @@ u32 IRNewValue(Context *context, Value value)
 
 inline Value IRGetValue(Context *context, u32 valueIdx)
 {
+	ASSERT(valueIdx > 0);
 	if (valueIdx & VALUE_GLOBAL_BIT)
 		return GetGlobalValue(context, valueIdx);
 	else
@@ -62,6 +63,7 @@ inline Value IRGetValue(Context *context, u32 valueIdx)
 
 inline Value *IRGetLocalValue(Context *context, u32 valueIdx)
 {
+	ASSERT(valueIdx > 0);
 	ASSERT(!(valueIdx & VALUE_GLOBAL_BIT));
 	IRThreadData *threadData = (IRThreadData *)SYSGetThreadData(context->tlsIndex);
 	return &threadData->localValues[valueIdx];
@@ -492,6 +494,18 @@ u32 IRAddTempValue(Context *context, String name, u32 typeTableIdx, u8 flags)
 
 void IRDoAssignment(Context *context, IRValue dstValue, IRValue srcValue)
 {
+	// Tuples
+	if (dstValue.valueType == IRVALUETYPE_TUPLE)
+	{
+		// Tuples of different sizes should be caught on type checking
+		ASSERT(srcValue.valueType == IRVALUETYPE_TUPLE);
+		ASSERT(srcValue.tuple.size == dstValue.tuple.size);
+
+		for (int i = 0; i < dstValue.tuple.size; ++i)
+			IRDoAssignment(context, dstValue.tuple[i], srcValue.tuple[i]);
+		return;
+	}
+
 	// Cast to Any
 	if (dstValue.typeTableIdx == TYPETABLEIDX_ANY_STRUCT &&
 		srcValue.typeTableIdx != TYPETABLEIDX_ANY_STRUCT)
@@ -1113,13 +1127,35 @@ IRValue IRDoInlineProcedureCall(Context *context, ASTProcedureCall astProcCall)
 #endif
 
 	IRLabel *oldReturnLabel = threadData->returnLabel;
-	u32 oldReturnValueIdx = threadData->returnValueIdx;
+	ArrayView<u32> oldReturnValueIndices = threadData->returnValueIndices;
 
 	TypeInfoProcedure procTypeInfo = GetTypeInfo(context, procedure.typeTableIdx).procedureInfo;
-	IRValue returnValue = IRValueNewValue(context, "_inline_return"_s, procTypeInfo.returnTypeTableIdx, 0);
-	threadData->returnValueIdx = returnValue.value.valueIdx;
-	IRPushValueIntoStack(context, returnValue.value.valueIdx);
+	u64 returnValueCount = procTypeInfo.returnTypeIndices.size;
+
+	Array<u32, ThreadAllocator> inlineReturnValues;
+	ArrayInit(&inlineReturnValues, returnValueCount);
+	for (int i = 0; i < returnValueCount; ++i)
+	{
+		IRValue returnValue = IRValueNewValue(context, "_inline_return"_s,
+				procTypeInfo.returnTypeIndices[i], 0);
+		IRPushValueIntoStack(context, returnValue.value.valueIdx);
+		*ArrayAdd(&inlineReturnValues) = returnValue.value.valueIdx;
+	}
 	bool isVarargs = procTypeInfo.isVarargs;
+
+	IRValue returnValue = {};
+	if (returnValueCount == 1)
+		returnValue = IRValueValue(inlineReturnValues[0], procTypeInfo.returnTypeIndices[0]);
+	else if (returnValueCount > 1)
+	{
+		returnValue.valueType = IRVALUETYPE_TUPLE;
+		ArrayInit(&returnValue.tuple, returnValueCount);
+		for (int i = 0; i < returnValueCount; ++i)
+			*ArrayAdd(&returnValue.tuple) =
+				IRValueValue(inlineReturnValues[i], procTypeInfo.returnTypeIndices[i]);
+	}
+
+	threadData->returnValueIndices = inlineReturnValues;
 
 	// Support both varargs and default parameters here
 	s32 procParamCount = (s32)procTypeInfo.parameters.size;
@@ -1265,7 +1301,7 @@ skipGeneratingVarargsArray:
 	returnLabelInst->label = returnLabel;
 
 	threadData->returnLabel = oldReturnLabel;
-	threadData->returnValueIdx = oldReturnValueIdx;
+	threadData->returnValueIndices = oldReturnValueIndices;
 
 	return returnValue;
 }
@@ -1285,13 +1321,13 @@ IRValue IRValueFromConstant(Context *context, Constant constant)
 		break;
 	case CONSTANTTYPE_GROUP:
 	{
-		result.valueType = IRVALUETYPE_IMMEDIATE_GROUP;
+		result.valueType = IRVALUETYPE_TUPLE;
 		result.typeTableIdx = constant.typeTableIdx;
 		u64 membersCount = constant.valueAsGroup.size;
-		ArrayInit(&result.immediateStructMembers, membersCount);
-		result.immediateStructMembers.size = membersCount;
+		ArrayInit(&result.tuple, membersCount);
+		result.tuple.size = membersCount;
 		for (int i = 0; i < membersCount; ++i)
-			result.immediateStructMembers[i] =
+			result.tuple[i] =
 				IRValueFromConstant(context, constant.valueAsGroup[i]);
 	} break;
 	default:
@@ -1459,15 +1495,13 @@ void IRGenProcedure(Context *context, u32 procedureIdx, SourceLocation loc)
 		IRPushValueIntoStack(context, paramValueIdx);
 	}
 
-	u32 returnValueIdx = procedure.returnValueIdx;
-	Value returnValue = IRGetValue(context, returnValueIdx);
-	if (IRShouldPassByCopy(context, returnValue.typeTableIdx))
+	u64 returnValueCount = procedure.returnValueIndices.size;
+	for (int i = 0; i < returnValueCount; ++i)
 	{
-		returnValue.flags |= VALUEFLAGS_PARAMETER_BY_COPY;
-		returnValue.typeTableIdx = GetTypeInfoPointerOf(context, returnValue.typeTableIdx);
-		IRUpdateValue(context, returnValueIdx, &returnValue);
+		u32 returnValueIdx = procedure.returnValueIndices[i];
+		Value returnValue = IRGetValue(context, returnValueIdx);
+		IRPushValueIntoStack(context, returnValueIdx);
 	}
-	IRPushValueIntoStack(context, returnValueIdx);
 
 	IRGenFromExpression(context, procedure.astBody);
 
@@ -1507,12 +1541,6 @@ IRValue IRGenFromExpression(Context *context, const ASTExpression *expression)
 
 	switch (expression->nodeType)
 	{
-	case ASTNODETYPE_STATIC_DEFINITION:
-	{
-		// @Cleanup
-		if (expression->staticDefinition.expression->nodeType == ASTNODETYPE_PROCEDURE_DECLARATION)
-			IRGenFromExpression(context, expression->staticDefinition.expression);
-	} break;
 	case ASTNODETYPE_BLOCK:
 	{
 		PushIRScope(context);
@@ -1594,6 +1622,16 @@ IRValue IRGenFromExpression(Context *context, const ASTExpression *expression)
 		}
 
 		PopIRScope(context);
+	} break;
+	case ASTNODETYPE_MULTIPLE_EXPRESSIONS:
+	{
+		result.valueType = IRVALUETYPE_TUPLE;
+		ArrayInit(&result.tuple, expression->multipleExpressions.array.size);
+		for (int i = 0; i < expression->multipleExpressions.array.size; ++i)
+		{
+			IRValue v = IRGenFromExpression(context, expression->multipleExpressions.array[i]);
+			*ArrayAdd(&result.tuple) = v;
+		}
 	} break;
 	case ASTNODETYPE_VARIABLE_DECLARATION:
 	{
@@ -1718,8 +1756,6 @@ IRValue IRGenFromExpression(Context *context, const ASTExpression *expression)
 		case NAMETYPE_VARIABLE:
 		{
 			result = IRValueValue(context, expression->identifier.valueIdx);
-			if (IRGetValue(context, result.value.valueIdx).flags & VALUEFLAGS_PARAMETER_BY_COPY)
-				result = IRDereferenceValue(context, result);
 		} break;
 		default:
 			ASSERT(false);
@@ -1760,8 +1796,6 @@ IRValue IRGenFromExpression(Context *context, const ASTExpression *expression)
 			ASSERT(false);
 		}
 
-		bool isReturnByCopy = IRShouldPassByCopy(context, expression->typeTableIdx);
-
 		ASSERT(GetTypeInfo(context, procTypeIdx).typeCategory == TYPECATEGORY_PROCEDURE);
 		TypeInfoProcedure procTypeInfo = GetTypeInfo(context, procTypeIdx).procedureInfo;
 		bool isVarargs = procTypeInfo.isVarargs;
@@ -1769,32 +1803,32 @@ IRValue IRGenFromExpression(Context *context, const ASTExpression *expression)
 		// Support both varargs and default parameters here
 		s32 procParamCount = (s32)procTypeInfo.parameters.size;
 		s32 callParamCount = (s32)astProcCall->arguments.size;
-		s32 paramCount = Max(procParamCount, callParamCount) + isReturnByCopy + isVarargs;
+		s32 paramCount = Max(procParamCount, callParamCount) + /*isReturnByCopy +*/ isVarargs;
 		ArrayInit(&procCallInst.procedureCall.parameters, paramCount);
 
-		// Return value
-		procCallInst.procedureCall.out.valueType = IRVALUETYPE_INVALID;
-		if (expression->typeTableIdx != TYPETABLEIDX_VOID)
+		// Return value(s)
+		u64 returnValueCount = procTypeInfo.returnTypeIndices.size;
+		ArrayInit(&procCallInst.procedureCall.returnValues, returnValueCount);
+		if (returnValueCount > 1)
 		{
-			if (isReturnByCopy)
+			result.valueType = IRVALUETYPE_TUPLE;
+			ArrayInit(&result.tuple, returnValueCount);
+			for (int i = 0; i < returnValueCount; ++i)
 			{
-				// Allocate stack for return value
-				u32 tempValueIdx = IRAddTempValue(context, "_returnByCopy"_s, expression->typeTableIdx,
-						VALUEFLAGS_FORCE_MEMORY);
-				IRValue tempVarIRValue = IRValueValue(tempValueIdx, expression->typeTableIdx);
-
-				// Add register as parameter
-				*ArrayAdd(&procCallInst.procedureCall.parameters) =
-					IRPointerToValue(context, tempVarIRValue);
-
-				result = IRValueValue(tempValueIdx, expression->typeTableIdx);
+				u32 returnTypeIdx = procTypeInfo.returnTypeIndices[i];
+				u32 returnValueIdx = IRAddTempValue(context, "_return"_s, returnTypeIdx, 0);
+				IRValue value = IRValueValue(returnValueIdx, returnTypeIdx);
+				*ArrayAdd(&procCallInst.procedureCall.returnValues) = value;
+				*ArrayAdd(&result.tuple) = value;
 			}
-			else
-			{
-				u32 returnValueIdx = IRAddTempValue(context, "_return"_s, expression->typeTableIdx, 0);
-				procCallInst.procedureCall.out = IRValueValue(returnValueIdx, expression->typeTableIdx);
-				result = procCallInst.procedureCall.out;
-			}
+		}
+		else if (returnValueCount == 1)
+		{
+			u32 returnTypeIdx = procTypeInfo.returnTypeIndices[0];
+			u32 returnValueIdx = IRAddTempValue(context, "_return"_s, returnTypeIdx, 0);
+			IRValue value = IRValueValue(returnValueIdx, returnTypeIdx);
+			*ArrayAdd(&procCallInst.procedureCall.returnValues) = value;
+			result = value;
 		}
 
 		// Set up parameters
@@ -2315,28 +2349,43 @@ skipGeneratingVarargsArray:
 
 		if (expression->returnNode.expression != nullptr)
 		{
-			IRValue returnValue = IRGenFromExpression(context, expression->returnNode.expression);
-			u32 returnTypeTableIdx = expression->returnNode.expression->typeTableIdx;
-			ASSERT(returnTypeTableIdx >= TYPETABLEIDX_Begin);
-
-			if (IRShouldPassByCopy(context, returnTypeTableIdx))
+			ArrayView<ASTExpression *const> returnExps;
+			if (expression->returnNode.expression->nodeType == ASTNODETYPE_MULTIPLE_EXPRESSIONS)
 			{
-				u64 size = GetTypeInfo(context, returnTypeTableIdx).size;
-				IRValue sizeValue = IRValueImmediate(size);
-
-				IRInstruction memcpyInst = {};
-				memcpyInst.type = IRINSTRUCTIONTYPE_COPY_MEMORY;
-				memcpyInst.copyMemory.src = IRPointerToValue(context, returnValue);
-				memcpyInst.copyMemory.dst = IRValueValue(threadData->returnValueIdx,
-						GetTypeInfoPointerOf(context, returnTypeTableIdx));
-				memcpyInst.copyMemory.size = sizeValue;
-
-				*AddInstruction(context) = memcpyInst;
+				returnExps.size = expression->returnNode.expression->multipleExpressions.array.size;
+				returnExps.data = expression->returnNode.expression->multipleExpressions.array.data;
 			}
 			else
 			{
-				IRValue dst = IRValueValue(threadData->returnValueIdx, returnValue.typeTableIdx);
-				IRDoAssignment(context, dst, returnValue);
+				returnExps.size = 1;
+				returnExps.data = &expression->returnNode.expression;
+			}
+
+			for (int i = 0; i < returnExps.size; ++i)
+			{
+				IRValue returnValue = IRGenFromExpression(context, returnExps[i]);
+				u32 returnTypeTableIdx = returnExps[i]->typeTableIdx;
+				ASSERT(returnTypeTableIdx >= TYPETABLEIDX_Begin);
+
+				if (IRShouldPassByCopy(context, returnTypeTableIdx))
+				{
+					u64 size = GetTypeInfo(context, returnTypeTableIdx).size;
+					IRValue sizeValue = IRValueImmediate(size);
+
+					IRInstruction memcpyInst = {};
+					memcpyInst.type = IRINSTRUCTIONTYPE_COPY_MEMORY;
+					memcpyInst.copyMemory.src = IRPointerToValue(context, returnValue);
+					memcpyInst.copyMemory.dst = IRPointerToValue(context,
+							IRValueValue(threadData->returnValueIndices[i], returnTypeTableIdx));
+					memcpyInst.copyMemory.size = sizeValue;
+
+					*AddInstruction(context) = memcpyInst;
+				}
+				else
+				{
+					IRValue dst = IRValueValue(threadData->returnValueIndices[i], returnValue.typeTableIdx);
+					IRDoAssignment(context, dst, returnValue);
+				}
 			}
 		}
 
@@ -2391,11 +2440,13 @@ skipGeneratingVarargsArray:
 		// @Check: only for variable declarations?
 		IRGenFromExpression(context, expression->usingNode.expression);
 	} break;
+	case ASTNODETYPE_STATIC_DEFINITION:
 	case ASTNODETYPE_PROCEDURE_DECLARATION:
 	case ASTNODETYPE_OPERATOR_OVERLOAD:
 	case ASTNODETYPE_INCLUDE:
 	case ASTNODETYPE_LINKLIB:
 	{
+		// Nothing to do!
 	} break;
 	case ASTNODETYPE_GARBAGE:
 	{
@@ -2438,7 +2489,7 @@ int IRJobProcedure(void *args)
 
 	IRThreadData threadData = {};
 	threadData.procedureIdx = procedureIdx;
-	threadData.returnValueIdx = GetProcedureRead(context, procedureIdx).returnValueIdx;
+	threadData.returnValueIndices = GetProcedureRead(context, procedureIdx).returnValueIndices;
 	threadData.shouldReturnValueIdx = U32_MAX;
 	threadData.localValues = argsStruct->localValues;
 	SYSSetThreadData(context->tlsIndex, &threadData);

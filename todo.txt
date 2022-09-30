@@ -1,3 +1,5 @@
+* Error when assignment is not at statement level.
+* There seems to be a problem with empty varargs.
 * Fix errortests, they are not failing properly.
 * Allow for expanding memory in ThreadAllocator.
 * Fix PrintIR, PrintAST and print asm before allocation.

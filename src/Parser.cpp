@@ -121,7 +121,9 @@ ASTType ParseType(Context *context)
 	ASTType astType;
 	astType.loc = threadData->token->loc;
 
-	if (threadData->token->type == TOKEN_OP_ARRAY_ACCESS)
+	switch (threadData->token->type)
+	{
+	case TOKEN_OP_ARRAY_ACCESS:
 	{
 		Advance(context);
 		astType.nodeType = ASTTYPENODETYPE_ARRAY;
@@ -137,45 +139,46 @@ ASTType ParseType(Context *context)
 
 		astType.arrayType = NewASTType(context);
 		*astType.arrayType = ParseType(context);
-	}
-	else if (threadData->token->type == TOKEN_OP_POINTER_TO)
+	} break;
+	case TOKEN_OP_POINTER_TO:
 	{
 		Advance(context);
 		astType.nodeType = ASTTYPENODETYPE_POINTER;
 		astType.pointedType = NewASTType(context);
 		*astType.pointedType = ParseType(context);
-	}
-	else if (threadData->token->type == TOKEN_KEYWORD_STRUCT)
+	} break;
+	case TOKEN_KEYWORD_STRUCT:
 	{
 		astType.nodeType = ASTTYPENODETYPE_STRUCT_DECLARATION;
 		astType.structDeclaration = ParseStructOrUnion(context);
-	}
-	else if (threadData->token->type == TOKEN_KEYWORD_UNION)
+	} break;
+	case TOKEN_KEYWORD_UNION:
 	{
 		astType.nodeType = ASTTYPENODETYPE_UNION_DECLARATION;
 		astType.structDeclaration = ParseStructOrUnion(context);
-	}
-	else if (threadData->token->type == TOKEN_KEYWORD_ENUM)
+	} break;
+	case TOKEN_KEYWORD_ENUM:
 	{
 		astType.nodeType = ASTTYPENODETYPE_ENUM_DECLARATION;
 		astType.enumDeclaration = ParseEnumDeclaration(context);
-	}
-	else if (threadData->token->type == TOKEN_IDENTIFIER)
+	} break;
+	case TOKEN_IDENTIFIER:
 	{
 		astType.nodeType = ASTTYPENODETYPE_IDENTIFIER;
 		astType.name = TokenToString(context, *threadData->token);
 		Advance(context);
-	}
-	else if (threadData->token->type == '(' ||
-			 threadData->token->type == TOKEN_DIRECTIVE_CALLING_CONVENTION)
+	} break;
+	case '(':
+	case TOKEN_DIRECTIVE_CALLING_CONVENTION:
 	{
 		astType.nodeType = ASTTYPENODETYPE_PROCEDURE;
 		astType.procedurePrototype = ParseProcedurePrototype(context);
-	}
-	else
+	} break;
+	default:
 	{
 		astType.nodeType = ASTTYPENODETYPE_INVALID;
 		LogError(context, threadData->token->loc, "Failed to parse type"_s);
+	}
 	}
 
 	return astType;
@@ -540,7 +543,7 @@ ASTEnumDeclaration ParseEnumDeclaration(Context *context)
 		{
 			Advance(context);
 			enumMember.value = NewTreeNode(context);
-			*enumMember.value = ParseExpression(context, -1);
+			*enumMember.value = ParseExpression(context, GetOperatorPrecedence(',') + 1);
 		}
 
 		if (threadData->token->type != '}')
@@ -593,8 +596,22 @@ Array<ASTExpression *, LinearAllocator> ParseGroupLiteral(Context *context)
 	while (true)
 	{
 		ASTExpression *newTreeNode = NewTreeNode(context);
-		*newTreeNode = ParseExpression(context, -1);
+		*newTreeNode = ParseExpression(context, GetOperatorPrecedence(',') + 1);
 		*DynamicArrayAdd(&members) = newTreeNode;
+
+		if (threadData->token->type == TOKEN_OP_ASSIGNMENT)
+		{
+			Advance(context);
+			ASTExpression assignment = { ASTNODETYPE_BINARY_OPERATION };
+			assignment.typeTableIdx = TYPETABLEIDX_Unset;
+			assignment.binaryOperation.op = TOKEN_OP_ASSIGNMENT;
+			assignment.binaryOperation.leftHand = NewTreeNode(context);
+			*assignment.binaryOperation.leftHand = *newTreeNode;
+			assignment.binaryOperation.rightHand = NewTreeNode(context);
+			*assignment.binaryOperation.rightHand = ParseExpression(context,
+					GetOperatorPrecedence(TOKEN_OP_ASSIGNMENT));
+			*newTreeNode = assignment;
+		}
 
 		if (threadData->token->type == '}')
 			break;
@@ -700,7 +717,7 @@ ASTProcedureParameter ParseProcedureParameter(Context *context)
 	{
 		Advance(context);
 		astParameter.astInitialValue = NewTreeNode(context);
-		*astParameter.astInitialValue = ParseExpression(context, -1);
+		*astParameter.astInitialValue = ParseExpression(context, GetOperatorPrecedence(',') + 1);
 	}
 
 	return astParameter;
@@ -709,9 +726,9 @@ ASTProcedureParameter ParseProcedureParameter(Context *context)
 ASTProcedurePrototype ParseProcedurePrototype(Context *context)
 {
 	ParseThreadData *threadData = (ParseThreadData *)SYSGetThreadData(context->tlsIndex);
-	ASTProcedurePrototype prototype = {};
-	prototype.loc = threadData->token->loc;
-	prototype.callingConvention = CC_DEFAULT;
+	ASTProcedurePrototype astPrototype = {};
+	astPrototype.loc = threadData->token->loc;
+	astPrototype.callingConvention = CC_DEFAULT;
 
 	if (threadData->token->type == TOKEN_DIRECTIVE_CALLING_CONVENTION)
 	{
@@ -722,9 +739,9 @@ ASTProcedurePrototype ParseProcedurePrototype(Context *context)
 		AssertToken(context, threadData->token, TOKEN_IDENTIFIER);
 		String tokenStr = TokenToString(context, *threadData->token);
 		if (StringEquals(tokenStr, "win64"_s))
-			prototype.callingConvention = CC_WIN64;
+			astPrototype.callingConvention = CC_WIN64;
 		else if (StringEquals(tokenStr, "linux64"_s))
-			prototype.callingConvention = CC_LINUX64;
+			astPrototype.callingConvention = CC_LINUX64;
 		else
 			LogError(context, threadData->token->loc, "Invalid calling convention specified"_s);
 		Advance(context);
@@ -733,7 +750,7 @@ ASTProcedurePrototype ParseProcedurePrototype(Context *context)
 		Advance(context);
 	}
 
-	DynamicArrayInit(&prototype.astParameters, 4);
+	DynamicArrayInit(&astPrototype.astParameters, 4);
 
 	AssertToken(context, threadData->token, '(');
 	Advance(context);
@@ -742,21 +759,21 @@ ASTProcedurePrototype ParseProcedurePrototype(Context *context)
 		if (threadData->token->type == TOKEN_OP_RANGE)
 		{
 			Advance(context);
-			prototype.isVarargs = true;
-			prototype.varargsLoc = threadData->token->loc;
+			astPrototype.isVarargs = true;
+			astPrototype.varargsLoc = threadData->token->loc;
 
 			if (threadData->token->type == TOKEN_IDENTIFIER)
 			{
-				prototype.varargsName = TokenToString(context, *threadData->token);
+				astPrototype.varargsName = TokenToString(context, *threadData->token);
 				Advance(context);
 			}
 			break;
 		}
 
 		ASTProcedureParameter astParam = ParseProcedureParameter(context);
-		ASSERT(prototype.astParameters.size <= S8_MAX);
+		ASSERT(astPrototype.astParameters.size <= S8_MAX);
 
-		*DynamicArrayAdd(&prototype.astParameters) = astParam;
+		*DynamicArrayAdd(&astPrototype.astParameters) = astParam;
 
 		if (threadData->token->type != ')')
 		{
@@ -769,15 +786,20 @@ ASTProcedurePrototype ParseProcedurePrototype(Context *context)
 	if (threadData->token->type == TOKEN_OP_ARROW)
 	{
 		Advance(context);
-		prototype.astReturnType = NewASTType(context);
-		*prototype.astReturnType = ParseType(context);
-	}
-	else
-	{
-		prototype.astReturnType = nullptr;
+		DynamicArrayInit(&astPrototype.astReturnTypes, 4);
+
+loop:
+		ASTType *newASTType = NewASTType(context);
+		*newASTType = ParseType(context);
+		*DynamicArrayAdd(&astPrototype.astReturnTypes) = newASTType;
+		if (threadData->token->type == ',')
+		{
+			Advance(context);
+			goto loop;
+		}
 	}
 
-	return prototype;
+	return astPrototype;
 }
 
 ASTExpression ParseExpression(Context *context, s32 precedence)
@@ -836,7 +858,7 @@ ASTExpression ParseExpression(Context *context, s32 precedence)
 			while (threadData->token->type != ')')
 			{
 				ASTExpression *arg = NewTreeNode(context);
-				*arg = ParseExpression(context, -1);
+				*arg = ParseExpression(context, GetOperatorPrecedence(',') + 1);
 				*HybridArrayAdd(&result.procedureCall.arguments) = arg;
 
 				if (threadData->token->type != ')')
@@ -982,7 +1004,7 @@ ASTExpression ParseExpression(Context *context, s32 precedence)
 			DynamicArrayInit(&result.intrinsic.arguments, 4);
 			while (threadData->token->type != ')')
 			{
-				ASTExpression arg = ParseExpression(context, -1);
+				ASTExpression arg = ParseExpression(context, GetOperatorPrecedence(',') + 1);
 				*DynamicArrayAdd(&result.intrinsic.arguments) = arg;
 
 				if (threadData->token->type != ')')
@@ -1056,16 +1078,53 @@ ASTExpression ParseExpression(Context *context, s32 precedence)
 				LogError(context, threadData->token->loc, "Invalid expression!"_s);
 			result.nodeType = ASTNODETYPE_UNARY_OPERATION;
 			result.unaryOperation = unaryOp;
+			continue;
 		}
 		else
 		{
 			ASTBinaryOperation binaryOp = result.binaryOperation;
 			bool success = TryParseBinaryOperation(context, result, precedence, &binaryOp);
-			if (!success)
-				break;
-			result.nodeType = ASTNODETYPE_BINARY_OPERATION;
-			result.binaryOperation = binaryOp;
+			if (success)
+			{
+				result.nodeType = ASTNODETYPE_BINARY_OPERATION;
+				result.binaryOperation = binaryOp;
+				continue;
+			}
 		}
+
+		if (threadData->token->type == ',' && GetOperatorPrecedence(',') >= precedence)
+		{
+			Advance(context);
+
+			ASTExpression mux;
+			mux.any.loc = result.any.loc;
+			mux.typeTableIdx = TYPETABLEIDX_Unset;
+			mux.nodeType = ASTNODETYPE_MULTIPLE_EXPRESSIONS;
+
+			ASTExpression *first = NewTreeNode(context);
+			*first = result;
+
+			ASTExpression second = ParseExpression(context, GetOperatorPrecedence(','));
+			if (second.nodeType == ASTNODETYPE_MULTIPLE_EXPRESSIONS)
+			{
+				DynamicArrayInit(&mux.multipleExpressions.array, second.multipleExpressions.array.size + 1);
+				*DynamicArrayAdd(&mux.multipleExpressions.array) = first;
+				for (int i = 0; i < second.multipleExpressions.array.size; ++i)
+					*DynamicArrayAdd(&mux.multipleExpressions.array) = second.multipleExpressions.array[i];
+			}
+			else
+			{
+				DynamicArrayInit(&mux.multipleExpressions.array, 2);
+				ASTExpression *sec = NewTreeNode(context);
+				*sec = second;
+				*DynamicArrayAdd(&mux.multipleExpressions.array) = first;
+				*DynamicArrayAdd(&mux.multipleExpressions.array) = sec;
+			}
+
+			result = mux;
+		}
+		else
+			break;
 	}
 
 	return result;

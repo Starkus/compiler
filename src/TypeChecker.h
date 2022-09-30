@@ -12,8 +12,7 @@ enum ValueFlags
 	VALUEFLAGS_ON_STATIC_STORAGE    = 64,
 	VALUEFLAGS_BASE_RELATIVE        = 128,
 	VALUEFLAGS_HAS_PUSH_INSTRUCTION = 256,
-	VALUEFLAGS_PARAMETER_BY_COPY    = 512, // These values are pointers behind the scenes
-	VALUEFLAGS_TRY_IMMITATE         = 1024
+	VALUEFLAGS_TRY_IMMITATE         = 512
 };
 
 struct Value
@@ -110,9 +109,9 @@ struct ProcedureParameter
 };
 struct TypeInfoProcedure
 {
-	u32 returnTypeTableIdx;
 	bool isVarargs;
 	Array<ProcedureParameter, LinearAllocator> parameters;
+	DynamicArray<u32, LinearAllocator> returnTypeIndices;
 	CallingConvention callingConvention;
 };
 
@@ -206,7 +205,7 @@ struct Procedure
 	bool isInline;
 	bool isExported;
 	bool isBodyTypeChecked;
-	u32 returnValueIdx;
+	Array<u32, LinearAllocator> returnValueIndices;
 	u32 typeTableIdx; // Type of the procedure
 };
 

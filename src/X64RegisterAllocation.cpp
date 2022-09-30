@@ -1,17 +1,3 @@
-const u64 callerSaveRegisters = 0b00000000001111100000111100000110;
-const u64 calleeSaveRegisters = 0b11111111110000001111000011111000;
-/* For reference
-IRValue x64Registers[X64REGISTER_Count] = {
-	RAX,	RCX,	RDX,	RBX,
-	RSI,	RDI,	RSP,	RBP,
-	R8,		R9,		R10,	R11,
-	R12,	R13,	R14,	R15,
-	XMM0,	XMM1,	XMM2,	XMM3,
-	XMM4,	XMM5,	XMM6,	XMM7
-	XMM8,	XMM9,	XMM10,	XMM11,
-	XMM12,	XMM13,	XMM14,	XMM15
-};*/
-
 struct BasicBlock
 {
 	s64 beginIdx;
@@ -337,8 +323,8 @@ void DoLivenessAnalisis(Context *context, BasicBlock *basicBlock,
 	for (int i = 0; i < liveValues->size; ++i)
 		DynamicArrayAddUnique(&basicBlock->liveValuesAtOutput, (*liveValues)[i]);
 
-	if (threadData->returnValueIdx != U32_MAX)
-		AddValue(context, threadData->returnValueIdx, liveValues);
+	for (int i = 0; i < threadData->returnValueIndices.size; ++i)
+		AddValue(context, threadData->returnValueIndices[i], liveValues);
 
 	// Check all basic block instructions
 	for (s64 instructionIdx = basicBlock->endIdx; instructionIdx >= basicBlock->beginIdx;
@@ -657,7 +643,7 @@ void X64AllocateRegisters(Context *context)
 		memset(threadData->valueIsXmmBits.data, 0, qwordCount * 8);
 		threadData->valueIsXmmBits.size = qwordCount;
 
-		for (int valueIdx = 0; valueIdx < valueCount; ++valueIdx)
+		for (int valueIdx = 1; valueIdx < valueCount; ++valueIdx)
 		{
 			u32 typeTableIdx = IRGetValue(context, valueIdx).typeTableIdx;
 			if (typeTableIdx >= 0)
@@ -925,6 +911,55 @@ skipImmitate:
 	{
 		usedRegisters = RegisterSavingInstruction(context, inst, usedRegisters);
 		inst = X64InstructionStreamAdvance(&stream);
+	}
+
+	// Don't save registers used to return values
+	u32 procTypeIdx = GetProcedureRead(context, threadData->procedureIdx).typeTableIdx;
+	TypeInfoProcedure procTypeInfo = GetTypeInfo(context, procTypeIdx).procedureInfo;
+	u64 returnValueCount = procTypeInfo.returnTypeIndices.size;
+	for (int i = 1; i < returnValueCount; ++i)
+	{
+		static u64 returnRegisters[] = {
+			0b00000000000000000000000000000001, // RDI
+			0b00000000000000000000000000100000, // RDI
+			0b00000000000000000000000000010000, // RSI
+			0b00000000000000000000000000000100, // RDX
+			0b00000000000000000000000000000010, // RCX
+			0b00000000000000000000000100000000, // R8
+			0b00000000000000000000001000000000, // R9
+		};
+		static u64 returnRegistersXMM[] = {
+			0b00000000000000010000000000000000, // XMM0
+			0b00000000000000100000000000000000, // XMM1
+			0b00000000000001000000000000000000, // XMM2
+			0b00000000000010000000000000000000, // XMM3
+			0b00000000000100000000000000000000, // XMM4
+			0b00000000001000000000000000000000, // XMM5
+			0b00000000010000000000000000000000, // XMM6
+			0b00000000100000000000000000000000, // XMM7
+		};
+		/* For reference
+		IRValue x64Registers[X64REGISTER_Count] = {
+			RAX,	RCX,	RDX,	RBX,
+			RSI,	RDI,	RSP,	RBP,
+			R8,		R9,		R10,	R11,
+			R12,	R13,	R14,	R15,
+			XMM0,	XMM1,	XMM2,	XMM3,
+			XMM4,	XMM5,	XMM6,	XMM7
+			XMM8,	XMM9,	XMM10,	XMM11,
+			XMM12,	XMM13,	XMM14,	XMM15
+		};*/
+		u32 typeIdx = procTypeInfo.returnTypeIndices[i];
+		if (GetTypeInfo(context, typeIdx).typeCategory == TYPECATEGORY_FLOATING)
+		{
+			if (i < ArrayCount(returnRegistersXMM))
+				usedRegisters &= ~returnRegistersXMM[i];
+		}
+		else
+		{
+			if (i < ArrayCount(returnRegisters))
+				usedRegisters &= ~returnRegisters[i];
+		}
 	}
 
 	// Callee save registers

@@ -313,9 +313,6 @@ void CPrintOutInstruction(Context *context, HANDLE outputFile, IRInstruction ins
 	{
 		String label = inst.label->name;
 		PrintOut(context, outputFile, "%S:;\n", label);
-		//if (instructionIdx == instructionCount - 1) // @Fix
-			// Label can't be right before a closing brace
-			//PrintOut(context, outputFile, ";\n");
 	} break;
 	case IRINSTRUCTIONTYPE_JUMP:
 	{

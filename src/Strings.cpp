@@ -309,10 +309,14 @@ ParseFloatResult F64FromString(String string)
 
 		// @Check: isn't mantissa always 0 here? 20 fraction digits means all our digits went into
 		// the fraction part.
+#if 1
+		ASSERT(mantissa == 0);
+		exponent -= 3;
+#else
 		mantissa <<= 3; // Multiply by 2 three times
 		ASSERT(!(mantissa & 0xFFF0000000000000)); // We shouldn't run out of bits yet.
-
 		if (mantissa == 0) exponent -= 3;
+#endif
 	}
 	else
 		div = divTable[fractionDigits];

@@ -1,8 +1,11 @@
-Main :: () -> s64
-{
+Main :: () -> s64 {
+	failed := false;
+
 	n : f64 = 25.0;
 	#intrinsic(sqrt64, n, n);
 	PrintF("Sqrt of 25 is %\n", n);
+	if n < 4.9999 || n > 5.00001
+		failed = true;
 
 	struct {
 		n2 : f64;
@@ -10,6 +13,14 @@ Main :: () -> s64
 	n2 = 36.0;
 	#intrinsic(sqrt64, n2, n2);
 	PrintF("Sqrt of 36 is %\n", n2);
+	if n2 < 5.9999 || n > 6.00001
+		failed = true;
 
+	if failed {
+		Print("Test failed!\n");
+		return 1;
+	}
+
+	Print("Test ok!\n");
 	return 0;
 }
