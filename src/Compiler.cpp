@@ -16,6 +16,7 @@ const String TPrintF(const char *format, ...);
 #include "Superluminal/PerformanceAPI_loader.h"
 PerformanceAPI_Functions performanceAPI;
 #endif
+#include "Profiler.cpp"
 
 #if _MSC_VER
 #include "PlatformWindows.cpp"
@@ -36,6 +37,36 @@ struct ThreadDataCommon
 {
 	void *threadMem, *threadMemPtr;
 	u64 threadMemSize;
+
+	// This is a little silly, but we need to make jobs available to be picked up by another thread
+	// AFTER we do the SwitchJob (fiber switch) call.
+	u32 lastJobIdx;
+};
+
+struct JobDataCommon
+{
+	void *jobMem, *jobMemPtr;
+	u64 jobMemSize;
+	u32 jobIdx;
+};
+
+enum JobState : u32
+{
+	JOBSTATE_START,
+	JOBSTATE_RUNNING,
+	JOBSTATE_SLEEPING,
+	// WAITING_FOR_STOP jobs want to wait until no jobs are running to make a decision.
+	// As of time of write, only #defined does this to determine if something isn't defined anywhere
+	// before continuing.
+	JOBSTATE_WAITING_FOR_STOP,
+	JOBSTATE_DONE,
+};
+
+struct Job
+{
+	void *fiber;
+	u32 isRunning;
+	JobState state;
 };
 
 s64 Print(const char *format, ...)
@@ -87,18 +118,12 @@ const String TPrintF(const char *format, ...)
 
 const String SNPrintF(const char *format, int maxSize, ...)
 {
-	//SYSMutexLock(g_memory->linearMemMutex);
-
 	char *buffer = (char *)LinearAllocator::Alloc(maxSize, 1);
 
 	va_list args;
 	va_start(args, maxSize);
 	s64 size = stbsp_vsnprintf(buffer, maxSize, format, args);
 	va_end(args);
-
-	//g_memory->linearMemPtr = (u8 *)g_memory->linearMemPtr + size + 1;
-
-	//SYSMutexUnlock(g_memory->linearMemMutex);
 
 	return { size, buffer };
 }
@@ -160,6 +185,7 @@ struct Context
 	Config config;
 
 	u32 tlsIndex;
+	u32 flsIndex;
 
 	Mutex consoleMutex;
 
@@ -167,9 +193,9 @@ struct Context
 	DynamicArray<SourceFile, HeapAllocator> sourceFiles;
 	DynamicArray<String, HeapAllocator> libsToLink;
 
+	MXContainer<DynamicArray<Job, HeapAllocator>> jobs;
+
 	// Parsing -----
-	SLContainer<DynamicArray<ThreadHandle, HeapAllocator>> parseThreads; // Lock only to write
-	SLContainer<DynamicArray<JobState, HeapAllocator>> parseJobStates; // Lock only to write
 	DynamicArray<BucketArray<Token, HeapAllocator, 1024>, HeapAllocator> fileTokens;
 	DynamicArray<ASTRoot, HeapAllocator> fileASTRoots;
 	DynamicArray<RWContainer<BucketArray<ASTExpression, HeapAllocator, 1024>>, HeapAllocator> fileTreeNodes;
@@ -177,10 +203,6 @@ struct Context
 
 	// Type check -----
 	Array<TCScopeName, HeapAllocator> tcPrimitiveTypes;
-
-	volatile u32 tcThreadsLock;
-	DynamicArray<ThreadHandle, HeapAllocator> tcThreads; // Lock only to write
-	DynamicArray<JobState, HeapAllocator> tcJobStates; // Lock only to write
 
 	RWContainer<BucketArray<Value, HeapAllocator, 1024>> globalValues;
 	RWContainer<BucketArray<Procedure, HeapAllocator, 512>> procedures;
@@ -193,11 +215,9 @@ struct Context
 	RWContainer<BucketArray<const TypeInfo, HeapAllocator, 1024>> typeTable;
 
 	RWContainer<DynamicArray<TCScopeName, LinearAllocator>> tcGlobalNames;
-	MXContainer<HashMap<String, CONDITION_VARIABLE, HeapAllocator>> tcConditionVariables;
 	RWContainer<DynamicArray<u32, LinearAllocator>> tcGlobalTypeIndices;
 
 	// IR -----
-	SLContainer<DynamicArray<ThreadHandle, HeapAllocator>> irThreads; // Lock only to write
 	RWContainer<BucketArray<String, HeapAllocator, 1024>> stringLiterals;
 	RWContainer<DynamicArray<IRStaticVariable, HeapAllocator>> irStaticVariables;
 	RWContainer<DynamicArray<u32, HeapAllocator>> irExternalVariables;
@@ -207,29 +227,28 @@ struct Context
 	RWContainer<DynamicArray<BEFinalProcedure, HeapAllocator>> beFinalProcedureData;
 };
 
-struct ParseThreadData : ThreadDataCommon
+struct ParseJobData : JobDataCommon
 {
 	u32 fileIdx;
 	u64 currentTokenIdx;
 	Token *token;
 };
 
-struct TCThreadData : ParseThreadData
+struct TCJobData : ParseJobData
 {
-	u32 jobIdx;
 	ASTExpression *expression;
 	bool onStaticContext;
-	DynamicArray<TCScope, ThreadAllocator> scopeStack;
+	DynamicArray<TCScope, JobAllocator> scopeStack;
 	ArrayView<u32> currentReturnTypes;
 	u32 currentForLoopArrayType;
 	BucketArray<Value, HeapAllocator, 1024> localValues;
 };
 
-struct IRThreadData : ThreadDataCommon
+struct IRJobData : JobDataCommon
 {
 	u32 procedureIdx;
 	BucketArray<IRInstruction, LinearAllocator, 256> irInstructions;
-	DynamicArray<IRScope, ThreadAllocator> irStack;
+	DynamicArray<IRScope, JobAllocator> irStack;
 	BucketArray<IRLabel, HeapAllocator, 1024> irLabels;
 	IRLabel *returnLabel;
 	IRLabel *currentBreakLabel;
@@ -247,12 +266,12 @@ struct IRThreadData : ThreadDataCommon
 	BucketArray<BEInstruction, HeapAllocator, 1024> beInstructions;
 	u64 stackSize;
 	s64 allocatedParameterCount;
-	DynamicArray<u32, ThreadAllocator> spilledValues;
-	BucketArray<BasicBlock, ThreadAllocator, 512> beBasicBlocks;
+	DynamicArray<u32, JobAllocator> spilledValues;
+	BucketArray<BasicBlock, JobAllocator, 512> beBasicBlocks;
 	BasicBlock * beLeafBasicBlock;
 	InterferenceGraph beInterferenceGraph;
 	BucketArray<BEInstruction, HeapAllocator, 128> bePatchedInstructions;
-	Array<u64, ThreadAllocator> valueIsXmmBits;
+	Array<u64, JobAllocator> valueIsXmmBits;
 	u32 x64SpilledParametersRead[32];
 	u32 x64SpilledParametersWrite[32];
 };
@@ -342,28 +361,99 @@ bool CompilerAddSourceFile(Context *context, String filename, SourceLocation loc
 	BucketArrayInit(DynamicArrayAdd(&context->fileTokens));
 
 	RWContainer<BucketArray<ASTExpression, HeapAllocator, 1024>> newTreeNodes;
-	BucketArrayInit(&newTreeNodes.content);
+	BucketArrayInit(&newTreeNodes.unsafe);
 	*DynamicArrayAdd(&context->fileTreeNodes) = newTreeNodes;
 
 	RWContainer<BucketArray<ASTType, HeapAllocator, 1024>> newTypeNodes;
-	BucketArrayInit(&newTypeNodes.content);
+	BucketArrayInit(&newTypeNodes.unsafe);
 	*DynamicArrayAdd(&context->fileTypeNodes) = newTypeNodes;
 
-	u32 jobIdx;
 	{
-		auto parseThreads = context->parseThreads.Get();
-		auto parseJobStates = context->parseJobStates.Get();
-		jobIdx = (u32)parseJobStates->size;
-		DynamicArrayAddMT(&parseThreads, SYS_INVALID_THREAD_HANDLE);
-		DynamicArrayAddMT(&parseJobStates, JOBSTATE_RUNNING);
+		auto jobs = context->jobs.Get();
+
+		u32 jobIdx = (u32)jobs->size;
+		ParseJobArgs *args = ALLOC(LinearAllocator, ParseJobArgs);
+		*args = {
+			.context = context,
+			.fileIdx = (u32)context->sourceFiles.size - 1,
+			.jobIdx = jobIdx };
+		void *fiber = CreateFiber(0, ParseJobProc, (void *)args);
+
+		Job newJob = { fiber, 0, JOBSTATE_START };
+		*DynamicArrayAdd(&jobs) = newJob;
 	}
 
-	ParseJobArgs *args = ALLOC(LinearAllocator, ParseJobArgs);
-	*args = { context, (u32)context->sourceFiles.size - 1, jobIdx };
-	ThreadHandle parseThread = SYSCreateThread(ParseJobProc, (void *)args);
-	context->parseThreads.content[jobIdx] = parseThread;
-
 	return true;
+}
+
+int WorkerThreadProc(void *arg)
+{
+	Context *context = (Context *)arg;
+
+	ThreadDataCommon threadData = {};
+	threadData.lastJobIdx = U32_MAX;
+	SYSSetThreadData(context->tlsIndex, &threadData);
+	MemoryInitThread(1 * 1024 * 1024);
+
+	ConvertThreadToFiber(nullptr);
+
+	void *fiber;
+	auto jobs = context->jobs.Get();
+	u32 jobCount = (u32)jobs->size;
+	for (u32 i = 0; i < jobCount; ++i)
+	{
+		if ((*jobs)[i].state != JOBSTATE_DONE && !(*jobs)[i].isRunning)
+		{
+			(*jobs)[i].isRunning = true;
+			fiber = (*jobs)[i].fiber;
+			goto newJob;
+		}
+	}
+	return 0;
+
+newJob:
+	SwitchToFiber(fiber);
+	return 0;
+}
+
+void SwitchJob(Context *context)
+{
+	ThreadDataCommon *threadData = (ThreadDataCommon *)SYSGetThreadData(context->tlsIndex);
+	if (threadData->lastJobIdx != U32_MAX)
+	{
+		auto jobs = context->jobs.Get();
+		(*jobs)[threadData->lastJobIdx].isRunning = 0;
+	}
+
+	JobDataCommon *jobData = (JobDataCommon *)SYSGetFiberData(context->flsIndex);
+	void *nextFiber = nullptr;
+	{
+		ProfileScope scope("Switch job", nullptr, PROFILER_COLOR(0x10, 0x10, 0xA0));
+
+		auto jobs = context->jobs.Get();
+		u32 jobCount = (u32)jobs->size;
+		u32 startJobIdx = jobData->jobIdx + 1;
+		if (startJobIdx >= jobCount)
+			startJobIdx -= jobCount;
+		u32 currentJobIdx = startJobIdx;
+		for (u32 i = 0; i < jobCount; ++i)
+		{
+			Job job = (*jobs)[currentJobIdx];
+			if (job.state != JOBSTATE_DONE && !job.isRunning)
+			{
+				(*jobs)[currentJobIdx].isRunning = 1;
+				nextFiber = (*jobs)[currentJobIdx].fiber;
+				goto newJob;
+			}
+			++currentJobIdx;
+			if (currentJobIdx >= jobCount)
+				currentJobIdx -= jobCount;
+		}
+		return;
+	}
+newJob:
+	threadData->lastJobIdx = jobData->jobIdx;
+	SwitchToFiber(nextFiber);
 }
 
 #include "Tokenizer.cpp"
@@ -392,12 +482,14 @@ int main(int argc, char **argv)
 
 	Context context = {};
 	context.tlsIndex = SYSAllocThreadData();
+	context.flsIndex = SYSAllocFiberData();
 	context.consoleMutex = SYSCreateMutex();
 
 	// Allocate memory
 	Memory memory;
 	g_memory = &memory;
 	memory.tlsIndex = context.tlsIndex;
+	memory.flsIndex = context.flsIndex;
 	memory.linearMem = SYSAlloc(Memory::linearMemSize);
 	MemoryInit(&memory);
 
@@ -442,9 +534,7 @@ int main(int argc, char **argv)
 				Print("Unknown option \"%s\"\n", arg);
 		}
 		else
-		{
 			*DynamicArrayAdd(&inputFiles) = CStrToString(arg);
-		}
 	}
 	ASSERT(inputFiles.size > 2);
 
@@ -458,29 +548,15 @@ int main(int argc, char **argv)
 	for (int i = 0; i < inputFiles.size; ++i)
 		CompilerAddSourceFile(&context, inputFiles[i], {});
 
-	TimerSplit("Read input files"_s);
+	TimerSplit("Create starting jobs"_s);
 
-	// Unsafe reads!
-	for (u64 threadIdx = 0; threadIdx < context.parseThreads.content.size; ++threadIdx)
-	{
-		ThreadHandle thread = context.parseThreads.content[threadIdx];
-		if (thread != SYS_INVALID_THREAD_HANDLE)
-			SYSWaitForThread(thread);
-	}
+	ThreadHandle threads[8];
+	for (int i = 0; i < 8; ++i)
+		threads[i] = SYSCreateThread(WorkerThreadProc, &context);
 
-	for (u64 threadIdx = 0; threadIdx < context.tcThreads.size; ++threadIdx)
-	{
-		ThreadHandle thread = context.tcThreads[threadIdx];
-		if (thread != SYS_INVALID_THREAD_HANDLE)
-			SYSWaitForThread(thread);
-	}
+	WaitForMultipleObjects(ArrayCount(threads), threads, true, INFINITE);
 
-	for (u64 threadIdx = 0; threadIdx < context.irThreads.content.size; ++threadIdx)
-	{
-		ThreadHandle thread = context.irThreads.content[threadIdx];
-		if (thread != SYS_INVALID_THREAD_HANDLE)
-			SYSWaitForThread(thread);
-	}
+	TimerSplit("Multithreaded parse/analyze/codegen phase"_s);
 
 	BackendGenerateOutputFile(&context);
 

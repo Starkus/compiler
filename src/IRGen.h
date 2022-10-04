@@ -1,6 +1,7 @@
 struct IRJobArgs
 {
 	Context *context;
+	u32 jobIdx;
 	u32 procedureIdx;
 	BucketArray<Value, HeapAllocator, 1024> localValues;
 	const ASTExpression *expression;
@@ -219,5 +220,5 @@ struct IRStaticVariable
 	IRValue initialValue;
 };
 
-int IRJobProcedure(void *args);
-int IRJobExpression(void *args);
+void IRJobProcedure(void *args);
+void IRJobExpression(void *args);

@@ -74,8 +74,8 @@ X64Instruction *X64InstructionStreamAdvance(X64InstructionStream *iterator)
 
 s64 PrintOut(Context *context, const char *format, ...)
 {
-	ThreadDataCommon *threadData = (ThreadDataCommon *)SYSGetThreadData(g_memory->tlsIndex);
-	char *buffer = (char *)threadData->threadMemPtr;
+	ThreadDataCommon *jobData = (ThreadDataCommon *)SYSGetThreadData(g_memory->tlsIndex);
+	char *buffer = (char *)jobData->threadMemPtr;
 
 	va_list args;
 	va_start(args, format);
@@ -109,7 +109,7 @@ s64 PrintOut(Context *context, const char *format, ...)
 	}
 
 #if DEBUG_BUILD
-	memset(threadData->threadMemPtr, 0x55, size + 1);
+	memset(jobData->threadMemPtr, 0x55, size + 1);
 #endif
 
 	va_end(args);
@@ -475,7 +475,7 @@ bool CanValueBeMemory(Context *context, IRValue value)
 void X64Mov(Context *context, IRValue dst, IRValue src);
 void X64MovNoTmp(Context *context, IRValue dst, IRValue src)
 {
-	IRThreadData *threadData = (IRThreadData *)SYSGetThreadData(context->tlsIndex);
+	IRJobData *jobData = (IRJobData *)SYSGetFiberData(context->flsIndex);
 
 	X64Instruction result;
 	TypeInfo dstType = GetTypeInfo(context, StripAllAliases(context, dst.typeTableIdx));
@@ -488,7 +488,7 @@ void X64MovNoTmp(Context *context, IRValue dst, IRValue src)
 		result.type = X64_MOVUPS;
 		result.dst = dst;
 		result.src = src;
-		*BucketArrayAdd(&threadData->beInstructions) = result;
+		*BucketArrayAdd(&jobData->beInstructions) = result;
 		return;
 	}
 
@@ -509,7 +509,7 @@ void X64MovNoTmp(Context *context, IRValue dst, IRValue src)
 					// MOVSXD is R-RM
 					IRValue newValue = IRValueNewValue(context, "_movsxd_tmp"_s, dst.typeTableIdx,
 							VALUEFLAGS_FORCE_REGISTER);
-					*BucketArrayAdd(&threadData->beInstructions) = { X64_MOVSXD, newValue, src };
+					*BucketArrayAdd(&jobData->beInstructions) = { X64_MOVSXD, newValue, src };
 					src = newValue;
 				}
 				ASSERT(dstType.size >= 4);
@@ -521,7 +521,7 @@ void X64MovNoTmp(Context *context, IRValue dst, IRValue src)
 				// MOVSX and MOVZX are R-RM
 				IRValue newValue = IRValueNewValue(context, "_movzx_tmp"_s, dst.typeTableIdx,
 						VALUEFLAGS_FORCE_REGISTER);
-				*BucketArrayAdd(&threadData->beInstructions) = { extendType, newValue, src };
+				*BucketArrayAdd(&jobData->beInstructions) = { extendType, newValue, src };
 				src = newValue;
 			}
 			else if (srcType.size > dstType.size)
@@ -543,7 +543,7 @@ void X64MovNoTmp(Context *context, IRValue dst, IRValue src)
 				ASSERT(srcType.size == 8);
 				type = X64_CVTTSD2SI;
 			}
-			*BucketArrayAdd(&threadData->beInstructions) = { type, newValue, src };
+			*BucketArrayAdd(&jobData->beInstructions) = { type, newValue, src };
 
 			result.type = X64_MOV;
 			src = newValue;
@@ -562,7 +562,7 @@ void X64MovNoTmp(Context *context, IRValue dst, IRValue src)
 				IRValue newValue = IRValueNewValue(context, "_cvt_tmp"_s, TYPETABLEIDX_U32,
 						VALUEFLAGS_FORCE_REGISTER);
 				X64InstructionType extendType = isSigned ? X64_MOVSX : X64_MOVZX;
-				*BucketArrayAdd(&threadData->beInstructions) = { extendType, newValue, src };
+				*BucketArrayAdd(&jobData->beInstructions) = { extendType, newValue, src };
 				src = newValue;
 			}
 			result.type = X64_CVTSI2SS;
@@ -589,7 +589,7 @@ void X64MovNoTmp(Context *context, IRValue dst, IRValue src)
 				IRValue newValue = IRValueNewValue(context, "_cvt_tmp"_s, TYPETABLEIDX_U32,
 						VALUEFLAGS_FORCE_REGISTER);
 				X64InstructionType extendType = isSigned ? X64_MOVSX : X64_MOVZX;
-				*BucketArrayAdd(&threadData->beInstructions) = { extendType, newValue, src };
+				*BucketArrayAdd(&jobData->beInstructions) = { extendType, newValue, src };
 				src = newValue;
 			}
 			result.type = X64_CVTSI2SD;
@@ -605,7 +605,7 @@ void X64MovNoTmp(Context *context, IRValue dst, IRValue src)
 
 	result.dst = dst;
 	result.src = src;
-	*BucketArrayAdd(&threadData->beInstructions) = result;
+	*BucketArrayAdd(&jobData->beInstructions) = result;
 }
 
 void X64Mov(Context *context, IRValue dst, IRValue src)
@@ -637,7 +637,7 @@ void X64Mov(Context *context, IRValue dst, IRValue src)
 
 void X64Test(Context *context, IRValue value)
 {
-	IRThreadData *threadData = (IRThreadData *)SYSGetThreadData(context->tlsIndex);
+	IRJobData *jobData = (IRJobData *)SYSGetFiberData(context->flsIndex);
 
 	X64FloatingType floatingType = X64FLOATINGTYPE_NONE;
 	TypeInfo typeInfo = GetTypeInfo(context, value.typeTableIdx);
@@ -657,14 +657,14 @@ void X64Test(Context *context, IRValue value)
 	{
 		cmpInst.type = X64_COMISS;
 		IRValue zero = IRValueNewValue(context, "_zero"_s, cmpInst.dst.typeTableIdx, 0);
-		*BucketArrayAdd(&threadData->beInstructions) = { X64_XORPS, zero, zero };
+		*BucketArrayAdd(&jobData->beInstructions) = { X64_XORPS, zero, zero };
 		cmpInst.src = zero;
 	} break;
 	case X64FLOATINGTYPE_F64:
 	{
 		cmpInst.type = X64_COMISD;
 		IRValue zero = IRValueNewValue(context, "_zero"_s, cmpInst.dst.typeTableIdx, 0);
-		*BucketArrayAdd(&threadData->beInstructions) = { X64_XORPD, zero, zero };
+		*BucketArrayAdd(&jobData->beInstructions) = { X64_XORPD, zero, zero };
 		cmpInst.src = zero;
 	} break;
 	default:
@@ -681,7 +681,7 @@ void X64Test(Context *context, IRValue value)
 		cmpInst.dst = newValue;
 	}
 
-	*BucketArrayAdd(&threadData->beInstructions) = cmpInst;
+	*BucketArrayAdd(&jobData->beInstructions) = cmpInst;
 }
 
 IRValue X64PushRegisterParameter(u32 typeTableIdx, s32 *numberOfGPR, s32 *numberOfXMM)
@@ -706,7 +706,7 @@ IRValue X64PushRegisterParameter(u32 typeTableIdx, s32 *numberOfGPR, s32 *number
 
 void X64CopyMemory(Context *context, IRValue dst, IRValue src, IRValue size)
 {
-	IRThreadData *threadData = (IRThreadData *)SYSGetThreadData(context->tlsIndex);
+	IRJobData *jobData = (IRJobData *)SYSGetFiberData(context->flsIndex);
 
 	ASSERT(dst.valueType == IRVALUETYPE_VALUE ||
 		   dst.valueType == IRVALUETYPE_VALUE_DEREFERENCE);
@@ -763,7 +763,7 @@ void X64CopyMemory(Context *context, IRValue dst, IRValue src, IRValue size)
 	*ArrayAdd(&result.parameterValues) = RCX.value.valueIdx;
 	*ArrayAdd(&result.parameterValues) = RDX.value.valueIdx;
 	*ArrayAdd(&result.parameterValues) = R8.value.valueIdx;
-	*BucketArrayAdd(&threadData->beInstructions) = result;
+	*BucketArrayAdd(&jobData->beInstructions) = result;
 }
 
 bool X64WinABIShouldPassByCopy(Context *context, u32 typeTableIdx)
@@ -782,7 +782,7 @@ bool X64WinABIShouldPassByCopy(Context *context, u32 typeTableIdx)
 Array<u32, ThreadAllocator> X64ReadyWin64Parameters(Context *context,
 		ArrayView<IRValue> parameters, bool isCaller)
 {
-	IRThreadData *threadData = (IRThreadData *)SYSGetThreadData(context->tlsIndex);
+	IRJobData *jobData = (IRJobData *)SYSGetFiberData(context->flsIndex);
 
 	int parameterCount = (int)parameters.size;
 
@@ -804,10 +804,10 @@ Array<u32, ThreadAllocator> X64ReadyWin64Parameters(Context *context,
 
 			X64Instruction pushInst = { X64_Push_Value };
 			pushInst.valueIdx = tmpValueIdx;
-			*BucketArrayAdd(&threadData->beInstructions) = pushInst;
+			*BucketArrayAdd(&jobData->beInstructions) = pushInst;
 
 			IRValue ptr = IRValueNewValue(context, "paramptr"_s, TYPETABLEIDX_S64, 0);
-			*BucketArrayAdd(&threadData->beInstructions) = { X64_LEA, ptr, tmpValue };
+			*BucketArrayAdd(&jobData->beInstructions) = { X64_LEA, ptr, tmpValue };
 
 			X64CopyMemory(context, ptr, param, IRValueImmediate(paramType.size));
 			param = ptr;
@@ -833,9 +833,9 @@ Array<u32, ThreadAllocator> X64ReadyWin64Parameters(Context *context,
 			break;
 		default:
 			if (isCaller)
-				slot = IRValueValue(threadData->x64SpilledParametersWrite[i], TYPETABLEIDX_S64);
+				slot = IRValueValue(jobData->x64SpilledParametersWrite[i], TYPETABLEIDX_S64);
 			else
-				slot = IRValueValue(threadData->x64SpilledParametersRead[i], TYPETABLEIDX_S64);
+				slot = IRValueValue(jobData->x64SpilledParametersRead[i], TYPETABLEIDX_S64);
 		}
 		slot.typeTableIdx = paramTypeIdx;
 
@@ -860,8 +860,8 @@ Array<u32, ThreadAllocator> X64ReadyWin64Parameters(Context *context,
 
 	if (isCaller)
 	{
-		if (threadData->allocatedParameterCount < parameterCount)
-			threadData->allocatedParameterCount = parameterCount;
+		if (jobData->allocatedParameterCount < parameterCount)
+			jobData->allocatedParameterCount = parameterCount;
 	}
 
 	return parameterValues;
@@ -870,7 +870,7 @@ Array<u32, ThreadAllocator> X64ReadyWin64Parameters(Context *context,
 Array<u32, ThreadAllocator> X64ReadyLinuxParameters(Context *context,
 		ArrayView<IRValue> parameters, bool isCaller)
 {
-	IRThreadData *threadData = (IRThreadData *)SYSGetThreadData(context->tlsIndex);
+	IRJobData *jobData = (IRJobData *)SYSGetFiberData(context->flsIndex);
 
 	int parameterCount = (int)parameters.size;
 
@@ -1020,13 +1020,13 @@ Array<u32, ThreadAllocator> X64ReadyLinuxParameters(Context *context,
 
 				if (isCaller)
 				{
-					IRValue slot = IRValueDereference(threadData->x64SpilledParametersWrite[numberOfSpilled++],
+					IRValue slot = IRValueDereference(jobData->x64SpilledParametersWrite[numberOfSpilled++],
 							typeTableIdx);
 					X64Mov(context, slot, param);
 				}
 				else
 				{
-					IRValue slot = IRValueDereference(threadData->x64SpilledParametersRead[numberOfSpilled++],
+					IRValue slot = IRValueDereference(jobData->x64SpilledParametersRead[numberOfSpilled++],
 							typeTableIdx);
 					X64Mov(context, param, slot);
 				}
@@ -1041,7 +1041,7 @@ Array<u32, ThreadAllocator> X64ReadyLinuxParameters(Context *context,
 			{
 				slot = X64PushRegisterParameter(param.typeTableIdx, &numberOfGPR, &numberOfXMM);
 				if (slot.valueType == IRVALUETYPE_INVALID)
-					slot = IRValueDereference(threadData->x64SpilledParametersWrite[numberOfSpilled++],
+					slot = IRValueDereference(jobData->x64SpilledParametersWrite[numberOfSpilled++],
 							TYPETABLEIDX_S64);
 
 				X64Mov(context, slot, param);
@@ -1050,7 +1050,7 @@ Array<u32, ThreadAllocator> X64ReadyLinuxParameters(Context *context,
 			{
 				slot = X64PushRegisterParameter(param.typeTableIdx, &numberOfGPR, &numberOfXMM);
 				if (slot.valueType == IRVALUETYPE_INVALID)
-					slot = IRValueDereference(threadData->x64SpilledParametersRead[numberOfSpilled++],
+					slot = IRValueDereference(jobData->x64SpilledParametersRead[numberOfSpilled++],
 							TYPETABLEIDX_S64);
 
 				X64Mov(context, param, slot);
@@ -1062,8 +1062,8 @@ Array<u32, ThreadAllocator> X64ReadyLinuxParameters(Context *context,
 
 	if (isCaller)
 	{
-		if (threadData->allocatedParameterCount < numberOfSpilled)
-			threadData->allocatedParameterCount = numberOfSpilled;
+		if (jobData->allocatedParameterCount < numberOfSpilled)
+			jobData->allocatedParameterCount = numberOfSpilled;
 	}
 
 	return parameterValues;
@@ -1071,7 +1071,7 @@ Array<u32, ThreadAllocator> X64ReadyLinuxParameters(Context *context,
 
 void X64ConvertInstruction(Context *context, IRInstruction inst)
 {
-	IRThreadData *threadData = (IRThreadData *)SYSGetThreadData(context->tlsIndex);
+	IRJobData *jobData = (IRJobData *)SYSGetFiberData(context->flsIndex);
 	X64Instruction result = {};
 
 	X64FloatingType floatingType = X64FLOATINGTYPE_NONE;
@@ -1123,12 +1123,12 @@ void X64ConvertInstruction(Context *context, IRInstruction inst)
 		{
 			IRValue tmp = IRValueNewValue(context, "_lea_mm_tmp"_s, dst.typeTableIdx,
 					VALUEFLAGS_FORCE_REGISTER);
-			*BucketArrayAdd(&threadData->beInstructions) = { X64_LEA, tmp, src };
+			*BucketArrayAdd(&jobData->beInstructions) = { X64_LEA, tmp, src };
 			X64Mov(context, dst, tmp);
 			src = tmp;
 		}
 		else
-			*BucketArrayAdd(&threadData->beInstructions) = { X64_LEA, dst, src };
+			*BucketArrayAdd(&jobData->beInstructions) = { X64_LEA, dst, src };
 		return;
 	}
 	case IRINSTRUCTIONTYPE_ADD:
@@ -1176,7 +1176,7 @@ void X64ConvertInstruction(Context *context, IRInstruction inst)
 			break;
 		}
 		result.dst = inst.unaryOperation.out;
-		*BucketArrayAdd(&threadData->beInstructions) = result;
+		*BucketArrayAdd(&jobData->beInstructions) = result;
 		return;
 	}
 	case IRINSTRUCTIONTYPE_BITWISE_AND:
@@ -1216,7 +1216,7 @@ void X64ConvertInstruction(Context *context, IRInstruction inst)
 						immitateFlag, left.value.valueIdx);
 
 				X64Mov(context, tmp, left);
-				*BucketArrayAdd(&threadData->beInstructions) = { X64_SAL, tmp,
+				*BucketArrayAdd(&jobData->beInstructions) = { X64_SAL, tmp,
 						IRValueImmediate(63 - Nlz64(right.immediate)) };
 				X64Mov(context, out, tmp);
 				return;
@@ -1232,7 +1232,7 @@ void X64ConvertInstruction(Context *context, IRInstruction inst)
 				{
 					X64Mov(context, RAX, left);
 
-					*BucketArrayAdd(&threadData->beInstructions) = { X64_XOR, RDX, RDX };
+					*BucketArrayAdd(&jobData->beInstructions) = { X64_XOR, RDX, RDX };
 
 					IRValue multiplier = right;
 					u8 accepted = x64InstructionInfos[X64_MUL].operandTypesLeft;
@@ -1246,7 +1246,7 @@ void X64ConvertInstruction(Context *context, IRInstruction inst)
 					}
 					result.type = X64_MUL;
 					result.dst = multiplier;
-					*BucketArrayAdd(&threadData->beInstructions) = result;
+					*BucketArrayAdd(&jobData->beInstructions) = result;
 
 					X64Mov(context, out, RAX);
 					return;
@@ -1279,7 +1279,7 @@ void X64ConvertInstruction(Context *context, IRInstruction inst)
 				X64InstructionType shiftType = isSigned ? X64_SAR : X64_SHR;
 
 				X64Mov(context, tmp, left);
-				*BucketArrayAdd(&threadData->beInstructions) = { shiftType, tmp,
+				*BucketArrayAdd(&jobData->beInstructions) = { shiftType, tmp,
 						IRValueImmediate(63 - Nlz64(right.immediate)) };
 				X64Mov(context, out, tmp);
 			}
@@ -1288,9 +1288,9 @@ void X64ConvertInstruction(Context *context, IRInstruction inst)
 				X64Mov(context, RAX, left);
 
 				if (isSigned)
-					*BucketArrayAdd(&threadData->beInstructions) = { X64_CQO };
+					*BucketArrayAdd(&jobData->beInstructions) = { X64_CQO };
 				else
-					*BucketArrayAdd(&threadData->beInstructions) = { X64_XOR, RDX, RDX };
+					*BucketArrayAdd(&jobData->beInstructions) = { X64_XOR, RDX, RDX };
 
 				IRValue divisor = right;
 				u8 accepted = x64InstructionInfos[X64_DIV].operandTypesLeft;
@@ -1304,7 +1304,7 @@ void X64ConvertInstruction(Context *context, IRInstruction inst)
 				}
 				result.type = isSigned ? X64_IDIV : X64_DIV;
 				result.dst = divisor;
-				*BucketArrayAdd(&threadData->beInstructions) = result;
+				*BucketArrayAdd(&jobData->beInstructions) = result;
 
 				X64Mov(context, out, RAX);
 			}
@@ -1330,7 +1330,7 @@ void X64ConvertInstruction(Context *context, IRInstruction inst)
 					left.value.valueIdx);
 
 			X64Mov(context, tmp, left);
-			*BucketArrayAdd(&threadData->beInstructions) = { X64_AND, tmp,
+			*BucketArrayAdd(&jobData->beInstructions) = { X64_AND, tmp,
 					IRValueImmediate(right.immediate - 1) };
 			X64Mov(context, out, tmp);
 		}
@@ -1338,9 +1338,9 @@ void X64ConvertInstruction(Context *context, IRInstruction inst)
 		{
 			X64Mov(context, RAX, left);
 			if (isSigned)
-				*BucketArrayAdd(&threadData->beInstructions) = { X64_CQO };
+				*BucketArrayAdd(&jobData->beInstructions) = { X64_CQO };
 			else
-				*BucketArrayAdd(&threadData->beInstructions) = { X64_XOR, RDX, RDX };
+				*BucketArrayAdd(&jobData->beInstructions) = { X64_XOR, RDX, RDX };
 
 			IRValue divisor = right;
 			u8 accepted = x64InstructionInfos[X64_DIV].operandTypesLeft;
@@ -1355,7 +1355,7 @@ void X64ConvertInstruction(Context *context, IRInstruction inst)
 			result.type = isSigned ? X64_IDIV : X64_DIV;
 			result.dst = divisor;
 
-			*BucketArrayAdd(&threadData->beInstructions) = result;
+			*BucketArrayAdd(&jobData->beInstructions) = result;
 			X64Mov(context, out, RDX);
 		}
 		return;
@@ -1375,12 +1375,12 @@ void X64ConvertInstruction(Context *context, IRInstruction inst)
 	case IRINSTRUCTIONTYPE_LABEL:
 		result.type = X64_Label;
 		result.label = inst.label;
-		*BucketArrayAdd(&threadData->beInstructions) = result;
+		*BucketArrayAdd(&jobData->beInstructions) = result;
 		return;
 	case IRINSTRUCTIONTYPE_JUMP:
 		result.type = X64_JMP;
 		result.label = inst.jump.label;
-		*BucketArrayAdd(&threadData->beInstructions) = result;
+		*BucketArrayAdd(&jobData->beInstructions) = result;
 		return;
 	case IRINSTRUCTIONTYPE_JUMP_IF_ZERO:
 		result.type = X64_JE;
@@ -1460,7 +1460,7 @@ void X64ConvertInstruction(Context *context, IRInstruction inst)
 			result.dst.typeTableIdx = TYPETABLEIDX_S8;
 		}
 
-		*BucketArrayAdd(&threadData->beInstructions) = result;
+		*BucketArrayAdd(&jobData->beInstructions) = result;
 		return;
 	}
 	case IRINSTRUCTIONTYPE_PROCEDURE_CALL:
@@ -1511,10 +1511,10 @@ void X64ConvertInstruction(Context *context, IRInstruction inst)
 
 				X64Instruction pushInst = { X64_Push_Value };
 				pushInst.valueIdx = tmpValueIdx;
-				*BucketArrayAdd(&threadData->beInstructions) = pushInst;
+				*BucketArrayAdd(&jobData->beInstructions) = pushInst;
 
 				IRValue ptr = IRValueNewValue(context, "returnptr"_s, TYPETABLEIDX_S64, 0);
-				*BucketArrayAdd(&threadData->beInstructions) = { X64_LEA, ptr, tmpValue };
+				*BucketArrayAdd(&jobData->beInstructions) = { X64_LEA, ptr, tmpValue };
 
 				*FixedArrayAdd(&paramSources) = ptr;
 			}
@@ -1561,7 +1561,7 @@ void X64ConvertInstruction(Context *context, IRInstruction inst)
 		}
 #endif
 
-		*BucketArrayAdd(&threadData->beInstructions) = result;
+		*BucketArrayAdd(&jobData->beInstructions) = result;
 
 		u64 returnValueCount = inst.procedureCall.returnValues.size;
 		if (returnValueCount)
@@ -1594,7 +1594,7 @@ void X64ConvertInstruction(Context *context, IRInstruction inst)
 							IRValue ptr = IRValueNewValue(context, "paramptr"_s, TYPETABLEIDX_S64, 0);
 							IRValue outButS64 = out;
 							outButS64.typeTableIdx = TYPETABLEIDX_S64;
-							*BucketArrayAdd(&threadData->beInstructions) = { X64_LEA, ptr, outButS64 };
+							*BucketArrayAdd(&jobData->beInstructions) = { X64_LEA, ptr, outButS64 };
 
 							X64CopyMemory(context, ptr, slot, IRValueImmediate(returnTypeInfo.size));
 						}
@@ -1625,7 +1625,7 @@ void X64ConvertInstruction(Context *context, IRInstruction inst)
 		switch (inst.intrinsic.type)
 		{
 		case INTRINSIC_BREAKPOINT:
-			*BucketArrayAdd(&threadData->beInstructions) = { X64_INT, IRValueImmediate(3) };
+			*BucketArrayAdd(&jobData->beInstructions) = { X64_INT, IRValueImmediate(3) };
 			return;
 		case INTRINSIC_SQRT32:
 			result.type = X64_SQRTSS;
@@ -1661,7 +1661,7 @@ void X64ConvertInstruction(Context *context, IRInstruction inst)
 			{
 				IRValue zeroXmmReg = IRValueNewValue(context, "_zeroxmm"_s, TYPETABLEIDX_128,
 						VALUEFLAGS_FORCE_REGISTER);
-				*BucketArrayAdd(&threadData->beInstructions) = { X64_XORPS, zeroXmmReg, zeroXmmReg };
+				*BucketArrayAdd(&jobData->beInstructions) = { X64_XORPS, zeroXmmReg, zeroXmmReg };
 				while (size - copiedBytes >= 16)
 				{
 					X64Mov(context,
@@ -1673,7 +1673,7 @@ void X64ConvertInstruction(Context *context, IRInstruction inst)
 			{
 				IRValue zeroReg = IRValueNewValue(context, "_zeroreg"_s, TYPETABLEIDX_S64,
 						VALUEFLAGS_FORCE_REGISTER);
-				*BucketArrayAdd(&threadData->beInstructions) = { X64_XOR, zeroReg, zeroReg };
+				*BucketArrayAdd(&jobData->beInstructions) = { X64_XOR, zeroReg, zeroReg };
 				while (size - copiedBytes >= 8)
 				{
 					X64Mov(context,
@@ -1703,26 +1703,26 @@ void X64ConvertInstruction(Context *context, IRInstruction inst)
 		ArrayInit(&result.parameterValues, 2);
 		*ArrayAdd(&result.parameterValues) = RCX.value.valueIdx;
 		*ArrayAdd(&result.parameterValues) = RDX.value.valueIdx;
-		*BucketArrayAdd(&threadData->beInstructions) = result;
+		*BucketArrayAdd(&jobData->beInstructions) = result;
 		return;
 	}
 	case IRINSTRUCTIONTYPE_PUSH_SCOPE:
 		result.type = X64_Push_Scope;
-		*BucketArrayAdd(&threadData->beInstructions) = result;
+		*BucketArrayAdd(&jobData->beInstructions) = result;
 		return;
 	case IRINSTRUCTIONTYPE_POP_SCOPE:
 		result.type = X64_Pop_Scope;
-		*BucketArrayAdd(&threadData->beInstructions) = result;
+		*BucketArrayAdd(&jobData->beInstructions) = result;
 		return;
 	case IRINSTRUCTIONTYPE_PUSH_VALUE:
 		result.type = X64_Push_Value;
 		result.valueIdx = inst.pushValue.valueIdx;
-		*BucketArrayAdd(&threadData->beInstructions) = result;
+		*BucketArrayAdd(&jobData->beInstructions) = result;
 		return;
 	case IRINSTRUCTIONTYPE_COMMENT:
 		result.type = X64_Comment;
 		result.comment = inst.comment;
-		*BucketArrayAdd(&threadData->beInstructions) = result;
+		*BucketArrayAdd(&jobData->beInstructions) = result;
 		return;
 	case IRINSTRUCTIONTYPE_RETURN:
 		return;
@@ -1746,7 +1746,7 @@ doRM:
 		X64Mov(context, operand, inst.unaryOperation.in);
 
 		result.dst = operand;
-		*BucketArrayAdd(&threadData->beInstructions) = result;
+		*BucketArrayAdd(&jobData->beInstructions) = result;
 
 		return;
 	}
@@ -1772,7 +1772,7 @@ doRM_RMI:
 
 		result.dst = tmp;
 		result.src = right;
-		*BucketArrayAdd(&threadData->beInstructions) = result;
+		*BucketArrayAdd(&jobData->beInstructions) = result;
 
 		X64Mov(context, out, tmp);
 
@@ -1804,7 +1804,7 @@ doX_XM:
 
 		result.dst = tmp;
 		result.src = right;
-		*BucketArrayAdd(&threadData->beInstructions) = result;
+		*BucketArrayAdd(&jobData->beInstructions) = result;
 
 		X64Mov(context, out, tmp);
 
@@ -1828,7 +1828,7 @@ doShift:
 
 		result.dst = tmp;
 		result.src = right;
-		*BucketArrayAdd(&threadData->beInstructions) = result;
+		*BucketArrayAdd(&jobData->beInstructions) = result;
 
 		X64Mov(context, out, tmp);
 
@@ -1839,7 +1839,7 @@ doConditionalJump:
 		X64Test(context, inst.conditionalJump.condition);
 
 		result.label = inst.conditionalJump.label;
-		*BucketArrayAdd(&threadData->beInstructions) = result;
+		*BucketArrayAdd(&jobData->beInstructions) = result;
 		return;
 	}
 doConditionalJump2:
@@ -1892,8 +1892,8 @@ doConditionalJump2:
 
 		result.label = inst.conditionalJump2.label;
 
-		*BucketArrayAdd(&threadData->beInstructions) = cmpInst;
-		*BucketArrayAdd(&threadData->beInstructions) = result;
+		*BucketArrayAdd(&jobData->beInstructions) = cmpInst;
+		*BucketArrayAdd(&jobData->beInstructions) = result;
 		return;
 	}
 doConditionalSet:
@@ -1936,7 +1936,7 @@ doConditionalSet:
 			cmpInst.dst = newValue;
 		}
 
-		*BucketArrayAdd(&threadData->beInstructions) = cmpInst;
+		*BucketArrayAdd(&jobData->beInstructions) = cmpInst;
 
 		result.dst = inst.binaryOperation.out;
 		if (GetTypeInfo(context, result.dst.typeTableIdx).size != 1)
@@ -1944,7 +1944,7 @@ doConditionalSet:
 			X64Mov(context, result.dst, IRValueImmediate(0));
 			result.dst.typeTableIdx = TYPETABLEIDX_S8;
 		}
-		*BucketArrayAdd(&threadData->beInstructions) = result;
+		*BucketArrayAdd(&jobData->beInstructions) = result;
 		return;
 	}
 doTwoArgIntrinsic:
@@ -1957,7 +1957,7 @@ doTwoArgIntrinsic:
 
 		result.dst = tmp;
 		result.src = right;
-		*BucketArrayAdd(&threadData->beInstructions) = result;
+		*BucketArrayAdd(&jobData->beInstructions) = result;
 
 		X64Mov(context, out, tmp);
 		return;
@@ -2821,7 +2821,7 @@ void BackendGenerateOutputFile(Context *context)
 #endif
 
 	// String literals
-	IRThreadData *threadData = (IRThreadData *)SYSGetThreadData(context->tlsIndex);
+	IRJobData *jobData = (IRJobData *)SYSGetThreadData(context->tlsIndex);
 	{
 		auto stringLiterals = context->stringLiterals.GetForRead();
 		s64 strCount = (s64)BucketArrayCount(&stringLiterals);
@@ -2832,7 +2832,7 @@ void BackendGenerateOutputFile(Context *context)
 			String str = (*stringLiterals)[stringLiteralIdx];
 			s64 size = str.size;
 			bool first = true;
-			char *buffer = (char *)threadData->threadMemPtr;
+			char *buffer = (char *)jobData->jobMemPtr;
 			char *out = buffer;
 			const u8 *in = (const u8 *)str.data;
 			for (int i = 0; i < str.size; ++i)
@@ -2874,7 +2874,7 @@ void BackendGenerateOutputFile(Context *context)
 					if (i == str.size - 1 || *in == '\\' || *in == '\'')
 					{
 						*out++ = 0;
-						threadData->threadMemPtr = out;
+						jobData->jobMemPtr = out;
 
 						if (!first) PrintOut(context, ", ");
 						PrintOut(context, "'%s'", buffer);
@@ -2885,7 +2885,7 @@ void BackendGenerateOutputFile(Context *context)
 				}
 			}
 			PrintOut(context, "\n");
-			threadData->threadMemPtr = buffer;
+			jobData->jobMemPtr = buffer;
 			bytesWritten += size;
 		}
 	}
@@ -3074,7 +3074,7 @@ void BackendGenerateOutputFile(Context *context)
 
 void BackendJobProc(Context *context, u32 procedureIdx)
 {
-	IRThreadData *threadData = (IRThreadData *)SYSGetThreadData(context->tlsIndex);
+	IRJobData *jobData = (IRJobData *)SYSGetFiberData(context->flsIndex);
 
 	// Initialize generic parameter values
 	for (int paramIdx = 0; paramIdx < 32; ++paramIdx)
@@ -3085,7 +3085,7 @@ void BackendJobProc(Context *context, u32 procedureIdx)
 		newValue.flags = VALUEFLAGS_IS_ALLOCATED | VALUEFLAGS_IS_MEMORY | VALUEFLAGS_BASE_RELATIVE;
 		newValue.stackOffset = 16 + paramIdx * 8; // Add 16, 8 for return address, and 8 because we push RBP
 		u32 newValueIdx = IRNewValue(context, newValue);
-		threadData->x64SpilledParametersRead[paramIdx] = newValueIdx;
+		jobData->x64SpilledParametersRead[paramIdx] = newValueIdx;
 	}
 
 	for (int paramIdx = 0; paramIdx < 32; ++paramIdx)
@@ -3096,7 +3096,7 @@ void BackendJobProc(Context *context, u32 procedureIdx)
 		newValue.flags = VALUEFLAGS_IS_ALLOCATED | VALUEFLAGS_IS_MEMORY;
 		newValue.stackOffset = paramIdx * 8; // Add 16, 8 for return address, and 8 because we push RBP
 		u32 newValueIdx = IRNewValue(context, newValue);
-		threadData->x64SpilledParametersWrite[paramIdx] = newValueIdx;
+		jobData->x64SpilledParametersWrite[paramIdx] = newValueIdx;
 	}
 
 	Procedure proc = GetProcedureRead(context, procedureIdx);
@@ -3104,12 +3104,12 @@ void BackendJobProc(Context *context, u32 procedureIdx)
 	ASSERT(GetTypeInfo(context, proc.typeTableIdx).typeCategory == TYPECATEGORY_PROCEDURE);
 	TypeInfoProcedure procTypeInfo = GetTypeInfo(context, proc.typeTableIdx).procedureInfo;
 
-	BucketArrayInit(&threadData->beInstructions);
-	threadData->allocatedParameterCount = 0;
-	threadData->returnValueIndices = proc.returnValueIndices;
-	threadData->stackSize = 0;
-	DynamicArrayInit(&threadData->spilledValues, 8);
-	BucketArrayInit(&threadData->bePatchedInstructions);
+	BucketArrayInit(&jobData->beInstructions);
+	jobData->allocatedParameterCount = 0;
+	jobData->returnValueIndices = proc.returnValueIndices;
+	jobData->stackSize = 0;
+	DynamicArrayInit(&jobData->spilledValues, 8);
+	BucketArrayInit(&jobData->bePatchedInstructions);
 
 	// Allocate parameters
 	int paramCount = (int)proc.parameterValues.size;
@@ -3139,10 +3139,10 @@ void BackendJobProc(Context *context, u32 procedureIdx)
 			X64ReadyLinuxParameters(context, params, false);
 	}
 
-	u64 instructionCount = BucketArrayCount(&threadData->irInstructions);
+	u64 instructionCount = BucketArrayCount(&jobData->irInstructions);
 	for (int instructionIdx = 0; instructionIdx < instructionCount; ++instructionIdx)
 	{
-		IRInstruction inst = threadData->irInstructions[instructionIdx];
+		IRInstruction inst = jobData->irInstructions[instructionIdx];
 		X64ConvertInstruction(context, inst);
 	}
 
@@ -3176,7 +3176,7 @@ void BackendJobProc(Context *context, u32 procedureIdx)
 					{
 						IRValue outButS64 = out;
 						outButS64.typeTableIdx = TYPETABLEIDX_S64;
-						*BucketArrayAdd(&threadData->beInstructions) = { X64_LEA, slot, outButS64 };
+						*BucketArrayAdd(&jobData->beInstructions) = { X64_LEA, slot, outButS64 };
 					}
 					else
 						X64Mov(context, slot, out);
@@ -3189,7 +3189,7 @@ void BackendJobProc(Context *context, u32 procedureIdx)
 			IRValue returnValue = IRValueValue(proc.returnValueIndices[0], returnTypeIdx);
 			bool returnByCopy = IRShouldPassByCopy(context, returnTypeIdx);
 			if (returnByCopy && procTypeInfo.callingConvention != CC_DEFAULT)
-				*BucketArrayAdd(&threadData->beInstructions) = { X64_LEA, RAX, returnValue };
+				*BucketArrayAdd(&jobData->beInstructions) = { X64_LEA, RAX, returnValue };
 			else if (!returnByCopy)
 			{
 				if (GetTypeInfo(context, returnTypeIdx).typeCategory == TYPECATEGORY_FLOATING)
@@ -3207,7 +3207,7 @@ void BackendJobProc(Context *context, u32 procedureIdx)
 	X64AllocateRegisters(context);
 
 	// Remove instructions that reference unused values
-	X64InstructionStream stream = X64InstructionStreamBegin(&threadData->beInstructions);
+	X64InstructionStream stream = X64InstructionStreamBegin(&jobData->beInstructions);
 	X64Instruction *inst = X64InstructionStreamAdvance(&stream);
 	X64Instruction *nextInst  = X64InstructionStreamAdvance(&stream);
 	X64Instruction *nextInst2 = X64InstructionStreamAdvance(&stream);
@@ -3381,9 +3381,9 @@ unalignedMovups:;
 
 	X64FinalProcedure finalProc;
 	finalProc.procedureIdx = procedureIdx;
-	finalProc.instructions = threadData->beInstructions;
-	finalProc.localValues = threadData->localValues;
-	finalProc.stackSize = threadData->stackSize;
+	finalProc.instructions = jobData->beInstructions;
+	finalProc.localValues = jobData->localValues;
+	finalProc.stackSize = jobData->stackSize;
 	auto finalProcs = context->beFinalProcedureData.GetForWrite();
 	*DynamicArrayAdd(&finalProcs) = finalProc;
 }

@@ -2,6 +2,7 @@
 struct Memory
 {
 	u32 tlsIndex;
+	u32 flsIndex;
 
 	void *linearMem, *linearMemPtr;
 	static const u64 linearMemSize = 64 * 1024 * 1024;
@@ -18,6 +19,15 @@ class LinearAllocator
 };
 
 class ThreadAllocator
+{
+	public:
+	static void *Alloc(u64 size, int alignment);
+	static void *Realloc(void *ptr, u64 newSize, int alignment);
+	static void Free(void *ptr);
+	static void Wipe();
+};
+
+class JobAllocator
 {
 	public:
 	static void *Alloc(u64 size, int alignment);

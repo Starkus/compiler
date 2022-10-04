@@ -66,7 +66,7 @@ template <typename T>
 class RWContainer
 {
 public:
-	T content;
+	T unsafe;
 	RWLock rwLock;
 
 	RWContainer()
@@ -77,7 +77,7 @@ public:
 	const T &LockForRead()
 	{
 		SYSLockForRead(&rwLock);
-		return content;
+		return unsafe;
 	}
 
 	void UnlockForRead()
@@ -88,7 +88,7 @@ public:
 	T &LockForWrite()
 	{
 		SYSLockForWrite(&rwLock);
-		return content;
+		return unsafe;
 	}
 
 	void UnlockForWrite()
@@ -115,17 +115,17 @@ public:
 
 		const T &operator*()
 		{
-			return safeContainer->content;
+			return safeContainer->unsafe;
 		}
 
 		const T *operator->()
 		{
-			return &safeContainer->content;
+			return &safeContainer->unsafe;
 		}
 
 		const T *operator&()
 		{
-			return &safeContainer->content;
+			return &safeContainer->unsafe;
 		}
 	};
 
@@ -153,17 +153,17 @@ public:
 
 		T &operator*()
 		{
-			return safeContainer->content;
+			return safeContainer->unsafe;
 		}
 
 		T *operator->()
 		{
-			return &safeContainer->content;
+			return &safeContainer->unsafe;
 		}
 
 		T *operator&()
 		{
-			return &safeContainer->content;
+			return &safeContainer->unsafe;
 		}
 	};
 
@@ -177,23 +177,19 @@ template <typename T>
 class SLContainer
 {
 public:
-	T content;
+	T unsafe;
 	volatile u32 lock;
 
 	const T &Lock()
 	{
 		SYSSpinlockLock(&lock);
-#if USE_PROFILER_API
-		//performanceAPI.BeginEvent("Spinlock locked", nullptr, PERFORMANCEAPI_MAKE_COLOR(0xA0, 0x30, 0x10));
-#endif
-		return content;
+		//ProfileBegin("Spinlock locked", nullptr, PERFORMANCEAPI_MAKE_COLOR(0xA0, 0x30, 0x10));
+		return unsafe;
 	}
 
 	void Unlock()
 	{
-#if USE_PROFILER_API
-		//performanceAPI.EndEvent();
-#endif
+		//ProfileEnd();
 		SYSSpinlockUnlock(&lock);
 	}
 
@@ -216,17 +212,17 @@ public:
 
 		T &operator*()
 		{
-			return safeContainer->content;
+			return safeContainer->unsafe;
 		}
 
 		T *operator->()
 		{
-			return &safeContainer->content;
+			return &safeContainer->unsafe;
 		}
 
 		T *operator&()
 		{
-			return &safeContainer->content;
+			return &safeContainer->unsafe;
 		}
 	};
 
@@ -240,7 +236,7 @@ template <typename T>
 class MXContainer
 {
 public:
-	T content;
+	T unsafe;
 	Mutex lock;
 
 	MXContainer()
@@ -251,7 +247,7 @@ public:
 	const T &Lock()
 	{
 		SYSMutexLock(lock);
-		return content;
+		return unsafe;
 	}
 
 	void Unlock()
@@ -278,17 +274,17 @@ public:
 
 		T &operator*()
 		{
-			return safeContainer->content;
+			return safeContainer->unsafe;
 		}
 
 		T *operator->()
 		{
-			return &safeContainer->content;
+			return &safeContainer->unsafe;
 		}
 
 		T *operator&()
 		{
-			return &safeContainer->content;
+			return &safeContainer->unsafe;
 		}
 	};
 

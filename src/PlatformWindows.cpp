@@ -549,6 +549,21 @@ inline bool SYSSetThreadData(u32 key, void *value)
 	return TlsSetValue(key, value);
 }
 
+inline u32 SYSAllocFiberData()
+{
+	return FlsAlloc(nullptr);
+}
+
+inline void *SYSGetFiberData(u32 key)
+{
+	return FlsGetValue(key);
+}
+
+inline bool SYSSetFiberData(u32 key, void *value)
+{
+	return FlsSetValue(key, value);
+}
+
 void SYSSetThreadDescription(ThreadHandle thread, String string)
 {
 	char buffer[512];
@@ -621,21 +636,14 @@ inline void SYSWakeAllConditionVariable(ConditionVariable *conditionVar)
 
 inline void SYSSpinlockLock(volatile u32 *locked)
 {
-#if USE_PROFILER_API
-	//performanceAPI.BeginEvent("Spinlock acquiring", nullptr, PERFORMANCEAPI_MAKE_COLOR(0xA0, 0x30, 0x10));
-#endif
+	//ProfileScope scope("Spinlock acquiring", nullptr, PERFORMANCEAPI_MAKE_COLOR(0xA0, 0x30, 0x10));
 	// Stupid MSVC uses long for this intrinsic but it's the same size as u32.
 	static_assert(sizeof(long) == sizeof(u32));
 	for (;;)
 	{
 		long oldLocked = _InterlockedCompareExchange_HLEAcquire((volatile long *)locked, 1, 0);
 		if (!oldLocked)
-		{
-#if USE_PROFILER_API
-			//performanceAPI.EndEvent();
-#endif
 			return;
-		}
 
 		for (;;)
 		{

@@ -217,15 +217,4 @@ struct TCJobArgs
 	ASTExpression *expression;
 };
 
-enum JobState
-{
-	JOBSTATE_RUNNING,
-	JOBSTATE_SLEEPING,
-	// WAITING_FOR_STOP jobs want to wait until no jobs are running to make a decision.
-	// As of time of write, only #defined does this to determine if something isn't defined anywhere
-	// before continuing.
-	JOBSTATE_WAITING_FOR_STOP,
-	JOBSTATE_DONE,
-};
-
 void GenerateTypeCheckJobs(Context *context, ASTExpression *expression);
