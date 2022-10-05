@@ -1,7 +1,3 @@
-struct Mutex;
-void SYSMutexLock(Mutex m, u64 timeout);
-void SYSMutexUnlock(Mutex m);
-
 class [[nodiscard]] ScopedLockRead
 {
 public:
@@ -96,13 +92,13 @@ public:
 		SYSUnlockForWrite(&rwLock);
 	}
 
-	template <typename T>
+	template <typename T2>
 	class HandleRead
 	{
 	public:
-		RWContainer<T> *safeContainer;
+		RWContainer<T2> *safeContainer;
 
-		HandleRead(RWContainer<T> *safe)
+		HandleRead(RWContainer<T2> *safe)
 		{
 			safeContainer = safe;
 			safeContainer->LockForRead();
@@ -113,17 +109,17 @@ public:
 			safeContainer->UnlockForRead();
 		}
 
-		T &operator*()
+		const T2 &operator*()
 		{
 			return safeContainer->unsafe;
 		}
 
-		T *operator->()
+		const T2 *operator->()
 		{
 			return &safeContainer->unsafe;
 		}
 
-		T *operator&()
+		const T2 *operator&()
 		{
 			return &safeContainer->unsafe;
 		}
@@ -131,16 +127,16 @@ public:
 
 	HandleRead<T> GetForRead()
 	{
-		return HandleRead(this);
+		return HandleRead<T>(this);
 	}
 
-	template <typename T>
+	template <typename T2>
 	class HandleWrite
 	{
 	public:
-		RWContainer<T> *safeContainer;
+		RWContainer<T2> *safeContainer;
 
-		HandleWrite(RWContainer<T> *safe)
+		HandleWrite(RWContainer<T2> *safe)
 		{
 			safe->LockForWrite();
 			safeContainer = safe;
@@ -151,17 +147,17 @@ public:
 			safeContainer->UnlockForWrite();
 		}
 
-		T &operator*()
+		T2 &operator*()
 		{
 			return safeContainer->unsafe;
 		}
 
-		T *operator->()
+		T2 *operator->()
 		{
 			return &safeContainer->unsafe;
 		}
 
-		T *operator&()
+		T2 *operator&()
 		{
 			return &safeContainer->unsafe;
 		}
@@ -169,7 +165,7 @@ public:
 
 	HandleWrite<T> GetForWrite()
 	{
-		return HandleWrite(this);
+		return HandleWrite<T>(this);
 	}
 };
 
@@ -193,13 +189,13 @@ public:
 		SYSSpinlockUnlock(&lock);
 	}
 
-	template <typename T>
+	template <typename T2>
 	class Handle
 	{
 	public:
-		SLContainer<T> *safeContainer;
+		SLContainer<T2> *safeContainer;
 
-		Handle(SLContainer<T> *safe)
+		Handle(SLContainer<T2> *safe)
 		{
 			safe->Lock();
 			safeContainer = safe;
@@ -210,17 +206,17 @@ public:
 			safeContainer->Unlock();
 		}
 
-		T &operator*()
+		T2 &operator*()
 		{
 			return safeContainer->unsafe;
 		}
 
-		T *operator->()
+		T2 *operator->()
 		{
 			return &safeContainer->unsafe;
 		}
 
-		T *operator&()
+		T2 *operator&()
 		{
 			return &safeContainer->unsafe;
 		}
@@ -228,7 +224,7 @@ public:
 
 	Handle<T> Get()
 	{
-		return Handle(this);
+		return Handle<T>(this);
 	}
 };
 
@@ -255,13 +251,13 @@ public:
 		SYSMutexUnlock(lock);
 	}
 
-	template <typename T>
+	template <typename T2>
 	class Handle
 	{
 	public:
-		MXContainer<T> *safeContainer;
+		MXContainer<T2> *safeContainer;
 
-		Handle(MXContainer<T> *safe)
+		Handle(MXContainer<T2> *safe)
 		{
 			safe->Lock();
 			safeContainer = safe;
@@ -272,17 +268,17 @@ public:
 			safeContainer->Unlock();
 		}
 
-		T &operator*()
+		T2 &operator*()
 		{
 			return safeContainer->unsafe;
 		}
 
-		T *operator->()
+		T2 *operator->()
 		{
 			return &safeContainer->unsafe;
 		}
 
-		T *operator&()
+		T2 *operator&()
 		{
 			return &safeContainer->unsafe;
 		}
@@ -290,6 +286,6 @@ public:
 
 	Handle<T> Get()
 	{
-		return Handle(this);
+		return Handle<T>(this);
 	}
 };

@@ -142,10 +142,10 @@ struct BEInstruction
 				u32 procedureIdx;
 				IRValue procedureIRValue;
 			};
-			Array<u32, ThreadAllocator> liveValues;
+			Array<u32, JobAllocator> liveValues;
 
 			// These tell the liveness analisis what registers to flag as live.
-			Array<u32, ThreadAllocator> parameterValues;
+			Array<u32, JobAllocator> parameterValues;
 		};
 		u32 valueIdx;
 		struct
@@ -373,7 +373,7 @@ IRValue x64Registers[X64REGISTER_Count] = {
 	XMM12,	XMM13,	XMM14,	XMM15
 };
 
-#if !_MSC_VER
+#if IS_LINUX
 String x64LinuxSyscallNames[] =
 {
 	"read"_s,

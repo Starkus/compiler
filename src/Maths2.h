@@ -1,6 +1,6 @@
 #include <math.h>
 
-#if IS_MSVC
+#if _MSC_VER
 #include <intrin.h>
 #endif
 
@@ -11,7 +11,7 @@ const f64 PI_64 = 3.1415926535897932384626433832795;
 const f64 HALFPI_64 = 1.5707963267948966192313216916398;
 const f64 PI2_64 = 6.283185307179586476925286766559;
 
-#if IS_MSVC
+#if _MSC_VER
 // Retarded compiler
 #define INTRINSIC inline
 #else
@@ -20,7 +20,7 @@ const f64 PI2_64 = 6.283185307179586476925286766559;
 
 INTRINSIC u8 Nlz(u32 x)
 {
-#if IS_MSVC
+#if _MSC_VER
 	unsigned long i;
 	if (_BitScanReverse(&i, x))
 		return 31 - (u8)i;
@@ -32,7 +32,7 @@ INTRINSIC u8 Nlz(u32 x)
 
 INTRINSIC u8 Ntz(u32 n)
 {
-#if IS_MSVC
+#if _MSC_VER
 	unsigned long i;
 	_BitScanForward(&i, n);
 	return (u8)i;
@@ -43,7 +43,7 @@ INTRINSIC u8 Ntz(u32 n)
 
 INTRINSIC u32 CountOnes(u32 n)
 {
-#if IS_MSVC
+#if _MSC_VER
 	return __popcnt(n);
 #else
 	return __builtin_popcount(n);
@@ -62,7 +62,7 @@ INTRINSIC u32 LastPowerOf2(u32 n)
 
 INTRINSIC u8 Nlz64(u64 x)
 {
-#if IS_MSVC
+#if _MSC_VER
 	unsigned long i;
 	if (_BitScanReverse64(&i, x))
 		return 63 - (u8)i;
@@ -74,7 +74,7 @@ INTRINSIC u8 Nlz64(u64 x)
 
 INTRINSIC  u8 Ntz64(u64 n)
 {
-#if IS_MSVC
+#if _MSC_VER
 	unsigned long i;
 	_BitScanForward64(&i, n);
 	return (u8)i;
@@ -85,7 +85,7 @@ INTRINSIC  u8 Ntz64(u64 n)
 
 INTRINSIC u64 CountOnes64(u64 n)
 {
-#if IS_MSVC
+#if _MSC_VER
 	return __popcnt64(n);
 #else
 	return __builtin_popcountll(n);
@@ -218,7 +218,7 @@ inline f32 Sqrt(f32 n)
 	return sqrtf(n);
 }
 
-#if IS_MSVC
+#if _MSC_VER
 // Retarded compiler
 inline constexpr u32 CountOnesConstexpr(u32 n)
 {

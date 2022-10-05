@@ -519,53 +519,47 @@ void SYSRunLinker(String outputPath, bool makeLibrary, String extraArguments)
 	CloseHandle(processInformation.hThread);
 }
 
-inline ThreadHandle SYSCreateThread(int (*start)(void *), void *args)
-{
+inline ThreadHandle SYSCreateThread(int (*start)(void *), void *args) {
 	return CreateThread(nullptr, 0, (DWORD (*)(void *))start, args, 0, nullptr);
 }
 
-inline void SYSWaitForThread(ThreadHandle thread)
-{
+inline void SYSWaitForThread(ThreadHandle thread) {
 	WaitForSingleObject(thread, INFINITE);
 }
 
-inline ThreadHandle SYSGetCurrentThread()
-{
+void SYSWaitForThreads(u64 count, ThreadHandle *threads) {
+	WaitForMultipleObjects(count, threads, true, INFINITE);
+}
+
+inline ThreadHandle SYSGetCurrentThread() {
 	return GetCurrentThread();
 }
 
-inline u32 SYSAllocThreadData()
-{
+inline u32 SYSAllocThreadData() {
 	return TlsAlloc();
 }
 
-inline void *SYSGetThreadData(u32 key)
-{
+inline void *SYSGetThreadData(u32 key) {
 	return TlsGetValue(key);
 }
 
-inline bool SYSSetThreadData(u32 key, void *value)
-{
+inline bool SYSSetThreadData(u32 key, void *value) {
 	return TlsSetValue(key, value);
 }
 
-inline u32 SYSAllocFiberData()
-{
+inline u32 SYSAllocFiberData() {
 	return FlsAlloc(nullptr);
 }
 
-inline void *SYSGetFiberData(u32 key)
-{
+inline void *SYSGetFiberData(u32 key) {
 	return FlsGetValue(key);
 }
 
-inline bool SYSSetFiberData(u32 key, void *value)
-{
+inline bool SYSSetFiberData(u32 key, void *value) {
 	return FlsSetValue(key, value);
 }
 
-void SYSSetThreadDescription(ThreadHandle thread, String string)
-{
+void SYSSetThreadDescription(ThreadHandle thread, String string) {
 	char buffer[512];
 	char *dst = buffer;
 	const char *src = string.data;
@@ -579,63 +573,51 @@ void SYSSetThreadDescription(ThreadHandle thread, String string)
 	SetThreadDescription(thread, (PCWSTR)buffer);
 }
 
-inline Mutex SYSCreateMutex()
-{
+inline Mutex SYSCreateMutex() {
 	return { CreateMutexA(nullptr, false, nullptr) };
 }
 
-inline void SYSMutexLock(Mutex mutex)
-{
+inline void SYSMutexLock(Mutex mutex) {
 	WaitForSingleObject(mutex.mutexHandle, INFINITE);
 }
 
-inline void SYSMutexUnlock(Mutex mutex)
-{
+inline void SYSMutexUnlock(Mutex mutex) {
 	ReleaseMutex(mutex.mutexHandle);
 }
 
-inline void SYSCreateRWLock(RWLock *lock)
-{
+inline void SYSCreateRWLock(RWLock *lock) {
 	InitializeSRWLock(lock);
 }
 
-inline void SYSLockForRead(RWLock *lock)
-{
+inline void SYSLockForRead(RWLock *lock) {
 	AcquireSRWLockShared(lock);
 }
 
-inline void SYSUnlockForRead(RWLock *lock)
-{
+inline void SYSUnlockForRead(RWLock *lock) {
 	ReleaseSRWLockShared(lock);
 }
 
-inline void SYSLockForWrite(RWLock *lock)
-{
+inline void SYSLockForWrite(RWLock *lock) {
 	AcquireSRWLockExclusive(lock);
 }
 
-inline void SYSUnlockForWrite(RWLock *lock)
-{
+inline void SYSUnlockForWrite(RWLock *lock) {
 	ReleaseSRWLockExclusive(lock);
 }
 
-inline void SYSCreateConditionVariable(ConditionVariable *conditionVar)
-{
+inline void SYSCreateConditionVariable(ConditionVariable *conditionVar) {
 	InitializeConditionVariable(conditionVar);
 }
 
-inline void SYSSleepConditionVariableRead(ConditionVariable *conditionVar, RWLock *lock)
-{
+inline void SYSSleepConditionVariableRead(ConditionVariable *conditionVar, RWLock *lock) {
 	SleepConditionVariableSRW(conditionVar, lock, INFINITE, CONDITION_VARIABLE_LOCKMODE_SHARED);
 }
 
-inline void SYSWakeAllConditionVariable(ConditionVariable *conditionVar)
-{
+inline void SYSWakeAllConditionVariable(ConditionVariable *conditionVar) {
 	WakeAllConditionVariable(conditionVar);
 }
 
-inline void SYSSpinlockLock(volatile u32 *locked)
-{
+inline void SYSSpinlockLock(volatile u32 *locked) {
 	//ProfileScope scope("Spinlock acquiring", nullptr, PERFORMANCEAPI_MAKE_COLOR(0xA0, 0x30, 0x10));
 	// Stupid MSVC uses long for this intrinsic but it's the same size as u32.
 	static_assert(sizeof(long) == sizeof(u32));
@@ -654,8 +636,17 @@ inline void SYSSpinlockLock(volatile u32 *locked)
 	}
 }
 
-inline void SYSSpinlockUnlock(volatile u32 *locked)
-{
+inline void SYSSpinlockUnlock(volatile u32 *locked) {
 	static_assert(sizeof(long) == sizeof(u32));
 	_Store_HLERelease((volatile long *)locked, 0);
+}
+
+inline s32 AtomicCompareExchange(volatile s32 *destination, s32 exchange, s32 comparand) {
+	_InterlockedCompareExchange64((volatile LONG *)destination, (LONG)exchange, (LONG)comparand);
+	return comparand;
+}
+
+inline s64 AtomicCompareExchange64(volatile s64 *destination, s64 exchange, s64 comparand) {
+	_InterlockedCompareExchange64((volatile LONG64 *)destination, (LONG64)exchange, (LONG64)comparand);
+	return comparand;
 }

@@ -2507,29 +2507,16 @@ void IRJobProcedure(void *args)
 
 	MemoryInitJob(1 * 1024 * 1024);
 
-#if !FINAL_BUILD
-	String threadName = TPrintF("IR:%S", GetProcedureRead(context, procedureIdx).name);
-	HANDLE thread = GetCurrentThread();
-
-	char buffer[512];
-	char *dst = buffer;
-	const char *src = threadName.data;
-	for (int i = 0; i < threadName.size; ++i)
-	{
-		*dst++ = *src++;
-		*dst++ = 0;
-	}
-	*dst++ = 0;
-	*dst++ = 0;
-	SetThreadDescription(thread, (PCWSTR)buffer);
-#endif
-
 	{
 		auto jobs = context->jobs.Get();
 		ASSERT((*jobs)[jobIdx].state == JOBSTATE_START);
 		ASSERT((*jobs)[jobIdx].isRunning);
 		(*jobs)[jobIdx].state = JOBSTATE_RUNNING;
 		threadData->lastJobIdx = U32_MAX;
+
+#if !FINAL_BUILD
+		(*jobs)[jobIdx].title = SStringConcat("IR:"_s, GetProcedureRead(context, procedureIdx).name);
+#endif
 	}
 
 	ASSERT(GetProcedureRead(context, procedureIdx).astBody != nullptr);
@@ -2568,28 +2555,15 @@ void IRJobExpression(void *args)
 
 	MemoryInitJob(512 * 1024);
 
-#if !FINAL_BUILD
-	String threadName = "IR:Expression"_s;
-	HANDLE thread = GetCurrentThread();
-
-	char buffer[512];
-	char *dst = buffer;
-	const char *src = threadName.data;
-	for (int i = 0; i < threadName.size; ++i)
-	{
-		*dst++ = *src++;
-		*dst++ = 0;
-	}
-	*dst++ = 0;
-	*dst++ = 0;
-	SetThreadDescription(thread, (PCWSTR)buffer);
-#endif
-
 	{
 		auto jobs = context->jobs.Get();
 		ASSERT((*jobs)[jobIdx].state == JOBSTATE_START);
 		ASSERT((*jobs)[jobIdx].isRunning);
 		(*jobs)[jobIdx].state = JOBSTATE_RUNNING;
+
+#if !FINAL_BUILD
+		(*jobs)[jobIdx].title = "IR:Expression"_s;
+#endif
 	}
 
 	IRGenFromExpression(context, argsStruct->expression);
