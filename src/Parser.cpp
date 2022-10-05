@@ -1552,6 +1552,10 @@ void ParseJobProc(void *args)
 		auto jobs = context->jobs.Get();
 		ASSERT((*jobs)[jobIdx].isRunning);
 		(*jobs)[jobIdx].state = JOBSTATE_RUNNING;
+
+#if !FINAL_BUILD
+		(*jobs)[jobIdx].title = SStringConcat("P:"_s, context->sourceFiles[fileIdx].name);
+#endif
 	}
 
 	TokenizeFile(context, fileIdx);

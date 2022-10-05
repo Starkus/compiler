@@ -2510,6 +2510,10 @@ void IRJobProcedure(void *args)
 		ASSERT((*jobs)[jobIdx].state == JOBSTATE_START);
 		ASSERT((*jobs)[jobIdx].isRunning);
 		(*jobs)[jobIdx].state = JOBSTATE_RUNNING;
+
+#if !FINAL_BUILD
+		(*jobs)[jobIdx].title = SStringConcat("IR:"_s, GetProcedureRead(context, procedureIdx).name);
+#endif
 	}
 
 	ASSERT(GetProcedureRead(context, procedureIdx).astBody != nullptr);
@@ -2551,6 +2555,10 @@ void IRJobExpression(void *args)
 		ASSERT((*jobs)[jobIdx].state == JOBSTATE_START);
 		ASSERT((*jobs)[jobIdx].isRunning);
 		(*jobs)[jobIdx].state = JOBSTATE_RUNNING;
+
+#if !FINAL_BUILD
+		(*jobs)[jobIdx].title = "IR:Expression"_s;
+#endif
 	}
 
 	IRGenFromExpression(context, argsStruct->expression);

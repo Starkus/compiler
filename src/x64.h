@@ -142,10 +142,10 @@ struct BEInstruction
 				u32 procedureIdx;
 				IRValue procedureIRValue;
 			};
-			Array<u32, ThreadAllocator> liveValues;
+			Array<u32, JobAllocator> liveValues;
 
 			// These tell the liveness analisis what registers to flag as live.
-			Array<u32, ThreadAllocator> parameterValues;
+			Array<u32, JobAllocator> parameterValues;
 		};
 		u32 valueIdx;
 		struct

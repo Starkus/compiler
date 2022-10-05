@@ -85,6 +85,9 @@ struct Job
 	Fiber fiber;
 	u32 isRunning;
 	JobState state;
+#if !FINAL_BUILD
+	String title;
+#endif
 };
 
 s64 Print(const char *format, ...)
@@ -192,12 +195,6 @@ struct Config
 };
 
 #define OUTPUT_BUFFER_BUCKET_SIZE 8192
-struct Procedure;
-struct TypeInfo;
-struct OperatorOverload;
-struct StaticDefinition;
-struct TCScope;
-struct TCScopeName;
 struct Context
 {
 	Config config;
@@ -227,7 +224,6 @@ struct Context
 	RWContainer<BucketArray<Procedure, HeapAllocator, 128>> externalProcedures;
 	RWContainer<DynamicArray<OperatorOverload, HeapAllocator>> operatorOverloads;
 	RWContainer<BucketArray<StaticDefinition, HeapAllocator, 512>> staticDefinitions;
-	ConditionVariable operatorOverloadsConditionVariable;
 
 	/* Don't add types to the type table by hand without checking what AddType() does! */
 	RWContainer<BucketArray<const TypeInfo, HeapAllocator, 1024>> typeTable;
@@ -570,8 +566,9 @@ int main(int argc, char **argv)
 
 	TimerSplit("Create starting jobs"_s);
 
-	ThreadHandle threads[8];
-	for (int i = 0; i < 8; ++i)
+	const int threadCount = 8;
+	ThreadHandle threads[threadCount];
+	for (int i = 0; i < threadCount; ++i)
 		threads[i] = SYSCreateThread(WorkerThreadProc, &context);
 
 	SYSWaitForThreads(ArrayCount(threads), threads);
