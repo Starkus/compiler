@@ -1536,7 +1536,9 @@ void ParseJobProc(void *args)
 	if (threadData->lastJobIdx != U32_MAX)
 	{
 		auto jobs = context->jobs.Get();
+		ASSERT((*jobs)[threadData->lastJobIdx].isRunning);
 		(*jobs)[threadData->lastJobIdx].isRunning = 0;
+		threadData->lastJobIdx = U32_MAX;
 	}
 
 	ParseJobData jobData;

@@ -2492,7 +2492,9 @@ void IRJobProcedure(void *args)
 	if (threadData->lastJobIdx != U32_MAX)
 	{
 		auto jobs = context->jobs.Get();
+		ASSERT((*jobs)[threadData->lastJobIdx].isRunning);
 		(*jobs)[threadData->lastJobIdx].isRunning = 0;
+		threadData->lastJobIdx = U32_MAX;
 	}
 
 	IRJobData jobData = {};
@@ -2527,6 +2529,7 @@ void IRJobProcedure(void *args)
 		ASSERT((*jobs)[jobIdx].state == JOBSTATE_START);
 		ASSERT((*jobs)[jobIdx].isRunning);
 		(*jobs)[jobIdx].state = JOBSTATE_RUNNING;
+		threadData->lastJobIdx = U32_MAX;
 	}
 
 	ASSERT(GetProcedureRead(context, procedureIdx).astBody != nullptr);
@@ -2554,7 +2557,9 @@ void IRJobExpression(void *args)
 	if (threadData->lastJobIdx != U32_MAX)
 	{
 		auto jobs = context->jobs.Get();
+		ASSERT((*jobs)[threadData->lastJobIdx].isRunning);
 		(*jobs)[threadData->lastJobIdx].isRunning = 0;
+		threadData->lastJobIdx = U32_MAX;
 	}
 
 	IRJobData jobData = {};

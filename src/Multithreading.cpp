@@ -74,7 +74,7 @@ public:
 		SYSCreateRWLock(&rwLock);
 	}
 
-	const T &LockForRead()
+	T &LockForRead()
 	{
 		SYSLockForRead(&rwLock);
 		return unsafe;
@@ -113,17 +113,17 @@ public:
 			safeContainer->UnlockForRead();
 		}
 
-		const T &operator*()
+		T &operator*()
 		{
 			return safeContainer->unsafe;
 		}
 
-		const T *operator->()
+		T *operator->()
 		{
 			return &safeContainer->unsafe;
 		}
 
-		const T *operator&()
+		T *operator&()
 		{
 			return &safeContainer->unsafe;
 		}

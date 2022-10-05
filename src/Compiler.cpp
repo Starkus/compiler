@@ -398,18 +398,24 @@ int WorkerThreadProc(void *arg)
 	ConvertThreadToFiber(nullptr);
 
 	void *fiber;
-	auto jobs = context->jobs.Get();
-	u32 jobCount = (u32)jobs->size;
-	for (u32 i = 0; i < jobCount; ++i)
 	{
-		if ((*jobs)[i].state != JOBSTATE_DONE && !(*jobs)[i].isRunning)
+		auto jobs = context->jobs.Get();
+		u32 jobCount = (u32)jobs->size;
+		for (u32 i = 0; i < jobCount; ++i)
 		{
-			(*jobs)[i].isRunning = true;
-			fiber = (*jobs)[i].fiber;
-			goto newJob;
+			if ((*jobs)[i].state != JOBSTATE_DONE && !(*jobs)[i].isRunning)
+			{
+				(*jobs)[i].isRunning = true;
+				//u32 *isRunning = &(*jobs)[i].isRunning;
+				//if (_InterlockedCompareExchange(isRunning, 1, 0) == 0)
+				{
+					fiber = (*jobs)[i].fiber;
+					goto newJob;
+				}
+			}
 		}
+		return 0;
 	}
-	return 0;
 
 newJob:
 	SwitchToFiber(fiber);
@@ -419,13 +425,9 @@ newJob:
 void SwitchJob(Context *context)
 {
 	ThreadDataCommon *threadData = (ThreadDataCommon *)SYSGetThreadData(context->tlsIndex);
-	if (threadData->lastJobIdx != U32_MAX)
-	{
-		auto jobs = context->jobs.Get();
-		(*jobs)[threadData->lastJobIdx].isRunning = 0;
-	}
 
 	JobDataCommon *jobData = (JobDataCommon *)SYSGetFiberData(context->flsIndex);
+	u32 nextJobIdx = U32_MAX;
 	void *nextFiber = nullptr;
 	{
 		ProfileScope scope("Switch job", nullptr, PROFILER_COLOR(0x10, 0x10, 0xA0));
@@ -442,8 +444,13 @@ void SwitchJob(Context *context)
 			if (job.state != JOBSTATE_DONE && !job.isRunning)
 			{
 				(*jobs)[currentJobIdx].isRunning = 1;
-				nextFiber = (*jobs)[currentJobIdx].fiber;
-				goto newJob;
+				//u32 *isRunning = &(*jobs)[currentJobIdx].isRunning;
+				//if (_InterlockedCompareExchange(isRunning, 1, 0) == 0)
+				{
+					nextJobIdx = currentJobIdx;
+					nextFiber = (*jobs)[currentJobIdx].fiber;
+					goto newJob;
+				}
 			}
 			++currentJobIdx;
 			if (currentJobIdx >= jobCount)
@@ -452,8 +459,19 @@ void SwitchJob(Context *context)
 		return;
 	}
 newJob:
+	ASSERT(nextJobIdx != jobData->jobIdx);
 	threadData->lastJobIdx = jobData->jobIdx;
 	SwitchToFiber(nextFiber);
+
+	// Leave this for when we come back
+	threadData = (ThreadDataCommon *)SYSGetThreadData(context->tlsIndex);
+	if (threadData->lastJobIdx != U32_MAX)
+	{
+		auto jobs = context->jobs.Get();
+		ASSERT((*jobs)[threadData->lastJobIdx].isRunning);
+		(*jobs)[threadData->lastJobIdx].isRunning = 0;
+		threadData->lastJobIdx = U32_MAX;
+	}
 }
 
 #include "Tokenizer.cpp"
