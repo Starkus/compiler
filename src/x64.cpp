@@ -779,14 +779,14 @@ bool X64WinABIShouldPassByCopy(Context *context, u32 typeTableIdx)
 			typeInfo.size != 8);
 }
 
-Array<u32, ThreadAllocator> X64ReadyWin64Parameters(Context *context,
+Array<u32, JobAllocator> X64ReadyWin64Parameters(Context *context,
 		ArrayView<IRValue> parameters, bool isCaller)
 {
 	IRJobData *jobData = (IRJobData *)SYSGetFiberData(context->flsIndex);
 
 	int parameterCount = (int)parameters.size;
 
-	Array<u32, ThreadAllocator> parameterValues;
+	Array<u32, JobAllocator> parameterValues;
 	ArrayInit(&parameterValues, parameterCount * 2);
 
 	for (int i = 0; i < parameterCount; ++i)
@@ -867,14 +867,14 @@ Array<u32, ThreadAllocator> X64ReadyWin64Parameters(Context *context,
 	return parameterValues;
 }
 
-Array<u32, ThreadAllocator> X64ReadyLinuxParameters(Context *context,
+Array<u32, JobAllocator> X64ReadyLinuxParameters(Context *context,
 		ArrayView<IRValue> parameters, bool isCaller)
 {
 	IRJobData *jobData = (IRJobData *)SYSGetFiberData(context->flsIndex);
 
 	int parameterCount = (int)parameters.size;
 
-	Array<u32, ThreadAllocator> parameterValues;
+	Array<u32, JobAllocator> parameterValues;
 	ArrayInit(&parameterValues, parameterCount * 2);
 
 	s32 numberOfGPR = 0;
@@ -1523,7 +1523,7 @@ void X64ConvertInstruction(Context *context, IRInstruction inst)
 		for (int i = 0; i < inst.procedureCall.parameters.size; ++i)
 			*FixedArrayAdd(&paramSources) = inst.procedureCall.parameters[i];
 
-		Array<u32, ThreadAllocator> paramValues;
+		Array<u32, JobAllocator> paramValues;
 		switch (callingConvention)
 		{
 			case CC_WIN64:
@@ -3114,7 +3114,7 @@ void BackendJobProc(Context *context, u32 procedureIdx)
 
 	// Allocate parameters
 	int paramCount = (int)proc.parameterValues.size;
-	Array<IRValue, ThreadAllocator> params;
+	Array<IRValue, JobAllocator> params;
 	ArrayInit(&params, paramCount + 1);
 
 	if (procTypeInfo.callingConvention != CC_DEFAULT)

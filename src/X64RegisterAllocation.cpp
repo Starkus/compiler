@@ -542,8 +542,8 @@ inline u64 BitIfRegister(Context *context, IRValue irValue)
 	if (irValue.valueType == IRVALUETYPE_VALUE || irValue.valueType == IRVALUETYPE_VALUE_DEREFERENCE)
 	{
 		Value value = IRGetValue(context, irValue.value.valueIdx);
-		if (value.flags & VALUEFLAGS_IS_USED && VALUEFLAGS_IS_ALLOCATED &&
-				!(value.flags & VALUEFLAGS_IS_MEMORY))
+		if ((value.flags & (VALUEFLAGS_IS_USED | VALUEFLAGS_IS_ALLOCATED | VALUEFLAGS_IS_MEMORY)) ==
+				(VALUEFLAGS_IS_USED | VALUEFLAGS_IS_ALLOCATED))
 		{
 			ASSERT(value.allocatedRegister < 64);
 			return 1ull << value.allocatedRegister;

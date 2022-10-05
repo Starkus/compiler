@@ -220,13 +220,17 @@ inline ThreadHandle SYSCreateThread(int (*start)(void *), void *args)
 
 inline void SYSWaitForThread(ThreadHandle thread)
 {
-	pthread_join(thread, nullptr);
+	int res = pthread_join(thread, nullptr);
+	ASSERT(res == 0);
 }
 
 inline void SYSWaitForThreads(int count, ThreadHandle *threads)
 {
 	for (int i = 0; i < count; ++i)
-		pthread_join(threads[i], nullptr);
+	{
+		int res = pthread_join(threads[i], nullptr);
+		ASSERT(res == 0);
+	}
 }
 
 inline ThreadHandle SYSGetCurrentThread()
@@ -387,11 +391,13 @@ ucontext_t fiberContexts[8192];
 void *g_fibersData[8192];
 u32 g_fiberCount = 0;
 __thread u32 g_currentFiber = U32_MAX;
+__thread ucontext_t g_originalContext;
 
 inline Fiber SYSCreateFiber(void (*start)(void *), void *args) {
 	const u64 fiberStackSize = 1 * 1024 * 1024; // 1MB
 	void *fiberStack = SYSAlloc(fiberStackSize);
 	u32 fiberIdx = __atomic_fetch_add(&g_fiberCount, 1, __ATOMIC_SEQ_CST);
+	ASSERT(fiberIdx < ArrayCount(fiberContexts)); // Out of fibers!
 	ucontext_t *fiberContext = &fiberContexts[fiberIdx];
 	int res = getcontext(fiberContext);
 	ASSERT(res == 0);
@@ -411,9 +417,15 @@ inline void SYSSwitchToFiber(Fiber fiber) {
 	Fiber oldFiber = g_currentFiber;
 	g_currentFiber = fiber;
 	if (oldFiber != SYS_INVALID_FIBER_HANDLE)
+	{
+		fiberContexts[fiber].uc_link = &fiberContexts[oldFiber];
 		swapcontext(&fiberContexts[oldFiber], &fiberContexts[fiber]);
+	}
 	else
-		setcontext(&fiberContexts[fiber]);
+	{
+		fiberContexts[fiber].uc_link = &g_originalContext;
+		swapcontext(&g_originalContext, &fiberContexts[fiber]);
+	}
 }
 
 inline u32 SYSAllocFiberData() {

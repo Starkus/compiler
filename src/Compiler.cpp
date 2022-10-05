@@ -587,7 +587,7 @@ int main(int argc, char **argv)
 	for (int i = 0; i < threadCount; ++i)
 		threads[i] = SYSCreateThread(WorkerThreadProc, &context);
 
-	SYSWaitForThreads(ArrayCount(threads), threads);
+	SYSWaitForThreads(threadCount, threads);
 
 	TimerSplit("Multithreaded parse/analyze/codegen phase"_s);
 

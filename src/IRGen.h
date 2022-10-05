@@ -211,7 +211,7 @@ struct IRInstruction
 struct IRScope
 {
 	IRLabel *closeLabel;
-	DynamicArray<ASTExpression *, ThreadAllocator> deferredStatements;
+	DynamicArray<ASTExpression *, JobAllocator> deferredStatements;
 };
 
 struct IRStaticVariable
