@@ -384,7 +384,7 @@ String X64IRValueToStr(Context *context, IRValue value,
 
 decoratePtr:
 	{
-#if _MSC_VER
+#if IS_WINDOWS
 		switch (size)
 		{
 		case 1:
@@ -1543,7 +1543,7 @@ void X64ConvertInstruction(Context *context, IRInstruction inst)
 		result.parameterValues._capacity = paramValues._capacity;
 #endif
 
-#if !_MSC_VER
+#if !IS_WINDOWS
 		// Check syscalls
 		if (inst.type == IRINSTRUCTIONTYPE_PROCEDURE_CALL)
 		{
@@ -2046,7 +2046,7 @@ void X64PrintInstructions(Context *context)
 	{
 		X64FinalProcedure finalProc = (*beFinalProcedureData)[finalProcIdx];
 		Procedure proc = GetProcedureRead(context, finalProc.procedureIdx);
-#if _MSC_VER
+#if IS_WINDOWS
 		if (proc.isExported)
 			PrintOut(context, "\n%S PROC PUBLIC\n", proc.name);
 		else
@@ -2070,7 +2070,7 @@ void X64PrintInstructions(Context *context)
 
 		PrintOut(context, "leave\n");
 		PrintOut(context, "ret\n");
-#if _MSC_VER
+#if IS_WINDOWS
 		PrintOut(context, "%S ENDP\n", proc.name);
 #endif
 	}
@@ -2078,7 +2078,7 @@ void X64PrintInstructions(Context *context)
 
 inline void X64StaticDataAlignTo(Context *context, s64 alignment, bool initialize)
 {
-#if _MSC_VER
+#if IS_WINDOWS
 	PrintOut(context, "ALIGN %d\n", alignment);
 #else
 	if (initialize)
@@ -2170,7 +2170,7 @@ void X64PrintStaticData(Context *context, String name, IRValue value, u32 typeTa
 	case IRVALUETYPE_INVALID:
 	{
 		TypeInfo typeInfo = GetTypeInfo(context, typeTableIdx);
-#if _MSC_VER
+#if IS_WINDOWS
 		PrintOut(context, "COMM %S:BYTE:0%llxH\n", name, typeInfo.size);
 #else
 		PrintOut(context, "%S: RESB %llxH\n", name, typeInfo.size);
@@ -2222,7 +2222,7 @@ void X64PrintStaticDataUninitialized(Context *context, String name, IRValue valu
 			str = (*stringLiterals)[value.immediateStringIdx];
 		}
 		ASSERT(str.size == 0);
-#if _MSC_VER
+#if IS_WINDOWS
 		PrintOut(context, "COMM %S:QWORD:02H\n", name);
 #else
 		PrintOut(context, "%S: RESQ 02H\n", name);
@@ -2234,7 +2234,7 @@ void X64PrintStaticDataUninitialized(Context *context, String name, IRValue valu
 		TypeInfo typeInfo = GetTypeInfo(context, typeTableIdx);
 		int alignment = alignmentOverride < 0 ? (int)typeInfo.size : alignmentOverride;
 		X64StaticDataAlignTo(context, alignment, false);
-#if _MSC_VER
+#if IS_WINDOWS
 		PrintOut(context, "COMM %S:BYTE:0%llxH\n", name, typeInfo.size);
 #else
 		PrintOut(context, "%S: RESB 0%llxH\n", name, typeInfo.size);
@@ -2271,7 +2271,7 @@ void X64PrintStaticDataUninitialized(Context *context, String name, IRValue valu
 	{
 		ASSERT(value.immediate == 0);
 		TypeInfo typeInfo = GetTypeInfo(context, typeTableIdx);
-#if _MSC_VER
+#if IS_WINDOWS
 		PrintOut(context, "COMM %S:BYTE:0%llxH\n", name, typeInfo.size);
 #else
 		PrintOut(context, "%S: RESB 0%llxH\n", name, typeInfo.size);
@@ -2806,7 +2806,7 @@ void BackendGenerateOutputFile(Context *context)
 
 	BucketArrayInit(&context->outputBuffer);
 
-#if _MSC_VER
+#if IS_WINDOWS
 	String memoryUtilFullpath = SYSExpandPathCompilerRelative("core\\memory_masm.asm"_s);
 	PrintOut(context, "include <%S>\n\n", memoryUtilFullpath);
 #else
@@ -2814,7 +2814,7 @@ void BackendGenerateOutputFile(Context *context)
 	PrintOut(context, "%cinclude \"%S\"\n\n", '%', memoryUtilFullpath);
 #endif
 
-#if _MSC_VER
+#if IS_WINDOWS
 	PrintOut(context, "_DATA SEGMENT\n");
 #else
 	PrintOut(context, "section .data\n");
@@ -2912,7 +2912,7 @@ void BackendGenerateOutputFile(Context *context)
 			}
 		}
 
-#if _MSC_VER
+#if IS_WINDOWS
 		PrintOut(context, "_DATA ENDS\n");
 		PrintOut(context, "_BSS SEGMENT\n");
 #else
@@ -2939,16 +2939,17 @@ void BackendGenerateOutputFile(Context *context)
 		}
 	}
 
-#if _MSC_VER
+#if IS_WINDOWS
 	PrintOut(context, "_BSS ENDS\n");
 #endif
 
-#if !_MSC_VER
+#if !IS_WINDOWS
+	u64 procedureCount = BucketArrayCount(&context->procedures.GetForRead());
 	for (int procedureIdx = 1; procedureIdx < procedureCount; ++procedureIdx)
 	{
 		Procedure proc = GetProcedureRead(context, procedureIdx);
 		if (proc.isExported)
-			PrintOut(context, "GLOBAL %S\n", proc->name);
+			PrintOut(context, "GLOBAL %S\n", proc.name);
 	}
 #endif
 
@@ -2967,7 +2968,7 @@ void BackendGenerateOutputFile(Context *context)
 				case 8: type = "QWORD"_s; break;
 				default: type = "QWORD"_s;
 			}
-#if _MSC_VER
+#if IS_WINDOWS
 			PrintOut(context, "EXTRN %S:%S\n", v.name, type);
 #else
 			PrintOut(context, "EXTERN %S:%S\n", v.name, type);
@@ -2986,7 +2987,7 @@ void BackendGenerateOutputFile(Context *context)
 				continue;
 
 			String procName = (*externalProcedures)[procedureIdx].name;
-#if _MSC_VER
+#if IS_WINDOWS
 			PrintOut(context, "EXTRN %S:proc\n", procName);
 #else
 			PrintOut(context, "EXTERN %S\n", procName);
@@ -2994,7 +2995,7 @@ void BackendGenerateOutputFile(Context *context)
 		}
 	}
 
-#if _MSC_VER
+#if IS_WINDOWS
 	PrintOut(context, "_TEXT SEGMENT\n");
 #else
 	PrintOut(context, "section .text\n");
@@ -3003,7 +3004,7 @@ void BackendGenerateOutputFile(Context *context)
 	// Code
 	X64PrintInstructions(context);
 
-#if _MSC_VER
+#if IS_WINDOWS
 	PrintOut(context, "_TEXT ENDS\n");
 	PrintOut(context, "END\n");
 #endif
@@ -3036,7 +3037,7 @@ void BackendGenerateOutputFile(Context *context)
 		extraLinkerArguments = TPrintF("%S %S", extraLinkerArguments,
 				context->libsToLink[i]);
 
-#if _MSC_VER
+#if IS_WINDOWS
 	bool useWindowsSubsystem = false;
 	{
 		auto staticDefinitions = context->staticDefinitions.GetForRead();

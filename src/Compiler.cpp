@@ -1,11 +1,28 @@
+#include <stdint.h>
+typedef int8_t  s8;
+typedef int16_t s16;
+typedef int32_t s32;
+typedef int64_t s64;
+
+typedef uint8_t  u8;
+typedef uint16_t u16;
+typedef uint32_t u32;
+typedef uint64_t u64;
+
+typedef float f32;
+typedef double f64;
+
 #if _MSC_VER
 #include "PlatformWindows.h"
+#else
+#include "PlatformLinux.h"
 #endif
+
 #include "General.h"
 #include "Strings.h"
 #include "MemoryAlloc.h"
 
-#define USE_PROFILER_API 1
+#define USE_PROFILER_API IS_WINDOWS
 
 const String TPrintF(const char *format, ...);
 
@@ -18,15 +35,16 @@ PerformanceAPI_Functions performanceAPI;
 #endif
 #include "Profiler.cpp"
 
+#include "Config.h"
+#include "Maths.h"
+#include "Containers.h"
+
 #if _MSC_VER
 #include "PlatformWindows.cpp"
 #else
 #include "PlatformLinux.cpp"
 #endif
 
-#include "Config.h"
-#include "Maths.h"
-#include "Containers.h"
 #include "Multithreading.cpp"
 
 Memory *g_memory;
@@ -64,7 +82,7 @@ enum JobState : u32
 
 struct Job
 {
-	void *fiber;
+	Fiber fiber;
 	u32 isRunning;
 	JobState state;
 };
@@ -82,7 +100,7 @@ s64 Print(const char *format, ...)
 	va_start(args, format);
 
 	s64 size = stbsp_vsprintf(buffer, format, args);
-#if _MSC_VER
+#if IS_WINDOWS
 	OutputDebugStringA(buffer);
 #endif
 
@@ -377,7 +395,7 @@ bool CompilerAddSourceFile(Context *context, String filename, SourceLocation loc
 			.context = context,
 			.fileIdx = (u32)context->sourceFiles.size - 1,
 			.jobIdx = jobIdx };
-		void *fiber = CreateFiber(0, ParseJobProc, (void *)args);
+		Fiber fiber = SYSCreateFiber(ParseJobProc, (void *)args);
 
 		Job newJob = { fiber, 0, JOBSTATE_START };
 		*DynamicArrayAdd(&jobs) = newJob;
@@ -395,24 +413,26 @@ int WorkerThreadProc(void *arg)
 	SYSSetThreadData(context->tlsIndex, &threadData);
 	MemoryInitThread(1 * 1024 * 1024);
 
-	ConvertThreadToFiber(nullptr);
+	SYSConvertThreadToFiber();
 
-	void *fiber;
-	auto jobs = context->jobs.Get();
-	u32 jobCount = (u32)jobs->size;
-	for (u32 i = 0; i < jobCount; ++i)
+	Fiber fiber;
 	{
-		if ((*jobs)[i].state != JOBSTATE_DONE && !(*jobs)[i].isRunning)
+		auto jobs = context->jobs.Get();
+		u32 jobCount = (u32)jobs->size;
+		for (u32 i = 0; i < jobCount; ++i)
 		{
-			(*jobs)[i].isRunning = true;
-			fiber = (*jobs)[i].fiber;
-			goto newJob;
+			if ((*jobs)[i].state != JOBSTATE_DONE && !(*jobs)[i].isRunning)
+			{
+				(*jobs)[i].isRunning = true;
+				fiber = (*jobs)[i].fiber;
+				goto newJob;
+			}
 		}
+		return 0;
 	}
-	return 0;
 
 newJob:
-	SwitchToFiber(fiber);
+	SYSSwitchToFiber(fiber);
 	return 0;
 }
 
@@ -426,7 +446,7 @@ void SwitchJob(Context *context)
 	}
 
 	JobDataCommon *jobData = (JobDataCommon *)SYSGetFiberData(context->flsIndex);
-	void *nextFiber = nullptr;
+	Fiber nextFiber = SYS_INVALID_FIBER_HANDLE;
 	{
 		ProfileScope scope("Switch job", nullptr, PROFILER_COLOR(0x10, 0x10, 0xA0));
 
@@ -453,7 +473,7 @@ void SwitchJob(Context *context)
 	}
 newJob:
 	threadData->lastJobIdx = jobData->jobIdx;
-	SwitchToFiber(nextFiber);
+	SYSSwitchToFiber(nextFiber);
 }
 
 #include "Tokenizer.cpp"
@@ -472,7 +492,7 @@ int main(int argc, char **argv)
 
 	SetUpTimers();
 
-#if _MSC_VER
+#if IS_WINDOWS
 	g_hStdout = GetStdHandle(STD_OUTPUT_HANDLE);
 	g_hStderr = GetStdHandle(STD_ERROR_HANDLE);
 #else
@@ -510,7 +530,7 @@ int main(int argc, char **argv)
 	DynamicArrayInit(&inputFiles, 16);
 	*DynamicArrayAdd(&inputFiles) = "core/basic.emi"_s;
 	*DynamicArrayAdd(&inputFiles) = "core/print.emi"_s;
-#if _MSC_VER
+#if IS_WINDOWS
 	*DynamicArrayAdd(&inputFiles) = "core/basic_windows.emi"_s;
 #else
 	*DynamicArrayAdd(&inputFiles) = "core/basic_linux.emi"_s;
@@ -554,7 +574,7 @@ int main(int argc, char **argv)
 	for (int i = 0; i < 8; ++i)
 		threads[i] = SYSCreateThread(WorkerThreadProc, &context);
 
-	WaitForMultipleObjects(ArrayCount(threads), threads, true, INFINITE);
+	SYSWaitForThreads(ArrayCount(threads), threads);
 
 	TimerSplit("Multithreaded parse/analyze/codegen phase"_s);
 

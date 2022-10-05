@@ -4,6 +4,9 @@
 #include <Shlobj.h>
 #include <process.h>
 
+#define IS_WINDOWS 1
+#define IS_MSVC 1
+
 typedef HANDLE FileHandle;
 typedef HANDLE ThreadHandle;
 typedef SRWLOCK RWLock;

@@ -19,7 +19,7 @@ String SYSExpandPathWorkingDirectoryRelative(String relativePath)
 	char *absolutePath = (char *)ThreadAllocator::Alloc(SYS_MAX_PATH, 1);
 	result.data = absolutePath;
 
-	ASSERT(getcwd(absolutePath, SYS_MAX_PATH));
+	getcwd(absolutePath, SYS_MAX_PATH);
 	s64 written = strlen(absolutePath);
 	absolutePath[written++] = '/';
 	strncpy(absolutePath + written, relativePath.data, relativePath.size);
@@ -83,25 +83,30 @@ bool SYSAreSameFile(FileHandle file1, FileHandle file2) {
 inline u64 SYSPerformanceCounter()
 {
 	timespec t;
-	ASSERT(clock_gettime(CLOCK_MONOTONIC_RAW, &t) == 0);
+	clock_gettime(CLOCK_MONOTONIC_RAW, &t);
 	return t.tv_nsec + t.tv_sec * 1000000000;
 }
 
 inline u64 SYSPerformanceFrequency()
 {
 	timespec t;
-	ASSERT(clock_getres(CLOCK_MONOTONIC_RAW, &t) == 0);
+	clock_getres(CLOCK_MONOTONIC_RAW, &t);
 	return t.tv_nsec * 1000000000;
 }
 
-void SYSCloseFile(FileHandle file)
+inline void SYSCloseFile(FileHandle file)
 {
 	close(file);
 }
 
-void *SYSAlloc(u64 size)
+inline void *SYSAlloc(u64 size)
 {
 	return valloc(size);
+}
+
+inline void SYSFree(void *ptr)
+{
+	free(ptr);
 }
 
 void SYSCreateDirectory(String pathname)
@@ -150,8 +155,7 @@ void SYSRunAssembler(String outputPath, String extraArguments)
 #endif
 }
 
-void SYSRunLinker(String outputPath, bool makeLibrary, String extraArguments)
-{
+void SYSRunLinker(String outputPath, bool makeLibrary, String extraArguments) {
 #if 1
 	if (makeLibrary)
 	{
@@ -208,128 +212,142 @@ void SYSRunLinker(String outputPath, bool makeLibrary, String extraArguments)
 
 inline ThreadHandle SYSCreateThread(int (*start)(void *), void *args)
 {
-	return CreateThread(nullptr, 0, (DWORD (*)(void *))start, args, 0, nullptr);
+	pthread_t thread;
+	int error = pthread_create(&thread, nullptr, (void *(*)(void *))start, args);
+	ASSERT(error == 0);
+	return thread;
 }
 
 inline void SYSWaitForThread(ThreadHandle thread)
 {
-	WaitForSingleObject(thread, INFINITE);
+	pthread_join(thread, nullptr);
+}
+
+inline void SYSWaitForThreads(int count, ThreadHandle *threads)
+{
+	for (int i = 0; i < count; ++i)
+		pthread_join(threads[i], nullptr);
 }
 
 inline ThreadHandle SYSGetCurrentThread()
 {
-	return GetCurrentThread();
+	return pthread_self();
 }
 
 inline u32 SYSAllocThreadData()
 {
 	u32 key;
-	ASSERT(pthread_key_create(&key, nullptr) == 0);
+	pthread_key_create(&key, nullptr);
 	return key;
 }
 
-inline void *SYSGetThreadData(u32 key)
-{
-	return pthread_get_specific(key);
+inline void *SYSGetThreadData(u32 key) {
+	return pthread_getspecific(key);
 }
 
-inline bool SYSSetThreadData(u32 key, void *value)
-{
-	return pthread_set_specific(key, value) == 0;
+inline bool SYSSetThreadData(u32 key, void *value) {
+	return pthread_setspecific(key, value) == 0;
 }
 
-void SYSSetThreadDescription(ThreadHandle thread, String string)
-{
+void SYSSetThreadDescription(ThreadHandle thread, String string) {
 	char buffer[32];
-	strncpy(buffer, string.data, string.size);
+	strncpy(buffer, string.data, 32);
 	if (string.size < 32)
 		buffer[string.size] = 0;
 	pthread_setname_np(thread, buffer);
 }
 
-inline Mutex SYSCreateMutex()
-{
+inline Mutex SYSCreateMutex() {
 	Mutex mutex;
-	ASSERT(pthread_mutex_init(&mutex) == 0);
+	pthread_mutex_init(&mutex, nullptr);
 	return mutex;
 }
 
-inline void SYSMutexLock(Mutex &mutex)
-{
+inline void SYSMutexLock(Mutex &mutex) {
 	pthread_mutex_lock(&mutex);
 }
 
-inline void SYSMutexUnlock(Mutex &mutex)
-{
+inline void SYSMutexUnlock(Mutex &mutex) {
 	pthread_mutex_unlock(&mutex);
 }
 
-inline void SYSCreateRWLock(RWLock *lock)
-{
+inline void SYSCreateRWLock(RWLock *lock) {
 	pthread_rwlock_init(lock, nullptr);
 }
 
-inline void SYSLockForRead(RWLock *lock)
-{
+inline void SYSLockForRead(RWLock *lock) {
 	pthread_rwlock_rdlock(lock);
 }
 
-inline void SYSUnlockForRead(RWLock *lock)
-{
+inline void SYSUnlockForRead(RWLock *lock) {
 	pthread_rwlock_unlock(lock);
 }
 
-inline void SYSLockForWrite(RWLock *lock)
-{
+inline void SYSLockForWrite(RWLock *lock) {
 	pthread_rwlock_wrlock(lock);
 }
 
-inline void SYSUnlockForWrite(RWLock *lock)
-{
+inline void SYSUnlockForWrite(RWLock *lock) {
 	pthread_rwlock_unlock(lock);
 }
 
-struct ConditionVariable
-{
+#if 0
+struct ConditionVariable {
 	pthread_mutex_t mutex;
 	DynamicArray<sem_t, LinearAllocator> semaphores;
 };
 
-inline void SYSCreateConditionVariable(ConditionVariable *conditionVar)
-{
-	ASSERT(pthread_mutex_init(&conditionVar->mutex) == 0);
+inline void SYSCreateConditionVariable(ConditionVariable *conditionVar) {
+	pthread_mutex_init(&conditionVar->mutex, nullptr);
 	DynamicArrayInit(&conditionVar->semaphores, 8);
 }
 
-inline void SYSSleepConditionVariableRead(ConditionVariable *conditionVar, RWLock *lock)
-{
+inline void SYSSleepConditionVariableRead(ConditionVariable *conditionVar, RWLock *lock) {
 	pthread_mutex_lock(&conditionVar->mutex);
 	sem_t *newSemaphore = DynamicArrayAdd(&conditionVar->semaphores);
 	sem_init(newSemaphore, 0, 0);
 	pthread_mutex_unlock(&conditionVar->mutex);
 
-	SYSLockForRead(lock);
-	sem_wait(newSemaphore);
 	SYSUnlockForRead(lock);
+	int error = sem_wait(newSemaphore);
+	if (error != 0 && errno != EINTR) {
+		Print("Error on sem_wait\n");
+		PANIC;
+	}
+	sem_destroy(newSemaphore);
+	SYSLockForRead(lock);
 }
 
-inline void SYSWakeAllConditionVariable(ConditionVariable *conditionVar)
-{
+inline void SYSWakeAllConditionVariable(ConditionVariable *conditionVar) {
 	pthread_mutex_lock(&conditionVar->mutex);
 	for (int i = 0; i < conditionVar->semaphores.size; ++i)
 		sem_post(&conditionVar->semaphores[i]);
+	conditionVar->semaphores.size = 0;
 	pthread_mutex_unlock(&conditionVar->mutex);
 }
+#else
+typedef pthread_cond_t ConditionVariable;
+inline void SYSCreateConditionVariable(ConditionVariable *conditionVar) {
+	pthread_cond_init(conditionVar, nullptr);
+}
 
-inline void SYSSpinlockLock(volatile u32 *locked)
-{
+inline void SYSSleepConditionVariableRead(ConditionVariable *conditionVar, Mutex *lock) {
+	pthread_cond_wait(conditionVar, lock);
+}
+
+inline void SYSWakeAllConditionVariable(ConditionVariable *conditionVar) {
+	pthread_cond_broadcast(conditionVar);
+}
+#endif
+
+inline void SYSSpinlockLock(volatile u32 *locked) {
 	int oldLocked = 1;
 retry:
 	int eax = 0;
 	asm volatile("xacquire lock cmpxchg %2, %1"
 					: "+a" (eax), "+m" (*locked)
 					: "r" (oldLocked) : "memory", "cc");
-	if (eax)
+	if (!eax)
 		goto ret;
 
 pause:
@@ -342,7 +360,71 @@ ret:
 	return;
 }
 
-inline void SYSSpinlockUnlock(volatile u32 *locked)
-{
+inline void SYSSpinlockUnlock(volatile u32 *locked) {
     asm volatile("xrelease movl %1, %0" : "+m"(*locked) : "i"(0) : "memory");
+}
+
+inline void SYSSleep(int milliseconds) {
+	struct timespec t = { 0, milliseconds * 1000 };
+	nanosleep(&t, nullptr);
+}
+
+inline s32 AtomicCompareExchange(volatile s32 *destination, s32 exchange, s32 comparand) {
+	__atomic_compare_exchange(destination, &comparand, &exchange, false, __ATOMIC_SEQ_CST,
+			__ATOMIC_SEQ_CST);
+	return comparand;
+}
+
+inline s64 AtomicCompareExchange64(volatile s64 *destination, s64 exchange, s64 comparand) {
+	__atomic_compare_exchange(destination, &comparand, &exchange, false, __ATOMIC_SEQ_CST,
+			__ATOMIC_SEQ_CST);
+	return comparand;
+}
+
+// Fibers!
+// @Improve: infinite storage for fibers
+ucontext_t fiberContexts[8192];
+void *g_fibersData[8192];
+u32 g_fiberCount = 0;
+__thread u32 g_currentFiber = U32_MAX;
+
+inline Fiber SYSCreateFiber(void (*start)(void *), void *args) {
+	const u64 fiberStackSize = 1 * 1024 * 1024; // 1MB
+	void *fiberStack = SYSAlloc(fiberStackSize);
+	u32 fiberIdx = __atomic_fetch_add(&g_fiberCount, 1, __ATOMIC_SEQ_CST);
+	ucontext_t *fiberContext = &fiberContexts[fiberIdx];
+	int res = getcontext(fiberContext);
+	ASSERT(res == 0);
+	fiberContext->uc_stack.ss_sp = fiberStack;
+	fiberContext->uc_stack.ss_size = fiberStackSize;
+	fiberContext->uc_link = nullptr;
+	makecontext(fiberContext, (void (*)())start, 1, args);
+	return fiberIdx;
+}
+
+inline void SYSConvertThreadToFiber() {
+	// Nothing on linux?
+}
+
+inline void SYSSwitchToFiber(Fiber fiber) {
+	ASSERT(fiber != SYS_INVALID_FIBER_HANDLE);
+	Fiber oldFiber = g_currentFiber;
+	g_currentFiber = fiber;
+	if (oldFiber != SYS_INVALID_FIBER_HANDLE)
+		swapcontext(&fiberContexts[oldFiber], &fiberContexts[fiber]);
+	else
+		setcontext(&fiberContexts[fiber]);
+}
+
+inline u32 SYSAllocFiberData() {
+	return U32_MAX;
+}
+
+inline void *SYSGetFiberData(u32 key) {
+	return g_fibersData[g_currentFiber];
+}
+
+inline bool SYSSetFiberData(u32 key, void *value) {
+	g_fibersData[g_currentFiber] = value;
+	return true;
 }

@@ -373,7 +373,7 @@ IRValue x64Registers[X64REGISTER_Count] = {
 	XMM12,	XMM13,	XMM14,	XMM15
 };
 
-#if !_MSC_VER
+#if IS_LINUX
 String x64LinuxSyscallNames[] =
 {
 	"read"_s,

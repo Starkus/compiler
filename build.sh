@@ -1,6 +1,6 @@
 #/bin/bash
 
-COMMON_OPTIONS="-I src/ -I external/ -Wno-switch -Wno-assume -mavx2 -g -fno-omit-frame-pointer
+COMMON_OPTIONS="-I src/ -I external/ -std=c++20 -Wno-switch -Wno-assume -mavx2 -g -fno-omit-frame-pointer
 	-fno-exceptions -fno-rtti -fuse-ld=mold"
 
 echo Compiling...

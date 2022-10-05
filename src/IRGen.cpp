@@ -2505,23 +2505,6 @@ void IRJobProcedure(void *args)
 
 	MemoryInitJob(1 * 1024 * 1024);
 
-#if !FINAL_BUILD
-	String threadName = TPrintF("IR:%S", GetProcedureRead(context, procedureIdx).name);
-	HANDLE thread = GetCurrentThread();
-
-	char buffer[512];
-	char *dst = buffer;
-	const char *src = threadName.data;
-	for (int i = 0; i < threadName.size; ++i)
-	{
-		*dst++ = *src++;
-		*dst++ = 0;
-	}
-	*dst++ = 0;
-	*dst++ = 0;
-	SetThreadDescription(thread, (PCWSTR)buffer);
-#endif
-
 	{
 		auto jobs = context->jobs.Get();
 		ASSERT((*jobs)[jobIdx].state == JOBSTATE_START);
@@ -2562,23 +2545,6 @@ void IRJobExpression(void *args)
 	SYSSetFiberData(context->flsIndex, &jobData);
 
 	MemoryInitJob(512 * 1024);
-
-#if !FINAL_BUILD
-	String threadName = "IR:Expression"_s;
-	HANDLE thread = GetCurrentThread();
-
-	char buffer[512];
-	char *dst = buffer;
-	const char *src = threadName.data;
-	for (int i = 0; i < threadName.size; ++i)
-	{
-		*dst++ = *src++;
-		*dst++ = 0;
-	}
-	*dst++ = 0;
-	*dst++ = 0;
-	SetThreadDescription(thread, (PCWSTR)buffer);
-#endif
 
 	{
 		auto jobs = context->jobs.Get();

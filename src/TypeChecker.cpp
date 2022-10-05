@@ -2037,7 +2037,7 @@ bool TypeCheckProcedurePrototype(Context *context, ASTProcedurePrototype *astPro
 		}
 	}
 
-	return { true };
+	return true;
 }
 
 TypeInfo TypeInfoFromASTProcedurePrototype(Context *context, ASTProcedurePrototype *astPrototype)
@@ -2902,7 +2902,7 @@ void TypeCheckExpression(Context *context, ASTExpression *expression)
 				.localValues = {},
 				.expression = expression
 			};
-			void *fiber = CreateFiber(0, IRJobExpression, (void *)args);
+			Fiber fiber = SYSCreateFiber(IRJobExpression, (void *)args);
 
 			Job newJob = { fiber, 0, JOBSTATE_START };
 			*DynamicArrayAdd(&jobs) = newJob;
@@ -3039,7 +3039,7 @@ void TypeCheckExpression(Context *context, ASTExpression *expression)
 						.expression = nullptr
 					};
 					jobData->localValues = {}; // Safety clear
-					void *fiber = CreateFiber(0, IRJobProcedure, (void *)args);
+					Fiber fiber = SYSCreateFiber(IRJobProcedure, (void *)args);
 
 					Job newJob = { fiber, 0, JOBSTATE_START };
 					*DynamicArrayAdd(&jobs) = newJob;
@@ -4311,42 +4311,6 @@ void TCJobProc(void *args)
 
 	MemoryInitJob(1 * 1024 * 1024);
 
-#if !FINAL_BUILD
-	String threadName = "TC:???"_s;
-	ThreadHandle thread = SYSGetCurrentThread();
-	switch (expression->nodeType)
-	{
-	case ASTNODETYPE_STATIC_DEFINITION:
-	{
-		switch (expression->staticDefinition.expression->nodeType)
-		{
-		case ASTNODETYPE_PROCEDURE_DECLARATION:
-		{
-			threadName = TPrintF("TC:%S - Procedure declaration", expression->staticDefinition.name);
-		} break;
-		case ASTNODETYPE_TYPE:
-		case ASTNODETYPE_ALIAS:
-		{
-			threadName = TPrintF("TC:%S - Type declaration", expression->staticDefinition.name);
-		} break;
-		case ASTNODETYPE_IDENTIFIER:
-		{
-			threadName = TPrintF("TC:%S - Constant declaration", expression->staticDefinition.name);
-		} break;
-		}
-	} break;
-	case ASTNODETYPE_VARIABLE_DECLARATION:
-	{
-		threadName = TPrintF("TC:%S - Variable declaration", expression->staticDefinition.name);
-	} break;
-	case ASTNODETYPE_IF_STATIC:
-	{
-		threadName = "TC:Static if"_s;
-	} break;
-	}
-	SYSSetThreadDescription(thread, threadName);
-#endif
-
 	{
 		auto jobs = context->jobs.Get();
 		ASSERT((*jobs)[jobIdx].state == JOBSTATE_START);
@@ -4408,7 +4372,7 @@ void GenerateTypeCheckJobs(Context *context, ASTExpression *expression)
 			.context = context,
 			.jobIdx = jobIdx,
 			.expression = expression };
-		void *fiber = CreateFiber(0, TCJobProc, (void *)args);
+		Fiber fiber = SYSCreateFiber(TCJobProc, (void *)args);
 
 		Job newJob = { fiber, 0, JOBSTATE_START };
 		*DynamicArrayAdd(&jobs) = newJob;
@@ -4445,11 +4409,6 @@ void GenerateTypeCheckJobs(Context *context, ASTExpression *expression)
 
 void TypeCheckMain(Context *context)
 {
-	SECURITY_ATTRIBUTES attr = {
-		sizeof(SECURITY_ATTRIBUTES),
-		nullptr,
-		true
-	};
 	SYSCreateConditionVariable(&context->operatorOverloadsConditionVariable);
 
 	{

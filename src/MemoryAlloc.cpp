@@ -53,8 +53,8 @@ void *LinearAllocator::Alloc(u64 size, int alignment)
 #endif
 
 		u64 newPtr = result + size;
-		u64 storedPtr = _InterlockedCompareExchange64((LONG64 *)&g_memory->linearMemPtr,
-				(LONG64)newPtr, (LONG64)originalPtr);
+		u64 storedPtr = AtomicCompareExchange64((s64 *)&g_memory->linearMemPtr,
+				newPtr, originalPtr);
 		if (storedPtr == originalPtr) break;
 	}
 

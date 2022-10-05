@@ -1548,28 +1548,6 @@ void ParseJobProc(void *args)
 
 	MemoryInitJob(1 * 1024 * 1024);
 
-#if !FINAL_BUILD
-	HANDLE thread = GetCurrentThread();
-	SourceFile sourceFile;
-	{
-		ScopedLockSpin filesLock(&context->filesLock);
-		sourceFile = context->sourceFiles[fileIdx];
-	}
-	String threadName = TPrintF("P:%S", sourceFile.name);
-
-	char buffer[512];
-	char *dst = buffer;
-	const char *src = threadName.data;
-	for (int i = 0; i < threadName.size; ++i)
-	{
-		*dst++ = *src++;
-		*dst++ = 0;
-	}
-	*dst++ = 0;
-	*dst++ = 0;
-	SetThreadDescription(thread, (PCWSTR)buffer);
-#endif
-
 	{
 		auto jobs = context->jobs.Get();
 		ASSERT((*jobs)[jobIdx].isRunning);
