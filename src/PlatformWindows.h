@@ -9,6 +9,7 @@
 
 typedef HANDLE FileHandle;
 typedef HANDLE ThreadHandle;
+typedef void *Fiber;
 typedef SRWLOCK RWLock;
 typedef CONDITION_VARIABLE ConditionVariable;
 #define SYS_INVALID_FILE_HANDLE INVALID_HANDLE_VALUE

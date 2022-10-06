@@ -1543,7 +1543,7 @@ void X64ConvertInstruction(Context *context, IRInstruction inst)
 		result.parameterValues._capacity = paramValues._capacity;
 #endif
 
-#if !IS_WINDOWS
+#if IS_LINUX
 		// Check syscalls
 		if (inst.type == IRINSTRUCTIONTYPE_PROCEDURE_CALL)
 		{
@@ -2943,7 +2943,7 @@ void BackendGenerateOutputFile(Context *context)
 	PrintOut(context, "_BSS ENDS\n");
 #endif
 
-#if !IS_WINDOWS
+#if IS_LINUX
 	u64 procedureCount = BucketArrayCount(&context->procedures.GetForRead());
 	for (int procedureIdx = 1; procedureIdx < procedureCount; ++procedureIdx)
 	{

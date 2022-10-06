@@ -528,7 +528,7 @@ inline void SYSWaitForThread(ThreadHandle thread) {
 }
 
 void SYSWaitForThreads(u64 count, ThreadHandle *threads) {
-	WaitForMultipleObjects(count, threads, true, INFINITE);
+	WaitForMultipleObjects((DWORD)count, threads, true, INFINITE);
 }
 
 inline ThreadHandle SYSGetCurrentThread() {
@@ -547,18 +547,6 @@ inline bool SYSSetThreadData(u32 key, void *value) {
 	return TlsSetValue(key, value);
 }
 
-inline u32 SYSAllocFiberData() {
-	return FlsAlloc(nullptr);
-}
-
-inline void *SYSGetFiberData(u32 key) {
-	return FlsGetValue(key);
-}
-
-inline bool SYSSetFiberData(u32 key, void *value) {
-	return FlsSetValue(key, value);
-}
-
 void SYSSetThreadDescription(ThreadHandle thread, String string) {
 	char buffer[512];
 	char *dst = buffer;
@@ -571,6 +559,32 @@ void SYSSetThreadDescription(ThreadHandle thread, String string) {
 	*dst++ = 0;
 	*dst++ = 0;
 	SetThreadDescription(thread, (PCWSTR)buffer);
+}
+
+inline u32 SYSAllocFiberData() {
+	return FlsAlloc(nullptr);
+}
+
+inline void *SYSGetFiberData(u32 key) {
+	return FlsGetValue(key);
+}
+
+inline bool SYSSetFiberData(u32 key, void *value) {
+	return FlsSetValue(key, value);
+}
+
+inline Fiber SYSCreateFiber(void (*start)(void *), void *args) {
+	const u64 fiberStackSize = 1 * 1024 * 1024; // 1MB
+	return CreateFiber(fiberStackSize, start, args);
+}
+
+inline void SYSConvertThreadToFiber() {
+	ConvertThreadToFiber(nullptr);
+}
+
+inline void SYSSwitchToFiber(Fiber fiber) {
+	ASSERT(fiber != SYS_INVALID_FIBER_HANDLE);
+	SwitchToFiber(fiber);
 }
 
 inline Mutex SYSCreateMutex() {
@@ -642,11 +656,9 @@ inline void SYSSpinlockUnlock(volatile u32 *locked) {
 }
 
 inline s32 AtomicCompareExchange(volatile s32 *destination, s32 exchange, s32 comparand) {
-	_InterlockedCompareExchange64((volatile LONG *)destination, (LONG)exchange, (LONG)comparand);
-	return comparand;
+	return _InterlockedCompareExchange((volatile LONG *)destination, (LONG)exchange, (LONG)comparand);
 }
 
 inline s64 AtomicCompareExchange64(volatile s64 *destination, s64 exchange, s64 comparand) {
-	_InterlockedCompareExchange64((volatile LONG64 *)destination, (LONG64)exchange, (LONG64)comparand);
-	return comparand;
+	return _InterlockedCompareExchange64((volatile LONG64 *)destination, (LONG64)exchange, (LONG64)comparand);
 }
