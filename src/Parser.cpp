@@ -1553,7 +1553,7 @@ void ParseJobProc(void *args)
 	{
 		auto jobs = context->jobs.Get();
 		ASSERT((*jobs)[jobIdx].isRunning);
-		(*jobs)[jobIdx].state = JOBSTATE_RUNNING;
+		(*jobs)[jobIdx].state = JOBSTATE_READY;
 
 #if !FINAL_BUILD
 		(*jobs)[jobIdx].title = SStringConcat("P:"_s, context->sourceFiles[fileIdx].name);
@@ -1591,6 +1591,6 @@ void ParserMain(Context *context)
 	}
 	{
 		auto jobs = context->jobs.Get();
-		DynamicArrayInit(&jobs, 64);
+		BucketArrayInit(&jobs);
 	}
 }

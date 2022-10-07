@@ -655,6 +655,10 @@ inline void SYSSpinlockUnlock(volatile u32 *locked) {
 	_Store_HLERelease((volatile long *)locked, 0);
 }
 
+inline void SYSSleep(int milliseconds) {
+	Sleep(milliseconds);
+}
+
 inline s32 AtomicCompareExchange(volatile s32 *destination, s32 exchange, s32 comparand) {
 	return _InterlockedCompareExchange((volatile LONG *)destination, (LONG)exchange, (LONG)comparand);
 }

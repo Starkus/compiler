@@ -70,9 +70,10 @@ struct JobDataCommon
 
 enum JobState : u32
 {
-	JOBSTATE_START,
-	JOBSTATE_RUNNING,
-	JOBSTATE_SLEEPING,
+	JOBSTATE_READY,
+	JOBSTATE_UNKNOWN_IDENTIFIER,
+	JOBSTATE_STATIC_DEF_NOT_READY,
+	JOBSTATE_PROC_BODY_NOT_READY,
 	// WAITING_FOR_STOP jobs want to wait until no jobs are running to make a decision.
 	// As of time of write, only #defined does this to determine if something isn't defined anywhere
 	// before continuing.
@@ -80,14 +81,19 @@ enum JobState : u32
 	JOBSTATE_DONE,
 };
 
-struct Job
-{
+struct Job {
 	Fiber fiber;
 	u32 isRunning;
 	JobState state;
 #if !FINAL_BUILD
 	String title;
 #endif
+
+	// Some data about why the job yielded execution.
+	union {
+		String identifier;
+		u32 index;
+	};
 };
 
 s64 Print(const char *format, ...)
@@ -208,7 +214,7 @@ struct Context
 	DynamicArray<SourceFile, HeapAllocator> sourceFiles;
 	DynamicArray<String, HeapAllocator> libsToLink;
 
-	MXContainer<DynamicArray<Job, HeapAllocator>> jobs;
+	MXContainer<BucketArray<Job, HeapAllocator, 1024>> jobs;
 
 	// Parsing -----
 	DynamicArray<BucketArray<Token, HeapAllocator, 1024>, HeapAllocator> fileTokens;
@@ -385,7 +391,7 @@ bool CompilerAddSourceFile(Context *context, String filename, SourceLocation loc
 	{
 		auto jobs = context->jobs.Get();
 
-		u32 jobIdx = (u32)jobs->size;
+		u32 jobIdx = (u32)BucketArrayCount(&jobs);
 		ParseJobArgs *args = ALLOC(LinearAllocator, ParseJobArgs);
 		*args = {
 			.context = context,
@@ -393,8 +399,8 @@ bool CompilerAddSourceFile(Context *context, String filename, SourceLocation loc
 			.jobIdx = jobIdx };
 		Fiber fiber = SYSCreateFiber(ParseJobProc, (void *)args);
 
-		Job newJob = { fiber, 0, JOBSTATE_START };
-		*DynamicArrayAdd(&jobs) = newJob;
+		Job newJob = { fiber, 0, JOBSTATE_READY };
+		*BucketArrayAdd(&jobs) = newJob;
 	}
 
 	return true;
@@ -413,22 +419,24 @@ int WorkerThreadProc(void *arg)
 
 	Fiber fiber;
 	{
-		auto jobs = context->jobs.Get();
-		u32 jobCount = (u32)jobs->size;
-		for (u32 i = 0; i < jobCount; ++i)
-		{
-			if ((*jobs)[i].state != JOBSTATE_DONE && !(*jobs)[i].isRunning)
-			{
-				(*jobs)[i].isRunning = true;
-				//u32 *isRunning = &(*jobs)[i].isRunning;
-				//if (_InterlockedCompareExchange(isRunning, 1, 0) == 0)
-				{
+		while (true) {
+			auto jobs = context->jobs.Get();
+			u32 jobCount = (u32)BucketArrayCount(&jobs);
+
+			bool allDone = true;
+			for (u32 i = 0; i < jobCount; ++i) {
+				if ((*jobs)[i].state == JOBSTATE_READY && !(*jobs)[i].isRunning) {
+					(*jobs)[i].isRunning = true;
 					fiber = (*jobs)[i].fiber;
 					goto newJob;
 				}
+				else if ((*jobs)[i].state != JOBSTATE_DONE)
+					allDone = false;
 			}
+			if (allDone)
+				return 0;
+			SYSSleep(0);
 		}
-		return 0;
 	}
 
 newJob:
@@ -446,34 +454,70 @@ void SwitchJob(Context *context)
 	{
 		ProfileScope scope("Switch job", nullptr, PROFILER_COLOR(0x10, 0x10, 0xA0));
 
-		auto jobs = context->jobs.Get();
-		u32 jobCount = (u32)jobs->size;
-		u32 startJobIdx = jobData->jobIdx + 1;
-		if (startJobIdx >= jobCount)
-			startJobIdx -= jobCount;
-		u32 currentJobIdx = startJobIdx;
-		for (u32 i = 0; i < jobCount; ++i)
-		{
-			Job job = (*jobs)[currentJobIdx];
-			if (job.state != JOBSTATE_DONE && !job.isRunning)
-			{
-				(*jobs)[currentJobIdx].isRunning = 1;
-				//u32 *isRunning = &(*jobs)[currentJobIdx].isRunning;
-				//if (_InterlockedCompareExchange(isRunning, 1, 0) == 0)
-				{
-					nextJobIdx = currentJobIdx;
-					nextFiber = (*jobs)[currentJobIdx].fiber;
-					goto newJob;
+		while (true) {
+			//auto jobs = context->jobs.Get();
+			BucketArray<Job, HeapAllocator, 1024> &jobs = context->jobs.unsafe;
+			u32 jobCount = (u32)BucketArrayCount(&jobs);
+
+			u32 startJobIdx = jobData->jobIdx + 1;
+			if (startJobIdx >= jobCount)
+				startJobIdx -= jobCount;
+
+			bool allDone = true;
+			bool anyReady = false;
+			u32 currentJobIdx = startJobIdx;
+			for (u32 i = 0; i < jobCount; ++i) {
+				volatile Job *job = &jobs[currentJobIdx];
+				if (job->state == JOBSTATE_READY) {
+					anyReady = true;
+					if (!job->isRunning) {
+						ScopedLockMutex jobsLock(context->jobs.lock);
+						// Check it didn't change
+						if (job->state == JOBSTATE_READY && !job->isRunning) {
+							job->isRunning = 1;
+							nextJobIdx = currentJobIdx;
+							nextFiber = job->fiber;
+							goto newJob;
+						}
+					}
+				}
+				else if (job->state != JOBSTATE_DONE)
+					allDone = false;
+				++currentJobIdx;
+				if (currentJobIdx >= jobCount)
+					currentJobIdx -= jobCount;
+			}
+			if (allDone)
+				return;
+			if (!anyReady) {
+				// If our job was waiting for stop, unlock it
+				if (jobs[jobData->jobIdx].state == JOBSTATE_WAITING_FOR_STOP) {
+					return;
+				}
+				// Try one waiting for stop
+				for (u32 i = 0; i < jobCount; ++i) {
+					volatile Job *job = &jobs[currentJobIdx];
+					if (job->state == JOBSTATE_WAITING_FOR_STOP && !job->isRunning) {
+						ScopedLockMutex jobsLock(context->jobs.lock);
+						// Check it didn't change
+						if (job->state == JOBSTATE_WAITING_FOR_STOP && !job->isRunning) {
+							job->isRunning = 1;
+							nextJobIdx = currentJobIdx;
+							nextFiber = job->fiber;
+							goto newJob;
+						}
+					}
+					++currentJobIdx;
+					if (currentJobIdx >= jobCount)
+						currentJobIdx -= jobCount;
 				}
 			}
-			++currentJobIdx;
-			if (currentJobIdx >= jobCount)
-				currentJobIdx -= jobCount;
+			SYSSleep(0);
 		}
-		return;
 	}
 newJob:
 	ASSERT(nextJobIdx != jobData->jobIdx);
+	ASSERT(context->jobs.unsafe[nextJobIdx].isRunning);
 	threadData->lastJobIdx = jobData->jobIdx;
 	SYSSwitchToFiber(nextFiber);
 

@@ -332,9 +332,8 @@ inline void PopTCScope(Context *context)
 inline bool TCIsAnyJobRunning(Context *context)
 {
 	// @Unsafe
-	for (int i = 0; i < context->jobs.unsafe.size; ++i)
-		if (context->jobs.unsafe[i].state == JOBSTATE_START ||
-			context->jobs.unsafe[i].state == JOBSTATE_RUNNING)
+	for (u64 i = 0, count = BucketArrayCount(&context->jobs.unsafe); i < count; ++i)
+		if (context->jobs.unsafe[i].state == JOBSTATE_READY)
 			return true;
 
 	return false;
@@ -343,9 +342,8 @@ inline bool TCIsAnyJobRunning(Context *context)
 inline bool TCIsAnyJobRunningOrWaiting(Context *context)
 {
 	// @Unsafe
-	for (int i = 0; i < context->jobs.unsafe.size; ++i)
-		if (context->jobs.unsafe[i].state == JOBSTATE_START ||
-			context->jobs.unsafe[i].state == JOBSTATE_RUNNING ||
+	for (u64 i = 0, count = BucketArrayCount(&context->jobs.unsafe); i < count; ++i)
+		if (context->jobs.unsafe[i].state == JOBSTATE_READY ||
 			context->jobs.unsafe[i].state == JOBSTATE_WAITING_FOR_STOP)
 			return true;
 
@@ -355,7 +353,7 @@ inline bool TCIsAnyJobRunningOrWaiting(Context *context)
 inline bool TCAreaAllJobFinished(Context *context)
 {
 	// @Unsafe
-	for (int i = 0; i < context->jobs.unsafe.size; ++i)
+	for (u64 i = 0, count = BucketArrayCount(&context->jobs.unsafe); i < count; ++i)
 		if (context->jobs.unsafe[i].state != JOBSTATE_DONE)
 			return false;
 
@@ -367,13 +365,12 @@ bool TCSetJobState(Context *context, JobState jobState)
 {
 	TCJobData *jobData = (TCJobData *)SYSGetFiberData(context->flsIndex);
 
-	if (context->jobs.unsafe[jobData->jobIdx].state != jobState)
-	{
+	if (context->jobs.unsafe[jobData->jobIdx].state != jobState) {
 		auto jobs = context->jobs.Get();
 		(*jobs)[jobData->jobIdx].state = jobState;
 	}
 
-	if (jobState == JOBSTATE_RUNNING)
+	if (jobState == JOBSTATE_READY)
 		return false;
 
 	if (!TCIsAnyJobRunning(context))
@@ -385,11 +382,38 @@ bool TCSetJobState(Context *context, JobState jobState)
 	return false;
 }
 
-bool TCYield(Context *context)
+bool TCYield(Context *context, JobState reason, String string)
 {
+	ASSERT(reason == JOBSTATE_UNKNOWN_IDENTIFIER);
 	ProfileScope scope("TC Yield", nullptr, PROFILER_COLOR(0xE0, 0x10, 0x10));
 
-	TCSetJobState(context, JOBSTATE_SLEEPING);
+	TCJobData *jobData = (TCJobData *)SYSGetFiberData(context->flsIndex);
+	{
+		auto jobs = context->jobs.Get();
+		(*jobs)[jobData->jobIdx].state = reason;
+		(*jobs)[jobData->jobIdx].identifier = string;
+	}
+
+	if (!TCIsAnyJobRunningOrWaiting(context))
+		return false;
+
+	SwitchJob(context);
+	return true;
+}
+
+bool TCYield(Context *context, JobState reason, u32 index)
+{
+	ASSERT(reason == JOBSTATE_STATIC_DEF_NOT_READY ||
+		   reason == JOBSTATE_PROC_BODY_NOT_READY);
+	ProfileScope scope("TC Yield", nullptr, PROFILER_COLOR(0xE0, 0x10, 0x10));
+
+	TCJobData *jobData = (TCJobData *)SYSGetFiberData(context->flsIndex);
+	{
+		auto jobs = context->jobs.Get();
+		(*jobs)[jobData->jobIdx].state = reason;
+		(*jobs)[jobData->jobIdx].index = index;
+	}
+
 	if (!TCIsAnyJobRunningOrWaiting(context))
 		return false;
 
@@ -423,15 +447,20 @@ TCScopeName TCFindScopeName(Context *context, String name)
 				const TCScopeName *currentName = &(*globalNames)[i];
 				if (StringEquals(name, currentName->name))
 				{
-					TCSetJobState(context, JOBSTATE_RUNNING);
+					TCSetJobState(context, JOBSTATE_READY);
 					return *currentName;
 				}
 			}
 		}
-		TCSetJobState(context, JOBSTATE_SLEEPING);
+
+		{
+			auto jobs = context->jobs.Get();
+			(*jobs)[jobData->jobIdx].state = JOBSTATE_UNKNOWN_IDENTIFIER;
+			(*jobs)[jobData->jobIdx].identifier = name;
+		}
 		if (!TCIsAnyJobRunningOrWaiting(context))
 		{
-			TCSetJobState(context, JOBSTATE_RUNNING);
+			TCSetJobState(context, JOBSTATE_READY);
 			return { NAMETYPE_INVALID };
 		}
 		SwitchJob(context);
@@ -458,29 +487,48 @@ inline StaticDefinition TCGetStaticDefinition(Context *context, u32 staticDefini
 		bool ensureTypeChecked)
 {
 	StaticDefinition staticDefinition;
-	while (true)
 	{
+		auto staticDefinitions = context->staticDefinitions.GetForRead();
+		staticDefinition = (*staticDefinitions)[staticDefinitionIdx];
+	}
+	while (staticDefinition.definitionType == STATICDEFINITIONTYPE_NOT_READY ||
+			(ensureTypeChecked && staticDefinition.typeTableIdx == TYPETABLEIDX_Unset))
+	{
+		if (!TCYield(context, JOBSTATE_STATIC_DEF_NOT_READY, staticDefinitionIdx))
+			LogError(context, {},
+					TPrintF("COMPILER ERROR! Static definition \"%S\" never processed",
+					staticDefinition.name));
+
 		{
 			auto staticDefinitions = context->staticDefinitions.GetForRead();
 			staticDefinition = (*staticDefinitions)[staticDefinitionIdx];
 		}
-		if (staticDefinition.definitionType != STATICDEFINITIONTYPE_NOT_READY &&
-			(!ensureTypeChecked || staticDefinition.typeTableIdx != TYPETABLEIDX_Unset))
-			break;
 
-		if (!TCYield(context))
-			LogError(context, {},
-					TPrintF("COMPILER ERROR! Static definition \"%S\" never processed",
-					staticDefinition.name));
+		if (staticDefinition.definitionType == STATICDEFINITIONTYPE_NOT_READY ||
+				(ensureTypeChecked && staticDefinition.typeTableIdx == TYPETABLEIDX_Unset))
+			Print("Bad resume of job waiting for static def!\n");
 	}
+	TCSetJobState(context, JOBSTATE_READY);
 	return staticDefinition;
 }
 
 inline void TCUpdateStaticDefinition(Context *context, u32 staticDefinitionIdx,
-		StaticDefinition *value)
-{
-	auto staticDefinitions = context->staticDefinitions.GetForWrite();
-	(*staticDefinitions)[staticDefinitionIdx] = *value;
+		StaticDefinition *value) {
+	{
+		auto staticDefinitions = context->staticDefinitions.GetForWrite();
+		(*staticDefinitions)[staticDefinitionIdx] = *value;
+	}
+
+	if (value->definitionType != STATICDEFINITIONTYPE_NOT_READY && value->typeTableIdx != TYPETABLEIDX_Unset) {
+		// Wake up any job waiting for this static def to be ready.
+		auto jobs = context->jobs.Get();
+		u64 jobCount = BucketArrayCount(&jobs);
+		for (int i = 0; i < jobCount; ++i) {
+			Job *job = &(*jobs)[i];
+			if (job->state == JOBSTATE_STATIC_DEF_NOT_READY && staticDefinitionIdx == job->index)
+				job->state = JOBSTATE_READY;
+		}
+	}
 }
 
 u32 FindTypeInStackByName(Context *context, SourceLocation loc, String name)
@@ -1560,11 +1608,9 @@ error:
 	return { CONSTANTTYPE_INVALID };
 }
 
-inline void TCAddScopeName(Context *context, TCScopeName scopeName)
-{
+inline void TCAddScopeName(Context *context, TCScopeName scopeName) {
 	// Primitives
-	for (int i = 0; i < context->tcPrimitiveTypes.size; ++i)
-	{
+	for (int i = 0; i < context->tcPrimitiveTypes.size; ++i) {
 		const TCScopeName *currentName = &context->tcPrimitiveTypes[i];
 		if (currentName->type == NAMETYPE_PRIMITIVE && StringEquals(scopeName.name, currentName->name))
 			LogError(context, scopeName.loc, TPrintF("Can not use name \"%S\", it is a language primitive",
@@ -1572,8 +1618,7 @@ inline void TCAddScopeName(Context *context, TCScopeName scopeName)
 	}
 
 	TCScope *stackTop = GetTopMostScope(context);
-	if (stackTop)
-	{
+	if (stackTop) {
 		// Check if already exists
 		for (int i = 0; i < stackTop->names.size; ++i)
 		{
@@ -1590,24 +1635,36 @@ inline void TCAddScopeName(Context *context, TCScopeName scopeName)
 
 		*DynamicArrayAdd(&stackTop->names) = scopeName;
 	}
-	else
-	{
-		auto globalNames = context->tcGlobalNames.GetForWrite();
-
-		// Check if already exists
-		for (int i = 0; i < globalNames->size; ++i)
+	else {
 		{
-			const TCScopeName *currentName = &(*globalNames)[i];
-			if (!StringEquals(scopeName.name, currentName->name))
-				continue;
+			auto globalNames = context->tcGlobalNames.GetForWrite();
 
-			LogErrorNoCrash(context, scopeName.loc, TPrintF("Name \"%S\" already assigned",
-						scopeName.name));
-			LogNote(context, currentName->loc, "First defined here"_s);
-			PANIC;
+			// Check if already exists
+			for (int i = 0; i < globalNames->size; ++i) {
+				const TCScopeName *currentName = &(*globalNames)[i];
+				if (!StringEquals(scopeName.name, currentName->name))
+					continue;
+
+				LogErrorNoCrash(context, scopeName.loc, TPrintF("Name \"%S\" already assigned",
+							scopeName.name));
+				LogNote(context, currentName->loc, "First defined here"_s);
+				PANIC;
+			}
+
+			*DynamicArrayAdd(&globalNames) = scopeName;
 		}
 
-		*DynamicArrayAdd(&globalNames) = scopeName;
+		// Wake up any jobs that were waiting for this name
+		{
+			auto jobs = context->jobs.Get();
+			u64 jobCount = BucketArrayCount(&jobs);
+			for (int i = 0; i < jobCount; ++i) {
+				Job *job = &(*jobs)[i];
+				if (job->state == JOBSTATE_UNKNOWN_IDENTIFIER &&
+						StringEquals(scopeName.name, job->identifier))
+					job->state = JOBSTATE_READY;
+			}
+		}
 	}
 }
 
@@ -2769,11 +2826,8 @@ bool LookForOperatorOverload(Context *context, ASTExpression *expression)
 			TypeInfo procTypeInfo = GetTypeInfo(context, proc.typeTableIdx);
 			ASSERT(procTypeInfo.typeCategory == TYPECATEGORY_PROCEDURE);
 
-			if (proc.isInline) while (true)
-			{
-				if (proc.isBodyTypeChecked)
-					break;
-				if (!TCYield(context))
+			if (proc.isInline) while (!proc.isBodyTypeChecked) {
+				if (!TCYield(context, JOBSTATE_PROC_BODY_NOT_READY, overload.procedureIdx))
 					LogError(context, expression->any.loc, TPrintF("COMPILER ERROR! Body of inline "
 							"procedure \"%S\" for operator overload never type checked", proc.name));
 				proc = GetProcedureRead(context, overload.procedureIdx);
@@ -2797,13 +2851,27 @@ bool LookForOperatorOverload(Context *context, ASTExpression *expression)
 
 			break;
 		}
-		else if (!TCIsAnyJobRunning(context))
-			break;
 
-		if (!TCSetJobState(context, JOBSTATE_WAITING_FOR_STOP))
-			SwitchJob(context);
+		// Is any other job running?
+		TCJobData *jobData = (TCJobData *)SYSGetFiberData(context->flsIndex);
+		bool anyOtherRunning = false;
+		// @Unsafe
+		u64 jobCount = BucketArrayCount(&context->jobs.unsafe);
+		for (u32 i = 0; i < jobCount; ++i) {
+			if (i == jobData->jobIdx) continue;
+			if (context->jobs.unsafe[i].state == JOBSTATE_READY) {
+				anyOtherRunning = true;
+				break;
+			}
+		}
+		if (anyOtherRunning) {
+			if (!TCSetJobState(context, JOBSTATE_WAITING_FOR_STOP))
+				SwitchJob(context);
+		}
+		else
+			break;
 	}
-	TCSetJobState(context, JOBSTATE_RUNNING);
+	TCSetJobState(context, JOBSTATE_READY);
 	return foundOverload;
 }
 
@@ -2893,7 +2961,7 @@ void TypeCheckExpression(Context *context, ASTExpression *expression)
 		{
 			auto jobs = context->jobs.Get();
 
-			u32 jobIdx = (u32)jobs->size;
+			u32 jobIdx = (u32)BucketArrayCount(&jobs);
 			IRJobArgs *args = ALLOC(LinearAllocator, IRJobArgs);
 			*args = {
 				.context = context,
@@ -2904,8 +2972,8 @@ void TypeCheckExpression(Context *context, ASTExpression *expression)
 			};
 			Fiber fiber = SYSCreateFiber(IRJobExpression, (void *)args);
 
-			Job newJob = { fiber, 0, JOBSTATE_START };
-			*DynamicArrayAdd(&jobs) = newJob;
+			Job newJob = { fiber, 0, JOBSTATE_READY };
+			*BucketArrayAdd(&jobs) = newJob;
 		}
 	} break;
 	case ASTNODETYPE_STATIC_DEFINITION:
@@ -2927,9 +2995,16 @@ void TypeCheckExpression(Context *context, ASTExpression *expression)
 			ASTProcedureDeclaration *astProcDecl = &astStaticDef->expression->procedureDeclaration;
 			ASTProcedurePrototype *astPrototype = &astProcDecl->prototype;
 
+			TypeCheckProcedurePrototype(context, astPrototype);
+			TypeInfo t = TypeInfoFromASTProcedurePrototype(context, astPrototype);
+
+			u32 typeTableIdx = FindOrAddTypeTableIdx(context, t);
+			astStaticDef->expression->typeTableIdx = typeTableIdx;
+
 			Procedure procedure = {};
 			procedure.typeTableIdx = TYPETABLEIDX_Unset;
 			procedure.name = astProcDecl->name;
+			procedure.typeTableIdx = typeTableIdx;
 			procedure.astBody = astProcDecl->astBody;
 			procedure.isInline = astProcDecl->isInline;
 			procedure.isExported = astProcDecl->isExported;
@@ -2943,6 +3018,7 @@ void TypeCheckExpression(Context *context, ASTExpression *expression)
 			newStaticDef.name = astStaticDef->name;
 			newStaticDef.definitionType = STATICDEFINITIONTYPE_PROCEDURE;
 			newStaticDef.procedureIdx = procedureIdx;
+			newStaticDef.typeTableIdx = typeTableIdx;
 
 			u32 newStaticDefIdx = TCNewStaticDefinition(context, &newStaticDef);
 			astStaticDef->staticDefinitionIdx = newStaticDefIdx;
@@ -2958,17 +3034,6 @@ void TypeCheckExpression(Context *context, ASTExpression *expression)
 			}
 
 			PushTCScope(context);
-
-			TypeCheckProcedurePrototype(context, astPrototype);
-			TypeInfo t = TypeInfoFromASTProcedurePrototype(context, astPrototype);
-
-			u32 typeTableIdx = FindOrAddTypeTableIdx(context, t);
-			procedure.typeTableIdx = typeTableIdx;
-			astStaticDef->expression->typeTableIdx = typeTableIdx;
-			newStaticDef.typeTableIdx = typeTableIdx;
-
-			TCUpdateStaticDefinition(context, newStaticDefIdx, &newStaticDef);
-			UpdateProcedure(context, procedureIdx, &procedure);
 
 			if (procedure.astBody)
 			{
@@ -3010,6 +3075,17 @@ void TypeCheckExpression(Context *context, ASTExpression *expression)
 
 			UpdateProcedure(context, procedureIdx, &procedure);
 
+			// Wake up any jobs that were waiting for this procedure body
+			{
+				auto jobs = context->jobs.Get();
+				u64 jobCount = BucketArrayCount(&jobs);
+				for (int i = 0; i < jobCount; ++i) {
+					Job *job = &(*jobs)[i];
+					if (job->state == JOBSTATE_PROC_BODY_NOT_READY && procedureIdx == job->index)
+						job->state = JOBSTATE_READY;
+				}
+			}
+
 			expression->typeTableIdx = procedure.typeTableIdx;
 			PopTCScope(context);
 
@@ -3029,7 +3105,7 @@ void TypeCheckExpression(Context *context, ASTExpression *expression)
 				{
 					auto jobs = context->jobs.Get();
 
-					u32 jobIdx = (u32)jobs->size;
+					u32 jobIdx = (u32)BucketArrayCount(&jobs);
 					IRJobArgs *args = ALLOC(LinearAllocator, IRJobArgs);
 					*args = {
 						.context = context,
@@ -3041,8 +3117,8 @@ void TypeCheckExpression(Context *context, ASTExpression *expression)
 					jobData->localValues = {}; // Safety clear
 					Fiber fiber = SYSCreateFiber(IRJobProcedure, (void *)args);
 
-					Job newJob = { fiber, 0, JOBSTATE_START };
-					*DynamicArrayAdd(&jobs) = newJob;
+					Job newJob = { fiber, 0, JOBSTATE_READY };
+					*BucketArrayAdd(&jobs) = newJob;
 				}
 			}
 
@@ -3225,18 +3301,11 @@ void TypeCheckExpression(Context *context, ASTExpression *expression)
 			expression->identifier.valueIdx = scopeName.variableInfo.valueIdx;
 
 			u32 variableTypeIdx = scopeName.variableInfo.typeTableIdx;
-			while (true)
-			{
-				if (variableTypeIdx != TYPETABLEIDX_Unset)
-					break;
+			if (variableTypeIdx == TYPETABLEIDX_Unset)
+				LogError(context, expression->any.loc, TPrintF("COMPILER ERROR! Variable "
+								"\"%S\" not type checked", string));
 
-				if (!TCYield(context))
-					LogError(context, expression->any.loc, TPrintF("COMPILER ERROR! Variable "
-								"\"%S\" never type checked", string));
-				// @Speed: don't look this up again, just re-read
-				scopeName = TCFindScopeName(context, string);
-			}
-			TCSetJobState(context, JOBSTATE_RUNNING);
+			TCSetJobState(context, JOBSTATE_READY);
 
 			expression->typeTableIdx = variableTypeIdx;
 		} break;
@@ -3323,19 +3392,15 @@ void TypeCheckExpression(Context *context, ASTExpression *expression)
 
 			procedureIdx = staticDefinition.procedureIdx;
 			Procedure proc = GetProcedureRead(context, procedureIdx);
-			if (proc.isInline)
-			{
+			if (proc.isInline) {
 				// We need the whole body type checked
-				while (true)
-				{
-					if (proc.isBodyTypeChecked)
-						break;
-					if (!TCYield(context))
+				while (!proc.isBodyTypeChecked) {
+					if (!TCYield(context, JOBSTATE_PROC_BODY_NOT_READY, procedureIdx))
 						LogError(context, expression->any.loc, TPrintF("COMPILER ERROR! Body of "
 									"inline procedure \"%S\" never type checked", proc.name));
 					proc = GetProcedureRead(context, procedureIdx);
 				}
-				TCSetJobState(context, JOBSTATE_RUNNING);
+				TCSetJobState(context, JOBSTATE_READY);
 			}
 			procedureTypeIdx = proc.typeTableIdx;
 		}
@@ -3343,17 +3408,10 @@ void TypeCheckExpression(Context *context, ASTExpression *expression)
 			LogError(context, expression->any.loc, "Calling a non-procedure"_s);
 
 		// @Todo: don't look up procedure again after this yields
-		while (true)
-		{
-			if (procedureTypeIdx != TYPETABLEIDX_Unset)
-				break;
-			if (!TCYield(context))
-				LogError(context, expression->any.loc, TPrintF("COMPILER ERROR! Procedure "
-							"\"%S\" never type checked",
+		if (procedureTypeIdx == TYPETABLEIDX_Unset)
+			LogError(context, expression->any.loc, TPrintF("COMPILER ERROR! Procedure "
+							"\"%S\" not type checked",
 							GetProcedureRead(context, procedureIdx).name));
-			procedureTypeIdx = GetProcedureRead(context, procedureIdx).typeTableIdx;
-		}
-		TCSetJobState(context, JOBSTATE_RUNNING);
 		ASSERT(GetTypeInfo(context, procedureTypeIdx).typeCategory == TYPECATEGORY_PROCEDURE);
 
 		s64 givenArguments = astProcCall->arguments.size;
@@ -4089,12 +4147,18 @@ void TypeCheckExpression(Context *context, ASTExpression *expression)
 
 		static u64 overloadUniqueId = 0;
 
+		TypeCheckProcedurePrototype(context, &astOverload->prototype);
+		TypeInfo t = TypeInfoFromASTProcedurePrototype(context, &astOverload->prototype);
+
+		u32 typeTableIdx = FindOrAddTypeTableIdx(context, t);
+
 		OperatorOverload overload = {};
 		overload.op = astOverload->op;
 
 		Procedure p = {};
 		p.typeTableIdx = TYPETABLEIDX_Unset;
 		p.name = SNPrintF("__overload%d_%d", 18, overload.op, overloadUniqueId++);
+		p.typeTableIdx = typeTableIdx;
 		p.astBody = astOverload->astBody;
 		p.isInline = astOverload->isInline;
 		p.astPrototype = astOverload->prototype;
@@ -4107,9 +4171,7 @@ void TypeCheckExpression(Context *context, ASTExpression *expression)
 
 		Procedure procedure = GetProcedureRead(context, astOverload->procedureIdx);
 
-		TypeCheckProcedurePrototype(context, &astOverload->prototype);
-		TypeInfo t = TypeInfoFromASTProcedurePrototype(context, &astOverload->prototype);
-
+		// Return values
 		u64 returnValueCount = astOverload->prototype.returnTypeIndices.size;
 		if (returnValueCount)
 		{
@@ -4120,11 +4182,6 @@ void TypeCheckExpression(Context *context, ASTExpression *expression)
 				*ArrayAdd(&procedure.returnValueIndices) = TCNewValue(context, "_returnValue"_s, returnType, 0);
 			}
 		}
-
-		u32 typeTableIdx = FindOrAddTypeTableIdx(context, t);
-		procedure.typeTableIdx = typeTableIdx;
-
-		UpdateProcedure(context, astOverload->procedureIdx, &procedure);
 
 		// Parameters
 		u64 paramCount = astOverload->prototype.astParameters.size;
@@ -4234,50 +4291,52 @@ void TypeCheckExpression(Context *context, ASTExpression *expression)
 
 		// Current stack
 		ArrayView<TCScope> scopeStack = jobData->scopeStack;
-		for (s64 stackIdx = scopeStack.size - 1; stackIdx >= 0; --stackIdx)
-		{
+		for (s64 stackIdx = scopeStack.size - 1; stackIdx >= 0; --stackIdx) {
 			const TCScope *currentScope = &scopeStack[stackIdx];
-			for (int i = 0; i < currentScope->names.size; ++i)
-			{
+			for (int i = 0; i < currentScope->names.size; ++i) {
 				const TCScopeName *currentName = &currentScope->names[i];
-				if (StringEquals(identifier, currentName->name))
-				{
+				if (StringEquals(identifier, currentName->name)) {
 					isDefined = true;
 					goto done;
 				}
 			}
 		}
 		// Global scope
-		{
-			while (true)
+		while (true) {
 			{
-				{
-					auto globalNames = context->tcGlobalNames.GetForRead();
-					for (int i = 0; i < globalNames->size; ++i)
-					{
-						const TCScopeName *currentName = &(*globalNames)[i];
-						if (StringEquals(identifier, currentName->name))
-						{
-							TCSetJobState(context, JOBSTATE_RUNNING);
-							isDefined = true;
-							goto done;
-						}
+				auto globalNames = context->tcGlobalNames.GetForRead();
+				for (int i = 0; i < globalNames->size; ++i) {
+					const TCScopeName *currentName = &(*globalNames)[i];
+					if (StringEquals(identifier, currentName->name)) {
+						TCSetJobState(context, JOBSTATE_READY);
+						isDefined = true;
+						goto done;
 					}
 				}
-				if (TCIsAnyJobRunning(context))
-				{
-					if (!TCSetJobState(context, JOBSTATE_WAITING_FOR_STOP))
-						goto sleep;
+			}
+			// Is any other job running?
+			// @Unsafe
+			bool anyOtherRunning = false;
+			u32 jobCount = (u32)BucketArrayCount(&context->jobs.unsafe);
+			for (u32 i = 0; i < jobCount; ++i) {
+				if (i == jobData->jobIdx) continue;
+				if (context->jobs.unsafe[i].state == JOBSTATE_READY) {
+					anyOtherRunning = true;
+					break;
 				}
+			}
+			if (anyOtherRunning) {
+				if (!TCSetJobState(context, JOBSTATE_WAITING_FOR_STOP))
+					SwitchJob(context);
+			}
+			else {
 				isDefined = false;
 				goto done;
-sleep:
-				SwitchJob(context);
 			}
 		}
 
 done:
-		TCSetJobState(context, JOBSTATE_RUNNING);
+		TCSetJobState(context, JOBSTATE_READY);
 		expression->definedNode.isDefined = isDefined;
 	} break;
 	default:
@@ -4287,15 +4346,13 @@ done:
 	}
 }
 
-void TCJobProc(void *args)
-{
+void TCJobProc(void *args) {
 	TCJobArgs *argsStruct = (TCJobArgs *)args;
 	Context *context = argsStruct->context;
 	u32 jobIdx = argsStruct->jobIdx;
 
 	ThreadDataCommon *threadData = (ThreadDataCommon *)SYSGetThreadData(context->tlsIndex);
-	if (threadData->lastJobIdx != U32_MAX)
-	{
+	if (threadData->lastJobIdx != U32_MAX) {
 		auto jobs = context->jobs.Get();
 		ASSERT((*jobs)[threadData->lastJobIdx].isRunning);
 		(*jobs)[threadData->lastJobIdx].isRunning = 0;
@@ -4313,12 +4370,9 @@ void TCJobProc(void *args)
 	MemoryInitJob(1 * 1024 * 1024);
 
 	{
-		auto jobs = context->jobs.Get();
-		ASSERT((*jobs)[jobIdx].state == JOBSTATE_START);
-		ASSERT((*jobs)[jobIdx].isRunning);
-		(*jobs)[jobIdx].state = JOBSTATE_RUNNING;
-
 #if !FINAL_BUILD
+		auto jobs = context->jobs.Get();
+
 		String threadName = "TC:???"_s;
 		switch (expression->nodeType) {
 		case ASTNODETYPE_STATIC_DEFINITION:
@@ -4348,6 +4402,9 @@ void TCJobProc(void *args)
 		}
 		(*jobs)[jobIdx].title = threadName;
 #endif
+
+		ASSERT(context->jobs.unsafe[jobIdx].state == JOBSTATE_READY);
+		ASSERT(context->jobs.unsafe[jobIdx].isRunning);
 	}
 
 	switch (expression->nodeType)
@@ -4380,10 +4437,8 @@ void TCJobProc(void *args)
 	SwitchJob(context);
 }
 
-void GenerateTypeCheckJobs(Context *context, ASTExpression *expression)
-{
-	switch (expression->nodeType)
-	{
+void GenerateTypeCheckJobs(Context *context, ASTExpression *expression) {
+	switch (expression->nodeType) {
 	case ASTNODETYPE_BLOCK:
 	{
 		for (int i = 0; i < expression->block.statements.size; ++i)
@@ -4396,18 +4451,17 @@ void GenerateTypeCheckJobs(Context *context, ASTExpression *expression)
 	case ASTNODETYPE_IF_STATIC:
 	case ASTNODETYPE_OPERATOR_OVERLOAD:
 	{
-		auto jobs = context->jobs.Get();
-
-		u32 jobIdx = (u32)jobs->size;
 		TCJobArgs *args = ALLOC(LinearAllocator, TCJobArgs);
+		Fiber fiber = SYSCreateFiber(TCJobProc, (void *)args);
+		Job newJob = { fiber, 0, JOBSTATE_READY };
+
+		auto jobs = context->jobs.Get();
+		u32 jobIdx = (u32)BucketArrayCount(&jobs);
 		*args = {
 			.context = context,
 			.jobIdx = jobIdx,
 			.expression = expression };
-		Fiber fiber = SYSCreateFiber(TCJobProc, (void *)args);
-
-		Job newJob = { fiber, 0, JOBSTATE_START };
-		*DynamicArrayAdd(&jobs) = newJob;
+		*BucketArrayAdd(&jobs) = newJob;
 	} break;
 	case ASTNODETYPE_GARBAGE:
 	case ASTNODETYPE_RETURN:
@@ -4439,8 +4493,7 @@ void GenerateTypeCheckJobs(Context *context, ASTExpression *expression)
 	}
 }
 
-void TypeCheckMain(Context *context)
-{
+void TypeCheckMain(Context *context) {
 	{
 		auto staticDefinitions = context->staticDefinitions.GetForWrite();
 		BucketArrayInit(&staticDefinitions);

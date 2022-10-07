@@ -2491,9 +2491,9 @@ void IRJobProcedure(void *args)
 	ThreadDataCommon *threadData = (ThreadDataCommon *)SYSGetThreadData(context->tlsIndex);
 	if (threadData->lastJobIdx != U32_MAX)
 	{
-		auto jobs = context->jobs.Get();
-		ASSERT((*jobs)[threadData->lastJobIdx].isRunning);
-		(*jobs)[threadData->lastJobIdx].isRunning = 0;
+		auto &jobsUnsafe = context->jobs.unsafe;
+		ASSERT(jobsUnsafe[threadData->lastJobIdx].isRunning);
+		jobsUnsafe[threadData->lastJobIdx].isRunning = 0;
 		threadData->lastJobIdx = U32_MAX;
 	}
 
@@ -2508,15 +2508,14 @@ void IRJobProcedure(void *args)
 	MemoryInitJob(1 * 1024 * 1024);
 
 	{
-		auto jobs = context->jobs.Get();
-		ASSERT((*jobs)[jobIdx].state == JOBSTATE_START);
-		ASSERT((*jobs)[jobIdx].isRunning);
-		(*jobs)[jobIdx].state = JOBSTATE_RUNNING;
-		threadData->lastJobIdx = U32_MAX;
-
 #if !FINAL_BUILD
+		auto jobs = context->jobs.Get();
 		(*jobs)[jobIdx].title = SStringConcat("IR:"_s, GetProcedureRead(context, procedureIdx).name);
 #endif
+
+		ASSERT(context->jobs.unsafe[jobIdx].state == JOBSTATE_READY);
+		ASSERT(context->jobs.unsafe[jobIdx].isRunning);
+		threadData->lastJobIdx = U32_MAX;
 	}
 
 	ASSERT(GetProcedureRead(context, procedureIdx).astBody != nullptr);
@@ -2556,12 +2555,11 @@ void IRJobExpression(void *args)
 	MemoryInitJob(512 * 1024);
 
 	{
-		auto jobs = context->jobs.Get();
-		ASSERT((*jobs)[jobIdx].state == JOBSTATE_START);
-		ASSERT((*jobs)[jobIdx].isRunning);
-		(*jobs)[jobIdx].state = JOBSTATE_RUNNING;
+		ASSERT(context->jobs.unsafe[jobIdx].state == JOBSTATE_READY);
+		ASSERT(context->jobs.unsafe[jobIdx].isRunning);
 
 #if !FINAL_BUILD
+		auto jobs = context->jobs.Get();
 		(*jobs)[jobIdx].title = "IR:Expression"_s;
 #endif
 	}

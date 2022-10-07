@@ -4,6 +4,14 @@ struct ArrayView
 	T *data;
 	u64 size;
 
+	T &operator[](s64 idx)
+	{
+#if DEBUG_BUILD
+		ASSERT(idx >= 0 && (u64)idx < size);
+#endif
+		return data[idx];
+	}
+
 	const T &operator[](s64 idx) const
 	{
 #if DEBUG_BUILD
