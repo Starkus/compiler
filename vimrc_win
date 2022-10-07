@@ -1,9 +1,27 @@
-let g:build_command = "build.bat"
-let g:build_release_command = "build.bat -r"
-let g:run_command =  "bin\\Compiler.exe"
+let g:run_command =  'bin\Compiler.exe'
 let g:debug_command =  "remedybg.exe compiler.rdbg"
 
-command! CompileC :call term_sendkeys("terminal", "compileCOutput.bat\<CR>") | call ShowTerminal()
+command! Build :silent make
+command! BuildR :silent make -r
+
+compiler msvc
+set makeprg=build.bat
+
+let msvc_path = 'C:\Program Files (x86)\Microsoft Visual Studio\2019\BuildTools\VC\Tools\MSVC\14.26.28801\'
+let winsdk_path = 'C:\Program Files (x86)\Windows Kits\10\'
+let winsdk_version = '10.0.18362.0'
+
+let $Path .= ';' . msvc_path . 'bin\HostX64\x64'
+let $INCLUDE = msvc_path . 'include;' .
+			 \ winsdk_path . 'include\' . winsdk_version . '\ucrt;' .
+			 \ winsdk_path . 'include\' . winsdk_version . '\shared;' .
+			 \ winsdk_path . 'include\' . winsdk_version . '\um;' .
+			 \ winsdk_path . 'include\' . winsdk_version . '\winrt;' .
+			 \ winsdk_path . 'include\' . winsdk_version . '\cppwinrt'
+let $LIB = msvc_path . 'lib\x64;' .
+		 \ winsdk_path . 'lib\' . winsdk_version . '\ucrt\x64;' .
+		 \ winsdk_path . 'lib\' . winsdk_version . '\um\x64'
+
 command! Assemble :call term_sendkeys("terminal", "assembleOutput.bat\<CR>") | call ShowTerminal()
 command! Test :call term_sendkeys("terminal", "output\\out.exe\<CR>") | call ShowTerminal()
 

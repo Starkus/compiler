@@ -18,7 +18,7 @@ IF NOT EXIST .\bin mkdir .\bin
 pushd .\bin
 
 set start=%time%
-cl %CompilerFlags% %SourceFiles% %Libraries% -link %LinkerFlags%
+cl.exe %CompilerFlags% %SourceFiles% %Libraries% -link %LinkerFlags%
 set end=%time%
 IF %ERRORLEVEL% NEQ 0 echo [31mFailed![0m
 IF %ERRORLEVEL% EQU 0 echo [32mSuccess[0m
