@@ -1,0 +1,11 @@
+Foo :: struct {
+	one: s32;
+	two: s32;
+};
+
+Main :: () -> s64 {
+	a : Foo;
+	b : Foo;
+	a + b;
+	return 0;
+}

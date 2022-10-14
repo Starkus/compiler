@@ -1,4 +1,4 @@
 #define PRINT_TOKEN_SOURCE_LOCATION 0
 #define PRINT_DEBUG_NOTES_UPON_YIELDING 0
 
-s64 g_pointerSize = 8;
+u64 g_pointerSize = 8;

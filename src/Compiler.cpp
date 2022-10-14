@@ -35,22 +35,6 @@ PerformanceAPI_Functions performanceAPI;
 #endif
 #include "Profiler.cpp"
 
-#include "Config.h"
-#include "Maths.h"
-#include "Containers.h"
-
-#if _MSC_VER
-#include "PlatformWindows.cpp"
-#else
-#include "PlatformLinux.cpp"
-#endif
-
-#include "Multithreading.cpp"
-
-Memory *g_memory;
-FileHandle g_hStdout;
-FileHandle g_hStderr;
-
 struct ThreadDataCommon
 {
 	void *threadMem, *threadMemPtr;
@@ -65,36 +49,56 @@ struct JobDataCommon
 {
 	void *jobMem, *jobMemPtr;
 	u64 jobMemSize;
-	u32 jobIdx;
 };
 
 enum JobState : u32
 {
 	JOBSTATE_READY,
 	JOBSTATE_UNKNOWN_IDENTIFIER,
+	JOBSTATE_UNKNOWN_OVERLOAD,
 	JOBSTATE_STATIC_DEF_NOT_READY,
 	JOBSTATE_PROC_BODY_NOT_READY,
+	JOBSTATE_TYPE_NOT_READY,
 	// WAITING_FOR_STOP jobs want to wait until no jobs are running to make a decision.
 	// As of time of write, only #defined does this to determine if something isn't defined anywhere
 	// before continuing.
 	JOBSTATE_WAITING_FOR_STOP,
-	JOBSTATE_DONE,
+	JOBSTATE_DONE
+};
+
+union JobYieldContext {
+	String identifier;
+	u32 index;
 };
 
 struct Job {
 	Fiber fiber;
-	u32 isRunning;
-	JobState state;
-#if !FINAL_BUILD
-	String title;
-#endif
 
 	// Some data about why the job yielded execution.
-	union {
-		String identifier;
-		u32 index;
-	};
+	JobYieldContext context;
 };
+
+#include "Config.h"
+#include "Maths.h"
+#include "Containers.h"
+
+__declspec(thread) u32 t_threadIndex;
+__declspec(thread) Fiber t_schedulerFiber;
+__declspec(thread) Fiber t_previousFiber = SYS_INVALID_FIBER_HANDLE;
+__declspec(thread) JobState t_previousYieldReason;
+__declspec(thread) JobYieldContext t_previousYieldContext;
+
+#if _MSC_VER
+#include "PlatformWindows.cpp"
+#else
+#include "PlatformLinux.cpp"
+#endif
+
+#include "Multithreading.cpp"
+
+Memory *g_memory;
+FileHandle g_hStdout;
+FileHandle g_hStderr;
 
 s64 Print(const char *format, ...)
 {
@@ -120,7 +124,7 @@ s64 Print(const char *format, ...)
 	SYSWriteFile(logFileHandle, buffer, strlen(buffer));
 
 #if DEBUG_BUILD
-	memset(threadData->threadMemPtr, 0x55, size + 1);
+	memset(threadData->threadMemPtr, 0x00, size + 1);
 #endif
 
 	va_end(args);
@@ -214,13 +218,24 @@ struct Context
 	DynamicArray<SourceFile, HeapAllocator> sourceFiles;
 	DynamicArray<String, HeapAllocator> libsToLink;
 
-	MXContainer<BucketArray<Job, HeapAllocator, 1024>> jobs;
+	//MXContainer<BucketArray<Job, HeapAllocator, 1024>> jobs;
+
+	Array<Fiber, HeapAllocator> readyJobs;
+	volatile u32 readyQueueHead;
+	volatile u32 readyQueueTail;
+	volatile u32 readyQueueHeadLock;
+	volatile u32 readyQueueTailLock;
+
+	volatile s32 threadsDoingWork;
+
+	SLContainer<DynamicArray<Job, HeapAllocator>> jobsWaitingForIdentifier;
+	MXContainer<DynamicArray<Job, HeapAllocator>> jobsWaitingForOverload;
+	MXContainer<DynamicArray<Job, HeapAllocator>> jobsWaitingForStaticDef;
+	MXContainer<DynamicArray<Job, HeapAllocator>> jobsWaitingForProcedure;
+	MXContainer<DynamicArray<Job, HeapAllocator>> jobsWaitingForType;
+	MXContainer<DynamicArray<Job, HeapAllocator>> jobsWaitingForDeadStop;
 
 	// Parsing -----
-	DynamicArray<BucketArray<Token, HeapAllocator, 1024>, HeapAllocator> fileTokens;
-	DynamicArray<ASTRoot, HeapAllocator> fileASTRoots;
-	DynamicArray<RWContainer<BucketArray<ASTExpression, HeapAllocator, 1024>>, HeapAllocator> fileTreeNodes;
-	DynamicArray<RWContainer<BucketArray<ASTType, HeapAllocator, 1024>>, HeapAllocator> fileTypeNodes;
 
 	// Type check -----
 	Array<TCScopeName, HeapAllocator> tcPrimitiveTypes;
@@ -252,9 +267,13 @@ struct ParseJobData : JobDataCommon
 	u32 fileIdx;
 	u64 currentTokenIdx;
 	Token *token;
+	BucketArray<Token, HeapAllocator, 1024> tokens;
+	ASTRoot astRoot;
+	BucketArray<ASTExpression, HeapAllocator, 1024> astTreeNodes;
+	BucketArray<ASTType, HeapAllocator, 1024> astTypes;
 };
 
-struct TCJobData : ParseJobData
+struct TCJobData : JobDataCommon
 {
 	ASTExpression *expression;
 	bool onStaticContext;
@@ -356,7 +375,6 @@ bool CompilerAddSourceFile(Context *context, String filename, SourceLocation loc
 		LogError(context, loc,
 				TPrintF("Included source file \"%S\" doesn't exist!", filename));
 
-	ScopedLockSpin sourceFiles(&context->filesLock);
 	for (int i = 0; i < context->sourceFiles.size; ++i)
 	{
 		String currentFilename = context->sourceFiles[i].name;
@@ -373,169 +391,190 @@ bool CompilerAddSourceFile(Context *context, String filename, SourceLocation loc
 	SourceFile newSourceFile = { filename, loc };
 	SYSReadEntireFile(file, &newSourceFile.buffer, &newSourceFile.size, LinearAllocator::Alloc);
 
-	*DynamicArrayAdd(&context->sourceFiles) = newSourceFile;
-
-	ASTRoot *newRoot = DynamicArrayAdd(&context->fileASTRoots);
-	DynamicArrayInit(&newRoot->block.statements, 4096);
-
-	BucketArrayInit(DynamicArrayAdd(&context->fileTokens));
-
-	RWContainer<BucketArray<ASTExpression, HeapAllocator, 1024>> newTreeNodes;
-	BucketArrayInit(&newTreeNodes.unsafe);
-	*DynamicArrayAdd(&context->fileTreeNodes) = newTreeNodes;
-
-	RWContainer<BucketArray<ASTType, HeapAllocator, 1024>> newTypeNodes;
-	BucketArrayInit(&newTypeNodes.unsafe);
-	*DynamicArrayAdd(&context->fileTypeNodes) = newTypeNodes;
-
+	u32 fileIdx;
 	{
-		auto jobs = context->jobs.Get();
-
-		u32 jobIdx = (u32)BucketArrayCount(&jobs);
-		ParseJobArgs *args = ALLOC(LinearAllocator, ParseJobArgs);
-		*args = {
-			.context = context,
-			.fileIdx = (u32)context->sourceFiles.size - 1,
-			.jobIdx = jobIdx };
-		Fiber fiber = SYSCreateFiber(ParseJobProc, (void *)args);
-
-		Job newJob = { fiber, 0, JOBSTATE_READY };
-		*BucketArrayAdd(&jobs) = newJob;
+		ScopedLockSpin sourceFilesLock(&context->filesLock);
+		fileIdx = (u32)context->sourceFiles.size;
+		*DynamicArrayAdd(&context->sourceFiles) = newSourceFile;
 	}
+
+	ParseJobArgs *args = ALLOC(LinearAllocator, ParseJobArgs);
+	*args = {
+		.context = context,
+		.fileIdx = fileIdx };
+	Fiber fiber = SYSCreateFiber(ParseJobProc, (void *)args);
+
+	SYSSpinlockLock(&context->readyQueueTailLock);
+
+	u32 queueIdx = context->readyQueueTail;
+	context->readyJobs[queueIdx] = fiber;
+	context->readyQueueTail = (context->readyQueueTail + 1) % context->readyJobs.size;
+
+	SYSSpinlockUnlock(&context->readyQueueTailLock);
 
 	return true;
 }
 
-int WorkerThreadProc(void *arg)
+struct ThreadArgs {
+	Context *context;
+	u32 threadIndex;
+};
+
+// Procedure to switch to a different job.
+// We leave the information in thread local storage for the scheduler fiber.
+// Call this when a job finishes too, the scheduler will delete the fiber and free resources.
+void SwitchJob(Context *context, JobState yieldReason,
+		JobYieldContext yieldContext) {
+	t_previousFiber = GetCurrentFiber();
+	t_previousYieldReason = yieldReason;
+	t_previousYieldContext = yieldContext;
+	SYSSwitchToFiber(t_schedulerFiber);
+}
+
+// Fiber that swaps jobs around.
+// The reason to have a separate scheduler fiber is so we can queue the caller fiber right away,
+// without risking another thread picking it up while it's still running on this one (since all this
+// logic would be running in the fiber that wants to yield).
+void SchedulerProc(Context *context) {
+	while (true) {
+		Fiber nextFiber = SYS_INVALID_FIBER_HANDLE;
+		u32 queueIdx = U32_MAX;
+		while (true) {
+			SYSSpinlockLock(&context->readyQueueHeadLock);
+
+			u32 head = context->readyQueueHead;
+			u32 tail = context->readyQueueTail;
+			if (head != tail) {
+				queueIdx = context->readyQueueHead;
+				context->readyQueueHead = (head + 1) % context->readyJobs.size;
+			}
+
+			SYSSpinlockUnlock(&context->readyQueueHeadLock);
+
+			if (queueIdx == U32_MAX) {
+				s32 threadsDoingWork = _InterlockedDecrement((LONG volatile *)&context->threadsDoingWork);
+				if (threadsDoingWork == 0) {
+#define WAKE_UP_ONE(_waitingJobs) \
+					{ \
+						auto jobsWaiting = context-> _waitingJobs .Get(); \
+						if (jobsWaiting->size) { \
+							Job *job = &(*jobsWaiting)[0]; \
+							\
+							SYSSpinlockLock(&context->readyQueueTailLock); \
+							\
+							context->readyJobs[context->readyQueueTail] = job->fiber; \
+							context->readyQueueTail = (context->readyQueueTail + 1) % context->readyJobs.size; \
+							\
+							SYSSpinlockUnlock(&context->readyQueueTailLock); \
+							\
+							/* Remove */ \
+							*job = (*jobsWaiting)[--jobsWaiting->size]; \
+							\
+							_InterlockedIncrement((LONG volatile *)&context->threadsDoingWork); \
+							continue; \
+						} \
+					}
+					WAKE_UP_ONE(jobsWaitingForDeadStop)
+					WAKE_UP_ONE(jobsWaitingForIdentifier)
+					WAKE_UP_ONE(jobsWaitingForOverload)
+					WAKE_UP_ONE(jobsWaitingForProcedure)
+					WAKE_UP_ONE(jobsWaitingForStaticDef)
+					WAKE_UP_ONE(jobsWaitingForType)
+#undef WAKE_UP_ONE
+
+					// Give up!
+					return;
+				}
+				// @Improve: This is silly but shouldn't happen too often...
+				Sleep(1);
+				_InterlockedIncrement((LONG volatile *)&context->threadsDoingWork);
+			}
+			else break;
+		}
+
+		nextFiber = context->readyJobs[queueIdx];
+		context->readyJobs[queueIdx] = (Fiber)0xFEEEFEEEFEEEFEEE;
+
+		SYSSwitchToFiber(nextFiber);
+
+		// Queue previous job now that its fiber is not running
+		ASSERT(t_previousFiber != (Fiber)0xDEADBEEFDEADBEEF);
+		if (t_previousFiber != SYS_INVALID_FIBER_HANDLE) {
+			Job job;
+			job.fiber = t_previousFiber;
+			job.context = t_previousYieldContext;
+			switch (t_previousYieldReason) {
+			case JOBSTATE_DONE:
+			{
+				DeleteFiber(t_previousFiber);
+			} break;
+			case JOBSTATE_WAITING_FOR_STOP:
+			{
+				auto jobs = context->jobsWaitingForDeadStop.Get();
+				*DynamicArrayAdd(&jobs) = job;
+			} break;
+			case JOBSTATE_UNKNOWN_IDENTIFIER:
+			{
+				auto jobs = context->jobsWaitingForIdentifier.Get();
+				*DynamicArrayAdd(&jobs) = job;
+				SYSUnlockForRead(&context->tcGlobalNames.rwLock);
+			} break;
+			case JOBSTATE_UNKNOWN_OVERLOAD:
+			{
+				auto jobs = context->jobsWaitingForOverload.Get();
+				*DynamicArrayAdd(&jobs) = job;
+			} break;
+			case JOBSTATE_PROC_BODY_NOT_READY:
+			{
+				auto jobs = context->jobsWaitingForProcedure.Get();
+				*DynamicArrayAdd(&jobs) = job;
+			} break;
+			case JOBSTATE_STATIC_DEF_NOT_READY:
+			{
+				auto jobs = context->jobsWaitingForStaticDef.Get();
+				*DynamicArrayAdd(&jobs) = job;
+				SYSUnlockForRead(&context->staticDefinitions.rwLock);
+			} break;
+			case JOBSTATE_TYPE_NOT_READY:
+			{
+				auto jobs = context->jobsWaitingForType.Get();
+				*DynamicArrayAdd(&jobs) = job;
+				SYSUnlockForRead(&context->typeTable.rwLock);
+			} break;
+			default:
+				ASSERTF(false, "Previous fiber is %llx, reason is %d", t_previousFiber,
+						t_previousYieldReason);
+			}
+		}
+	}
+}
+
+// Procedure where worker threads begin executing
+int WorkerThreadProc(void *args)
 {
-	Context *context = (Context *)arg;
+	ThreadArgs *threadArgs = (ThreadArgs *)args;
+	Context *context = threadArgs->context;
+
+	t_threadIndex = threadArgs->threadIndex;
 
 	ThreadDataCommon threadData = {};
 	threadData.lastJobIdx = U32_MAX;
 	SYSSetThreadData(context->tlsIndex, &threadData);
 	MemoryInitThread(1 * 1024 * 1024);
 
-	SYSConvertThreadToFiber();
+	_InterlockedIncrement((LONG volatile *)&context->threadsDoingWork);
 
-	Fiber fiber;
-	{
-		while (true) {
-			auto jobs = context->jobs.Get();
-			u32 jobCount = (u32)BucketArrayCount(&jobs);
+	t_schedulerFiber = SYSConvertThreadToFiber();
 
-			bool allDone = true;
-			for (u32 i = 0; i < jobCount; ++i) {
-				if ((*jobs)[i].state == JOBSTATE_READY && !(*jobs)[i].isRunning) {
-					(*jobs)[i].isRunning = true;
-					fiber = (*jobs)[i].fiber;
-					goto newJob;
-				}
-				else if ((*jobs)[i].state != JOBSTATE_DONE)
-					allDone = false;
-			}
-			if (allDone)
-				return 0;
-			SYSSleep(0);
-		}
-	}
+	SchedulerProc(context);
 
-newJob:
-	SYSSwitchToFiber(fiber);
 	return 0;
 }
 
-void SwitchJob(Context *context)
-{
-	ThreadDataCommon *threadData = (ThreadDataCommon *)SYSGetThreadData(context->tlsIndex);
-
-	JobDataCommon *jobData = (JobDataCommon *)SYSGetFiberData(context->flsIndex);
-	u32 nextJobIdx = U32_MAX;
-	Fiber nextFiber = SYS_INVALID_FIBER_HANDLE;
-	{
-		ProfileScope scope("Switch job", nullptr, PROFILER_COLOR(0x10, 0x10, 0xA0));
-
-		while (true) {
-			//auto jobs = context->jobs.Get();
-			BucketArray<Job, HeapAllocator, 1024> &jobs = context->jobs.unsafe;
-			u32 jobCount = (u32)BucketArrayCount(&jobs);
-
-			u32 startJobIdx = jobData->jobIdx + 1;
-			if (startJobIdx >= jobCount)
-				startJobIdx -= jobCount;
-
-			bool allDone = true;
-			bool anyReady = false;
-			u32 currentJobIdx = startJobIdx;
-			for (u32 i = 0; i < jobCount; ++i) {
-				volatile Job *job = &jobs[currentJobIdx];
-				if (job->state == JOBSTATE_READY) {
-					anyReady = true;
-					if (!job->isRunning) {
-						ScopedLockMutex jobsLock(context->jobs.lock);
-						// Check it didn't change
-						if (job->state == JOBSTATE_READY && !job->isRunning) {
-							job->isRunning = 1;
-							nextJobIdx = currentJobIdx;
-							nextFiber = job->fiber;
-							goto newJob;
-						}
-					}
-				}
-				else if (job->state != JOBSTATE_DONE)
-					allDone = false;
-				++currentJobIdx;
-				if (currentJobIdx >= jobCount)
-					currentJobIdx -= jobCount;
-			}
-			if (allDone)
-				return;
-			if (!anyReady) {
-				// If our job was waiting for stop, unlock it
-				if (jobs[jobData->jobIdx].state == JOBSTATE_WAITING_FOR_STOP) {
-					return;
-				}
-				// Try one waiting for stop
-				for (u32 i = 0; i < jobCount; ++i) {
-					volatile Job *job = &jobs[currentJobIdx];
-					if (job->state == JOBSTATE_WAITING_FOR_STOP && !job->isRunning) {
-						ScopedLockMutex jobsLock(context->jobs.lock);
-						// Check it didn't change
-						if (job->state == JOBSTATE_WAITING_FOR_STOP && !job->isRunning) {
-							job->isRunning = 1;
-							nextJobIdx = currentJobIdx;
-							nextFiber = job->fiber;
-							goto newJob;
-						}
-					}
-					++currentJobIdx;
-					if (currentJobIdx >= jobCount)
-						currentJobIdx -= jobCount;
-				}
-			}
-			SYSSleep(0);
-		}
-	}
-newJob:
-	ASSERT(nextJobIdx != jobData->jobIdx);
-	ASSERT(context->jobs.unsafe[nextJobIdx].isRunning);
-	threadData->lastJobIdx = jobData->jobIdx;
-	SYSSwitchToFiber(nextFiber);
-
-	// Leave this for when we come back
-	threadData = (ThreadDataCommon *)SYSGetThreadData(context->tlsIndex);
-	if (threadData->lastJobIdx != U32_MAX)
-	{
-		auto jobs = context->jobs.Get();
-		ASSERT((*jobs)[threadData->lastJobIdx].isRunning);
-		(*jobs)[threadData->lastJobIdx].isRunning = 0;
-		threadData->lastJobIdx = U32_MAX;
-	}
-}
-
 #include "Tokenizer.cpp"
+#include "PrintAST.cpp"
 #include "Parser.cpp"
 #include "TypeChecker.cpp"
-#include "PrintAST.cpp"
 #include "IRGen.cpp"
 //#include "PrintIR.cpp" // @Fix
 #include "x64.cpp"
@@ -628,13 +667,17 @@ int main(int argc, char **argv)
 
 	const int threadCount = 8;
 	ThreadHandle threads[threadCount];
-	for (int i = 0; i < threadCount; ++i)
-		threads[i] = SYSCreateThread(WorkerThreadProc, &context);
+	ThreadArgs threadArgs[threadCount];
+	for (int i = 0; i < threadCount; ++i) {
+		threadArgs[i] = { &context, (u32)i };
+		threads[i] = SYSCreateThread(WorkerThreadProc, &threadArgs[i]);
+	}
 
 	SYSWaitForThreads(threadCount, threads);
 
 	TimerSplit("Multithreaded parse/analyze/codegen phase"_s);
 
+	ASSERT(!TCIsAnyOtherJobRunning(&context));
 	BackendGenerateOutputFile(&context);
 
 	TimerSplit("Done"_s);

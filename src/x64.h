@@ -228,6 +228,98 @@ enum X64Register
 	X64REGISTER_Count
 };
 
+const String x64RegisterNames64[] = {
+	"rax"_s,
+	"rcx"_s,
+	"rdx"_s,
+	"rbx"_s,
+	"rsi"_s,
+	"rdi"_s,
+	"rsp"_s,
+	"rbp"_s,
+	"r8"_s,
+	"r9"_s,
+	"r10"_s,
+	"r11"_s,
+	"r12"_s,
+	"r13"_s,
+	"r14"_s,
+	"r15"_s,
+	"xmm0"_s,
+	"xmm1"_s,
+	"xmm2"_s,
+	"xmm3"_s,
+	"xmm4"_s,
+	"xmm5"_s,
+	"xmm6"_s,
+	"xmm7"_s,
+	"xmm8"_s,
+	"xmm9"_s,
+	"xmm10"_s,
+	"xmm11"_s,
+	"xmm12"_s,
+	"xmm13"_s,
+	"xmm14"_s,
+	"xmm15"_s,
+};
+
+const String x64RegisterNames32[] = {
+	"eax"_s,
+	"ecx"_s,
+	"edx"_s,
+	"ebx"_s,
+	"esi"_s,
+	"edi"_s,
+	"esp"_s,
+	"ebp"_s,
+	"r8d"_s,
+	"r9d"_s,
+	"r10d"_s,
+	"r11d"_s,
+	"r12d"_s,
+	"r13d"_s,
+	"r14d"_s,
+	"r15d"_s,
+};
+
+const String x64RegisterNames16[] = {
+	"ax"_s,
+	"cx"_s,
+	"dx"_s,
+	"bx"_s,
+	"si"_s,
+	"di"_s,
+	"sp"_s,
+	"bp"_s,
+	"r8w"_s,
+	"r9w"_s,
+	"r10w"_s,
+	"r11w"_s,
+	"r12w"_s,
+	"r13w"_s,
+	"r14w"_s,
+	"r15w"_s,
+};
+
+const String x64RegisterNames8[] = {
+	"al"_s,
+	"cl"_s,
+	"dl"_s,
+	"bl"_s,
+	"sil"_s,
+	"dil"_s,
+	"spl"_s,
+	"bpl"_s,
+	"r8b"_s,
+	"r9b"_s,
+	"r10b"_s,
+	"r11b"_s,
+	"r12b"_s,
+	"r13b"_s,
+	"r14b"_s,
+	"r15b"_s,
+};
+
 const u64 RAX_bit	= 1llu << RAX_idx;
 const u64 RCX_bit	= 1llu << RCX_idx;
 const u64 RDX_bit	= 1llu << RDX_idx;

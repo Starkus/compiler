@@ -812,8 +812,9 @@ FatSourceLocation ExpandSourceLocation(Context *context, SourceLocation loc)
 	return result;
 }
 
-void TokenizeFile(Context *context, u32 fileIdx)
-{
+void TokenizeFile(Context *context, u32 fileIdx) {
+	ParseJobData *jobData = (ParseJobData *)SYSGetFiberData(context->flsIndex);
+
 	Tokenizer tokenizer = {};
 	SourceFile file;
 	{
@@ -828,29 +829,15 @@ void TokenizeFile(Context *context, u32 fileIdx)
 
 	const char *fileBuffer = file.buffer;
 
-#if 0
-	u64 tokenCount = BucketArrayCount(&context->tokens);
-	if (tokenCount)
-	{
-		ASSERT(context->tokens[tokenCount - 1].type == TOKEN_END_OF_FILE);
-		// Remove!
-		--context->tokens.buckets[context->tokens.buckets.size - 1].size;
-	}
-#endif
-
-	while (true)
-	{
+	while (true) {
 		EatWhitespace(&tokenizer);
 
-		while (*tokenizer.cursor == '/')
-		{
-			if (*(tokenizer.cursor + 1) == '/')
-			{
+		while (*tokenizer.cursor == '/') {
+			if (*(tokenizer.cursor + 1) == '/') {
 				ProcessCppComment(&tokenizer);
 				EatWhitespace(&tokenizer);
 			}
-			else if (*(tokenizer.cursor + 1) == '*')
-			{
+			else if (*(tokenizer.cursor + 1) == '*') {
 				ProcessCComment(&tokenizer);
 				EatWhitespace(&tokenizer);
 			}
@@ -866,11 +853,11 @@ void TokenizeFile(Context *context, u32 fileIdx)
 		if (newToken.type == TOKEN_INVALID_DIRECTIVE)
 			LogError(context, newToken.loc, "Invalid parser directive"_s);
 
-		*BucketArrayAdd(&context->fileTokens[fileIdx]) = newToken;
+		*BucketArrayAdd(&jobData->tokens) = newToken;
 
 		tokenizer.cursor += newToken.size;
 	}
 
-	*BucketArrayAdd(&context->fileTokens[fileIdx]) = { TOKEN_END_OF_FILE, 0,
+	*BucketArrayAdd(&jobData->tokens) = { TOKEN_END_OF_FILE, 0,
 		{ fileIdx, (u32)(tokenizer.cursor - file.buffer)-1 } };
 }

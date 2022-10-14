@@ -24,27 +24,24 @@ void AssertToken(Context *context, Token *token, int type)
 void Advance(Context *context)
 {
 	ParseJobData *jobData = (ParseJobData *)SYSGetFiberData(context->flsIndex);
-	BucketArray<Token, HeapAllocator, 1024> &fileTokens = context->fileTokens[jobData->fileIdx];
-	ASSERT(jobData->token == &fileTokens[jobData->currentTokenIdx]);
+	ASSERT(jobData->token == &jobData->tokens[jobData->currentTokenIdx]);
 
 	++jobData->currentTokenIdx;
-	if (jobData->currentTokenIdx > BucketArrayCount(&fileTokens))
+	if (jobData->currentTokenIdx > BucketArrayCount(&jobData->tokens))
 		LogError(context, jobData->token->loc, "Unexpected end of file"_s);
-	jobData->token = &fileTokens[jobData->currentTokenIdx];
+	jobData->token = &jobData->tokens[jobData->currentTokenIdx];
 }
 
-inline ASTExpression *NewTreeNode(Context *context)
+inline ASTExpression *PNewTreeNode(Context *context)
 {
 	ParseJobData *jobData = (ParseJobData *)SYSGetFiberData(context->flsIndex);
-	auto treeNodes = context->fileTreeNodes[jobData->fileIdx].GetForWrite();
-	return BucketArrayAdd(&treeNodes);
+	return BucketArrayAdd(&jobData->astTreeNodes);
 }
 
 inline ASTType *NewASTType(Context *context)
 {
 	ParseJobData *jobData = (ParseJobData *)SYSGetFiberData(context->flsIndex);
-	auto typeNodes = context->fileTypeNodes[jobData->fileIdx].GetForWrite();
-	return BucketArrayAdd(&typeNodes);
+	return BucketArrayAdd(&jobData->astTypes);
 }
 
 inline s64 ParseInt(Context *context, String str)
@@ -210,7 +207,7 @@ bool TryParseUnaryOperation(Context *context, s32 prevPrecedence, ASTUnaryOperat
 
 		int precedenceOf = op == TOKEN_OP_MINUS ? PRECEDENCE_UNARY_SUBTRACT : op;
 		s32 precedence = GetOperatorPrecedence(precedenceOf);
-		result->expression = NewTreeNode(context);
+		result->expression = PNewTreeNode(context);
 		*result->expression = ParseExpression(context, precedence);
 
 		return true;
@@ -239,7 +236,7 @@ bool TryParseBinaryOperation(Context *context, ASTExpression leftHand, s32 prevP
 	{
 	case TOKEN_OP_ARRAY_ACCESS:
 	{
-		result->leftHand = NewTreeNode(context);
+		result->leftHand = PNewTreeNode(context);
 		*result->leftHand = leftHand;
 
 		result->op = TOKEN_OP_ARRAY_ACCESS;
@@ -248,7 +245,7 @@ bool TryParseBinaryOperation(Context *context, ASTExpression leftHand, s32 prevP
 		s32 precedence = GetOperatorPrecedence(TOKEN_OP_ARRAY_ACCESS);
 		if (precedence > (prevPrecedence & (~1)))
 		{
-			result->rightHand = NewTreeNode(context);
+			result->rightHand = PNewTreeNode(context);
 			*result->rightHand = ParseExpression(context, -1);
 
 			AssertToken(context, jobData->token, ']');
@@ -291,7 +288,7 @@ bool TryParseBinaryOperation(Context *context, ASTExpression leftHand, s32 prevP
 	case TOKEN_OP_MEMBER_ACCESS:
 	case TOKEN_OP_RANGE:
 	{
-		result->leftHand = NewTreeNode(context);
+		result->leftHand = PNewTreeNode(context);
 		*result->leftHand = leftHand;
 
 		enum TokenType op = jobData->token->type;
@@ -301,7 +298,7 @@ bool TryParseBinaryOperation(Context *context, ASTExpression leftHand, s32 prevP
 		s32 precedence = GetOperatorPrecedence(op);
 		if (precedence > (prevPrecedence & (~1)))
 		{
-			result->rightHand = NewTreeNode(context);
+			result->rightHand = PNewTreeNode(context);
 			*result->rightHand = ParseExpression(context, precedence);
 
 			return true;
@@ -329,7 +326,7 @@ ASTIf ParseIf(Context *context, bool onStaticContext)
 	ASTIf ifNode = {};
 	ifNode.loc = jobData->token->loc;
 
-	ifNode.condition = NewTreeNode(context);
+	ifNode.condition = PNewTreeNode(context);
 	if (jobData->token->type == '(')
 	{
 		// If there are parenthesis, grab _only_ the expression inside.
@@ -341,7 +338,7 @@ ASTIf ParseIf(Context *context, bool onStaticContext)
 	else
 		*ifNode.condition = ParseExpression(context, -1);
 
-	ifNode.body = NewTreeNode(context);
+	ifNode.body = PNewTreeNode(context);
 	if (onStaticContext)
 		*ifNode.body = ParseStaticStatement(context);
 	else
@@ -351,7 +348,7 @@ ASTIf ParseIf(Context *context, bool onStaticContext)
 	{
 		ifNode.elseLoc = jobData->token->loc;
 		Advance(context);
-		ifNode.elseBody = NewTreeNode(context);
+		ifNode.elseBody = PNewTreeNode(context);
 		if (onStaticContext)
 			*ifNode.elseBody = ParseStaticStatement(context);
 		else
@@ -369,7 +366,7 @@ ASTWhile ParseWhile(Context *context)
 	whileNode.loc = jobData->token->loc;
 	Advance(context);
 
-	whileNode.condition = NewTreeNode(context);
+	whileNode.condition = PNewTreeNode(context);
 	if (jobData->token->type == '(')
 	{
 		// If there are parenthesis, grab _only_ the expression inside.
@@ -381,7 +378,7 @@ ASTWhile ParseWhile(Context *context)
 	else
 		*whileNode.condition = ParseExpression(context, -1);
 
-	whileNode.body = NewTreeNode(context);
+	whileNode.body = PNewTreeNode(context);
 	*whileNode.body = ParseStatement(context);
 
 	return whileNode;
@@ -399,7 +396,7 @@ ASTFor ParseFor(Context *context)
 	Advance(context);
 
 	bool closeParenthesis = false;
-	forNode.range = NewTreeNode(context);
+	forNode.range = PNewTreeNode(context);
 	if (jobData->token->type == '(')
 	{
 		// If there are parenthesis, grab _only_ the expression inside.
@@ -458,7 +455,7 @@ ASTFor ParseFor(Context *context)
 		Advance(context);
 	}
 
-	forNode.body = NewTreeNode(context);
+	forNode.body = PNewTreeNode(context);
 	*forNode.body = ParseStatement(context);
 
 	return forNode;
@@ -502,7 +499,7 @@ ASTStructMemberDeclaration ParseStructMemberDeclaration(Context *context)
 	if (jobData->token->type == TOKEN_OP_ASSIGNMENT)
 	{
 		Advance(context);
-		structMem.value = NewTreeNode(context);
+		structMem.value = PNewTreeNode(context);
 		*structMem.value = ParseExpression(context, -1);
 	}
 
@@ -542,7 +539,7 @@ ASTEnumDeclaration ParseEnumDeclaration(Context *context)
 		if (jobData->token->type == TOKEN_OP_ASSIGNMENT)
 		{
 			Advance(context);
-			enumMember.value = NewTreeNode(context);
+			enumMember.value = PNewTreeNode(context);
 			*enumMember.value = ParseExpression(context, GetOperatorPrecedence(',') + 1);
 		}
 
@@ -595,7 +592,7 @@ Array<ASTExpression *, LinearAllocator> ParseGroupLiteral(Context *context)
 
 	while (true)
 	{
-		ASTExpression *newTreeNode = NewTreeNode(context);
+		ASTExpression *newTreeNode = PNewTreeNode(context);
 		*newTreeNode = ParseExpression(context, GetOperatorPrecedence(',') + 1);
 		*DynamicArrayAdd(&members) = newTreeNode;
 
@@ -605,9 +602,9 @@ Array<ASTExpression *, LinearAllocator> ParseGroupLiteral(Context *context)
 			ASTExpression assignment = { ASTNODETYPE_BINARY_OPERATION };
 			assignment.typeTableIdx = TYPETABLEIDX_Unset;
 			assignment.binaryOperation.op = TOKEN_OP_ASSIGNMENT;
-			assignment.binaryOperation.leftHand = NewTreeNode(context);
+			assignment.binaryOperation.leftHand = PNewTreeNode(context);
 			*assignment.binaryOperation.leftHand = *newTreeNode;
-			assignment.binaryOperation.rightHand = NewTreeNode(context);
+			assignment.binaryOperation.rightHand = PNewTreeNode(context);
 			*assignment.binaryOperation.rightHand = ParseExpression(context,
 					GetOperatorPrecedence(TOKEN_OP_ASSIGNMENT));
 			*newTreeNode = assignment;
@@ -672,7 +669,7 @@ ASTVariableDeclaration ParseVariableDeclaration(Context *context)
 			LogError(context, jobData->token->loc, "Can't assign value to external variable"_s);
 
 		Advance(context);
-		varDecl.astInitialValue = NewTreeNode(context);
+		varDecl.astInitialValue = PNewTreeNode(context);
 		*varDecl.astInitialValue = ParseExpression(context, -1);
 	}
 
@@ -703,7 +700,7 @@ ASTProcedureParameter ParseProcedureParameter(Context *context)
 	{
 		// Nameless parameter, rewind
 		jobData->currentTokenIdx = startTokenIdx;
-		jobData->token = &context->fileTokens[jobData->fileIdx][startTokenIdx];
+		jobData->token = &jobData->tokens[startTokenIdx];
 		astParameter.name = {};
 	}
 
@@ -716,7 +713,7 @@ ASTProcedureParameter ParseProcedureParameter(Context *context)
 	if (jobData->token->type == TOKEN_OP_ASSIGNMENT)
 	{
 		Advance(context);
-		astParameter.astInitialValue = NewTreeNode(context);
+		astParameter.astInitialValue = PNewTreeNode(context);
 		*astParameter.astInitialValue = ParseExpression(context, GetOperatorPrecedence(',') + 1);
 	}
 
@@ -857,7 +854,7 @@ ASTExpression ParseExpression(Context *context, s32 precedence)
 			Advance(context);
 			while (jobData->token->type != ')')
 			{
-				ASTExpression *arg = NewTreeNode(context);
+				ASTExpression *arg = PNewTreeNode(context);
 				*arg = ParseExpression(context, GetOperatorPrecedence(',') + 1);
 				*HybridArrayAdd(&result.procedureCall.arguments) = arg;
 
@@ -938,7 +935,7 @@ ASTExpression ParseExpression(Context *context, s32 precedence)
 		Advance(context);
 
 		result.nodeType = ASTNODETYPE_TYPEOF;
-		result.typeOfNode.expression = NewTreeNode(context);
+		result.typeOfNode.expression = PNewTreeNode(context);
 		*result.typeOfNode.expression = ParseExpression(context, precedence);
 	} break;
 	case TOKEN_KEYWORD_SIZEOF:
@@ -947,7 +944,7 @@ ASTExpression ParseExpression(Context *context, s32 precedence)
 		Advance(context);
 
 		result.nodeType = ASTNODETYPE_SIZEOF;
-		result.sizeOfNode.expression = NewTreeNode(context);
+		result.sizeOfNode.expression = PNewTreeNode(context);
 		*result.sizeOfNode.expression = ParseExpression(context, precedence);
 	} break;
 	case TOKEN_DIRECTIVE_DEFINED:
@@ -980,7 +977,7 @@ ASTExpression ParseExpression(Context *context, s32 precedence)
 		AssertToken(context, jobData->token, ')');
 		Advance(context);
 
-		result.castNode.expression = NewTreeNode(context);
+		result.castNode.expression = PNewTreeNode(context);
 		int castPrecedence = GetOperatorPrecedence(TOKEN_KEYWORD_CAST);
 		*result.castNode.expression = ParseExpression(context, castPrecedence);
 	} break;
@@ -1101,7 +1098,7 @@ ASTExpression ParseExpression(Context *context, s32 precedence)
 			mux.typeTableIdx = TYPETABLEIDX_Unset;
 			mux.nodeType = ASTNODETYPE_MULTIPLE_EXPRESSIONS;
 
-			ASTExpression *first = NewTreeNode(context);
+			ASTExpression *first = PNewTreeNode(context);
 			*first = result;
 
 			ASTExpression second = ParseExpression(context, GetOperatorPrecedence(','));
@@ -1115,7 +1112,7 @@ ASTExpression ParseExpression(Context *context, s32 precedence)
 			else
 			{
 				DynamicArrayInit(&mux.multipleExpressions.array, 2);
-				ASTExpression *sec = NewTreeNode(context);
+				ASTExpression *sec = PNewTreeNode(context);
 				*sec = second;
 				*DynamicArrayAdd(&mux.multipleExpressions.array) = first;
 				*DynamicArrayAdd(&mux.multipleExpressions.array) = sec;
@@ -1197,7 +1194,7 @@ ASTStaticDefinition ParseStaticDefinition(Context *context)
 		{
 			if (isExternal)
 				LogError(context, jobData->token->loc, "External procedure declaration can't have a body"_s);
-			procDecl.astBody = NewTreeNode(context);
+			procDecl.astBody = PNewTreeNode(context);
 			*procDecl.astBody = ParseStatement(context);
 		}
 
@@ -1252,7 +1249,7 @@ ASTStaticDefinition ParseStaticDefinition(Context *context)
 		}
 	}
 
-	result.expression = NewTreeNode(context);
+	result.expression = PNewTreeNode(context);
 	*result.expression = expression;
 
 	return result;
@@ -1337,7 +1334,7 @@ ASTExpression ParseStatement(Context *context)
 			result.returnNode.expression = nullptr;
 		else
 		{
-			result.returnNode.expression = NewTreeNode(context);
+			result.returnNode.expression = PNewTreeNode(context);
 			*result.returnNode.expression = ParseExpression(context, -1);
 		}
 
@@ -1350,7 +1347,7 @@ ASTExpression ParseStatement(Context *context)
 
 		result.any.loc = jobData->token->loc;
 		result.nodeType = ASTNODETYPE_DEFER;
-		result.deferNode.expression = NewTreeNode(context);
+		result.deferNode.expression = PNewTreeNode(context);
 		*result.deferNode.expression = ParseExpression(context, -1);
 
 		AssertToken(context, jobData->token, ';');
@@ -1368,7 +1365,7 @@ ASTExpression ParseStatement(Context *context)
 		if (jobData->token->type == TOKEN_OP_ASSIGNMENT)
 		{
 			Advance(context);
-			varDecl.astInitialValue = NewTreeNode(context);
+			varDecl.astInitialValue = PNewTreeNode(context);
 			*varDecl.astInitialValue = ParseExpression(context, -1);
 		}
 
@@ -1384,12 +1381,12 @@ ASTExpression ParseStatement(Context *context)
 
 		result.any.loc = jobData->token->loc;
 		result.nodeType = ASTNODETYPE_USING;
-		result.usingNode.expression = NewTreeNode(context);
+		result.usingNode.expression = PNewTreeNode(context);
 		*result.usingNode.expression = ParseStatement(context);
 	} break;
 	default:
 	{
-		Token *next = &context->fileTokens[jobData->fileIdx][jobData->currentTokenIdx + 1];
+		Token *next = &jobData->tokens[jobData->currentTokenIdx + 1];
 		if (next->type == TOKEN_OP_STATIC_DEF)
 		{
 			result.nodeType = ASTNODETYPE_STATIC_DEFINITION;
@@ -1467,7 +1464,7 @@ ASTExpression ParseStaticStatement(Context *context)
 		overload.isInline = isInline;
 		overload.prototype = ParseProcedurePrototype(context);
 
-		overload.astBody = NewTreeNode(context);
+		overload.astBody = PNewTreeNode(context);
 		*overload.astBody = ParseStatement(context);
 
 		result.nodeType = ASTNODETYPE_OPERATOR_OVERLOAD;
@@ -1499,7 +1496,7 @@ ASTExpression ParseStaticStatement(Context *context)
 	} break;
 	default:
 	{
-		Token *next = &context->fileTokens[jobData->fileIdx][jobData->currentTokenIdx + 1];
+		Token *next = &jobData->tokens[jobData->currentTokenIdx + 1];
 		if (next->type == TOKEN_OP_STATIC_DEF)
 		{
 			result.nodeType = ASTNODETYPE_STATIC_DEFINITION;
@@ -1525,31 +1522,26 @@ ASTExpression ParseStaticStatement(Context *context)
 	return result;
 }
 
-void ParseJobProc(void *args)
-{
+void ParseJobProc(void *args) {
 	ParseJobArgs *argsStruct = (ParseJobArgs *)args;
 	Context *context = argsStruct->context;
 	u32 fileIdx = argsStruct->fileIdx;
-	u32 jobIdx = argsStruct->jobIdx;
-
-	ThreadDataCommon *threadData = (ThreadDataCommon *)SYSGetThreadData(context->tlsIndex);
-	if (threadData->lastJobIdx != U32_MAX)
-	{
-		auto jobs = context->jobs.Get();
-		ASSERT((*jobs)[threadData->lastJobIdx].isRunning);
-		(*jobs)[threadData->lastJobIdx].isRunning = 0;
-		threadData->lastJobIdx = U32_MAX;
-	}
 
 	ParseJobData jobData;
-	jobData.jobIdx = jobIdx;
 	jobData.fileIdx = fileIdx;
 	jobData.currentTokenIdx = 0;
-	jobData.token = &context->fileTokens[fileIdx][0];
+	BucketArrayInit(&jobData.tokens);
+	jobData.token = &jobData.tokens[0];
+
+	DynamicArrayInit(&jobData.astRoot.block.statements, 4096);
+	BucketArrayInit(&jobData.astTreeNodes);
+	BucketArrayInit(&jobData.astTypes);
+
 	SYSSetFiberData(context->flsIndex, &jobData);
 
 	MemoryInitJob(1 * 1024 * 1024);
 
+#if 0
 	{
 		auto jobs = context->jobs.Get();
 		ASSERT((*jobs)[jobIdx].isRunning);
@@ -1559,38 +1551,40 @@ void ParseJobProc(void *args)
 		(*jobs)[jobIdx].title = SStringConcat("P:"_s, context->sourceFiles[fileIdx].name);
 #endif
 	}
+#endif
 
 	TokenizeFile(context, fileIdx);
 
 	DynamicArray<ASTExpression, LinearAllocator> *statements =
-		&context->fileASTRoots[fileIdx].block.statements;
-	while (jobData.token->type != TOKEN_END_OF_FILE)
-	{
+		&jobData.astRoot.block.statements;
+	while (jobData.token->type != TOKEN_END_OF_FILE) {
 		ASTExpression *statement = DynamicArrayAdd(statements);
 		*statement = ParseStaticStatement(context);
 		GenerateTypeCheckJobs(context, statement);
 	}
 
-	{
-		auto jobs = context->jobs.Get();
-		(*jobs)[jobIdx].state = JOBSTATE_DONE;
-	}
+	if (context->config.logAST)
+		PrintAST(context);
+
 	SYSFree(jobData.jobMem);
-	SwitchJob(context);
+	t_previousYieldReason = JOBSTATE_DONE;
+	SwitchJob(context, JOBSTATE_DONE, {});
 }
 
-void ParserMain(Context *context)
-{
-	{
-		ScopedLockSpin filesLock(&context->filesLock);
-		DynamicArrayInit(&context->sourceFiles, 64);
-		DynamicArrayInit(&context->fileASTRoots, 64);
-		DynamicArrayInit(&context->fileTokens, 64);
-		DynamicArrayInit(&context->fileTreeNodes, 64);
-		DynamicArrayInit(&context->fileTypeNodes, 64);
-	}
-	{
-		auto jobs = context->jobs.Get();
-		BucketArrayInit(&jobs);
-	}
+void ParserMain(Context *context) {
+	DynamicArrayInit(&context->sourceFiles, 64);
+
+	ArrayInit(&context->readyJobs, 1024);
+	context->readyJobs.size = 1024;
+	context->readyQueueHead = 0;
+	context->readyQueueTail = 0;
+	context->readyQueueHeadLock = 0;
+	context->readyQueueTailLock = 0;
+
+	DynamicArrayInit(&context->jobsWaitingForIdentifier.unsafe, 64);
+	DynamicArrayInit(&context->jobsWaitingForOverload.unsafe, 64);
+	DynamicArrayInit(&context->jobsWaitingForStaticDef.unsafe, 64);
+	DynamicArrayInit(&context->jobsWaitingForProcedure.unsafe, 64);
+	DynamicArrayInit(&context->jobsWaitingForType.unsafe, 64);
+	DynamicArrayInit(&context->jobsWaitingForDeadStop.unsafe, 64);
 }

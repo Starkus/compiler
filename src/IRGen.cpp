@@ -1924,10 +1924,11 @@ IRValue IRGenFromExpression(Context *context, const ASTExpression *expression)
 					arrayOfAnyTypeIdx, VALUEFLAGS_FORCE_MEMORY);
 			IRValue arrayIRValue = IRValueValue(context, arrayValueIdx);
 
-			TypeInfo dynamicArrayTypeInfo = GetTypeInfo(context, TYPETABLEIDX_ARRAY_STRUCT);
 			// Size
 			{
-				StructMember sizeStructMember = dynamicArrayTypeInfo.structInfo.members[0];
+				StructMember sizeStructMember = {
+					.typeTableIdx = GetTypeInfoPointerOf(context, TYPETABLEIDX_U8),
+					.offset = 0 };
 				IRValue sizeMember = IRDoMemberAccess(context, arrayIRValue, sizeStructMember);
 				IRValue sizeValue = IRValueImmediate(varargsCount);
 				IRDoAssignment(context, sizeMember, sizeValue);
@@ -1935,7 +1936,9 @@ IRValue IRGenFromExpression(Context *context, const ASTExpression *expression)
 
 			// Data
 			{
-				StructMember dataStructMember = dynamicArrayTypeInfo.structInfo.members[1];
+				StructMember dataStructMember = {
+					.typeTableIdx = TYPETABLEIDX_U64,
+					.offset = g_pointerSize };
 				IRValue dataMember = IRDoMemberAccess(context, arrayIRValue, dataStructMember);
 				IRValue dataValue = pointerToBuffer;
 				IRDoAssignment(context, dataMember, dataValue);
@@ -2194,8 +2197,10 @@ skipGeneratingVarargsArray:
 			if (rangeTypeInfo.arrayInfo.count == 0 || arrayValue.typeTableIdx == TYPETABLEIDX_STRING_STRUCT)
 			{
 				// Compare with size member
-				TypeInfo dynamicArrayTypeInfo = GetTypeInfo(context, TYPETABLEIDX_ARRAY_STRUCT);
-				to = IRDoMemberAccess(context, arrayValue, dynamicArrayTypeInfo.structInfo.members[0]);
+				StructMember sizeMember = {
+					.typeTableIdx = GetTypeInfoPointerOf(context, TYPETABLEIDX_U8),
+					.offset = 0 };
+				to = IRDoMemberAccess(context, arrayValue, sizeMember);
 			}
 			else
 				to = IRValueImmediate(rangeTypeInfo.arrayInfo.count);
@@ -2294,9 +2299,12 @@ skipGeneratingVarargsArray:
 		u32 elementTypeIdx = arrayType.arrayInfo.elementTypeTableIdx;
 
 		{
-			TypeInfo arrayStructTypeInfo = GetTypeInfo(context, TYPETABLEIDX_ARRAY_STRUCT);
-			StructMember sizeMember = arrayStructTypeInfo.structInfo.members[0];
-			StructMember dataMember = arrayStructTypeInfo.structInfo.members[1];
+			StructMember sizeMember = {
+				.typeTableIdx = GetTypeInfoPointerOf(context, TYPETABLEIDX_U8),
+				.offset = 0 };
+			StructMember dataMember = {
+				.typeTableIdx = TYPETABLEIDX_U64,
+				.offset = g_pointerSize };
 
 			sizeValue = IRDoMemberAccess(context, arrayValue, sizeMember);
 		}
@@ -2485,20 +2493,9 @@ void IRJobProcedure(void *args)
 {
 	IRJobArgs *argsStruct = (IRJobArgs *)args;
 	Context *context = argsStruct->context;
-	u32 jobIdx = argsStruct->jobIdx;
 	u32 procedureIdx = argsStruct->procedureIdx;
 
-	ThreadDataCommon *threadData = (ThreadDataCommon *)SYSGetThreadData(context->tlsIndex);
-	if (threadData->lastJobIdx != U32_MAX)
-	{
-		auto &jobsUnsafe = context->jobs.unsafe;
-		ASSERT(jobsUnsafe[threadData->lastJobIdx].isRunning);
-		jobsUnsafe[threadData->lastJobIdx].isRunning = 0;
-		threadData->lastJobIdx = U32_MAX;
-	}
-
 	IRJobData jobData = {};
-	jobData.jobIdx = jobIdx;
 	jobData.procedureIdx = procedureIdx;
 	jobData.returnValueIndices = GetProcedureRead(context, procedureIdx).returnValueIndices;
 	jobData.shouldReturnValueIdx = U32_MAX;
@@ -2507,6 +2504,7 @@ void IRJobProcedure(void *args)
 
 	MemoryInitJob(1 * 1024 * 1024);
 
+#if 0
 	{
 #if !FINAL_BUILD
 		auto jobs = context->jobs.Get();
@@ -2517,6 +2515,7 @@ void IRJobProcedure(void *args)
 		ASSERT(context->jobs.unsafe[jobIdx].isRunning);
 		threadData->lastJobIdx = U32_MAX;
 	}
+#endif
 
 	ASSERT(GetProcedureRead(context, procedureIdx).astBody != nullptr);
 
@@ -2528,32 +2527,21 @@ void IRJobProcedure(void *args)
 
 	BackendJobProc(context, procedureIdx);
 
-	TCSetJobState(context, JOBSTATE_DONE);
 	SYSFree(jobData.jobMem);
-	SwitchJob(context);
+	SwitchJob(context, JOBSTATE_DONE, {});
 }
 
 void IRJobExpression(void *args)
 {
 	IRJobArgs *argsStruct = (IRJobArgs *)args;
 	Context *context = argsStruct->context;
-	u32 jobIdx = argsStruct->jobIdx;
-
-	ThreadDataCommon *threadData = (ThreadDataCommon *)SYSGetThreadData(context->tlsIndex);
-	if (threadData->lastJobIdx != U32_MAX)
-	{
-		auto jobs = context->jobs.Get();
-		ASSERT((*jobs)[threadData->lastJobIdx].isRunning);
-		(*jobs)[threadData->lastJobIdx].isRunning = 0;
-		threadData->lastJobIdx = U32_MAX;
-	}
 
 	IRJobData jobData = {};
-	jobData.jobIdx = jobIdx;
 	SYSSetFiberData(context->flsIndex, &jobData);
 
 	MemoryInitJob(512 * 1024);
 
+#if 0
 	{
 		ASSERT(context->jobs.unsafe[jobIdx].state == JOBSTATE_READY);
 		ASSERT(context->jobs.unsafe[jobIdx].isRunning);
@@ -2563,10 +2551,10 @@ void IRJobExpression(void *args)
 		(*jobs)[jobIdx].title = "IR:Expression"_s;
 #endif
 	}
+#endif
 
 	IRGenFromExpression(context, argsStruct->expression);
 
-	TCSetJobState(context, JOBSTATE_DONE);
 	SYSFree(jobData.jobMem);
-	SwitchJob(context);
+	SwitchJob(context, JOBSTATE_DONE, {});
 }

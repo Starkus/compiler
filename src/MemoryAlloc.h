@@ -1,6 +1,5 @@
 #define ALLOC(ALLOCATOR, TYPE) (TYPE *)ALLOCATOR::Alloc(sizeof(TYPE), alignof(TYPE))
-struct Memory
-{
+struct Memory {
 	u32 tlsIndex;
 	u32 flsIndex;
 
@@ -9,38 +8,30 @@ struct Memory
 	Mutex linearMemMutex;
 };
 
-class LinearAllocator
-{
-	public:
+class LinearAllocator {
+public:
 	static void *Alloc(u64 size, int alignment);
 	static void *Realloc(void *ptr, u64 newSize, int alignment);
 	static void Free(void *ptr);
-	static void Wipe();
 };
 
-class ThreadAllocator
-{
-	public:
+class ThreadAllocator {
+public:
 	static void *Alloc(u64 size, int alignment);
 	static void *Realloc(void *ptr, u64 newSize, int alignment);
 	static void Free(void *ptr);
-	static void Wipe();
 };
 
-class JobAllocator
-{
-	public:
+class JobAllocator {
+public:
 	static void *Alloc(u64 size, int alignment);
 	static void *Realloc(void *ptr, u64 newSize, int alignment);
 	static void Free(void *ptr);
-	static void Wipe();
 };
 
-class HeapAllocator
-{
-	public:
+class HeapAllocator {
+public:
 	static void *Alloc(u64 size, int alignment);
 	static void *Realloc(void *ptr, u64 newSize, int alignment);
 	static void Free(void *ptr);
-	static void Wipe();
 };

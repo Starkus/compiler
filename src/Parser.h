@@ -12,7 +12,6 @@ struct ParseJobArgs
 {
 	Context *context;
 	u32 fileIdx;
-	u32 jobIdx;
 };
 
 enum TokenType : u8

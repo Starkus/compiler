@@ -407,8 +407,7 @@ void SYSRunLinker(String outputPath, bool makeLibrary, String extraArguments)
 
 	String workingPath = SYSExpandPathWorkingDirectoryRelative({});
 
-	if (!makeLibrary)
-	{
+	if (!makeLibrary) {
 		String commandLine = TPrintF(
 				"%S\\bin\\Hostx64\\x64\\link.exe " // msvcPath
 				"out.obj "
@@ -453,21 +452,18 @@ void SYSRunLinker(String outputPath, bool makeLibrary, String extraArguments)
 				outputPath.data,
 				&startupInfo,
 				&processInformation
-				))
-		{
+				)) {
 			Print("Failed to call link.exe (%d)\n", GetLastError());
 			PANIC;
 		}
 		DWORD exitCode;
 		GetExitCodeProcess(processInformation.hProcess, &exitCode);
-		if (exitCode != 0 && exitCode != ERROR_NO_MORE_ITEMS) // ??? wtf this error
-		{
+		if (exitCode != 0 && exitCode != ERROR_NO_MORE_ITEMS) { // ??? wtf this error
 			Print("link.exe returned an error (%d)\n", exitCode);
 			exit(exitCode);
 		}
 	}
-	else
-	{
+	else {
 		String commandLine = TPrintF(
 				"%S\\bin\\Hostx64\\x64\\lib.exe " // msvcPath
 				"out.obj "
@@ -500,15 +496,13 @@ void SYSRunLinker(String outputPath, bool makeLibrary, String extraArguments)
 				outputPath.data,
 				&startupInfo,
 				&processInformation
-				))
-		{
+				)) {
 			Print("Failed to call lib.exe (%d)\n", GetLastError());
 			PANIC;
 		}
 		DWORD exitCode;
 		GetExitCodeProcess(processInformation.hProcess, &exitCode);
-		if (exitCode != 0 && exitCode != ERROR_NO_MORE_ITEMS) // ??? wtf this error
-		{
+		if (exitCode != 0 && exitCode != ERROR_NO_MORE_ITEMS) { // ??? wtf this error
 			Print("lib.exe returned an error (%d)\n", exitCode);
 			exit(exitCode);
 		}
@@ -578,12 +572,18 @@ inline Fiber SYSCreateFiber(void (*start)(void *), void *args) {
 	return CreateFiber(fiberStackSize, start, args);
 }
 
-inline void SYSConvertThreadToFiber() {
-	ConvertThreadToFiber(nullptr);
+inline Fiber SYSConvertThreadToFiber() {
+	return ConvertThreadToFiber(nullptr);
 }
 
+Fiber runningFibers[8] = { SYS_INVALID_FIBER_HANDLE };
 inline void SYSSwitchToFiber(Fiber fiber) {
 	ASSERT(fiber != SYS_INVALID_FIBER_HANDLE);
+
+	for (int i = 0; i < ArrayCount(runningFibers); ++i)
+		if (runningFibers[i] == fiber) ASSERT(!"Trying to run fiber on two threads at once");
+
+	runningFibers[t_threadIndex] = fiber;
 	SwitchToFiber(fiber);
 }
 

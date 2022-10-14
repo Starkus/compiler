@@ -213,7 +213,6 @@ struct Context;
 struct TCJobArgs
 {
 	Context *context;
-	u32 jobIdx;
 	ASTExpression *expression;
 };
 

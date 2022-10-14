@@ -1,7 +1,6 @@
 struct IRJobArgs
 {
 	Context *context;
-	u32 jobIdx;
 	u32 procedureIdx;
 	BucketArray<Value, HeapAllocator, 1024> localValues;
 	const ASTExpression *expression;

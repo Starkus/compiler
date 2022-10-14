@@ -2,9 +2,6 @@
 
 void MemoryInit(Memory *memory)
 {
-#if DEBUG_BUILD
-	memset(memory->linearMem, 0xCD, Memory::linearMemSize);
-#endif
 	memory->linearMemPtr = memory->linearMem;
 	memory->linearMemMutex = SYSCreateMutex();
 }
@@ -15,9 +12,6 @@ void MemoryInitThread(u64 size)
 	threadData->threadMem = SYSAlloc(size);
 	threadData->threadMemPtr = threadData->threadMem;
 	threadData->threadMemSize = size;
-#if DEBUG_BUILD
-	memset(threadData->threadMem, 0x55, size);
-#endif
 }
 
 void MemoryInitJob(u64 size)
@@ -26,9 +20,6 @@ void MemoryInitJob(u64 size)
 	jobData->jobMem = SYSAlloc(size);
 	jobData->jobMemPtr = jobData->jobMem;
 	jobData->jobMemSize = size;
-#if DEBUG_BUILD
-	memset(jobData->jobMem, 0x55, size);
-#endif
 }
 
 void *LinearAllocator::Alloc(u64 size, int alignment)
@@ -59,7 +50,8 @@ void *LinearAllocator::Alloc(u64 size, int alignment)
 	}
 
 #if DEBUG_BUILD
-	if (*((u64 *)result) != 0xCDCDCDCDCDCDCDCD) CRASH; // Watch for memory corruption
+	for (int i = 0; i < Min(size, 8); ++i)
+		if (*((u8 *)(result + i)) != 0x00) CRASH; // Watch for memory corruption
 	ASSERT((u8 *)result + size < (u8 *)g_memory->linearMem + Memory::linearMemSize); // Out of memory!
 #endif
 
@@ -81,21 +73,13 @@ void LinearAllocator::Free(void *ptr)
 {
 	(void) ptr;
 }
-void LinearAllocator::Wipe()
-{
-#if DEBUG_BUILD
-	memset(g_memory->linearMem, 0xCD, Memory::linearMemSize);
-#endif
-
-	g_memory->linearMemPtr = g_memory->linearMem;
-}
 
 void *ThreadAllocator::Alloc(u64 size, int alignment)
 {
 	ThreadDataCommon *threadData = (ThreadDataCommon *)SYSGetThreadData(g_memory->tlsIndex);
 
 #if DEBUG_BUILD
-	if (*((u64 *)threadData->threadMemPtr) != 0x5555555555555555) CRASH; // Watch for memory corruption
+	if (*((u64 *)threadData->threadMemPtr) != 0x0000000000000000) CRASH; // Watch for memory corruption
 	ASSERT((u8 *)threadData->threadMemPtr + size < (u8 *)threadData->threadMem +
 			threadData->threadMemSize); // Out of memory!
 #endif
@@ -128,17 +112,13 @@ void ThreadAllocator::Free(void *ptr)
 {
 	(void) ptr;
 }
-void ThreadAllocator::Wipe()
-{
-	ASSERT(false);
-}
 
 void *JobAllocator::Alloc(u64 size, int alignment)
 {
 	JobDataCommon *jobData = (JobDataCommon *)SYSGetFiberData(g_memory->flsIndex);
 
 #if DEBUG_BUILD
-	if (*((u64 *)jobData->jobMemPtr) != 0x5555555555555555) CRASH; // Watch for memory corruption
+	if (*((u64 *)jobData->jobMemPtr) != 0x0000000000000000) CRASH; // Watch for memory corruption
 	ASSERT((u8 *)jobData->jobMemPtr + size < (u8 *)jobData->jobMem +
 			jobData->jobMemSize); // Out of memory!
 #endif
@@ -171,10 +151,6 @@ void JobAllocator::Free(void *ptr)
 {
 	(void) ptr;
 }
-void JobAllocator::Wipe()
-{
-	ASSERT(false);
-}
 
 void *HeapAllocator::Alloc(u64 size, int alignment)
 {
@@ -189,8 +165,4 @@ void *HeapAllocator::Realloc(void *ptr, u64 newSize, int alignment)
 void HeapAllocator::Free(void *ptr)
 {
 	free(ptr);
-}
-void HeapAllocator::Wipe()
-{
-	ASSERT(false);
 }

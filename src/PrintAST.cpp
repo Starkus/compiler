@@ -479,9 +479,11 @@ void PrintExpression(Context *context, const ASTExpression *e)
 		PrintSourceLocation(context, e->any.loc);
 		Print("\n");
 
-		++indentLevels;
-		PrintExpression(context, e->returnNode.expression);
-		--indentLevels;
+		if (e->returnNode.expression) {
+			++indentLevels;
+			PrintExpression(context, e->returnNode.expression);
+			--indentLevels;
+		}
 	} break;
 	case ASTNODETYPE_DEFER:
 	{
@@ -553,15 +555,17 @@ void PrintExpression(Context *context, const ASTExpression *e)
 
 void PrintAST(Context *context)
 {
+	static Mutex printASTMutex = SYSCreateMutex();
+
+	ParseJobData *jobData = (ParseJobData *)SYSGetFiberData(context->flsIndex);
 	indentLevels = 0;
 
-	for (int fileIdx = 0; fileIdx < context->fileASTRoots.size; ++fileIdx)
+	SYSMutexLock(printASTMutex);
+	ArrayView<ASTExpression> statements = jobData->astRoot.block.statements;
+	for (int i = 0; i < statements.size; ++i)
 	{
-		ArrayView<ASTExpression> statements = context->fileASTRoots[fileIdx].block.statements;
-		for (int i = 0; i < statements.size; ++i)
-		{
-			const ASTExpression *statement = &statements[i];
-			PrintExpression(context, statement);
-		}
+		const ASTExpression *statement = &statements[i];
+		PrintExpression(context, statement);
 	}
+	SYSMutexUnlock(printASTMutex);
 }

@@ -1,0 +1,4 @@
+Main :: () -> s64 {
+	bar := foo;
+	return 0;
+}
