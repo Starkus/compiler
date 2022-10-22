@@ -35,58 +35,48 @@ PerformanceAPI_Functions performanceAPI;
 #endif
 #include "Profiler.cpp"
 
-struct ThreadDataCommon
-{
-	void *threadMem, *threadMemPtr;
-	u64 threadMemSize;
-
-	// This is a little silly, but we need to make jobs available to be picked up by another thread
-	// AFTER we do the SwitchJob (fiber switch) call.
-	u32 lastJobIdx;
-};
-
-struct JobDataCommon
-{
+struct JobDataCommon {
 	void *jobMem, *jobMemPtr;
 	u64 jobMemSize;
 };
 
-enum JobState : u32
-{
-	JOBSTATE_READY,
-	JOBSTATE_UNKNOWN_IDENTIFIER,
-	JOBSTATE_UNKNOWN_OVERLOAD,
-	JOBSTATE_STATIC_DEF_NOT_READY,
-	JOBSTATE_PROC_BODY_NOT_READY,
-	JOBSTATE_TYPE_NOT_READY,
+enum TCYieldReason : u32 {
+	TCYIELDREASON_READY,
+	TCYIELDREASON_UNKNOWN_IDENTIFIER,
+	TCYIELDREASON_UNKNOWN_OVERLOAD,
+	TCYIELDREASON_STATIC_DEF_NOT_READY,
+	TCYIELDREASON_PROC_BODY_NOT_READY,
+	TCYIELDREASON_TYPE_NOT_READY,
 	// WAITING_FOR_STOP jobs want to wait until no jobs are running to make a decision.
 	// As of time of write, only #defined does this to determine if something isn't defined anywhere
 	// before continuing.
-	JOBSTATE_WAITING_FOR_STOP,
-	JOBSTATE_DONE
+	TCYIELDREASON_WAITING_FOR_STOP,
+	TCYIELDREASON_DONE
 };
 
-union JobYieldContext {
+union TCYieldContext {
 	String identifier;
 	u32 index;
 };
 
-struct Job {
+struct TCJob {
 	Fiber fiber;
 
 	// Some data about why the job yielded execution.
-	JobYieldContext context;
+	TCYieldContext context;
 };
 
 #include "Config.h"
 #include "Maths.h"
 #include "Containers.h"
 
-__declspec(thread) u32 t_threadIndex;
-__declspec(thread) Fiber t_schedulerFiber;
-__declspec(thread) Fiber t_previousFiber = SYS_INVALID_FIBER_HANDLE;
-__declspec(thread) JobState t_previousYieldReason;
-__declspec(thread) JobYieldContext t_previousYieldContext;
+THREADLOCAL u32 t_threadIndex;
+THREADLOCAL void *t_threadMem, *t_threadMemPtr;
+THREADLOCAL u64 t_threadMemSize;
+THREADLOCAL Fiber t_schedulerFiber;
+THREADLOCAL Fiber t_previousFiber = SYS_INVALID_FIBER_HANDLE;
+THREADLOCAL TCYieldReason t_previousYieldReason;
+THREADLOCAL TCYieldContext t_previousYieldContext;
 
 #if _MSC_VER
 #include "PlatformWindows.cpp"
@@ -100,14 +90,11 @@ Memory *g_memory;
 FileHandle g_hStdout;
 FileHandle g_hStderr;
 
-s64 Print(const char *format, ...)
-{
+s64 Print(const char *format, ...) {
 	// Log file
 	static FileHandle logFileHandle = SYSOpenFileWrite("output/log.txt"_s);
 
-	ThreadDataCommon *threadData = (ThreadDataCommon *)SYSGetThreadData(g_memory->tlsIndex);
-
-	char *buffer = (char *)threadData->threadMemPtr;
+	char *buffer = (char *)t_threadMemPtr;
 
 	va_list args;
 	va_start(args, format);
@@ -124,31 +111,27 @@ s64 Print(const char *format, ...)
 	SYSWriteFile(logFileHandle, buffer, strlen(buffer));
 
 #if DEBUG_BUILD
-	memset(threadData->threadMemPtr, 0x00, size + 1);
+	memset(t_threadMemPtr, 0x00, size + 1);
 #endif
 
 	va_end(args);
 	return size;
 }
 
-const String TPrintF(const char *format, ...)
-{
-	ThreadDataCommon *threadData = (ThreadDataCommon *)SYSGetThreadData(g_memory->tlsIndex);
-
-	char *buffer = (char *)threadData->threadMemPtr;
+const String TPrintF(const char *format, ...) {
+	char *buffer = (char *)t_threadMemPtr;
 
 	va_list args;
 	va_start(args, format);
 	s64 size = stbsp_vsprintf(buffer, format, args);
 	va_end(args);
 
-	threadData->threadMemPtr = (u8 *)threadData->threadMemPtr + size + 1;
+	t_threadMemPtr = (u8 *)t_threadMemPtr + size + 1;
 
 	return { size, buffer };
 }
 
-const String SNPrintF(const char *format, int maxSize, ...)
-{
+const String SNPrintF(const char *format, int maxSize, ...) {
 	char *buffer = (char *)LinearAllocator::Alloc(maxSize, 1);
 
 	va_list args;
@@ -162,26 +145,22 @@ const String SNPrintF(const char *format, int maxSize, ...)
 u64 g_firstPerfCounter;
 u64 g_lastPerfCounter;
 u64 g_perfFrequency;
-void SetUpTimers()
-{
+void SetUpTimers() {
 	g_firstPerfCounter = SYSPerformanceCounter();
 	g_lastPerfCounter  = g_firstPerfCounter;
 	g_perfFrequency = SYSPerformanceFrequency();
 }
-void TimerSplit(String message)
-{
+void TimerSplit(String message) {
 	u64 newPerfCounter = SYSPerformanceCounter();
 	f64 time = (f64)(newPerfCounter - g_firstPerfCounter) / (f64)g_perfFrequency;
 	f64 deltaTime = (f64)(newPerfCounter - g_lastPerfCounter) / (f64)g_perfFrequency;
 	g_lastPerfCounter = newPerfCounter;
 	Print("%f - %f - %S\n", time, deltaTime, message);
 }
-u64 CycleCountBegin()
-{
+u64 CycleCountBegin() {
 	return __rdtsc();
 }
-u64 CycleCountEnd(u64 begin)
-{
+u64 CycleCountEnd(u64 begin) {
 	u64 newPerfCounter = __rdtsc();
 	return newPerfCounter - begin;
 }
@@ -195,8 +174,7 @@ u64 CycleCountEnd(u64 begin)
 #include "Backend.h"
 #include "x64.h"
 
-struct Config
-{
+struct Config {
 	bool dontPromoteMemoryToRegisters;
 	bool dontCallAssembler;
 	bool logAST;
@@ -205,8 +183,7 @@ struct Config
 };
 
 #define OUTPUT_BUFFER_BUCKET_SIZE 8192
-struct Context
-{
+struct Context {
 	Config config;
 
 	u32 tlsIndex;
@@ -218,26 +195,18 @@ struct Context
 	DynamicArray<SourceFile, HeapAllocator> sourceFiles;
 	DynamicArray<String, HeapAllocator> libsToLink;
 
-	//MXContainer<BucketArray<Job, HeapAllocator, 1024>> jobs;
-
-	Array<Fiber, HeapAllocator> readyJobs;
-	volatile u32 readyQueueHead;
-	volatile u32 readyQueueTail;
-	volatile u32 readyQueueHeadLock;
-	volatile u32 readyQueueTailLock;
+	MTQueue<Fiber> readyJobs;
 
 	volatile s32 threadsDoingWork;
 
-	SLContainer<DynamicArray<Job, HeapAllocator>> jobsWaitingForIdentifier;
-	MXContainer<DynamicArray<Job, HeapAllocator>> jobsWaitingForOverload;
-	MXContainer<DynamicArray<Job, HeapAllocator>> jobsWaitingForStaticDef;
-	MXContainer<DynamicArray<Job, HeapAllocator>> jobsWaitingForProcedure;
-	MXContainer<DynamicArray<Job, HeapAllocator>> jobsWaitingForType;
-	MXContainer<DynamicArray<Job, HeapAllocator>> jobsWaitingForDeadStop;
-
-	// Parsing -----
-
 	// Type check -----
+	SLContainer<DynamicArray<TCJob, HeapAllocator>> jobsWaitingForIdentifier;
+	MXContainer<DynamicArray<TCJob, HeapAllocator>> jobsWaitingForOverload;
+	MXContainer<DynamicArray<TCJob, HeapAllocator>> jobsWaitingForStaticDef;
+	MXContainer<DynamicArray<TCJob, HeapAllocator>> jobsWaitingForProcedure;
+	MXContainer<DynamicArray<TCJob, HeapAllocator>> jobsWaitingForType;
+	MXContainer<DynamicArray<TCJob, HeapAllocator>> jobsWaitingForDeadStop;
+
 	Array<TCScopeName, HeapAllocator> tcPrimitiveTypes;
 
 	RWContainer<BucketArray<Value, HeapAllocator, 1024>> globalValues;
@@ -262,8 +231,7 @@ struct Context
 	RWContainer<DynamicArray<BEFinalProcedure, HeapAllocator>> beFinalProcedureData;
 };
 
-struct ParseJobData : JobDataCommon
-{
+struct ParseJobData : JobDataCommon {
 	u32 fileIdx;
 	u64 currentTokenIdx;
 	Token *token;
@@ -273,8 +241,7 @@ struct ParseJobData : JobDataCommon
 	BucketArray<ASTType, HeapAllocator, 1024> astTypes;
 };
 
-struct TCJobData : JobDataCommon
-{
+struct TCJobData : JobDataCommon {
 	ASTExpression *expression;
 	bool onStaticContext;
 	DynamicArray<TCScope, JobAllocator> scopeStack;
@@ -283,8 +250,7 @@ struct TCJobData : JobDataCommon
 	BucketArray<Value, HeapAllocator, 1024> localValues;
 };
 
-struct IRJobData : JobDataCommon
-{
+struct IRJobData : JobDataCommon {
 	u32 procedureIdx;
 	BucketArray<IRInstruction, LinearAllocator, 256> irInstructions;
 	DynamicArray<IRScope, JobAllocator> irStack;
@@ -317,8 +283,7 @@ struct IRJobData : JobDataCommon
 
 FatSourceLocation ExpandSourceLocation(Context *context, SourceLocation loc);
 void __Log(Context *context, SourceLocation loc, String str, const char *inFile, const char *inFunc,
-		int inLine)
-{
+		int inLine) {
 	FatSourceLocation fatLoc = ExpandSourceLocation(context, loc);
 
 	// Info
@@ -368,20 +333,17 @@ void __Log(Context *context, SourceLocation loc, String str, const char *inFile,
 #define LogNote(context, loc, str) \
 	do { __Log(context, loc, TStringConcat("NOTE: "_s, str), __FILE__, __func__, __LINE__); } while (0)
 
-bool CompilerAddSourceFile(Context *context, String filename, SourceLocation loc)
-{
+bool CompilerAddSourceFile(Context *context, String filename, SourceLocation loc) {
 	FileHandle file = SYSOpenFileRead(filename);
 	if (file == SYS_INVALID_FILE_HANDLE)
 		LogError(context, loc,
 				TPrintF("Included source file \"%S\" doesn't exist!", filename));
 
-	for (int i = 0; i < context->sourceFiles.size; ++i)
-	{
+	for (int i = 0; i < context->sourceFiles.size; ++i) {
 		String currentFilename = context->sourceFiles[i].name;
 		FileHandle currentFile = SYSOpenFileRead(currentFilename);
 
-		if (SYSAreSameFile(file, currentFile))
-		{
+		if (SYSAreSameFile(file, currentFile)) {
 			LogWarning(context, loc, TPrintF("File included twice: \"%S\"", filename));
 			LogNote(context, context->sourceFiles[i].includeLoc, "First included here"_s);
 			return false;
@@ -404,13 +366,7 @@ bool CompilerAddSourceFile(Context *context, String filename, SourceLocation loc
 		.fileIdx = fileIdx };
 	Fiber fiber = SYSCreateFiber(ParseJobProc, (void *)args);
 
-	SYSSpinlockLock(&context->readyQueueTailLock);
-
-	u32 queueIdx = context->readyQueueTail;
-	context->readyJobs[queueIdx] = fiber;
-	context->readyQueueTail = (context->readyQueueTail + 1) % context->readyJobs.size;
-
-	SYSSpinlockUnlock(&context->readyQueueTailLock);
+	MTQueueEnqueue(&context->readyJobs, fiber);
 
 	return true;
 }
@@ -423,8 +379,7 @@ struct ThreadArgs {
 // Procedure to switch to a different job.
 // We leave the information in thread local storage for the scheduler fiber.
 // Call this when a job finishes too, the scheduler will delete the fiber and free resources.
-void SwitchJob(Context *context, JobState yieldReason,
-		JobYieldContext yieldContext) {
+void SwitchJob(Context *context, TCYieldReason yieldReason, TCYieldContext yieldContext) {
 	t_previousFiber = GetCurrentFiber();
 	t_previousYieldReason = yieldReason;
 	t_previousYieldContext = yieldContext;
@@ -438,34 +393,22 @@ void SwitchJob(Context *context, JobState yieldReason,
 void SchedulerProc(Context *context) {
 	while (true) {
 		Fiber nextFiber = SYS_INVALID_FIBER_HANDLE;
-		u32 queueIdx = U32_MAX;
 		while (true) {
-			SYSSpinlockLock(&context->readyQueueHeadLock);
-
-			u32 head = context->readyQueueHead;
-			u32 tail = context->readyQueueTail;
-			if (head != tail) {
-				queueIdx = context->readyQueueHead;
-				context->readyQueueHead = (head + 1) % context->readyJobs.size;
+			Fiber *dequeue = MTQueueDequeue(&context->readyJobs);
+			if (dequeue) {
+				nextFiber = *dequeue;
+				*dequeue = (Fiber)0xFEEEFEEEFEEEFEEE;
+				break;
 			}
-
-			SYSSpinlockUnlock(&context->readyQueueHeadLock);
-
-			if (queueIdx == U32_MAX) {
+			else {
 				s32 threadsDoingWork = _InterlockedDecrement((LONG volatile *)&context->threadsDoingWork);
 				if (threadsDoingWork == 0) {
 #define WAKE_UP_ONE(_waitingJobs) \
 					{ \
 						auto jobsWaiting = context-> _waitingJobs .Get(); \
 						if (jobsWaiting->size) { \
-							Job *job = &(*jobsWaiting)[0]; \
-							\
-							SYSSpinlockLock(&context->readyQueueTailLock); \
-							\
-							context->readyJobs[context->readyQueueTail] = job->fiber; \
-							context->readyQueueTail = (context->readyQueueTail + 1) % context->readyJobs.size; \
-							\
-							SYSSpinlockUnlock(&context->readyQueueTailLock); \
+							TCJob *job = &(*jobsWaiting)[0]; \
+							MTQueueEnqueue(&context->readyJobs, job->fiber); \
 							\
 							/* Remove */ \
 							*job = (*jobsWaiting)[--jobsWaiting->size]; \
@@ -489,53 +432,49 @@ void SchedulerProc(Context *context) {
 				Sleep(1);
 				_InterlockedIncrement((LONG volatile *)&context->threadsDoingWork);
 			}
-			else break;
 		}
-
-		nextFiber = context->readyJobs[queueIdx];
-		context->readyJobs[queueIdx] = (Fiber)0xFEEEFEEEFEEEFEEE;
 
 		SYSSwitchToFiber(nextFiber);
 
 		// Queue previous job now that its fiber is not running
 		ASSERT(t_previousFiber != (Fiber)0xDEADBEEFDEADBEEF);
 		if (t_previousFiber != SYS_INVALID_FIBER_HANDLE) {
-			Job job;
+			TCJob job;
 			job.fiber = t_previousFiber;
 			job.context = t_previousYieldContext;
 			switch (t_previousYieldReason) {
-			case JOBSTATE_DONE:
+			case TCYIELDREASON_DONE:
 			{
 				DeleteFiber(t_previousFiber);
 			} break;
-			case JOBSTATE_WAITING_FOR_STOP:
+			case TCYIELDREASON_WAITING_FOR_STOP:
 			{
 				auto jobs = context->jobsWaitingForDeadStop.Get();
 				*DynamicArrayAdd(&jobs) = job;
 			} break;
-			case JOBSTATE_UNKNOWN_IDENTIFIER:
+			case TCYIELDREASON_UNKNOWN_IDENTIFIER:
 			{
 				auto jobs = context->jobsWaitingForIdentifier.Get();
 				*DynamicArrayAdd(&jobs) = job;
 				SYSUnlockForRead(&context->tcGlobalNames.rwLock);
 			} break;
-			case JOBSTATE_UNKNOWN_OVERLOAD:
+			case TCYIELDREASON_UNKNOWN_OVERLOAD:
 			{
 				auto jobs = context->jobsWaitingForOverload.Get();
 				*DynamicArrayAdd(&jobs) = job;
 			} break;
-			case JOBSTATE_PROC_BODY_NOT_READY:
+			case TCYIELDREASON_PROC_BODY_NOT_READY:
 			{
 				auto jobs = context->jobsWaitingForProcedure.Get();
 				*DynamicArrayAdd(&jobs) = job;
 			} break;
-			case JOBSTATE_STATIC_DEF_NOT_READY:
+			case TCYIELDREASON_STATIC_DEF_NOT_READY:
 			{
 				auto jobs = context->jobsWaitingForStaticDef.Get();
 				*DynamicArrayAdd(&jobs) = job;
 				SYSUnlockForRead(&context->staticDefinitions.rwLock);
 			} break;
-			case JOBSTATE_TYPE_NOT_READY:
+			case TCYIELDREASON_TYPE_NOT_READY:
 			{
 				auto jobs = context->jobsWaitingForType.Get();
 				*DynamicArrayAdd(&jobs) = job;
@@ -550,16 +489,12 @@ void SchedulerProc(Context *context) {
 }
 
 // Procedure where worker threads begin executing
-int WorkerThreadProc(void *args)
-{
+int WorkerThreadProc(void *args) {
 	ThreadArgs *threadArgs = (ThreadArgs *)args;
 	Context *context = threadArgs->context;
 
 	t_threadIndex = threadArgs->threadIndex;
 
-	ThreadDataCommon threadData = {};
-	threadData.lastJobIdx = U32_MAX;
-	SYSSetThreadData(context->tlsIndex, &threadData);
 	MemoryInitThread(1 * 1024 * 1024);
 
 	_InterlockedIncrement((LONG volatile *)&context->threadsDoingWork);
@@ -576,7 +511,7 @@ int WorkerThreadProc(void *args)
 #include "Parser.cpp"
 #include "TypeChecker.cpp"
 #include "IRGen.cpp"
-//#include "PrintIR.cpp" // @Fix
+#include "PrintIR.cpp"
 #include "x64.cpp"
 
 int main(int argc, char **argv)
@@ -608,12 +543,9 @@ int main(int argc, char **argv)
 	memory.linearMem = SYSAlloc(Memory::linearMemSize);
 	MemoryInit(&memory);
 
-	ThreadDataCommon threadData = {};
-	SYSSetThreadData(context.tlsIndex, &threadData);
 	MemoryInitThread(1 * 1024 * 1024);
 
-	if (argc < 2)
-	{
+	if (argc < 2) {
 		Print("Usage: compiler [options] <source file>\n");
 		return 1;
 	}
@@ -630,11 +562,9 @@ int main(int argc, char **argv)
 #else
 	*DynamicArrayAdd(&inputFiles) = "core/basic_linux.emi"_s;
 #endif
-	for (int argIdx = 1; argIdx < argc; ++argIdx)
-	{
+	for (int argIdx = 1; argIdx < argc; ++argIdx) {
 		char *arg = argv[argIdx];
-		if (arg[0] == '-')
-		{
+		if (arg[0] == '-') {
 			if (strcmp("-noPromote", arg) == 0)
 				context.config.dontPromoteMemoryToRegisters = true;
 			else if (strcmp("-noBuildExecutable", arg) == 0)

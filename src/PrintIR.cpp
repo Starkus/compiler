@@ -1,6 +1,6 @@
 s64 PIRPrintOut(Context *context, const char *format, ...)
 {
-	char *buffer = (char *)g_memory->framePtr;
+	char *buffer = (char *)t_threadMemPtr;
 
 	va_list args;
 	va_start(args, format);
@@ -34,7 +34,7 @@ s64 PIRPrintOut(Context *context, const char *format, ...)
 	}
 
 #if DEBUG_BUILD
-	memset(g_memory->framePtr, 0xCD, size + 1);
+	memset(t_threadMemPtr, 0x00, size + 1);
 #endif
 
 	va_end(args);
@@ -43,7 +43,7 @@ s64 PIRPrintOut(Context *context, const char *format, ...)
 
 inline String PIRValueToStr(Context *context, u32 valueIdx)
 {
-	Value v = GetValueRead(context, valueIdx);
+	Value v = IRGetValue(context, valueIdx);
 	if (v.name)
 		return TPrintF("$v%u\"%S\"", valueIdx, v.name);
 	else
@@ -70,7 +70,7 @@ void PrintIRValue(Context *context, IRValue value)
 	else if (value.valueType == IRVALUETYPE_IMMEDIATE_FLOAT)
 		PIRPrintOut(context, "%f", value.immediateFloat);
 	else if (value.valueType == IRVALUETYPE_IMMEDIATE_STRING)
-		PIRPrintOut(context, "\"%S\"", context->stringLiterals[value.immediateStringIdx]);
+		PIRPrintOut(context, "\"%S\"", context->stringLiterals.unsafe[value.immediateStringIdx]);
 	else
 		PIRPrintOut(context, "???");
 
@@ -201,16 +201,15 @@ void PrintIRInstruction(Context *context, IRInstruction inst)
 	} break;
 	case IRINSTRUCTIONTYPE_PROCEDURE_CALL:
 	{
-		if (inst.procedureCall.out.valueType != IRVALUETYPE_INVALID)
-		{
-			PrintIRValue(context, inst.procedureCall.out);
+		if (inst.procedureCall.returnValues.size) {
+			for (int i = 0; i < inst.procedureCall.returnValues.size; ++i)
+				PrintIRValue(context, inst.procedureCall.returnValues[i]);
 			PIRPrintOut(context, " := ");
 		}
 		String name = GetProcedureRead(context, inst.procedureCall.procedureIdx).name;
 		PIRPrintOut(context, "call %S(", name);
 
-		for (int i = 0; i < inst.procedureCall.parameters.size; ++i)
-		{
+		for (int i = 0; i < inst.procedureCall.parameters.size; ++i) {
 			if (i) PIRPrintOut(context, ", ");
 			PrintIRValue(context, inst.procedureCall.parameters[i]);
 		}
@@ -218,9 +217,9 @@ void PrintIRInstruction(Context *context, IRInstruction inst)
 	} break;
 	case IRINSTRUCTIONTYPE_PROCEDURE_CALL_INDIRECT:
 	{
-		if (inst.procedureCall.out.valueType != IRVALUETYPE_INVALID)
-		{
-			PrintIRValue(context, inst.procedureCall.out);
+		if (inst.procedureCall.returnValues.size) {
+			for (int i = 0; i < inst.procedureCall.returnValues.size; ++i)
+				PrintIRValue(context, inst.procedureCall.returnValues[i]);
 			PIRPrintOut(context, " := ");
 		}
 		PIRPrintOut(context, "call virtual ");
@@ -289,87 +288,86 @@ void PrintIRInstruction(Context *context, IRInstruction inst)
 	}
 }
 
-void PrintIRInstructions(Context *context)
-{
-	BucketArrayInit(&context->outputBuffer);
+void PrintJobIRInstructions(Context *context) {
+	static Mutex printIRMutex = SYSCreateMutex();
+
+	IRJobData *jobData = (IRJobData *)SYSGetFiberData(context->flsIndex);
 
 	const int padding = 20;
-	const u64 procedureCount = BucketArrayCount(&context->procedures.LockForRead());
-	context->procedures.UnlockForRead();
-	for (int procedureIdx = 1; procedureIdx < procedureCount; ++procedureIdx)
-	{
-		Procedure proc = GetProcedureRead(context, procedureIdx);
-		TypeInfoProcedure procTypeInfo = GetTypeInfo(context, proc.typeTableIdx).procedureInfo;
+	Procedure proc = GetProcedureRead(context, jobData->procedureIdx);
+	TypeInfoProcedure procTypeInfo = GetTypeInfo(context, proc.typeTableIdx).procedureInfo;
 
-		String returnTypeStr = TypeInfoToString(context, procTypeInfo.returnTypeTableIdx);
+	SYSMutexLock(printIRMutex);
 
-		String name = proc.name;
-		PIRPrintOut(context, "proc %S(", name);
+	BucketArrayInit(&context->outputBuffer);
 
-		for (int paramIdx = 0; paramIdx < proc.parameterValues.size; ++paramIdx)
-		{
-			if (paramIdx) PIRPrintOut(context, ", ");
-			u32 paramValueIdx = proc.parameterValues[paramIdx];
-			Value paramValue = GetValueRead(context, paramValueIdx);
-			String typeStr = TypeInfoToString(context, paramValue.typeTableIdx);
-			PIRPrintOut(context, "%S : %S", paramValue.name, typeStr);
-		}
-		PIRPrintOut(context, ")");
-		if (procTypeInfo.returnTypeTableIdx != TYPETABLEIDX_VOID)
-			PIRPrintOut(context, " -> %S", returnTypeStr);
-		PIRPrintOut(context, "\n");
+	String name = proc.name;
+	PIRPrintOut(context, "proc %S(", name);
 
-		const auto &instructions = context->irProcedureInstructions[procedureIdx];
-		const u64 instructionCount = BucketArrayCount(&instructions);
-		for (int instructionIdx = 0; instructionIdx < instructionCount; ++instructionIdx)
-		{
-			IRInstruction inst = instructions[instructionIdx];
-
-			if (inst.type == IRINSTRUCTIONTYPE_LABEL)
-			{
-				PIRPrintOut(context, "%S: ", inst.label->name);
-
-				IRInstruction nextInst = instructions[instructionIdx + 1];
-				if (nextInst.type != IRINSTRUCTIONTYPE_LABEL &&
-					nextInst.type != IRINSTRUCTIONTYPE_PUSH_SCOPE &&
-					nextInst.type != IRINSTRUCTIONTYPE_POP_SCOPE &&
-					nextInst.type != IRINSTRUCTIONTYPE_NOP)
-				{
-					for (s64 i = inst.label->name.size + 2; i < padding; ++i)
-						PIRPrintOut(context, " ");
-
-					++instructionIdx;
-					if (instructionIdx >= instructionCount)
-						break;
-					inst = instructions[instructionIdx];
-				}
-				else
-				{
-					PIRPrintOut(context, "\n");
-					continue;
-				}
-			}
-			else if (inst.type == IRINSTRUCTIONTYPE_PUSH_SCOPE ||
-					 inst.type == IRINSTRUCTIONTYPE_POP_SCOPE ||
-					 inst.type == IRINSTRUCTIONTYPE_NOP)
-				continue;
-			else
-			{
-				for (s64 i = 0; i < padding; ++i)
-					PIRPrintOut(context, " ");
-			}
-
-			PrintIRInstruction(context, inst);
+	for (int paramIdx = 0; paramIdx < proc.parameterValues.size; ++paramIdx) {
+		if (paramIdx) PIRPrintOut(context, ", ");
+		u32 paramValueIdx = proc.parameterValues[paramIdx];
+		Value paramValue = IRGetValue(context, paramValueIdx);
+		String typeStr = TypeInfoToString(context, paramValue.typeTableIdx);
+		PIRPrintOut(context, "%S : %S", paramValue.name, typeStr);
+	}
+	PIRPrintOut(context, ")");
+	if (procTypeInfo.returnTypeIndices.size) {
+		PIRPrintOut(context, " -> ");
+		for (int returnIdx = 0; returnIdx < procTypeInfo.returnTypeIndices.size; ++returnIdx) {
+			if (returnIdx) PIRPrintOut(context, ", ");
+			String returnTypeStr = TypeInfoToString(context,
+					procTypeInfo.returnTypeIndices[returnIdx]);
+			PIRPrintOut(context, "%S", returnTypeStr);
 		}
 	}
 	PIRPrintOut(context, "\n");
 
+	const auto &instructions = jobData->irInstructions;
+	const u64 instructionCount = BucketArrayCount(&instructions);
+	for (int instructionIdx = 0; instructionIdx < instructionCount; ++instructionIdx) {
+		IRInstruction inst = instructions[instructionIdx];
+
+		if (inst.type == IRINSTRUCTIONTYPE_LABEL) {
+			PIRPrintOut(context, "%S: ", inst.label->name);
+
+			IRInstruction nextInst = instructions[instructionIdx + 1];
+			if (nextInst.type != IRINSTRUCTIONTYPE_LABEL &&
+				nextInst.type != IRINSTRUCTIONTYPE_PUSH_SCOPE &&
+				nextInst.type != IRINSTRUCTIONTYPE_POP_SCOPE &&
+				nextInst.type != IRINSTRUCTIONTYPE_NOP) {
+				for (s64 i = inst.label->name.size + 2; i < padding; ++i)
+					PIRPrintOut(context, " ");
+
+				++instructionIdx;
+				if (instructionIdx >= instructionCount)
+					break;
+				inst = instructions[instructionIdx];
+			}
+			else {
+				PIRPrintOut(context, "\n");
+				continue;
+			}
+		}
+		else if (inst.type == IRINSTRUCTIONTYPE_PUSH_SCOPE ||
+				 inst.type == IRINSTRUCTIONTYPE_POP_SCOPE ||
+				 inst.type == IRINSTRUCTIONTYPE_NOP)
+			continue;
+		else {
+			for (s64 i = 0; i < padding; ++i)
+				PIRPrintOut(context, " ");
+		}
+
+		PrintIRInstruction(context, inst);
+	}
+	PIRPrintOut(context, "\n");
+
 	FileHandle outputFile = SYSOpenFileWrite("output/ir.txt"_s);
-	for (int i = 0; i < context->outputBuffer.buckets.size; ++i)
-	{
+	for (int i = 0; i < context->outputBuffer.buckets.size; ++i) {
 		SYSWriteFile(outputFile,
 				context->outputBuffer.buckets[i].data,
 				context->outputBuffer.buckets[i].size);
 	}
 	SYSCloseFile(outputFile);
+	SYSMutexUnlock(printIRMutex);
 }

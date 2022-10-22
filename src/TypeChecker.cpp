@@ -186,7 +186,7 @@ inline bool TCIsAnyOtherJobRunning(Context *context)
 {
 	if (context->threadsDoingWork > 1)
 		return true;
-	if (context->readyQueueHead != context->readyQueueTail)
+	if (!MTQueueIsEmpty(&context->readyJobs))
 		return true;
 
 	return false;
@@ -196,7 +196,7 @@ inline bool TCIsAnyOtherJobRunningOrWaiting(Context *context)
 {
 	if (context->threadsDoingWork > 1)
 		return true;
-	if (context->readyQueueHead != context->readyQueueTail)
+	if (!MTQueueIsEmpty(&context->readyJobs))
 		return true;
 #if 0
 	if (context->jobsWaitingForIdentifier.unsafe.size)
@@ -216,11 +216,11 @@ inline bool TCIsAnyOtherJobRunningOrWaiting(Context *context)
 	return false;
 }
 
-inline bool TCAreaAllJobFinished(Context *context)
+inline bool TCAreAllJobFinished(Context *context)
 {
 	if (context->threadsDoingWork > 0)
 		return false;
-	if (context->readyQueueHead != context->readyQueueTail)
+	if (!MTQueueIsEmpty(&context->readyJobs))
 		return false;
 	if (context->jobsWaitingForIdentifier.unsafe.size)
 		return false;
@@ -258,7 +258,7 @@ inline TypeInfo TCGetTypeInfo(Context *context, u32 typeTableIdx) {
 		while (result.typeCategory == TYPECATEGORY_INVALID) {
 			// IMPORTANT! The scheduler will unlock typeTable once it adds this job to the waiting
 			// list, so we don't miss waking it up when adding the identifier.
-			SwitchJob(context, JOBSTATE_TYPE_NOT_READY, { .index = typeTableIdx });
+			SwitchJob(context, TCYIELDREASON_TYPE_NOT_READY, { .index = typeTableIdx });
 			result = typeTable[typeTableIdx];
 		}
 
@@ -339,8 +339,7 @@ String TypeInfoToString(Context *context, u32 typeTableIdx) {
 			result = "cc:win64 ("_s;
 		else if (typeInfo.procedureInfo.callingConvention == CC_LINUX64)
 			result = "cc:linux64 ("_s;
-		for (int i = 0; i < typeInfo.procedureInfo.parameters.size; ++i)
-		{
+		for (int i = 0; i < typeInfo.procedureInfo.parameters.size; ++i) {
 			if (i) result = TStringConcat(result, ", "_s);
 			String paramStr = TypeInfoToString(context, typeInfo.procedureInfo.parameters[i].typeTableIdx);
 			result = TStringConcat(result, paramStr);
@@ -351,8 +350,9 @@ String TypeInfoToString(Context *context, u32 typeTableIdx) {
 				result = TPrintF("%S = %f", result, defaultValue.valueAsFloat);
 		}
 		result = TStringConcat(result, ") -> "_s);
-		for (int i = 0; i < typeInfo.procedureInfo.returnTypeIndices.size; ++i)
-		{
+		if (!typeInfo.procedureInfo.returnTypeIndices.size)
+			result = TStringConcat(result, "void"_s);
+		else for (int i = 0; i < typeInfo.procedureInfo.returnTypeIndices.size; ++i) {
 			if (i) result = TStringConcat(result, ", "_s);
 			String paramStr = TypeInfoToString(context, typeInfo.procedureInfo.returnTypeIndices[i]);
 			result = TStringConcat(result, paramStr);
@@ -415,7 +415,7 @@ TCScopeName TCFindScopeName(Context *context, String name)
 
 		// IMPORTANT! The scheduler will unlock tcGlobalNames once it adds this job to the waiting
 		// list, so we don't miss waking it up when adding the identifier.
-		SwitchJob(context, JOBSTATE_UNKNOWN_IDENTIFIER, { .identifier = name });
+		SwitchJob(context, TCYIELDREASON_UNKNOWN_IDENTIFIER, { .identifier = name });
 	}
 }
 
@@ -451,7 +451,7 @@ inline StaticDefinition TCGetStaticDefinition(Context *context, u32 staticDefini
 
 		// IMPORTANT! The scheduler will unlock staticDefinitions once it adds this job to the
 		// waiting list, so we don't miss waking it up when adding the identifier.
-		SwitchJob(context, JOBSTATE_STATIC_DEF_NOT_READY, { .index = staticDefinitionIdx });
+		SwitchJob(context, TCYIELDREASON_STATIC_DEF_NOT_READY, { .index = staticDefinitionIdx });
 
 		// Need to lock it again!
 		SYSLockForRead(&context->staticDefinitions.rwLock);
@@ -476,16 +476,9 @@ inline void TCUpdateStaticDefinition(Context *context, u32 staticDefinitionIdx,
 		// Wake up any job waiting for this static def to be ready.
 		auto jobsWaiting = context->jobsWaitingForStaticDef.Get();
 		for (int i = 0; i < jobsWaiting->size; ) {
-			Job *job = &(*jobsWaiting)[i];
+			TCJob *job = &(*jobsWaiting)[i];
 			if (job->context.index == staticDefinitionIdx) {
-				SYSSpinlockLock(&context->readyQueueTailLock);
-
-				u32 queueIdx = context->readyQueueTail;
-				context->readyJobs[queueIdx] = job->fiber;
-				context->readyQueueTail = (context->readyQueueTail + 1) % context->readyJobs.size;
-
-				SYSSpinlockUnlock(&context->readyQueueTailLock);
-
+				MTQueueEnqueue(&context->readyJobs, job->fiber);
 				// Remove
 				*job = (*jobsWaiting)[--jobsWaiting->size];
 			}
@@ -1276,16 +1269,9 @@ u32 TypeCheckStructDeclaration(Context *context, String name, bool isUnion,
 		// Wake up any jobs that were waiting for this built-in type
 		auto jobsWaiting = context->jobsWaitingForType.Get();
 		for (int i = 0; i < jobsWaiting->size; ) {
-			Job *job = &(*jobsWaiting)[i];
+			TCJob *job = &(*jobsWaiting)[i];
 			if (job->context.index == typeTableIdx) {
-				SYSSpinlockLock(&context->readyQueueTailLock);
-
-				u32 queueIdx = context->readyQueueTail;
-				context->readyJobs[queueIdx] = job->fiber;
-				context->readyQueueTail = (context->readyQueueTail + 1) % context->readyJobs.size;
-
-				SYSSpinlockUnlock(&context->readyQueueTailLock);
-
+				MTQueueEnqueue(&context->readyJobs, job->fiber);
 				// Remove
 				*job = (*jobsWaiting)[--jobsWaiting->size];
 			}
@@ -1625,16 +1611,9 @@ inline void TCAddScopeName(Context *context, TCScopeName scopeName) {
 		// Wake up any jobs that were waiting for this name
 		auto jobsWaiting = context->jobsWaitingForIdentifier.Get();
 		for (int i = 0; i < jobsWaiting->size; ) {
-			Job *job = &(*jobsWaiting)[i];
+			TCJob *job = &(*jobsWaiting)[i];
 			if (StringEquals(job->context.identifier, scopeName.name)) {
-				SYSSpinlockLock(&context->readyQueueTailLock);
-
-				u32 queueIdx = context->readyQueueTail;
-				context->readyJobs[queueIdx] = job->fiber;
-				context->readyQueueTail = (context->readyQueueTail + 1) % context->readyJobs.size;
-
-				SYSSpinlockUnlock(&context->readyQueueTailLock);
-
+				MTQueueEnqueue(&context->readyJobs, job->fiber);
 				// Remove
 				*job = (*jobsWaiting)[--jobsWaiting->size];
 			}
@@ -2806,7 +2785,7 @@ bool LookForOperatorOverload(Context *context, ASTExpression *expression)
 				if (!TCIsAnyOtherJobRunningOrWaiting(context))
 					LogError(context, expression->any.loc, TPrintF("COMPILER ERROR! Body of inline "
 							"procedure \"%S\" for operator overload never type checked", proc.name));
-				SwitchJob(context, JOBSTATE_PROC_BODY_NOT_READY, { .index = overload.procedureIdx });
+				SwitchJob(context, TCYIELDREASON_PROC_BODY_NOT_READY, { .index = overload.procedureIdx });
 				proc = GetProcedureRead(context, overload.procedureIdx);
 			}
 
@@ -2829,7 +2808,7 @@ bool LookForOperatorOverload(Context *context, ASTExpression *expression)
 			break;
 		}
 
-		SwitchJob(context, JOBSTATE_UNKNOWN_OVERLOAD, { .index = (u32)op });
+		SwitchJob(context, TCYIELDREASON_UNKNOWN_OVERLOAD, { .index = (u32)op });
 		if (!TCIsAnyOtherJobRunningOrWaiting(context))
 			break;
 	}
@@ -2929,21 +2908,14 @@ void TypeCheckExpression(Context *context, ASTExpression *expression)
 			};
 			Fiber fiber = SYSCreateFiber(IRJobExpression, (void *)args);
 
-			SYSSpinlockLock(&context->readyQueueTailLock);
-
-			u32 queueIdx = context->readyQueueTail;
-			context->readyJobs[queueIdx] = fiber;
-			context->readyQueueTail = (context->readyQueueTail + 1) % context->readyJobs.size;
-
-			SYSSpinlockUnlock(&context->readyQueueTailLock);
+			MTQueueEnqueue(&context->readyJobs, fiber);
 		}
 	} break;
 	case ASTNODETYPE_STATIC_DEFINITION:
 	{
 		ASTStaticDefinition *astStaticDef = &expression->staticDefinition;
 
-		switch (astStaticDef->expression->nodeType)
-		{
+		switch (astStaticDef->expression->nodeType) {
 		case ASTNODETYPE_PROCEDURE_DECLARATION:
 		{
 			BucketArray<Value, HeapAllocator, 1024> oldLocalValues = jobData->localValues;
@@ -3040,16 +3012,9 @@ void TypeCheckExpression(Context *context, ASTExpression *expression)
 			// Wake up any jobs that were waiting for this procedure body
 			auto jobsWaiting = context->jobsWaitingForProcedure.Get();
 			for (int i = 0; i < jobsWaiting->size; ) {
-				Job *job = &(*jobsWaiting)[i];
+				TCJob *job = &(*jobsWaiting)[i];
 				if (job->context.index == procedureIdx) {
-					SYSSpinlockLock(&context->readyQueueTailLock);
-
-					u32 queueIdx = context->readyQueueTail;
-					context->readyJobs[queueIdx] = job->fiber;
-					context->readyQueueTail = (context->readyQueueTail + 1) % context->readyJobs.size;
-
-					SYSSpinlockUnlock(&context->readyQueueTailLock);
-
+					MTQueueEnqueue(&context->readyJobs, job->fiber);
 					// Remove
 					*job = (*jobsWaiting)[--jobsWaiting->size];
 				}
@@ -3084,13 +3049,7 @@ void TypeCheckExpression(Context *context, ASTExpression *expression)
 					jobData->localValues = {}; // Safety clear
 					Fiber fiber = SYSCreateFiber(IRJobProcedure, (void *)args);
 
-					SYSSpinlockLock(&context->readyQueueTailLock);
-
-					u32 queueIdx = context->readyQueueTail;
-					context->readyJobs[queueIdx] = fiber;
-					context->readyQueueTail = (context->readyQueueTail + 1) % context->readyJobs.size;
-
-					SYSSpinlockUnlock(&context->readyQueueTailLock);
+					MTQueueEnqueue(&context->readyJobs, fiber);
 				}
 			}
 
@@ -3368,7 +3327,7 @@ void TypeCheckExpression(Context *context, ASTExpression *expression)
 					if (!TCIsAnyOtherJobRunningOrWaiting(context))
 						LogError(context, expression->any.loc, TPrintF("COMPILER ERROR! Body of "
 									"inline procedure \"%S\" never type checked", proc.name));
-					SwitchJob(context, JOBSTATE_PROC_BODY_NOT_READY, { .index = procedureIdx });
+					SwitchJob(context, TCYIELDREASON_PROC_BODY_NOT_READY, { .index = procedureIdx });
 					proc = GetProcedureRead(context, procedureIdx);
 				}
 			}
@@ -3403,27 +3362,26 @@ void TypeCheckExpression(Context *context, ASTExpression *expression)
 		ASSERT(TCGetTypeInfo(context, procedureTypeIdx).typeCategory == TYPECATEGORY_PROCEDURE);
 		TypeInfoProcedure procTypeInfo = TCGetTypeInfo(context, procedureTypeIdx).procedureInfo;
 
-		if (procTypeInfo.returnTypeIndices.size == 1)
+		if (procTypeInfo.returnTypeIndices.size == 0)
+			expression->typeTableIdx = TYPETABLEIDX_VOID;
+		else if (procTypeInfo.returnTypeIndices.size == 1)
 			expression->typeTableIdx = procTypeInfo.returnTypeIndices[0];
 
 		// Type check arguments
 		s64 requiredArguments = 0;
-		for (int i = 0; i < procTypeInfo.parameters.size; ++i)
-		{
+		for (int i = 0; i < procTypeInfo.parameters.size; ++i) {
 			if (procTypeInfo.parameters[i].defaultValue.type == CONSTANTTYPE_INVALID)
 				++requiredArguments;
 		}
 
 		s64 totalArguments = procTypeInfo.parameters.size;
-		if (procTypeInfo.isVarargs)
-		{
+		if (procTypeInfo.isVarargs) {
 			if (requiredArguments > givenArguments)
 				LogError(context, expression->any.loc,
 						TPrintF("Procedure \"%S\" needs at least %d arguments but only %d were given",
 							procName, requiredArguments, givenArguments));
 		}
-		else
-		{
+		else {
 			if (requiredArguments > givenArguments)
 				LogError(context, expression->any.loc,
 						TPrintF("Procedure \"%S\" needs at least %d arguments but only %d were given",
@@ -3436,16 +3394,14 @@ void TypeCheckExpression(Context *context, ASTExpression *expression)
 		}
 
 		s64 argsToCheck = Min(givenArguments, totalArguments);
-		for (int argIdx = 0; argIdx < argsToCheck; ++argIdx)
-		{
+		for (int argIdx = 0; argIdx < argsToCheck; ++argIdx) {
 			ASTExpression *arg = astProcCall->arguments[argIdx];
 			u32 paramTypeIdx = procTypeInfo.parameters[argIdx].typeTableIdx;
 			TypeCheckResult typeCheckResult = CheckTypesMatchAndSpecialize(context,
 					paramTypeIdx, arg);
 			arg->typeTableIdx = typeCheckResult.rightTableIdx;
 
-			if (typeCheckResult.errorCode != TYPECHECK_COOL)
-			{
+			if (typeCheckResult.errorCode != TYPECHECK_COOL) {
 				String paramStr = TypeInfoToString(context, paramTypeIdx);
 				String givenStr = TypeInfoToString(context, arg->typeTableIdx);
 				LogError(context, arg->any.loc, TPrintF("When calling procedure \"%S\": type of "
@@ -3466,8 +3422,7 @@ void TypeCheckExpression(Context *context, ASTExpression *expression)
 
 		bool foundOverload = LookForOperatorOverload(context, expression);
 
-		if (!foundOverload)
-		{
+		if (!foundOverload) {
 			u32 expressionType = input->typeTableIdx;
 			switch (expression->unaryOperation.op)
 			{
@@ -3486,8 +3441,7 @@ void TypeCheckExpression(Context *context, ASTExpression *expression)
 					LogError(context, expression->any.loc, "Trying to get pointer to temporal value"_s);
 
 				ASTExpression *e = input;
-				switch (e->nodeType)
-				{
+				switch (e->nodeType) {
 				case ASTNODETYPE_IDENTIFIER:
 				{
 					if (e->identifier.type == NAMETYPE_VARIABLE)
@@ -3516,8 +3470,7 @@ void TypeCheckExpression(Context *context, ASTExpression *expression)
 		ASTExpression *leftHand  = expression->binaryOperation.leftHand;
 		ASTExpression *rightHand = expression->binaryOperation.rightHand;
 
-		if (expression->binaryOperation.op == TOKEN_OP_MEMBER_ACCESS)
-		{
+		if (expression->binaryOperation.op == TOKEN_OP_MEMBER_ACCESS) {
 			TypeCheckExpression(context, leftHand);
 
 			if (IsExpressionAType(context, leftHand))
@@ -3526,9 +3479,7 @@ void TypeCheckExpression(Context *context, ASTExpression *expression)
 			u32 leftHandTypeIdx = leftHand->typeTableIdx;
 
 			if (rightHand->nodeType != ASTNODETYPE_IDENTIFIER)
-			{
 				LogError(context, rightHand->any.loc, "Expected identifier after member access operator"_s);
-			}
 
 			rightHand->identifier.type = NAMETYPE_STRUCT_MEMBER;
 
@@ -3537,14 +3488,12 @@ void TypeCheckExpression(Context *context, ASTExpression *expression)
 
 			TypeInfo structTypeInfo = TCGetTypeInfo(context, structTypeIdx);
 
-			if (structTypeInfo.typeCategory == TYPECATEGORY_POINTER)
-			{
+			if (structTypeInfo.typeCategory == TYPECATEGORY_POINTER) {
 				u32 pointedTypeIdx = structTypeInfo.pointerInfo.pointedTypeTableIdx;
 				structTypeInfo = TCGetTypeInfo(context, pointedTypeIdx);
 			}
 
-			if (structTypeInfo.typeCategory == TYPECATEGORY_ARRAY)
-			{
+			if (structTypeInfo.typeCategory == TYPECATEGORY_ARRAY) {
 				// This is only for dynamic size arrays!
 				if (structTypeInfo.arrayInfo.count != 0)
 					LogError(context, expression->any.loc, "Array left of '.' has to be of dynamic size! ([])"_s);
@@ -3552,8 +3501,7 @@ void TypeCheckExpression(Context *context, ASTExpression *expression)
 				structTypeInfo = TCGetTypeInfo(context, TYPETABLEIDX_ARRAY_STRUCT);
 			}
 			else if (structTypeInfo.typeCategory != TYPECATEGORY_STRUCT &&
-					 structTypeInfo.typeCategory != TYPECATEGORY_UNION)
-			{
+					 structTypeInfo.typeCategory != TYPECATEGORY_UNION) {
 				LogError(context, expression->any.loc, "Left of '.' has to be a struct/union"_s);
 			}
 
@@ -4204,16 +4152,9 @@ void TypeCheckExpression(Context *context, ASTExpression *expression)
 		// Wake up any job waiting for this overload.
 		auto jobsWaiting = context->jobsWaitingForOverload.Get();
 		for (int i = 0; i < jobsWaiting->size; ) {
-			Job *job = &(*jobsWaiting)[i];
+			TCJob *job = &(*jobsWaiting)[i];
 			if (job->context.index == astOverload->op) {
-				SYSSpinlockLock(&context->readyQueueTailLock);
-
-				u32 queueIdx = context->readyQueueTail;
-				context->readyJobs[queueIdx] = job->fiber;
-				context->readyQueueTail = (context->readyQueueTail + 1) % context->readyJobs.size;
-
-				SYSSpinlockUnlock(&context->readyQueueTailLock);
-
+				MTQueueEnqueue(&context->readyJobs, job->fiber);
 				// Remove
 				*job = (*jobsWaiting)[--jobsWaiting->size];
 			}
@@ -4305,7 +4246,7 @@ void TypeCheckExpression(Context *context, ASTExpression *expression)
 			}
 			if (!TCIsAnyOtherJobRunning(context))
 				goto done;
-			SwitchJob(context, JOBSTATE_WAITING_FOR_STOP, {});
+			SwitchJob(context, TCYIELDREASON_WAITING_FOR_STOP, {});
 		}
 
 done:
@@ -4393,7 +4334,7 @@ void TCJobProc(void *args) {
 	TypeCheckExpression(context, expression);
 
 	SYSFree(jobData.jobMem);
-	SwitchJob(context, JOBSTATE_DONE, {});
+	SwitchJob(context, TCYIELDREASON_DONE, {});
 }
 
 void GenerateTypeCheckJobs(Context *context, ASTExpression *expression) {
@@ -4416,13 +4357,7 @@ void GenerateTypeCheckJobs(Context *context, ASTExpression *expression) {
 			.expression = expression };
 		Fiber fiber = SYSCreateFiber(TCJobProc, (void *)args);
 
-		SYSSpinlockLock(&context->readyQueueTailLock);
-
-		u32 queueIdx = context->readyQueueTail;
-		context->readyJobs[queueIdx] = fiber;
-		context->readyQueueTail = (context->readyQueueTail + 1) % context->readyJobs.size;
-
-		SYSSpinlockUnlock(&context->readyQueueTailLock);
+		MTQueueEnqueue(&context->readyJobs, fiber);
 	} break;
 	case ASTNODETYPE_GARBAGE:
 	case ASTNODETYPE_RETURN:

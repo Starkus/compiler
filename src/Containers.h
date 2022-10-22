@@ -849,3 +849,58 @@ u64 FindInBigArray(u32 *buffer, u64 count, u32 item)
 	}
 	return U64_MAX;
 }
+
+template <typename T>
+struct MTQueue {
+	T *buffer;
+	u32 capacity;
+	volatile u32 head;
+	volatile u32 tail;
+	volatile u32 headLock;
+	volatile u32 tailLock;
+};
+
+template <typename Allocator, typename T>
+void MTQueueInit(MTQueue<T> *queue, u32 capacity) {
+	*queue = {
+		.buffer = (T *)Allocator::Alloc(sizeof(T) * capacity, alignof(T)),
+		.capacity = capacity,
+		.head = 0,
+		.tail = 0,
+		.headLock = 0,
+		.tailLock = 0 };
+}
+
+template <typename T>
+void MTQueueEnqueue(MTQueue<T> *queue, T item) {
+	SYSSpinlockLock(&queue->tailLock);
+	u32 tail = queue->tail;
+	queue->buffer[tail] = item;
+	queue->tail = (tail + 1) % queue->capacity;
+	SYSSpinlockUnlock(&queue->tailLock);
+}
+
+template <typename T>
+T *MTQueueDequeue(MTQueue<T> *queue) {
+	T *result = nullptr;
+	SYSSpinlockLock(&queue->headLock);
+	u32 head = queue->head;
+	u32 tail = queue->tail;
+	if (head != tail) {
+		queue->head = (head + 1) % queue->capacity;
+		result = &queue->buffer[head];
+	}
+	SYSSpinlockUnlock(&queue->headLock);
+	return result;
+}
+
+template <typename T>
+bool MTQueueIsEmpty(MTQueue<T> *queue) {
+	SYSSpinlockLock(&queue->headLock);
+	SYSSpinlockLock(&queue->tailLock);
+	u32 head = queue->head;
+	u32 tail = queue->tail;
+	SYSSpinlockUnlock(&queue->tailLock);
+	SYSSpinlockUnlock(&queue->headLock);
+	return head == tail;
+}

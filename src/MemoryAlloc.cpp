@@ -8,10 +8,9 @@ void MemoryInit(Memory *memory)
 
 void MemoryInitThread(u64 size)
 {
-	ThreadDataCommon *threadData = (ThreadDataCommon *)SYSGetThreadData(g_memory->tlsIndex);
-	threadData->threadMem = SYSAlloc(size);
-	threadData->threadMemPtr = threadData->threadMem;
-	threadData->threadMemSize = size;
+	t_threadMem = SYSAlloc(size);
+	t_threadMemPtr = t_threadMem;
+	t_threadMemSize = size;
 }
 
 void MemoryInitJob(u64 size)
@@ -76,14 +75,12 @@ void LinearAllocator::Free(void *ptr)
 
 void *ThreadAllocator::Alloc(u64 size, int alignment)
 {
-	ThreadDataCommon *threadData = (ThreadDataCommon *)SYSGetThreadData(g_memory->tlsIndex);
-
 #if DEBUG_BUILD
-	if (*((u64 *)threadData->threadMemPtr) != 0x0000000000000000) CRASH; // Watch for memory corruption
-	ASSERT((u8 *)threadData->threadMemPtr + size < (u8 *)threadData->threadMem +
-			threadData->threadMemSize); // Out of memory!
+	if (*((u64 *)t_threadMemPtr) != 0x0000000000000000) CRASH; // Watch for memory corruption
+	ASSERT((u8 *)t_threadMemPtr + size < (u8 *)t_threadMem +
+			t_threadMemSize); // Out of memory!
 #endif
-	u64 result = (u64)threadData->threadMemPtr;
+	u64 result = (u64)t_threadMemPtr;
 
 #if ENABLE_ALIGNMENT
 	// Alignment
@@ -96,7 +93,7 @@ void *ThreadAllocator::Alloc(u64 size, int alignment)
 	result &= ~alignmentMask;
 #endif
 
-	threadData->threadMemPtr = (u8 *)result + size;
+	t_threadMemPtr = (u8 *)result + size;
 
 	return (void *)result;
 }

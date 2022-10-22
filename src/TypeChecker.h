@@ -102,13 +102,11 @@ struct TypeInfoArray
 	u64 count;
 };
 
-struct ProcedureParameter
-{
+struct ProcedureParameter {
 	u32 typeTableIdx;
 	Constant defaultValue;
 };
-struct TypeInfoProcedure
-{
+struct TypeInfoProcedure {
 	bool isVarargs;
 	Array<ProcedureParameter, LinearAllocator> parameters;
 	DynamicArray<u32, LinearAllocator> returnTypeIndices;

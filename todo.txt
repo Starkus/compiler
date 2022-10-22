@@ -1,3 +1,5 @@
+* Local procedures can access the parent's local variables.
+* Proper error message when initializing a variable to multiple values.
 * Error when assignment is not at statement level.
 * There seems to be a problem with empty varargs.
 * Fix errortests, they are not failing properly.

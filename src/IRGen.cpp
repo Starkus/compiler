@@ -49,56 +49,46 @@ u32 IRNewValue(Context *context, Value value)
 	return (u32)idx;
 }
 
-inline Value IRGetValue(Context *context, u32 valueIdx)
-{
+inline Value IRGetValue(Context *context, u32 valueIdx) {
 	ASSERT(valueIdx > 0);
 	if (valueIdx & VALUE_GLOBAL_BIT)
 		return GetGlobalValue(context, valueIdx);
-	else
-	{
+	else {
 		IRJobData *jobData = (IRJobData *)SYSGetFiberData(context->flsIndex);
 		return jobData->localValues[valueIdx];
 	}
 }
 
-inline Value *IRGetLocalValue(Context *context, u32 valueIdx)
-{
+inline Value *IRGetLocalValue(Context *context, u32 valueIdx) {
 	ASSERT(valueIdx > 0);
 	ASSERT(!(valueIdx & VALUE_GLOBAL_BIT));
 	IRJobData *jobData = (IRJobData *)SYSGetFiberData(context->flsIndex);
 	return &jobData->localValues[valueIdx];
 }
 
-inline void IRUpdateValue(Context *context, u32 valueIdx, Value *value)
-{
-	if (valueIdx & VALUE_GLOBAL_BIT)
-	{
+inline void IRUpdateValue(Context *context, u32 valueIdx, Value *value) {
+	if (valueIdx & VALUE_GLOBAL_BIT) {
 		auto globalValues = context->globalValues.GetForWrite();
 		(*globalValues)[valueIdx & VALUE_GLOBAL_MASK] = *value;
 	}
-	else
-	{
+	else {
 		IRJobData *jobData = (IRJobData *)SYSGetFiberData(context->flsIndex);
 		jobData->localValues[valueIdx] = *value;
 	}
 }
 
-inline void IRSetValueFlags(Context *context, u32 valueIdx, u32 flags)
-{
-	if (valueIdx & VALUE_GLOBAL_BIT)
-	{
+inline void IRSetValueFlags(Context *context, u32 valueIdx, u32 flags) {
+	if (valueIdx & VALUE_GLOBAL_BIT) {
 		auto globalValues = context->globalValues.GetForWrite();
 		(*globalValues)[valueIdx & VALUE_GLOBAL_MASK].flags |= flags;
 	}
-	else
-	{
+	else {
 		IRJobData *jobData = (IRJobData *)SYSGetFiberData(context->flsIndex);
 		jobData->localValues[valueIdx].flags |= flags;
 	}
 }
 
-IRLabel *NewLabel(Context *context, String name)
-{
+IRLabel *NewLabel(Context *context, String name) {
 	IRJobData *jobData = (IRJobData *)SYSGetFiberData(context->flsIndex);
 
 	IRLabel result = {};
@@ -111,23 +101,20 @@ IRLabel *NewLabel(Context *context, String name)
 	return newLabel;
 }
 
-void PushIRScope(Context *context)
-{
+void PushIRScope(Context *context) {
 	IRJobData *jobData = (IRJobData *)SYSGetFiberData(context->flsIndex);
 	IRScope newScope = {};
 	DynamicArrayInit(&newScope.deferredStatements, 4);
 	*DynamicArrayAdd(&jobData->irStack) = newScope;
 }
 
-inline void PopIRScope(Context *context)
-{
+inline void PopIRScope(Context *context) {
 	IRJobData *jobData = (IRJobData *)SYSGetFiberData(context->flsIndex);
 	ASSERT(jobData->irStack.size);
 	--jobData->irStack.size;
 }
 
-inline IRInstruction *AddInstruction(Context *context)
-{
+inline IRInstruction *AddInstruction(Context *context) {
 	IRJobData *jobData = (IRJobData *)SYSGetFiberData(context->flsIndex);
 	return BucketArrayAdd(&jobData->irInstructions);
 }
@@ -2471,6 +2458,7 @@ skipGeneratingVarargsArray:
 	return result;
 }
 
+void PrintJobIRInstructions(Context *context);
 void IRGenMain(Context *context)
 {
 	{
@@ -2511,7 +2499,7 @@ void IRJobProcedure(void *args)
 		(*jobs)[jobIdx].title = SStringConcat("IR:"_s, GetProcedureRead(context, procedureIdx).name);
 #endif
 
-		ASSERT(context->jobs.unsafe[jobIdx].state == JOBSTATE_READY);
+		ASSERT(context->jobs.unsafe[jobIdx].state == TCYIELDREASON_READY);
 		ASSERT(context->jobs.unsafe[jobIdx].isRunning);
 		threadData->lastJobIdx = U32_MAX;
 	}
@@ -2525,10 +2513,13 @@ void IRJobProcedure(void *args)
 
 	IRGenProcedure(context, procedureIdx, {});
 
+	if (context->config.logIR)
+		PrintJobIRInstructions(context);
+
 	BackendJobProc(context, procedureIdx);
 
 	SYSFree(jobData.jobMem);
-	SwitchJob(context, JOBSTATE_DONE, {});
+	SwitchJob(context, TCYIELDREASON_DONE, {});
 }
 
 void IRJobExpression(void *args)
@@ -2543,7 +2534,7 @@ void IRJobExpression(void *args)
 
 #if 0
 	{
-		ASSERT(context->jobs.unsafe[jobIdx].state == JOBSTATE_READY);
+		ASSERT(context->jobs.unsafe[jobIdx].state == TCYIELDREASON_READY);
 		ASSERT(context->jobs.unsafe[jobIdx].isRunning);
 
 #if !FINAL_BUILD
@@ -2556,5 +2547,5 @@ void IRJobExpression(void *args)
 	IRGenFromExpression(context, argsStruct->expression);
 
 	SYSFree(jobData.jobMem);
-	SwitchJob(context, JOBSTATE_DONE, {});
+	SwitchJob(context, TCYIELDREASON_DONE, {});
 }

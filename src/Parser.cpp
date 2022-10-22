@@ -1545,7 +1545,7 @@ void ParseJobProc(void *args) {
 	{
 		auto jobs = context->jobs.Get();
 		ASSERT((*jobs)[jobIdx].isRunning);
-		(*jobs)[jobIdx].state = JOBSTATE_READY;
+		(*jobs)[jobIdx].state = TCYIELDREASON_READY;
 
 #if !FINAL_BUILD
 		(*jobs)[jobIdx].title = SStringConcat("P:"_s, context->sourceFiles[fileIdx].name);
@@ -1567,19 +1567,14 @@ void ParseJobProc(void *args) {
 		PrintAST(context);
 
 	SYSFree(jobData.jobMem);
-	t_previousYieldReason = JOBSTATE_DONE;
-	SwitchJob(context, JOBSTATE_DONE, {});
+	t_previousYieldReason = TCYIELDREASON_DONE;
+	SwitchJob(context, TCYIELDREASON_DONE, {});
 }
 
 void ParserMain(Context *context) {
 	DynamicArrayInit(&context->sourceFiles, 64);
 
-	ArrayInit(&context->readyJobs, 1024);
-	context->readyJobs.size = 1024;
-	context->readyQueueHead = 0;
-	context->readyQueueTail = 0;
-	context->readyQueueHeadLock = 0;
-	context->readyQueueTailLock = 0;
+	MTQueueInit<HeapAllocator>(&context->readyJobs, 1024);
 
 	DynamicArrayInit(&context->jobsWaitingForIdentifier.unsafe, 64);
 	DynamicArrayInit(&context->jobsWaitingForOverload.unsafe, 64);

@@ -190,10 +190,8 @@ PIXELFORMATDESCRIPTOR :: struct
 	dwVisibleMask : u32;
 	dwDamageMask : u32;
 };
-LARGE_INTEGER :: union
-{
-	struct
-	{
+LARGE_INTEGER :: union {
+	struct {
 		lowPart : u64;
 		highPart : u64;
 	};

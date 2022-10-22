@@ -16,6 +16,7 @@ typedef CONDITION_VARIABLE ConditionVariable;
 #define SYS_INVALID_THREAD_HANDLE INVALID_HANDLE_VALUE
 #define SYS_INVALID_FIBER_HANDLE nullptr
 #define SYS_MAX_PATH MAX_PATH
+#define THREADLOCAL __declspec(thread)
 #if DEBUG_BUILD
 #define BREAK __debugbreak()
 #else
@@ -24,8 +25,7 @@ typedef CONDITION_VARIABLE ConditionVariable;
 #define ASSUME(expr) __assume(expr)
 #define PANIC do { BREAK; exit(1); } while(0)
 
-struct Mutex
-{
+struct Mutex {
 	HANDLE mutexHandle;
 };
 

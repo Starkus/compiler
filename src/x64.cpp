@@ -61,8 +61,7 @@ X64Instruction *X64InstructionStreamAdvance(X64InstructionStream *iterator)
 }
 
 s64 PrintOut(Context *context, const char *format, ...) {
-	ThreadDataCommon *jobData = (ThreadDataCommon *)SYSGetThreadData(g_memory->tlsIndex);
-	char *buffer = (char *)jobData->threadMemPtr;
+	char *buffer = (char *)t_threadMemPtr;
 
 	va_list args;
 	va_start(args, format);
@@ -93,7 +92,7 @@ s64 PrintOut(Context *context, const char *format, ...) {
 	}
 
 #if DEBUG_BUILD
-	memset(jobData->threadMemPtr, 0x00, size + 1);
+	memset(t_threadMemPtr, 0x00, size + 1);
 #endif
 
 	va_end(args);
@@ -2609,24 +2608,20 @@ void BackendGenerateOutputFile(Context *context)
 #endif
 
 	// String literals
-	IRJobData *jobData = (IRJobData *)SYSGetThreadData(context->tlsIndex);
 	{
 		auto stringLiterals = context->stringLiterals.GetForRead();
 		s64 strCount = (s64)BucketArrayCount(&stringLiterals);
 		s64 bytesWritten = 0;
-		for (s64 stringLiteralIdx = 1; stringLiteralIdx < strCount; ++stringLiteralIdx)
-		{
+		for (s64 stringLiteralIdx = 1; stringLiteralIdx < strCount; ++stringLiteralIdx) {
 			PrintOut(context, "_str_%lld DB ", stringLiteralIdx);
 			String str = (*stringLiterals)[stringLiteralIdx];
 			s64 size = str.size;
 			bool first = true;
-			char *buffer = (char *)jobData->jobMemPtr;
+			char *buffer = (char *)t_threadMemPtr;
 			char *out = buffer;
 			const u8 *in = (const u8 *)str.data;
-			for (int i = 0; i < str.size; ++i)
-			{
-				if (*in == '\\')
-				{
+			for (int i = 0; i < str.size; ++i) {
+				if (*in == '\\') {
 					if (!first) PrintOut(context, ", ");
 
 					++in;
@@ -2647,22 +2642,18 @@ void BackendGenerateOutputFile(Context *context)
 					--size; // Don't count backslash for string size.
 					first = false;
 				}
-				else if (*in == '\'')
-				{
+				else if (*in == '\'') {
 					// MASM uses ' as string delimiters
 					if (!first) PrintOut(context, ", ");
 					PrintOut(context, "27H");
 					++in;
 					first = false;
 				}
-				else
-				{
+				else {
 					*out++ = *in++;
-
-					if (i == str.size - 1 || *in == '\\' || *in == '\'')
-					{
+					if (i == str.size - 1 || *in == '\\' || *in == '\'') {
 						*out++ = 0;
-						jobData->jobMemPtr = out;
+						t_threadMemPtr = out;
 
 						if (!first) PrintOut(context, ", ");
 						PrintOut(context, "'%s'", buffer);
@@ -2673,7 +2664,7 @@ void BackendGenerateOutputFile(Context *context)
 				}
 			}
 			PrintOut(context, "\n");
-			jobData->jobMemPtr = buffer;
+			t_threadMemPtr = buffer;
 			bytesWritten += size;
 		}
 	}
@@ -2684,12 +2675,10 @@ void BackendGenerateOutputFile(Context *context)
 	{
 		auto staticVars = context->irStaticVariables.GetForRead();
 		const u64 staticVariableCount = staticVars->size;
-		for (int staticVariableIdx = 0; staticVariableIdx < staticVariableCount; ++staticVariableIdx)
-		{
+		for (int staticVariableIdx = 0; staticVariableIdx < staticVariableCount; ++staticVariableIdx) {
 			IRStaticVariable staticVar = (*staticVars)[staticVariableIdx];
 			if (staticVar.initialValue.valueType != IRVALUETYPE_INVALID &&
-					staticVar.initialValue.immediate != 0)
-			{
+					staticVar.initialValue.immediate != 0) {
 				Value value = GetGlobalValue(context, staticVar.valueIdx);
 
 				String name = value.name;
@@ -2709,12 +2698,10 @@ void BackendGenerateOutputFile(Context *context)
 
 		// Uninitialized
 		// @Speed: don't iterate this twice...
-		for (int staticVariableIdx = 0; staticVariableIdx < staticVariableCount; ++staticVariableIdx)
-		{
+		for (int staticVariableIdx = 0; staticVariableIdx < staticVariableCount; ++staticVariableIdx) {
 			IRStaticVariable staticVar = (*staticVars)[staticVariableIdx];
 			if (staticVar.initialValue.valueType == IRVALUETYPE_INVALID ||
-					staticVar.initialValue.immediate == 0)
-			{
+					staticVar.initialValue.immediate == 0) {
 				Value value = GetGlobalValue(context, staticVar.valueIdx);
 
 				String name = value.name;
@@ -2733,8 +2720,7 @@ void BackendGenerateOutputFile(Context *context)
 
 #if IS_LINUX
 	u64 procedureCount = BucketArrayCount(&context->procedures.GetForRead());
-	for (int procedureIdx = 1; procedureIdx < procedureCount; ++procedureIdx)
-	{
+	for (int procedureIdx = 1; procedureIdx < procedureCount; ++procedureIdx) {
 		Procedure proc = GetProcedureRead(context, procedureIdx);
 		if (proc.isExported)
 			PrintOut(context, "GLOBAL %S\n", proc.name);
@@ -2743,13 +2729,11 @@ void BackendGenerateOutputFile(Context *context)
 
 	{
 		auto externalVars = context->irExternalVariables.GetForRead();
-		for (int varIdx = 0; varIdx < externalVars->size; ++varIdx)
-		{
+		for (int varIdx = 0; varIdx < externalVars->size; ++varIdx) {
 			Value v = GetGlobalValue(context, (*externalVars)[varIdx]);
 			s64 size = GetTypeInfo(context, v.typeTableIdx).size;
 			String type;
-			switch (size)
-			{
+			switch (size) {
 				case 1: type = "BYTE"_s; break;
 				case 2: type = "WORD"_s; break;
 				case 4: type = "DWORD"_s; break;
@@ -2767,8 +2751,7 @@ void BackendGenerateOutputFile(Context *context)
 	{
 		auto externalProcedures = context->externalProcedures.GetForRead();
 		u64 externalProcedureCount = BucketArrayCount(&externalProcedures);
-		for (u32 procedureIdx = 1; procedureIdx < externalProcedureCount; ++procedureIdx)
-		{
+		for (u32 procedureIdx = 1; procedureIdx < externalProcedureCount; ++procedureIdx) {
 			// Don't declare hard-coded procedures that are already included in the asm file.
 			u32 externalProcIdx = procedureIdx | PROCEDURE_EXTERNAL_BIT;
 			if (externalProcIdx == copyMemoryProcIdx || externalProcIdx == zeroMemoryProcIdx)
