@@ -13,8 +13,7 @@ screenHeight :s s32 = 600;
 deviceContext :s ^void;
 glContext :s ^void;
 
-Win32WindowCallback :: #convention(win64) (hWnd : ^void, message : u32, wParam : u64, lParam : u64) -> u64
-{
+Win32WindowCallback :: #convention(win64) (hWnd : ^void, message : u32, wParam : u64, lParam : u64) -> u64 {
 	if message == WM_CLOSE
 		PostQuitMessage(0);
 	else if message == WM_SIZE
@@ -29,8 +28,7 @@ Win32WindowCallback :: #convention(win64) (hWnd : ^void, message : u32, wParam :
 	return 0;
 }
 
-LoadShader :: (filename : String, shaderType : GLenum) -> GLuint
-{
+LoadShader :: (filename : String, shaderType : GLenum) -> GLuint {
 	filenameCStr : [512] u8 = ?;
 	for filename filenameCStr[i] = @it;
 	filenameCStr[filename.size] = 0;
@@ -38,8 +36,7 @@ LoadShader :: (filename : String, shaderType : GLenum) -> GLuint
 		FILE_ATTRIBUTE_NORMAL, null);
 	defer CloseHandle(fileHandle);
 
-	if fileHandle == INVALID_HANDLE_VALUE
-	{
+	if fileHandle == INVALID_HANDLE_VALUE {
 		PrintF("Shader file \"%\" not found!\n", filename);
 		return 0;
 	}
@@ -50,8 +47,7 @@ LoadShader :: (filename : String, shaderType : GLenum) -> GLuint
 	bytesRead : u32 = ?;
 	success := ReadFile(fileHandle, fileBuffer, fileSize, ^bytesRead, null);
 
-	if !success
-	{
+	if !success {
 		PrintF("Couldn't read shader file \"%\"!\n", filename);
 		return 0;
 	}
@@ -66,8 +62,7 @@ LoadShader :: (filename : String, shaderType : GLenum) -> GLuint
 
 	logSize : s32;
 	glGetShaderiv(shaderId, GL_INFO_LOG_LENGTH, ^logSize);
-	if (logSize > 0)
-	{
+	if (logSize > 0) {
 		shaderLog : String;
 		shaderLog.size = cast(u64)logSize;
 		shaderLog.data = cast(^u8)VirtualAlloc(0, shaderLog.size, MEM_COMMIT, PAGE_READWRITE);
@@ -79,8 +74,135 @@ LoadShader :: (filename : String, shaderType : GLenum) -> GLuint
 	return shaderId;
 }
 
-InitOpenGLContext :: ()
-{
+LoadTextureErrorCode :: enum {
+	LOADTEXTURE_OK = 0,
+	LOADTEXTURE_FILE_NOT_FOUND = 1,
+	LOADTEXTURE_COULD_NOT_READ = 2,
+	LOADTEXTURE_WRONG_FORMAT = 3
+};
+LoadTexture :: (filename : String) -> GLuint, LoadTextureErrorCode {
+	textureId : GLuint;
+	file := CreateFileA(
+			filename.data,
+			GENERIC_READ,
+			FILE_SHARE_READ,
+			null,
+			OPEN_EXISTING,
+			FILE_ATTRIBUTE_NORMAL,
+			null
+			);
+	if file == INVALID_HANDLE_VALUE {
+		PrintF("Failed to open texture file %!\n", filename);
+		return 0, LOADTEXTURE_FILE_NOT_FOUND;
+	}
+	defer CloseHandle(file);
+	fileSize := GetFileSize(file, null);
+	fileBuffer := cast(^u8)VirtualAlloc(0, fileSize, MEM_COMMIT, PAGE_READWRITE);
+	defer VirtualFree(fileBuffer, 0, MEM_RELEASE);
+	bytesRead : u32;
+	success := ReadFile(
+			file,
+			fileBuffer,
+			fileSize,
+			^bytesRead,
+			null
+			);
+	if !success {
+		PrintF("Failed to read texture file %!\n", filename);
+		return 0, LOADTEXTURE_COULD_NOT_READ;
+	}
+
+	scan := fileBuffer;
+
+	magicNumber := @cast(^u16)scan;
+	if magicNumber != 0x4D42 {
+		PrintF("File is not a valid BMP file \"%\"\n", filename);
+		return 0, LOADTEXTURE_WRONG_FORMAT;
+	}
+	scan += 10;
+
+	imageDataOffset := @cast(^u32)scan;
+	scan += 4;
+	headerSize := @cast(^u32)scan;
+	scan += 4;
+	textureWidth  := @cast(^u32)scan;
+	scan += 4;
+	textureHeight := @cast(^u32)scan;
+	scan += 6;
+	bitsPerPixel := @cast(^u16)scan;
+	scan += 2;
+
+	if headerSize < 40 {
+		PrintF("File BMP format not supported \"%\"\n", filename);
+		return 0, LOADTEXTURE_WRONG_FORMAT;
+	}
+
+	compressionMethod := @cast(^u16)scan;
+	if compressionMethod != 3 { // BI_BITFIELDS
+		PrintF("File BMP compression method not supported \"%\"\n", filename);
+		return 0, LOADTEXTURE_WRONG_FORMAT;
+	}
+	scan += 24;
+
+	redBitfield := @cast(^u32)scan;
+	scan += 4;
+	greenBitfield := @cast(^u32)scan;
+	scan += 4;
+	blueBitfield := @cast(^u32)scan;
+	scan += 4;
+	alphaBitfield := ~(redBitfield | greenBitfield | blueBitfield);
+
+	bitfield := redBitfield;
+	redShift : u8 = 0;
+	while ((bitfield & 1) == 0) {
+		redShift += 1;
+		bitfield >>= 1;
+	}
+	bitfield = greenBitfield;
+	greenShift : u8 = 0;
+	while ((bitfield & 1) == 0) {
+		greenShift += 1;
+		bitfield >>= 1;
+	}
+	bitfield = blueBitfield;
+	blueShift : u8 = 0;
+	while ((bitfield & 1) == 0) {
+		blueShift += 1;
+		bitfield >>= 1;
+	}
+	bitfield = alphaBitfield;
+	alphaShift : u8 = 0;
+	while ((bitfield & 1) == 0) {
+		alphaShift += 1;
+		bitfield >>= 1;
+	}
+
+	imageData := fileBuffer + imageDataOffset;
+
+	// Repack colors
+	pixel : ^u32 = cast(^u32)imageData;
+	for 0..textureWidth * textureHeight {
+		word := @pixel;
+
+		red   : u32 = ((word & redBitfield)   >> redShift)   & 0xFF;
+		green : u32 = ((word & greenBitfield) >> greenShift) & 0xFF;
+		blue  : u32 = ((word & blueBitfield)  >> blueShift)  & 0xFF;
+		alpha : u32 = ((word & alphaBitfield) >> alphaShift) & 0xFF;
+
+		@pixel = (alpha << 24) | (blue << 16) | (green << 8) | red;
+		pixel += 4;
+	}
+
+	glGenTextures(1, ^textureId);
+	glBindTexture(GL_TEXTURE_2D, textureId);
+	glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, cast(s32)textureWidth, cast(s32)textureHeight, 0,
+			GL_RGBA, GL_UNSIGNED_BYTE, imageData);
+	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+	return textureId, LOADTEXTURE_OK;
+}
+
+InitOpenGLContext :: () {
 	windowClass : WNDCLASSEXA;
 	hInstance := ^__ImageBase;
 	windowClassName := "window\0";
@@ -167,18 +289,33 @@ InitOpenGLContext :: ()
 	wglMakeCurrent(deviceContext, glContext);
 }
 
-Input :: struct
-{
+g_randomSeed :s u32;
+RandomFloat :: () -> f32 {
+	rand: u32 = g_randomSeed;
+	rand = ((rand >> 16) ^ rand) * 0x45d9f3b;
+	rand = ((rand >> 16) ^ rand) * 0x45d9f3b;
+	rand = ((rand >> 16) ^ rand);
+	g_randomSeed = rand;
+	return cast(f32)(rand % 8192) / 4096.0 - 1.0;
+}
+
+Input :: struct {
 	left : bool;
 	right : bool;
 	shoot : bool;
 };
 input :s Input;
 
-Enemy :: struct
-{
+Enemy :: struct {
 	pos : v2;
 	life : s32;
+};
+
+Particle :: struct {
+	pos : v2;
+	vel : v2;
+	life : f32;
+	duration : f32;
 };
 
 ENEMY_WIDTH   :: 64.0;
@@ -188,14 +325,17 @@ BULLET_HEIGHT :: 24.0;
 playerPos :s v2;
 bullets :s [] v2;
 enemies :s [] Enemy;
+particles :s [] Particle;
 
-Main :: () -> s64
-{
+Main :: () -> s64 {
 	InitOpenGLContext();
 
 	// Allocate memory for entities
 	bullets.data = cast(^v2)VirtualAlloc(0, cast(u64)(256 * sizeof(v2)), MEM_COMMIT, PAGE_READWRITE);
-	enemies.data = cast(^v2)VirtualAlloc(0, cast(u64)(256 * sizeof(v2)), MEM_COMMIT, PAGE_READWRITE);
+	enemies.data = cast(^v2)VirtualAlloc(0, cast(u64)(256 * sizeof(Enemy)), MEM_COMMIT, PAGE_READWRITE);
+	particles.data = cast(^v2)VirtualAlloc(0, cast(u64)(256 * sizeof(Particle)), MEM_COMMIT, PAGE_READWRITE);
+
+	g_randomSeed = 123456;
 
 	// Init player
 	playerPos = { cast(f32)screenWidth / 2.0, 50.0 };
@@ -230,8 +370,7 @@ Main :: () -> s64
 		bottom := 0.0;
 		near :=  1.0;
 		far  := -1.0;
-		projectionMatrix =
-		{
+		projectionMatrix = {
 			2.0/(right-left),	0.0,				0.0,			-(right+left)/(right-left),
 			0.0,				2.0/(top-bottom),	0.0,			-(top+bottom)/(top-bottom),
 			0.0,				0.0,				2.0/(far-near),	-(far+near)/(far-near),
@@ -255,8 +394,7 @@ Main :: () -> s64
 
 	logSize : s32 = ?;
 	glGetProgramiv(programId, GL_INFO_LOG_LENGTH, ^logSize);
-	if logSize > 0
-	{
+	if logSize > 0 {
 		programLog : String;
 		programLog.size = cast(u64)logSize;
 		programLog.data = cast(^u8)VirtualAlloc(0, programLog.size, MEM_COMMIT, PAGE_READWRITE);
@@ -271,68 +409,25 @@ Main :: () -> s64
 	projectionUniform := glGetUniformLocation(programId, uniformName.data);
 	glUniformMatrix4fv(projectionUniform, 1, false, ^projectionMatrix.m00);
 
-	uniformName = "dimensions\0";
-	dimensionsUniform := glGetUniformLocation(programId, uniformName.data);
-
 	glEnable(GL_BLEND);
 	glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
 
-	// Read texture
-	textureId : GLuint;
-	{
-		texFileName := "examples/texture.bmp\0";
-		file := CreateFileA(
-				texFileName.data,
-				GENERIC_READ,
-				FILE_SHARE_READ,
-				null,
-				OPEN_EXISTING,
-				FILE_ATTRIBUTE_NORMAL,
-				null
-				);
-		if file == INVALID_HANDLE_VALUE
-		{
-			Print("Failed to open texture file!\n");
-			return 1;
-		}
-		defer CloseHandle(file);
-		fileSize := GetFileSize(file, null);
-		fileBuffer := cast(^u8)VirtualAlloc(0, fileSize, MEM_COMMIT, PAGE_READWRITE);
-		defer VirtualFree(fileBuffer, 0, MEM_RELEASE);
-		bytesRead : u32;
-		success := ReadFile(
-				file,
-				fileBuffer,
-				fileSize,
-				^bytesRead,
-				null
-				);
-		if !success
-		{
-			Print("Failed to read texture file!\n");
-			return 1;
-		}
-
-		scan := fileBuffer;
-		scan += 10;
-		imageDataOffset := @cast(^u32)scan;
-		scan += 4;
-		headerSize := @cast(^u32)scan;
-		scan += 4;
-		textureWidth  := @cast(^u32)scan;
-		scan += 4;
-		textureHeight := @cast(^u32)scan;
-		scan += 6;
-		bitsPerPixel := @cast(^u16)scan;
-		imageData := fileBuffer + imageDataOffset;
-
-		glGenTextures(1, ^textureId);
-		glBindTexture(GL_TEXTURE_2D, textureId);
-		glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, cast(s32)textureWidth, cast(s32)textureHeight, 0,
-				GL_RGBA, GL_UNSIGNED_BYTE, imageData);
-		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
-		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
-	}
+	textureId:		 GLuint = ?;
+	textureIdShip:	 GLuint = ?;
+	textureIdBullet: GLuint = ?;
+	textureIdEnemy:	 GLuint = ?;
+	textureIdSmoke:	 GLuint = ?;
+	textureError: LoadTextureErrorCode;
+	textureId,		 textureError = LoadTexture("examples/texture.bmp\0");
+	if textureError != LOADTEXTURE_OK return 1;
+	textureIdShip,	 textureError = LoadTexture("examples/ship.bmp\0");
+	if textureError != LOADTEXTURE_OK return 1;
+	textureIdBullet, textureError = LoadTexture("examples/player_bullet.bmp\0");
+	if textureError != LOADTEXTURE_OK return 1;
+	textureIdEnemy,	 textureError = LoadTexture("examples/enemy.bmp\0");
+	if textureError != LOADTEXTURE_OK return 1;
+	textureIdSmoke,	 textureError = LoadTexture("examples/smoke.bmp\0");
+	if textureError != LOADTEXTURE_OK return 1;
 
 	lastPerformanceCounter : u64;
 	performanceFrequency : u64;
@@ -347,8 +442,7 @@ Main :: () -> s64
 	deltaTime : f32;
 
 	message : MSG = ?;
-	while running
-	{
+	while running {
 		// Timer
 		{
 			largeInteger : LARGE_INTEGER;
@@ -373,8 +467,7 @@ Main :: () -> s64
 		{
 			shootCooldown :s f32;
 			shootCooldown += deltaTime;
-			if input.shoot && shootCooldown >= 0
-			{
+			if input.shoot && shootCooldown >= 0 {
 				bullets[bullets.size] = V2Subtract(playerPos, { 20.0, 0.0 });
 				bullets.size += 1;
 				bullets[bullets.size] = V2Add(playerPos, { 20.0, 0.0 });
@@ -383,27 +476,38 @@ Main :: () -> s64
 			}
 		}
 
-		for bullets
-		{
+		for bullets {
 			it.y += 1000.0 * deltaTime;
 			if it.y > screenHeight
 				remove;
 		}
 
 		// Player bullet collisions
-		halfBulletWidth  := BULLET_WIDTH  * 0.5;
-		halfBulletHeight := BULLET_HEIGHT * 0.5;
-		halfEnemyWidth   := ENEMY_WIDTH   * 0.5;
-		halfEnemyHeight  := ENEMY_HEIGHT  * 0.5;
-		for bulletIdx, bullet : bullets
-		{
-			for enemyIdx, enemy : enemies
-			{
-				if (bullet.x - halfBulletWidth  < enemy.pos.x + halfEnemyWidth &&
-					bullet.x + halfBulletWidth  > enemy.pos.x - halfEnemyWidth &&
-					bullet.y - halfBulletHeight < enemy.pos.y + halfEnemyHeight &&
-					bullet.y + halfBulletHeight > enemy.pos.y - halfEnemyHeight)
-				{
+		HALF_BULLET_WIDTH  :: BULLET_WIDTH  * 0.5;
+		HALF_BULLET_HEIGHT :: BULLET_HEIGHT * 0.5;
+		HALF_ENEMY_WIDTH   :: ENEMY_WIDTH   * 0.5;
+		HALF_ENEMY_HEIGHT  :: ENEMY_HEIGHT  * 0.5;
+		for bulletIdx, bullet : bullets {
+			for enemyIdx, enemy : enemies {
+				if (bullet.x - HALF_BULLET_WIDTH  < enemy.pos.x + HALF_ENEMY_WIDTH &&
+					bullet.x + HALF_BULLET_WIDTH  > enemy.pos.x - HALF_ENEMY_WIDTH &&
+					bullet.y - HALF_BULLET_HEIGHT < enemy.pos.y + HALF_ENEMY_HEIGHT &&
+					bullet.y + HALF_BULLET_HEIGHT > enemy.pos.y - HALF_ENEMY_HEIGHT) {
+
+					// Spawn particles
+					newParticle: Particle;
+					newParticle.pos = @bullet;
+					newParticle.duration = 0.15;
+					for 0..20 {
+						newParticle.vel = { RandomFloat(), RandomFloat() };
+						newParticle.vel = V2Normalize(newParticle.vel);
+						speed := 200.0 * (RandomFloat() + 0.5);
+						newParticle.vel.x *= speed;
+						newParticle.vel.y *= speed;
+						particles[particles.size] = newParticle;
+						particles.size += 1;
+					}
+
 					// Destroy bullet
 					bullets.size -= 1;
 					@bullet = bullets[bullets.size];
@@ -412,8 +516,7 @@ Main :: () -> s64
 					// Reduce health
 					enemy.life -= 1;
 
-					if enemy.life <= 0
-					{
+					if enemy.life <= 0 {
 						// Destroy enemy
 						enemies.size -= 1;
 						@enemy = enemies[enemies.size];
@@ -423,53 +526,57 @@ Main :: () -> s64
 			}
 		}
 
-		for enemies
-		{
+		for enemies {
 			SPEED :: 3.0;
 			PERIOD :: PI2 * SPEED;
 			enemySinTimer :s f32 = HALFPI * SPEED;
-			it.pos.x += Sin(enemySinTimer / SPEED);
+			it.pos.x += Sin(enemySinTimer / SPEED) * 3.0;
 			enemySinTimer += deltaTime;
-			if enemySinTimer > PERIOD
+			while enemySinTimer > PERIOD
 				enemySinTimer -= PERIOD;
 		}
 
+		// Update particles
+		for particles {
+			it.life += deltaTime;
+			if it.life > it.duration
+				remove;
+			else {
+				it.pos.x += it.vel.x * deltaTime;
+				it.pos.y += it.vel.y * deltaTime;
+			}
+		}
+
 		// RENDER
-		glClearColor(0.8, 0.6, 0.0, 0.0);
+		glClearColor(0.05, 0.0, 0.09, 0.0);
 		glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 
 		glBindBuffer(GL_ARRAY_BUFFER, vertexBuffer);
 		glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, 0, 0);
 
-		{
-			dimensions : v4 = { playerPos.x, playerPos.y, 64.0, 64.0 };
+		DrawSprite :: #inline (position: v2, size: v2) {
+			dimensions : v4 = { position.x, position.y, size.x, size.y };
+			dimensionsUniform := glGetUniformLocation(programId, "dimensions\0".data);
 			glUniform4fv(dimensionsUniform, 1, ^dimensions.x);
 			glDrawArrays(GL_TRIANGLES, 0, 6);
 		}
 
-		for bullets
-		{
-			dimensions : v4 = { it.x, it.y, BULLET_WIDTH, BULLET_HEIGHT };
-			glUniform4fv(dimensionsUniform, 1, ^dimensions.x);
-			glDrawArrays(GL_TRIANGLES, 0, 6);
-		}
-
-		for enemies
-		{
-			dimensions : v4 = { it.pos.x, it.pos.y, ENEMY_WIDTH, ENEMY_HEIGHT };
-			glUniform4fv(dimensionsUniform, 1, ^dimensions.x);
-			glDrawArrays(GL_TRIANGLES, 0, 6);
-		}
+		glBindTexture(GL_TEXTURE_2D, textureIdShip);
+		DrawSprite(playerPos, { 64.0, 64.0 });
+		glBindTexture(GL_TEXTURE_2D, textureIdBullet);
+		for bullets DrawSprite(@it,    { BULLET_WIDTH, BULLET_HEIGHT });
+		glBindTexture(GL_TEXTURE_2D, textureIdEnemy);
+		for enemies DrawSprite(it.pos, { ENEMY_WIDTH,  ENEMY_HEIGHT  });
+		glBindTexture(GL_TEXTURE_2D, textureIdSmoke);
+		for particles DrawSprite(it.pos, { 24, 24 });
 
 		SwapBuffers(deviceContext);
 
-		while PeekMessageA(^message, 0, 0, 0, PM_REMOVE)
-		{
+		while PeekMessageA(^message, 0, 0, 0, PM_REMOVE) {
 			consumed := true;
 			if message.message == WM_QUIT
 				running = false;
-			else if message.message == WM_KEYDOWN || message.message == WM_KEYUP
-			{
+			else if message.message == WM_KEYDOWN || message.message == WM_KEYUP {
 				isDown : bool = (message.lParam & (1 << 31)) == 0;
 				if message.wParam == 'Q'
 					running = false;
