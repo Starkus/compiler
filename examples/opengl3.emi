@@ -31,8 +31,8 @@ Win32WindowCallback :: #convention(win64) (hWnd : ^void, message : u32, wParam :
 
 LoadShader :: (filename : String, shaderType : GLenum) -> GLuint
 {
-	filenameCStr : [512] u8 = ?;
-	for filename filenameCStr[i] = @it;
+	filenameCStr : [512] CHAR = ?;
+	for filename filenameCStr[i] = cast(CHAR)(@it);
 	filenameCStr[filename.size] = 0;
 	fileHandle := CreateFileA(^filenameCStr, GENERIC_READ, FILE_SHARE_READ, null, OPEN_EXISTING,
 		FILE_ATTRIBUTE_NORMAL, null);
@@ -83,19 +83,19 @@ InitOpenGLContext :: ()
 {
 	windowClass : WNDCLASSEXA;
 	hInstance := ^__ImageBase;
-	windowClassName := "window\0";
-	windowTitle := "Hello OpenGL 3.3!\0";
+	windowClassName := cast(^CHAR)("window\0".data);
+	windowTitle := cast(^CHAR)("Hello OpenGL 3.3!\0".data);
 
 	windowClass.cbSize = cast(u32)sizeof(windowClass);
 	windowClass.style = CS_HREDRAW | CS_VREDRAW | CS_OWNDC;
 	windowClass.lpfnWndProc = Win32WindowCallback;
 	windowClass.hInstance = hInstance;
-	windowClass.lpszClassName = windowClassName.data;
+	windowClass.lpszClassName = windowClassName;
 
 	RegisterClassExA(^windowClass);
 
 	// Fake window
-	fakeWindow := CreateWindowExA(0, windowClassName.data, windowTitle.data, WS_CLIPSIBLINGS |
+	fakeWindow := CreateWindowExA(0, windowClassName, windowTitle, WS_CLIPSIBLINGS |
 			WS_CLIPCHILDREN, 0, 0, 1, 1, null, null, hInstance, null);
 
 	// Fake context
@@ -119,7 +119,7 @@ InitOpenGLContext :: ()
 	// Real context
 	LoadWGLProcedures();
 
-	windowHandle = CreateWindowExA(0, windowClassName.data, windowTitle.data,
+	windowHandle = CreateWindowExA(0, windowClassName, windowTitle,
 			WS_OVERLAPPEDWINDOW | WS_VISIBLE, 100, 100, windowWidth, windowHeight, 0, 0, hInstance, 0);
 
 	deviceContext = GetDC(windowHandle);
@@ -263,7 +263,7 @@ Main :: () -> s64
 	{
 		texFileName := "examples/texture.bmp\0";
 		file := CreateFileA(
-				texFileName.data,
+				cast(^CHAR)(texFileName.data),
 				GENERIC_READ,
 				FILE_SHARE_READ,
 				null,
@@ -315,8 +315,8 @@ Main :: () -> s64
 		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
 	}
 
-	lastPerformanceCounter : u64;
-	performanceFrequency : u64;
+	lastPerformanceCounter : s64;
+	performanceFrequency : s64;
 	{
 		largeInteger : LARGE_INTEGER;
 		QueryPerformanceCounter(^largeInteger);

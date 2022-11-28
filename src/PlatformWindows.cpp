@@ -577,14 +577,26 @@ inline Fiber SYSConvertThreadToFiber() {
 }
 
 Fiber runningFibers[8] = { SYS_INVALID_FIBER_HANDLE };
-inline void SYSSwitchToFiber(Fiber fiber) {
+NOINLINE void SYSSwitchToFiber(Fiber fiber) {
 	ASSERT(fiber != SYS_INVALID_FIBER_HANDLE);
 
 	for (int i = 0; i < ArrayCount(runningFibers); ++i)
-		if (runningFibers[i] == fiber) ASSERT(!"Trying to run fiber on two threads at once");
+		if (runningFibers[i] == fiber) {
+			Print("CRASH: Trying to run fiber on two threads at once\n");
+			PANIC;
+		}
 
 	runningFibers[t_threadIndex] = fiber;
 	SwitchToFiber(fiber);
+}
+
+inline void SYSDeleteFiber(Fiber fiber) {
+	for (int i = 0; i < ArrayCount(runningFibers); ++i)
+		if (runningFibers[i] == fiber) {
+			Print("CRASH: Trying to delete a running fiber\n");
+			PANIC;
+		}
+	DeleteFiber(fiber);
 }
 
 inline Mutex SYSCreateMutex() {

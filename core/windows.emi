@@ -1,5 +1,44 @@
 __ImageBase : #external ^void;
 
+// Size-based types
+BYTE  :: #alias u8;
+WORD  :: #alias u16;
+DWORD :: #alias u32;
+QWORD :: #alias u64;
+
+// Fluffy C-like types
+BOOL      :: #alias s32;
+CHAR      :: #alias s8;
+SHORT     :: #alias s16;
+USHORT    :: #alias u16;
+INT       :: #alias s32;
+UINT      :: #alias u32;
+LONG      :: #alias s32;
+ULONG     :: #alias u32;
+LONGLONG  :: #alias s64;
+ULONGLONG :: #alias u64;
+FLOAT     :: #alias f32;
+
+// Weird size-based types
+UINT8     :: #alias u8;
+WCHAR     :: #alias s16;
+DWORD32   :: #alias u32;
+DWORD64   :: #alias u64;
+LONG32    :: #alias s32;
+LONG64    :: #alias s64;
+ULONG32   :: #alias u32;
+ULONG64   :: #alias u64;
+DWORDLONG :: #alias u64;
+SIZE_T    :: #alias u64;
+
+// Other weird windows types
+HANDLE  :: #alias ^void;
+LPARAM  :: #alias u64;
+WPARAM  :: #alias u64;
+LRESULT :: #alias u64;
+HRESULT :: #alias s32;
+
+// Constants and flags
 INVALID_HANDLE_VALUE :: 0xFFFFFFFFFFFFFFFF;
 MEM_COMMIT      :: 0x00001000;
 MEM_RESERVE     :: 0x00002000;
@@ -73,7 +112,20 @@ WS_OVERLAPPEDWINDOW :: WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU | WS_THICKFRAME |
 CS_VREDRAW :: 0x0001;
 CS_HREDRAW :: 0x0002;
 CS_OWNDC   :: 0x0020;
-SW_SHOW    :: 5;
+SW_HIDE            :: 0;
+SW_SHOWNORMAL      :: 1;
+SW_NORMAL          :: 1;
+SW_SHOWMINIMIZED   :: 2;
+SW_SHOWMAXIMIZED   :: 3;
+SW_MAXIMIZE        :: 3;
+SW_SHOWNOACTIVATE  :: 4;
+SW_SHOW            :: 5;
+SW_MINIMIZE        :: 6;
+SW_SHOWMINNOACTIVE :: 7;
+SW_SHOWNA          :: 8;
+SW_RESTORE         :: 9;
+SW_SHOWDEFAULT     :: 10;
+SW_FORCEMINIMIZE   :: 11;
 PM_REMOVE  :: 0x0001;
 WM_DESTROY :: 0x0002;
 WM_SIZE    :: 0x0005;
@@ -133,115 +185,141 @@ VK_HELP :: 0x2F;
 
 WNDCLASSEXA :: struct
 {
-	cbSize : u32;
-	style : u32;
-	lpfnWndProc : #convention(win64) (hWnd : ^void, uMsg : u32, wParam : u64, lParam : u64) -> u64;
-	cbClsExtra : s32;
-	cbWndExtra : s32;
-	hInstance : ^void;
-	hIcon : ^void;
-	hCursor : ^void;
-	hBrush : ^void;
-	lpszMenuName : ^u8;
-	lpszClassName : ^u8;
-	hIconSm : ^void;
+	cbSize : UINT;
+	style : UINT;
+	lpfnWndProc : #convention(win64) (hWnd : HANDLE, uMsg : UINT, wParam : WPARAM,
+						  lParam : LPARAM) -> LRESULT;
+	cbClsExtra : INT;
+	cbWndExtra : INT;
+	hInstance : HANDLE;
+	hIcon : HANDLE;
+	hCursor : HANDLE;
+	hBrush : HANDLE;
+	lpszMenuName : ^CHAR;
+	lpszClassName : ^CHAR;
+	hIconSm : HANDLE;
 };
 POINT :: struct
 {
-	x : s32;
-	y : s32;
+	x : LONG;
+	y : LONG;
+};
+RECT :: struct
+{
+	left   : LONG;
+	top    : LONG;
+	right  : LONG;
+	bottom : LONG;
 };
 MSG :: struct
 {
-	hWnd : ^void;
-	message : u32;
-	wParam : ^void;
-	lParam : ^void;
-	time : u32;
+	hWnd : HANDLE;
+	message : UINT;
+	wParam : WPARAM;
+	lParam : LPARAM;
+	time : DWORD;
 	pt : POINT;
-	lPrivate : u32;
+	lPrivate : DWORD;
 };
 PIXELFORMATDESCRIPTOR :: struct
 {
-	nSize : u16;
-	nVersion : u16;
-	dwFlags : u32;
-	iPixelType : u8;
-	cColorBits : u8;
-	cRedBits : u8;
-	cRedShift : u8;
-	cGreenBits : u8;
-	cGreenShift : u8;
-	cBlueBits : u8;
-	cBlueShift : u8;
-	cAlphaBits : u8;
-	cAlphaShift : u8;
-	cAccumBits : u8;
-	cAccumRedBits : u8;
-	cAccumGreenBits : u8;
-	cAccumBlueBits : u8;
-	cAccumAlphaBits : u8;
-	cDepthBits : u8;
-	cStencilBits : u8;
-	cAuxBuffers : u8;
-	iLayerType : u8;
-	bReserved : u8;
-	dwLayerMask : u32;
-	dwVisibleMask : u32;
-	dwDamageMask : u32;
+	nSize : WORD;
+	nVersion : WORD;
+	dwFlags : DWORD;
+	iPixelType : CHAR;
+	cColorBits : CHAR;
+	cRedBits : CHAR;
+	cRedShift : CHAR;
+	cGreenBits : CHAR;
+	cGreenShift : CHAR;
+	cBlueBits : CHAR;
+	cBlueShift : CHAR;
+	cAlphaBits : CHAR;
+	cAlphaShift : CHAR;
+	cAccumBits : CHAR;
+	cAccumRedBits : CHAR;
+	cAccumGreenBits : CHAR;
+	cAccumBlueBits : CHAR;
+	cAccumAlphaBits : CHAR;
+	cDepthBits : CHAR;
+	cStencilBits : CHAR;
+	cAuxBuffers : CHAR;
+	iLayerType : CHAR;
+	bReserved : CHAR;
+	dwLayerMask : DWORD;
+	dwVisibleMask : DWORD;
+	dwDamageMask : DWORD;
 };
 LARGE_INTEGER :: union {
 	struct {
-		lowPart : u64;
-		highPart : u64;
+		lowPart : DWORD;
+		highPart : LONG;
 	};
-	quadPart : u64;
+	quadPart : LONGLONG;
+};
+GUID :: struct
+{
+	Data1 : u32;
+	Data2 : u16;
+	Data3 : u16;
+	Data4 : [8] u8;
+};
+LUID :: struct
+{
+	LowPart: DWORD;
+	HighPart: LONG;
 };
 
 CreateFileA :: #external #convention(win64) (
-		lpFileName : ^u8,
-		dwDesiredAccess : u32,
-		dwShareMode : u32,
-		lpSecurityAttributes : ^void,
-		dwCreationDisposition : u32,
-		dwFlagsAndAttributes : u32,
-		hTemplateFile : ^void) -> ^void;
-CloseHandle :: #external #convention(win64) (handle : ^void);
-GetFileSize :: #external #convention(win64) (handle : ^void, lpFileSizeHigh : ^u32) -> u32;
-ReadFile :: #external #convention(win64) (hFile : ^void, lpBuffer : ^void, nNumberOfBytesToRead : u32, lpNumberOfBytesRead : ^u32, lpOverlapped : ^void) -> bool;
-VirtualAlloc :: #external #convention(win64) (lpAddress : ^void, dwSize : u64, flAllocationType : u32, flProtect : u32) -> ^void;
-VirtualFree :: #external #convention(win64) (lpAddress : ^void, dwSize : u64, dwFreeType : u32) -> bool;
-AttachConsole :: #external #convention(win64) (handle : ^void);
-GetModuleHandleA :: #external #convention(win64) (lpModuleName : ^void) -> ^void;
+		lpFileName : ^CHAR,
+		dwDesiredAccess : DWORD,
+		dwShareMode : DWORD,
+		lpSecurityAttributes : ^void, // @Todo
+		dwCreationDisposition : DWORD,
+		dwFlagsAndAttributes : DWORD,
+		hTemplateFile : HANDLE) -> HANDLE;
+CloseHandle :: #external #convention(win64) (handle : HANDLE);
+GetFileSize :: #external #convention(win64) (handle : HANDLE, lpFileSizeHigh : ^DWORD) -> DWORD;
+ReadFile :: #external #convention(win64) (hFile : HANDLE, lpBuffer : ^void,
+		nNumberOfBytesToRead : DWORD, lpNumberOfBytesRead : ^DWORD, lpOverlapped : ^void) -> BOOL;
+VirtualAlloc :: #external #convention(win64) (lpAddress : ^void, dwSize : SIZE_T,
+		flAllocationType : DWORD, flProtect : DWORD) -> ^void;
+VirtualFree :: #external #convention(win64) (lpAddress : ^void, dwSize : SIZE_T,
+		dwFreeType : DWORD) -> BOOL;
+AttachConsole :: #external #convention(win64) (handle : HANDLE);
+GetModuleHandleA :: #external #convention(win64) (lpModuleName : ^CHAR) -> HANDLE;
 RegisterClassExA :: #external #convention(win64) (wndClass : ^WNDCLASSEXA) -> u16;
 CreateWindowExA :: #external #convention(win64) (
-		dwExStyle : u32,
-		lpClassName : ^u8,
-		lpWindowName : ^u8,
-		dwStyle : u32,
-		x : s32,
-		y : s32,
-		nWidth : s32,
-		nHeight : s32,
-		hWndParent : ^void,
-		hMenu : ^void,
-		hInstance : ^void,
+		dwExStyle : DWORD,
+		lpClassName : ^CHAR,
+		lpWindowName : ^CHAR,
+		dwStyle : DWORD,
+		x : INT,
+		y : INT,
+		nWidth : INT,
+		nHeight : INT,
+		hWndParent : HANDLE,
+		hMenu : HANDLE,
+		hInstance : HANDLE,
 		lpParam : ^void
-	) -> ^void;
-ShowWindow :: #external #convention(win64) (hWnd : ^void, nCmdShow : s32);
-GetLastError :: #external #convention(win64) () -> u32;
-DefWindowProcA :: #external #convention(win64) (hWnd : ^void, uMsg : u32, wParam : u64, lParam : u64) -> u64;
-PeekMessageA :: #external #convention(win64) (lpMsg : ^MSG, hWnd : ^void, wMsgFilterMin : u32, wMsgFilterMax : u32, wRemoveMsg : u32) -> bool;
-TranslateMessage :: #external #convention(win64) (message : ^MSG) -> bool;
-DispatchMessageA :: #external #convention(win64) (message : ^MSG) -> s64;
-LoadModule :: #external #convention(win64) (lpLibFileName : ^u8) -> ^void;
-GetProcAddress :: #external #convention(win64) (hModule : ^void, lpProcName : ^u8) -> ^void;
-GetDC :: #external #convention(win64) (hWnd : ^void) -> ^void;
-ReleaseDC :: #external #convention(win64) (hWnd : ^void, hdc : ^void);
-ChoosePixelFormat :: #external #convention(win64) (hdc : ^void, ppfd : ^PIXELFORMATDESCRIPTOR) -> s64;
-SetPixelFormat :: #external #convention(win64) (hdc : ^void, format : s64, ppfd : ^PIXELFORMATDESCRIPTOR) -> bool;
-PostQuitMessage :: #external #convention(win64) (nExitCode : s64);
-DestroyWindow :: #external #convention(win64) (hWnd : ^void) -> bool;
-TerminateProcess :: #external #convention(win64) (uExitCode : u32);
-QueryPerformanceCounter :: #external #convention(win64) (lpPerformanceCount : ^LARGE_INTEGER) -> bool;
-QueryPerformanceFrequency :: #external #convention(win64) (lpFrequency : ^LARGE_INTEGER) -> bool;
+	) -> HANDLE;
+ShowWindow :: #external #convention(win64) (hWnd : HANDLE, nCmdShow : INT) -> BOOL;
+GetLastError :: #external #convention(win64) () -> DWORD;
+DefWindowProcA :: #external #convention(win64) (hWnd : HANDLE, uMsg : UINT, wParam : WPARAM,
+		lParam : LPARAM) -> LRESULT;
+PeekMessageA :: #external #convention(win64) (lpMsg : ^MSG, hWnd : HANDLE, wMsgFilterMin : UINT,
+		wMsgFilterMax : UINT, wRemoveMsg : UINT) -> BOOL;
+TranslateMessage :: #external #convention(win64) (message : ^MSG) -> BOOL;
+DispatchMessageA :: #external #convention(win64) (message : ^MSG) -> LRESULT;
+GetProcAddress :: #external #convention(win64) (hModule : HANDLE, lpProcName : ^CHAR) -> ^void;
+GetDC :: #external #convention(win64) (hWnd : HANDLE) -> HANDLE;
+ReleaseDC :: #external #convention(win64) (hWnd : HANDLE, hdc : HANDLE);
+ChoosePixelFormat :: #external #convention(win64) (hdc : HANDLE, ppfd : ^PIXELFORMATDESCRIPTOR) -> INT;
+SetPixelFormat :: #external #convention(win64) (hdc : HANDLE, format : INT, ppfd : ^PIXELFORMATDESCRIPTOR) -> BOOL;
+PostQuitMessage :: #external #convention(win64) (nExitCode : INT);
+DestroyWindow :: #external #convention(win64) (hWnd : HANDLE) -> BOOL;
+TerminateProcess :: #external #convention(win64) (hProcess : HANDLE, uExitCode : UINT) -> BOOL;
+TerminateThread :: #external #convention(win64) (hThread : HANDLE, uExitCode : UINT) -> BOOL;
+QueryPerformanceCounter :: #external #convention(win64) (lpPerformanceCount : ^LARGE_INTEGER) -> BOOL;
+QueryPerformanceFrequency :: #external #convention(win64) (lpFrequency : ^LARGE_INTEGER) -> BOOL;
+AdjustWindowRect :: #external #convention(win64) (lpRect : ^RECT, dwStyle : DWORD, bMenu : BOOL) -> BOOL;

@@ -24,15 +24,15 @@ Main :: () -> s64
 {
 	hInstance := ^__ImageBase;
 
-	windowClassName := "window\0";
-	windowTitle := "Hello OpenGL!\0";
+	windowClassName := cast(^CHAR)("window\0".data);
+	windowTitle := cast(^CHAR)("Hello OpenGL!\0".data);
 
 	windowClass : WNDCLASSEXA;
 	windowClass.cbSize = cast(u32)sizeof(windowClass);
 	windowClass.style = CS_HREDRAW | CS_VREDRAW | CS_OWNDC;
 	windowClass.lpfnWndProc = Win32WindowCallback;
 	windowClass.hInstance = hInstance;
-	windowClass.lpszClassName = windowClassName.data;
+	windowClass.lpszClassName = windowClassName;
 
 	success := RegisterClassExA(^windowClass);
 
@@ -44,7 +44,7 @@ Main :: () -> s64
 	pfd.cColorBits = 32;
 	pfd.cDepthBits = 32;
 
-	windowHandle = CreateWindowExA(0, windowClassName.data, windowTitle.data, WS_OVERLAPPEDWINDOW | WS_VISIBLE,
+	windowHandle = CreateWindowExA(0, windowClassName, windowTitle, WS_OVERLAPPEDWINDOW | WS_VISIBLE,
 					16, 16, 800, 600, 0, 0, hInstance, 0);
 
 	deviceContext := GetDC(windowHandle);

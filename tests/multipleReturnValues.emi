@@ -50,10 +50,11 @@ Main :: () -> s64
 	if num != 0 || error != PARSEERROR_INVALID_CHARACTER failed = true;
 
 	// @Todo: syntax for declaring multiple variables at once.
-	bigA : BigStruct = ?;
-	bigB : BigStruct = ?;
-	bigC : BigStruct = ?;
-	bigA, bigB, bigC = ByCopy();
+	//bigA : BigStruct = ?;
+	//bigB : BigStruct = ?;
+	//bigC : BigStruct = ?;
+	//bigA, bigB, bigC = ByCopy();
+	bigA, bigB, bigC := ByCopy();
 	PrintF("Big structs returned: % % %\n", bigA, bigB, bigC);
 
 	if failed

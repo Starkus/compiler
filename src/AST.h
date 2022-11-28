@@ -151,7 +151,7 @@ struct ASTType : ASTBase
 
 struct ASTVariableDeclaration : ASTBase
 {
-	String name;
+	HybridArray<String, 2, ThreadAllocator> names;
 	ASTExpression *astInitialValue;
 	ASTType *astType;
 	bool isInline;
@@ -159,8 +159,11 @@ struct ASTVariableDeclaration : ASTBase
 	bool isExternal;
 
 	// TypeCheck
-	u32 valueIdx;
-	u32 typeTableIdx;
+	u32 anonymousVariableValueIdx;
+	u32 specifiedTypeIdx;
+	// @Improve: AOS or better SOA...
+	HybridArray<u32, 2, ThreadAllocator> valueIndices;
+	HybridArray<u32, 2, ThreadAllocator> typeIndices;
 };
 
 struct ASTProcedureParameter : ASTBase
@@ -201,7 +204,7 @@ struct ASTOperatorOverload : ASTBase
 
 struct ASTStaticDefinition : ASTBase
 {
-	String name;
+	HybridArray<String, 2, ThreadAllocator> names;
 	ASTExpression *expression;
 
 	// Type check
@@ -430,6 +433,8 @@ enum TypeTableIndices : u32
 	TYPETABLEIDX_TYPE_INFO_ENUM_STRUCT,
 	TYPETABLEIDX_TYPE_INFO_POINTER_STRUCT,
 	TYPETABLEIDX_TYPE_INFO_ARRAY_STRUCT,
+	TYPETABLEIDX_TYPE_INFO_PROCEDURE_STRUCT,
+	TYPETABLEIDX_TYPE_INFO_ALIAS_STRUCT,
 
 	TYPETABLEIDX_BuiltinStructsEnd,
 	TYPETABLEIDX_Count = TYPETABLEIDX_BuiltinStructsEnd

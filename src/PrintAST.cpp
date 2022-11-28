@@ -296,7 +296,7 @@ void PrintExpression(Context *context, const ASTExpression *e) {
 		else
 			Print("Variable declaration ");
 		String typeStr = ASTTypeToString(e->variableDeclaration.astType);
-		Print("\"%S\" of type \"%S\"", e->variableDeclaration.name, typeStr);
+		Print("of type \"%S\"", typeStr);
 
 		PrintSourceLocation(context, e->any.loc);
 		Print("\n");
@@ -505,7 +505,7 @@ void PrintExpression(Context *context, const ASTExpression *e) {
 	} break;
 	case ASTNODETYPE_STATIC_DEFINITION:
 	{
-		Print("Static definition \"%S\"\n", e->staticDefinition.name);
+		Print("Static definition\n");
 
 		++indentLevels;
 		PrintExpression(context, e->staticDefinition.expression);

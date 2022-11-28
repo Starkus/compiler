@@ -2405,32 +2405,35 @@ void BackendGenerateOutputFile(Context *context)
 				if (!structName.size)
 					structName = "<anonymous struct>"_s;
 
-				u32 membersValueIdx = NewGlobalValue(context, SNPrintF("_members_%lld", 16, typeTableIdx),
-						TYPETABLEIDX_TYPE_INFO_STRUCT_MEMBER_STRUCT, VALUEFLAGS_ON_STATIC_STORAGE);
-				IRStaticVariable membersStaticVar = { membersValueIdx };
-				membersStaticVar.initialValue.valueType = IRVALUETYPE_TUPLE;
-				membersStaticVar.initialValue.typeTableIdx = TYPETABLEIDX_Unset;
-				ArrayInit(&membersStaticVar.initialValue.tuple,
-						typeInfo.structInfo.members.size);
-				for (s64 memberIdx = 0; memberIdx < (s64)typeInfo.structInfo.members.size; ++memberIdx)
-				{
-					StructMember member = typeInfo.structInfo.members[memberIdx];
-					TypeInfo memberType = typeTable[member.typeTableIdx];
+				u32 membersValueIdx = U32_MAX;
+				int memberCount = (int)typeInfo.structInfo.members.size;
+				if (memberCount) {
+					membersValueIdx = NewGlobalValue(context, SNPrintF("_members_%lld", 16, typeTableIdx),
+							TYPETABLEIDX_TYPE_INFO_STRUCT_MEMBER_STRUCT, VALUEFLAGS_ON_STATIC_STORAGE);
+					IRStaticVariable membersStaticVar = { membersValueIdx };
+					membersStaticVar.initialValue.valueType = IRVALUETYPE_TUPLE;
+					membersStaticVar.initialValue.typeTableIdx = TYPETABLEIDX_Unset;
+					ArrayInit(&membersStaticVar.initialValue.tuple, memberCount);
+					for (s64 memberIdx = 0; memberIdx < memberCount; ++memberIdx)
+					{
+						StructMember member = typeInfo.structInfo.members[memberIdx];
+						TypeInfo memberType = typeTable[member.typeTableIdx];
 
-					IRValue memberImm;
-					memberImm.valueType = IRVALUETYPE_TUPLE;
-					memberImm.typeTableIdx = TYPETABLEIDX_Unset;
-					ArrayInit(&memberImm.tuple, 4);
-					*ArrayAdd(&memberImm.tuple) =
-						{ IRValueImmediateString(context, member.name) };
-					*ArrayAdd(&memberImm.tuple) =
-						{ IRValueDereference(memberType.valueIdx, pointerToTypeInfoIdx) };
-					*ArrayAdd(&memberImm.tuple) =
-						{ IRValueImmediate(member.offset, TYPETABLEIDX_S64) };
+						IRValue memberImm;
+						memberImm.valueType = IRVALUETYPE_TUPLE;
+						memberImm.typeTableIdx = TYPETABLEIDX_Unset;
+						ArrayInit(&memberImm.tuple, 4);
+						*ArrayAdd(&memberImm.tuple) =
+							{ IRValueImmediateString(context, member.name) };
+						*ArrayAdd(&memberImm.tuple) =
+							{ IRValueDereference(memberType.valueIdx, pointerToTypeInfoIdx) };
+						*ArrayAdd(&memberImm.tuple) =
+							{ IRValueImmediate(member.offset, TYPETABLEIDX_S64) };
 
-					*ArrayAdd(&membersStaticVar.initialValue.tuple) = memberImm;
+						*ArrayAdd(&membersStaticVar.initialValue.tuple) = memberImm;
+					}
+					*DynamicArrayAdd(&context->irStaticVariables.GetForWrite()) = membersStaticVar;
 				}
-				*DynamicArrayAdd(&context->irStaticVariables.GetForWrite()) = membersStaticVar;
 
 				ArrayInit(&newStaticVar.initialValue.tuple, 6);
 				*ArrayAdd(&newStaticVar.initialValue.tuple) =
@@ -2443,8 +2446,12 @@ void BackendGenerateOutputFile(Context *context)
 					{ IRValueImmediate(typeInfo.typeCategory == TYPECATEGORY_UNION, TYPETABLEIDX_S32) };
 				*ArrayAdd(&newStaticVar.initialValue.tuple) =
 					{ IRValueImmediate(typeInfo.structInfo.members.size, TYPETABLEIDX_S64) };
-				*ArrayAdd(&newStaticVar.initialValue.tuple) =
-					{ IRValueDereference(membersValueIdx, pointerToStructMemberInfoIdx) };
+				if (memberCount)
+					*ArrayAdd(&newStaticVar.initialValue.tuple) =
+						{ IRValueDereference(membersValueIdx, pointerToStructMemberInfoIdx) };
+				else
+					*ArrayAdd(&newStaticVar.initialValue.tuple) =
+						{ IRValueImmediate(0, pointerToStructMemberInfoIdx) }; // null pointer
 			} break;
 			case TYPECATEGORY_ENUM:
 			{

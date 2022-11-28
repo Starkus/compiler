@@ -17,6 +17,7 @@ typedef CONDITION_VARIABLE ConditionVariable;
 #define SYS_INVALID_FIBER_HANDLE nullptr
 #define SYS_MAX_PATH MAX_PATH
 #define THREADLOCAL __declspec(thread)
+#define NOINLINE __declspec(noinline)
 #if DEBUG_BUILD
 #define BREAK __debugbreak()
 #else

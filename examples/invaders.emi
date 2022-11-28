@@ -13,7 +13,9 @@ screenHeight :s s32 = 600;
 deviceContext :s ^void;
 glContext :s ^void;
 
-Win32WindowCallback :: #convention(win64) (hWnd : ^void, message : u32, wParam : u64, lParam : u64) -> u64 {
+Win32WindowCallback :: #convention(win64) (hWnd : HANDLE, message : DWORD, wParam : WPARAM,
+		lParam : LPARAM) -> LRESULT
+{
 	if message == WM_CLOSE
 		PostQuitMessage(0);
 	else if message == WM_SIZE
@@ -28,12 +30,13 @@ Win32WindowCallback :: #convention(win64) (hWnd : ^void, message : u32, wParam :
 	return 0;
 }
 
-LoadShader :: (filename : String, shaderType : GLenum) -> GLuint {
+LoadShader :: (filename : String, shaderType : GLenum) -> GLuint
+{
 	filenameCStr : [512] u8 = ?;
 	for filename filenameCStr[i] = @it;
 	filenameCStr[filename.size] = 0;
-	fileHandle := CreateFileA(^filenameCStr, GENERIC_READ, FILE_SHARE_READ, null, OPEN_EXISTING,
-		FILE_ATTRIBUTE_NORMAL, null);
+	fileHandle := CreateFileA(cast(^CHAR)(^filenameCStr), GENERIC_READ, FILE_SHARE_READ, null,
+			OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, null);
 	defer CloseHandle(fileHandle);
 
 	if fileHandle == INVALID_HANDLE_VALUE {
@@ -74,16 +77,18 @@ LoadShader :: (filename : String, shaderType : GLenum) -> GLuint {
 	return shaderId;
 }
 
-LoadTextureErrorCode :: enum {
+LoadTextureErrorCode :: enum
+{
 	LOADTEXTURE_OK = 0,
 	LOADTEXTURE_FILE_NOT_FOUND = 1,
 	LOADTEXTURE_COULD_NOT_READ = 2,
 	LOADTEXTURE_WRONG_FORMAT = 3
 };
-LoadTexture :: (filename : String) -> GLuint, LoadTextureErrorCode {
+LoadTexture :: (filename : String) -> GLuint, LoadTextureErrorCode
+{
 	textureId : GLuint;
 	file := CreateFileA(
-			filename.data,
+			cast(^CHAR)(filename.data),
 			GENERIC_READ,
 			FILE_SHARE_READ,
 			null,
@@ -205,19 +210,19 @@ LoadTexture :: (filename : String) -> GLuint, LoadTextureErrorCode {
 InitOpenGLContext :: () {
 	windowClass : WNDCLASSEXA;
 	hInstance := ^__ImageBase;
-	windowClassName := "window\0";
-	windowTitle := "Hello OpenGL 3.3!\0";
+	windowClassName := cast(^CHAR)"window\0".data;
+	windowTitle := cast(^CHAR)"Hello OpenGL 3.3!\0".data;
 
 	windowClass.cbSize = cast(u32)sizeof(windowClass);
 	windowClass.style = CS_HREDRAW | CS_VREDRAW | CS_OWNDC;
 	windowClass.lpfnWndProc = Win32WindowCallback;
 	windowClass.hInstance = hInstance;
-	windowClass.lpszClassName = windowClassName.data;
+	windowClass.lpszClassName = windowClassName;
 
 	RegisterClassExA(^windowClass);
 
 	// Fake window
-	fakeWindow := CreateWindowExA(0, windowClassName.data, windowTitle.data, WS_CLIPSIBLINGS |
+	fakeWindow := CreateWindowExA(0, windowClassName, windowTitle, WS_CLIPSIBLINGS |
 			WS_CLIPCHILDREN, 0, 0, 1, 1, null, null, hInstance, null);
 
 	// Fake context
@@ -241,7 +246,7 @@ InitOpenGLContext :: () {
 	// Real context
 	LoadWGLProcedures();
 
-	windowHandle = CreateWindowExA(0, windowClassName.data, windowTitle.data,
+	windowHandle = CreateWindowExA(0, windowClassName, windowTitle,
 			WS_OVERLAPPEDWINDOW | WS_VISIBLE, 100, 100, screenWidth + 16, screenHeight + 39, 0, 0, hInstance, 0);
 
 	deviceContext = GetDC(windowHandle);
@@ -429,8 +434,8 @@ Main :: () -> s64 {
 	textureIdSmoke,	 textureError = LoadTexture("examples/smoke.bmp\0");
 	if textureError != LOADTEXTURE_OK return 1;
 
-	lastPerformanceCounter : u64;
-	performanceFrequency : u64;
+	lastPerformanceCounter : s64;
+	performanceFrequency : s64;
 	{
 		largeInteger : LARGE_INTEGER;
 		QueryPerformanceCounter(^largeInteger);

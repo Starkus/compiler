@@ -1624,78 +1624,83 @@ IRValue IRGenFromExpression(Context *context, const ASTExpression *expression)
 	{
 		ASTVariableDeclaration varDecl = expression->variableDeclaration;
 
-		if (varDecl.isStatic)
-		{
-			IRStaticVariable newStaticVar = {};
-			newStaticVar.valueIdx = varDecl.valueIdx;
-			newStaticVar.initialValue.valueType = IRVALUETYPE_INVALID;
+		IRValue initialValue = { IRVALUETYPE_INVALID };
+		if (!varDecl.isStatic && varDecl.astInitialValue &&
+				varDecl.astInitialValue->nodeType != ASTNODETYPE_GARBAGE)
+			initialValue = IRGenFromExpression(context, varDecl.astInitialValue);
 
-			// Initial value
-			if (varDecl.astInitialValue)
-			{
-				if (varDecl.astInitialValue->literal.type == LITERALTYPE_STRING)
-				{
-					newStaticVar.initialValue = IRValueImmediateString(context,
-							varDecl.astInitialValue->literal.string);
+		u64 varCount = varDecl.names.size;
+		for (int varIdx = 0; varIdx < varCount; ++varIdx) {
+			if (varDecl.isStatic) {
+				IRStaticVariable newStaticVar = {};
+				newStaticVar.valueIdx = varDecl.valueIndices[varIdx];
+				newStaticVar.initialValue.valueType = IRVALUETYPE_INVALID;
+
+				// Initial value
+				if (varDecl.astInitialValue) {
+					if (varDecl.astInitialValue->literal.type == LITERALTYPE_STRING) {
+						newStaticVar.initialValue = IRValueImmediateString(context,
+								varDecl.astInitialValue->literal.string);
+					}
+					else {
+						Constant constant  = TryEvaluateConstant(context, varDecl.astInitialValue);
+						if (constant.type == CONSTANTTYPE_INVALID)
+							LogError(context, varDecl.astInitialValue->any.loc,
+									"Initial value of static variable isn't constant"_s);
+
+						newStaticVar.initialValue = IRValueFromConstant(context, constant);
+					}
 				}
-				else
-				{
-					Constant constant  = TryEvaluateConstant(context, varDecl.astInitialValue);
-					if (constant.type == CONSTANTTYPE_INVALID)
-						LogError(context, varDecl.astInitialValue->any.loc,
-								"Initial value of static variable isn't constant"_s);
 
-					newStaticVar.initialValue = IRValueFromConstant(context, constant);
+				auto staticVars = context->irStaticVariables.GetForWrite();
+				*DynamicArrayAdd(&staticVars) = newStaticVar;
+			}
+			else if (varDecl.isExternal) {
+				ASSERT(varDecl.astInitialValue == nullptr);
+				auto externalVars = context->irExternalVariables.GetForWrite();
+				*DynamicArrayAdd(&externalVars) = varDecl.valueIndices[varIdx];
+			}
+			else {
+				IRPushValueIntoStack(context, varDecl.valueIndices[varIdx]);
+
+				// Initial value
+				if (varDecl.astInitialValue) {
+					if (varDecl.astInitialValue->nodeType != ASTNODETYPE_GARBAGE) {
+						IRValue dstValue = IRValueValue(context, varDecl.valueIndices[varIdx]);
+						if (initialValue.valueType == IRVALUETYPE_TUPLE)
+							IRDoAssignment(context, dstValue, initialValue.tuple[varIdx]);
+						else
+							IRDoAssignment(context, dstValue, initialValue);
+					}
+				}
+				else {
+					// Initialize to zero
+					TypeCategory dstTypeCat = GetTypeInfo(context, varDecl.typeIndices[varIdx]).typeCategory;
+					if (dstTypeCat == TYPECATEGORY_STRUCT ||
+						dstTypeCat == TYPECATEGORY_UNION ||
+						dstTypeCat == TYPECATEGORY_ARRAY)
+					{
+						IRValue dstValue = IRValueValue(context, varDecl.valueIndices[varIdx]);
+						u64 size = GetTypeInfo(context, dstValue.typeTableIdx).size;
+						IRValue sizeValue = IRValueImmediate(size);
+
+						IRInstruction inst = {};
+						inst.type = IRINSTRUCTIONTYPE_ZERO_MEMORY;
+						inst.zeroMemory.dst = IRPointerToValue(context, dstValue);
+						inst.zeroMemory.size = sizeValue;
+
+						*AddInstruction(context) = inst;
+					}
+					else {
+						IRValue dstValue = IRValueValue(context, varDecl.valueIndices[varIdx]);
+						IRValue srcValue = IRValueImmediate(0, varDecl.typeIndices[varIdx]);
+						IRDoAssignment(context, dstValue, srcValue);
+					}
 				}
 			}
-
-			auto staticVars = context->irStaticVariables.GetForWrite();
-			*DynamicArrayAdd(&staticVars) = newStaticVar;
 		}
-		else if (varDecl.isExternal)
-		{
-			auto externalVars = context->irExternalVariables.GetForWrite();
-			*DynamicArrayAdd(&externalVars) = varDecl.valueIdx;
-		}
-		else
-		{
-			IRPushValueIntoStack(context, varDecl.valueIdx);
-
-			// Initial value
-			if (varDecl.astInitialValue)
-			{
-				if (varDecl.astInitialValue->nodeType != ASTNODETYPE_GARBAGE)
-				{
-					IRValue dstValue = IRValueValue(context, varDecl.valueIdx);
-					IRAssignmentFromExpression(context, dstValue, varDecl.astInitialValue);
-				}
-			}
-			else
-			{
-				TypeCategory dstTypeCat = GetTypeInfo(context, varDecl.typeTableIdx).typeCategory;
-				if (dstTypeCat == TYPECATEGORY_STRUCT ||
-					dstTypeCat == TYPECATEGORY_UNION ||
-					dstTypeCat == TYPECATEGORY_ARRAY)
-				{
-					IRValue dstValue = IRValueValue(context, varDecl.valueIdx);
-					u64 size = GetTypeInfo(context, dstValue.typeTableIdx).size;
-					IRValue sizeValue = IRValueImmediate(size);
-
-					IRInstruction inst = {};
-					inst.type = IRINSTRUCTIONTYPE_ZERO_MEMORY;
-					inst.zeroMemory.dst = IRPointerToValue(context, dstValue);
-					inst.zeroMemory.size = sizeValue;
-
-					*AddInstruction(context) = inst;
-				}
-				else
-				{
-					IRValue dstValue = IRValueValue(context, varDecl.valueIdx);
-					IRValue srcValue = IRValueImmediate(0, varDecl.typeTableIdx);
-					IRDoAssignment(context, dstValue, srcValue);
-				}
-			}
-		}
+		if (varDecl.anonymousVariableValueIdx != U32_MAX)
+			IRPushValueIntoStack(context, varDecl.anonymousVariableValueIdx);
 	} break;
 	case ASTNODETYPE_IDENTIFIER:
 	{
@@ -2510,6 +2515,8 @@ void IRJobProcedure(void *args)
 	BucketArrayInit(&jobData.irInstructions);
 	DynamicArrayInit(&jobData.irStack, 64);
 	BucketArrayInit(&jobData.irLabels);
+
+	//if (StringEquals(GetProcedureRead(context, procedureIdx).name, "PrintF"_s)) __debugbreak();
 
 	IRGenProcedure(context, procedureIdx, {});
 

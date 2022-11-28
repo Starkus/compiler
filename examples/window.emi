@@ -19,20 +19,20 @@ Main :: () -> s64
 {
 	hInstance := ^__ImageBase;
 
-	windowClassName := "window\0";
-	windowTitle := "Hello, Sailor!\0";
+	windowClassName := cast(^CHAR)("window\0".data);
+	windowTitle := cast(^CHAR)("Hello, Sailor!\0".data);
 
 	windowClass : WNDCLASSEXA;
 	windowClass.cbSize = cast(u32)sizeof(windowClass);
 	windowClass.style = CS_HREDRAW | CS_VREDRAW | CS_OWNDC;
 	windowClass.lpfnWndProc = Win32WindowCallback;
 	windowClass.hInstance = hInstance;
-	windowClass.lpszClassName = windowClassName.data;
+	windowClass.lpszClassName = windowClassName;
 
 	success : bool = RegisterClassExA(^windowClass);
 	PrintF("Window succeded: % Last error: %\n", success, GetLastError());
 
-	window := CreateWindowExA(0, windowClassName.data, windowTitle.data, WS_CLIPSIBLINGS |
+	window := CreateWindowExA(0, windowClassName, windowTitle, WS_CLIPSIBLINGS |
 			WS_CLIPCHILDREN | WS_SIZEBOX | WS_SYSMENU, 0, 0, 128, 128, 0, 0, hInstance, 0);
 	PrintF("Window handle: % Last error: %\n", cast(s64) window, GetLastError());
 

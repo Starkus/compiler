@@ -8,58 +8,6 @@ inline bool IsOperatorToken(Token *token)
 	return token->type >= TOKEN_OP_Begin && token->type <= TOKEN_OP_End;
 }
 
-const int PRECEDENCE_UNARY_SUBTRACT = TOKEN_OP_End+1; // @Hack
-
-constexpr int GetOperatorPrecedence(s32 op)
-{
-	// Even means evaluated left to right with things of same precedence.
-	// Odd means evaluated right to left with things of same precedence.
-	if (op >= TOKEN_OP_ASSIGNMENT_Begin && op <= TOKEN_OP_ASSIGNMENT_End)
-		return 1;
-	else switch (op)
-	{
-		case ',':
-			return 2;
-		case TOKEN_OP_AND:
-		case TOKEN_OP_OR:
-			return 4;
-		case TOKEN_OP_EQUALS:
-		case TOKEN_OP_NOT_EQUALS:
-		case TOKEN_OP_GREATER_THAN:
-		case TOKEN_OP_GREATER_THAN_OR_EQUAL:
-		case TOKEN_OP_LESS_THAN:
-		case TOKEN_OP_LESS_THAN_OR_EQUAL:
-		case TOKEN_OP_RANGE:
-			return 6;
-		case TOKEN_OP_PLUS:
-		case TOKEN_OP_MINUS:
-			return 8;
-		case TOKEN_OP_MULTIPLY:
-		case TOKEN_OP_DIVIDE:
-		case TOKEN_OP_MODULO:
-			return 10;
-		case TOKEN_OP_SHIFT_LEFT:
-		case TOKEN_OP_SHIFT_RIGHT:
-		case TOKEN_OP_BITWISE_AND:
-		case TOKEN_OP_BITWISE_OR:
-			return 12;
-		case TOKEN_OP_NOT:
-		case TOKEN_OP_BITWISE_NOT:
-		case PRECEDENCE_UNARY_SUBTRACT:
-			return 14;
-		case TOKEN_OP_POINTER_TO:
-		case TOKEN_OP_DEREFERENCE:
-			return 16;
-		case TOKEN_KEYWORD_CAST:
-			return 18;
-		case TOKEN_OP_ARRAY_ACCESS:
-		case TOKEN_OP_MEMBER_ACCESS:
-			return 20;
-		default:
-			ASSERT(false);
-	}
-}
-
 int EatWhitespace(Tokenizer *tokenizer)
 {
 	int nAdvanced = 0;

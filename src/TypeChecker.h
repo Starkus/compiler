@@ -52,7 +52,10 @@ struct Constant
 enum TypeCategory
 {
 	TYPECATEGORY_INVALID,
-	TYPECATEGORY_INTEGER,
+	TYPECATEGORY_NOT_READY,
+
+	TYPECATEGORY_ValidBegin,
+	TYPECATEGORY_INTEGER = TYPECATEGORY_ValidBegin,
 	TYPECATEGORY_FLOATING,
 	TYPECATEGORY_STRUCT,
 	TYPECATEGORY_UNION,
@@ -178,6 +181,8 @@ struct TCScopeName
 		const StructMember *structMember;
 		ASTExpression *expression;
 		u32 staticDefinitionIdx;
+		u32 procedureIdx;
+		u32 typeTableIdx;
 	};
 };
 struct TCScope
@@ -207,11 +212,19 @@ struct Procedure
 	u32 typeTableIdx; // Type of the procedure
 };
 
-struct Context;
 struct TCJobArgs
 {
 	Context *context;
 	ASTExpression *expression;
+};
+
+struct TCStructJobArgs
+{
+	Context *context;
+	u32 typeTableIdx;
+	ASTStructDeclaration astStructDecl;
+	String name;
+	bool isUnion;
 };
 
 void GenerateTypeCheckJobs(Context *context, ASTExpression *expression);

@@ -1,7 +1,6 @@
 ASTExpression ParseExpression(Context *context, s32 precedence);
 ASTExpression ParseStatement(Context *context);
 ASTExpression ParseStaticStatement(Context *context);
-ASTVariableDeclaration ParseVariableDeclaration(Context *context);
 
 void AssertToken(Context *context, Token *token, int type)
 {
@@ -181,6 +180,62 @@ ASTType ParseType(Context *context)
 	return astType;
 }
 
+const int PRECEDENCE_UNARY_SUBTRACT = TOKEN_OP_End+1; // @Hack
+
+constexpr int GetOperatorPrecedence(s32 op)
+{
+	// Even means evaluated left to right with things of same precedence.
+	// Odd means evaluated right to left with things of same precedence.
+	if (op >= TOKEN_OP_ASSIGNMENT_Begin && op <= TOKEN_OP_ASSIGNMENT_End)
+		return 1;
+	else switch (op)
+	{
+		case TOKEN_OP_STATIC_DEF:
+		case TOKEN_OP_VARIABLE_DECLARATION:
+		case TOKEN_OP_VARIABLE_DECLARATION_STATIC:
+			return 1;
+		case ',':
+			return 2;
+		case TOKEN_OP_AND:
+		case TOKEN_OP_OR:
+			return 4;
+		case TOKEN_OP_EQUALS:
+		case TOKEN_OP_NOT_EQUALS:
+		case TOKEN_OP_GREATER_THAN:
+		case TOKEN_OP_GREATER_THAN_OR_EQUAL:
+		case TOKEN_OP_LESS_THAN:
+		case TOKEN_OP_LESS_THAN_OR_EQUAL:
+		case TOKEN_OP_RANGE:
+			return 6;
+		case TOKEN_OP_PLUS:
+		case TOKEN_OP_MINUS:
+			return 8;
+		case TOKEN_OP_MULTIPLY:
+		case TOKEN_OP_DIVIDE:
+		case TOKEN_OP_MODULO:
+			return 10;
+		case TOKEN_OP_SHIFT_LEFT:
+		case TOKEN_OP_SHIFT_RIGHT:
+		case TOKEN_OP_BITWISE_AND:
+		case TOKEN_OP_BITWISE_OR:
+			return 12;
+		case TOKEN_OP_NOT:
+		case TOKEN_OP_BITWISE_NOT:
+		case PRECEDENCE_UNARY_SUBTRACT:
+			return 14;
+		case TOKEN_OP_POINTER_TO:
+		case TOKEN_OP_DEREFERENCE:
+			return 16;
+		case TOKEN_KEYWORD_CAST:
+			return 18;
+		case TOKEN_OP_ARRAY_ACCESS:
+		case TOKEN_OP_MEMBER_ACCESS:
+			return 20;
+		default:
+			ASSERT(false);
+	}
+}
+
 bool TryParseUnaryOperation(Context *context, s32 prevPrecedence, ASTUnaryOperation *result)
 {
 	ParseJobData *jobData = (ParseJobData *)SYSGetFiberData(context->flsIndex);
@@ -227,24 +282,23 @@ bool TryParseBinaryOperation(Context *context, ASTExpression leftHand, s32 prevP
 	if (!IsOperatorToken(jobData->token))
 		return false;
 
+	result->loc = jobData->token->loc;
+
 	Token *oldToken = jobData->token;
 	s64 oldTokenIdx = jobData->currentTokenIdx;
 
-	result->loc = jobData->token->loc;
+	enum TokenType op = jobData->token->type;
+	Advance(context);
 
-	switch (jobData->token->type)
-	{
+	result->op = op;
+	result->leftHand = PNewTreeNode(context);
+	*result->leftHand = leftHand;
+
+	switch (op) {
 	case TOKEN_OP_ARRAY_ACCESS:
 	{
-		result->leftHand = PNewTreeNode(context);
-		*result->leftHand = leftHand;
-
-		result->op = TOKEN_OP_ARRAY_ACCESS;
-		Advance(context);
-
 		s32 precedence = GetOperatorPrecedence(TOKEN_OP_ARRAY_ACCESS);
-		if (precedence > (prevPrecedence & (~1)))
-		{
+		if (precedence > (prevPrecedence & (~1))) {
 			result->rightHand = PNewTreeNode(context);
 			*result->rightHand = ParseExpression(context, -1);
 
@@ -288,13 +342,6 @@ bool TryParseBinaryOperation(Context *context, ASTExpression leftHand, s32 prevP
 	case TOKEN_OP_MEMBER_ACCESS:
 	case TOKEN_OP_RANGE:
 	{
-		result->leftHand = PNewTreeNode(context);
-		*result->leftHand = leftHand;
-
-		enum TokenType op = jobData->token->type;
-		result->op = op;
-		Advance(context);
-
 		s32 precedence = GetOperatorPrecedence(op);
 		if (precedence > (prevPrecedence & (~1)))
 		{
@@ -637,34 +684,38 @@ ASTVariableDeclaration ParseVariableDeclaration(Context *context)
 	ASTVariableDeclaration varDecl = {};
 	varDecl.loc = jobData->token->loc;
 
+	HybridArrayInit(&varDecl.names);
+
 	AssertToken(context, jobData->token, TOKEN_IDENTIFIER);
-	varDecl.name = TokenToString(context, *jobData->token);
+	*HybridArrayAdd(&varDecl.names) = TokenToString(context, *jobData->token);
 	Advance(context);
+	while (jobData->token->type == ',') {
+		Advance(context);
+		AssertToken(context, jobData->token, TOKEN_IDENTIFIER);
+		*HybridArrayAdd(&varDecl.names) = TokenToString(context, *jobData->token);
+		Advance(context);
+	}
 
 	if (jobData->token->type == TOKEN_OP_VARIABLE_DECLARATION)
 		Advance(context);
-	else if (jobData->token->type == TOKEN_OP_VARIABLE_DECLARATION_STATIC)
-	{
+	else if (jobData->token->type == TOKEN_OP_VARIABLE_DECLARATION_STATIC) {
 		varDecl.isStatic = true;
 		Advance(context);
 	}
 	else
 		UNEXPECTED_TOKEN_ERROR(context, jobData->token);
 
-	if (jobData->token->type == TOKEN_DIRECTIVE_EXTERNAL)
-	{
+	if (jobData->token->type == TOKEN_DIRECTIVE_EXTERNAL) {
 		varDecl.isExternal = true;
 		Advance(context);
 	}
 
-	if (jobData->token->type != TOKEN_OP_ASSIGNMENT)
-	{
+	if (jobData->token->type != TOKEN_OP_ASSIGNMENT) {
 		varDecl.astType = NewASTType(context);
 		*varDecl.astType = ParseType(context);
 	}
 
-	if (jobData->token->type == TOKEN_OP_ASSIGNMENT)
-	{
+	if (jobData->token->type == TOKEN_OP_ASSIGNMENT) {
 		if (varDecl.isExternal)
 			LogError(context, jobData->token->loc, "Can't assign value to external variable"_s);
 
@@ -672,6 +723,9 @@ ASTVariableDeclaration ParseVariableDeclaration(Context *context)
 		varDecl.astInitialValue = PNewTreeNode(context);
 		*varDecl.astInitialValue = ParseExpression(context, -1);
 	}
+
+	AssertToken(context, jobData->token, ';');
+	Advance(context);
 
 	return varDecl;
 }
@@ -739,8 +793,13 @@ ASTProcedurePrototype ParseProcedurePrototype(Context *context)
 			astPrototype.callingConvention = CC_WIN64;
 		else if (StringEquals(tokenStr, "linux64"_s))
 			astPrototype.callingConvention = CC_LINUX64;
-		else
-			LogError(context, jobData->token->loc, "Invalid calling convention specified"_s);
+		else {
+			LogErrorNoCrash(context, jobData->token->loc, TPrintF("Invalid calling convention "
+						"specified (\"%S\")", tokenStr));
+			LogNote(context, {}, "Could be one of:\n"
+					"    * win64\n"
+					"    * linux64"_s);
+		}
 		Advance(context);
 
 		AssertToken(context, jobData->token, ')');
@@ -1131,12 +1190,21 @@ ASTStaticDefinition ParseStaticDefinition(Context *context)
 {
 	ParseJobData *jobData = (ParseJobData *)SYSGetFiberData(context->flsIndex);
 	ASTStaticDefinition result = {};
+	result.loc = jobData->token->loc;
+
+	HybridArrayInit(&result.names);
 
 	AssertToken(context, jobData->token, TOKEN_IDENTIFIER);
-	result.name = TokenToString(context, *jobData->token);
-	result.loc = jobData->token->loc;
+	*HybridArrayAdd(&result.names) = TokenToString(context, *jobData->token);
 	Advance(context);
+	while (jobData->token->type == ',') {
+		Advance(context);
+		AssertToken(context, jobData->token, TOKEN_IDENTIFIER);
+		*HybridArrayAdd(&result.names) = TokenToString(context, *jobData->token);
+		Advance(context);
+	}
 
+	AssertToken(context, jobData->token, TOKEN_OP_STATIC_DEF);
 	Advance(context);
 
 	ASTExpression expression = {};
@@ -1182,7 +1250,7 @@ ASTStaticDefinition ParseStaticDefinition(Context *context)
 
 		ASTProcedureDeclaration procDecl = {};
 		procDecl.loc = jobData->token->loc;
-		procDecl.name = result.name;
+		procDecl.name = result.names[0];
 		procDecl.isInline = isInline;
 		procDecl.isExternal = isExternal;
 		procDecl.isExported = isExported;
@@ -1262,8 +1330,7 @@ ASTExpression ParseStatement(Context *context)
 	result.typeTableIdx = TYPETABLEIDX_Unset;
 	result.any.loc = jobData->token->loc;
 
-	switch (jobData->token->type)
-	{
+	switch (jobData->token->type) {
 	case '{':
 	{
 		result.nodeType = ASTNODETYPE_BLOCK;
@@ -1362,8 +1429,7 @@ ASTExpression ParseStatement(Context *context)
 		varDecl.astType = NewASTType(context);
 		*varDecl.astType = ParseType(context); // This will parse the struct/union declaration.
 
-		if (jobData->token->type == TOKEN_OP_ASSIGNMENT)
-		{
+		if (jobData->token->type == TOKEN_OP_ASSIGNMENT) {
 			Advance(context);
 			varDecl.astInitialValue = PNewTreeNode(context);
 			*varDecl.astInitialValue = ParseExpression(context, -1);
@@ -1386,23 +1452,41 @@ ASTExpression ParseStatement(Context *context)
 	} break;
 	default:
 	{
-		Token *next = &jobData->tokens[jobData->currentTokenIdx + 1];
-		if (next->type == TOKEN_OP_STATIC_DEF)
-		{
+		u64 lookAheadIndex = jobData->currentTokenIdx + 1;
+		Token *next = &jobData->tokens[lookAheadIndex];
+		if (next->type == ',') {
+			AssertToken(context, jobData->token, TOKEN_IDENTIFIER);
+			while (next->type == ',') {
+				++lookAheadIndex;
+				AssertToken(context, &jobData->tokens[lookAheadIndex], TOKEN_IDENTIFIER);
+				++lookAheadIndex;
+				next = &jobData->tokens[lookAheadIndex];
+			}
+			if (next->type == TOKEN_OP_STATIC_DEF) {
+				result.nodeType = ASTNODETYPE_STATIC_DEFINITION;
+				result.staticDefinition = ParseStaticDefinition(context);
+			}
+			else if (next->type == TOKEN_OP_VARIABLE_DECLARATION ||
+					next->type == TOKEN_OP_VARIABLE_DECLARATION_STATIC) {
+				result.nodeType = ASTNODETYPE_VARIABLE_DECLARATION;
+				result.variableDeclaration = ParseVariableDeclaration(context);
+			}
+			else {
+				result = ParseExpression(context, -1);
+				AssertToken(context, jobData->token, ';');
+				Advance(context);
+			}
+		}
+		else if (next->type == TOKEN_OP_STATIC_DEF) {
 			result.nodeType = ASTNODETYPE_STATIC_DEFINITION;
 			result.staticDefinition = ParseStaticDefinition(context);
 		}
 		else if (next->type == TOKEN_OP_VARIABLE_DECLARATION ||
-				next->type == TOKEN_OP_VARIABLE_DECLARATION_STATIC)
-		{
+				next->type == TOKEN_OP_VARIABLE_DECLARATION_STATIC) {
 			result.nodeType = ASTNODETYPE_VARIABLE_DECLARATION;
 			result.variableDeclaration = ParseVariableDeclaration(context);
-
-			AssertToken(context, jobData->token, ';');
-			Advance(context);
 		}
-		else
-		{
+		else {
 			result = ParseExpression(context, -1);
 			AssertToken(context, jobData->token, ';');
 			Advance(context);
@@ -1420,8 +1504,7 @@ ASTExpression ParseStaticStatement(Context *context)
 	result.any.loc = jobData->token->loc;
 	result.typeTableIdx = TYPETABLEIDX_Unset;
 
-	switch (jobData->token->type)
-	{
+	switch (jobData->token->type) {
 	case '{':
 	{
 		result.nodeType = ASTNODETYPE_BLOCK;
@@ -1503,16 +1586,13 @@ ASTExpression ParseStaticStatement(Context *context)
 			result.staticDefinition = ParseStaticDefinition(context);
 		}
 		else if (next->type == TOKEN_OP_VARIABLE_DECLARATION ||
-				next->type == TOKEN_OP_VARIABLE_DECLARATION_STATIC)
+				 next->type == TOKEN_OP_VARIABLE_DECLARATION_STATIC)
 		{
 			result.nodeType = ASTNODETYPE_VARIABLE_DECLARATION;
 			result.variableDeclaration = ParseVariableDeclaration(context);
 
 			ASSERT(result.variableDeclaration.isStatic ||
 				   result.variableDeclaration.isExternal);
-
-			AssertToken(context, jobData->token, ';');
-			Advance(context);
 		}
 		else
 			LogError(context, jobData->token->loc, "Invalid expression in static context"_s);
@@ -1522,7 +1602,8 @@ ASTExpression ParseStaticStatement(Context *context)
 	return result;
 }
 
-void ParseJobProc(void *args) {
+void ParseJobProc(void *args)
+{
 	ParseJobArgs *argsStruct = (ParseJobArgs *)args;
 	Context *context = argsStruct->context;
 	u32 fileIdx = argsStruct->fileIdx;
@@ -1571,7 +1652,8 @@ void ParseJobProc(void *args) {
 	SwitchJob(context, TCYIELDREASON_DONE, {});
 }
 
-void ParserMain(Context *context) {
+void ParserMain(Context *context)
+{
 	DynamicArrayInit(&context->sourceFiles, 64);
 
 	MTQueueInit<HeapAllocator>(&context->readyJobs, 1024);

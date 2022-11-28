@@ -1,5 +1,3 @@
-//compiler_output_type :: COMPILER_OUTPUT_EXECUTABLE;
-
 Person :: struct
 {
 	id : u64;
@@ -22,6 +20,12 @@ structByPointer :: (person : ^Person)
 {
 	person.age = 99;
 }
+
+// Pointer to self
+Node :: struct
+{
+	next : ^Node;
+};
 
 Main :: () -> s64
 {
