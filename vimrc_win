@@ -1,8 +1,49 @@
-let g:run_command =  'bin\Compiler.exe'
 let g:debug_command =  "remedybg.exe compiler.rdbg"
 
-command! Build :silent make
-command! BuildR :silent make -r
+function! RunCompiler(args)
+	if empty(a:args) == 0
+		let g:compiler_args = a:args
+	endif
+	silent exec "!bin\\Compiler.exe " . g:compiler_args . " & pause"
+endfunction
+
+function! Make(args)
+	exec "silent make" . a:args
+	"if empty(filter(getqflist(), 'v:val.valid'))
+	if !empty(filter(getqflist(), 'match(v:val.text, "Success") >= 0'))
+		echo "Compilation succeeded!"
+	else
+		echo "Compilation failed!"
+	endif
+endfunction
+
+function! ConvertSyntax()
+	" Remove stupid annotations
+	silent exec a:firstline.','a:lastline.'s/\/\* \[.*\] \*\/ \? \?//e'
+	" Convert enum/struct header
+	silent exec a:firstline.','a:lastline.'s/typedef \(enum\)\?\(struct\)\? \(\w\+\) {/\3 :: \1\2\r{/e'
+	silent exec a:firstline.','a:lastline+1.'s/^} \w\+ \?;/};/e'
+	silent exec a:firstline.','a:lastline+1.'s/^  \(\w\)/\t\1/e'
+	" Convert type** to ^^type
+	silent exec a:firstline.','a:lastline+1.'s/\(\w\+\) \?\*\* \?/^^\1 /e'
+	" Convert type* to ^type
+	silent exec a:firstline.','a:lastline+1.'s/\(\w\+\) \?\* \?/^\1 /e'
+	" Convert procedure headers
+	silent exec a:firstline.','a:lastline+1.'s/\(\^\?\^\?\w\+\) ( \(\^\?\^\?\w\+\) \(\w\+\) )( \?/\3: #convention(win64) () -> \1;/e'
+	" Convert parameters
+	silent exec a:firstline.','a:lastline+1.'s/\(_[A-Za-z0-9_]\+_\((.*)\)\?  \)\?\(const \)\?\(\^\?\^\?\w\+\) \+\(\w\+\)\(\[.*\]\)\?/\5: \6\4/e'
+	silent exec a:firstline.','a:lastline+1.'s/This/this/e'
+	" Remove stupid annotations
+	silent exec a:firstline.','a:lastline+1.'g/\/\* \[annot/d _'
+endfunction
+
+command! Build :call Make("")
+command! BuildR :call Make("-r")
+command! -nargs=* -complete=file Run :call RunCompiler("<args>")
+command! Test :silent !output\out.exe & pause
+
+nnoremap <F5> :call RunCompiler("")<CR>
+nnoremap <F7> :silent !output\out.exe & pause<CR>
 
 compiler msvc
 set makeprg=build.bat
@@ -23,7 +64,6 @@ let $LIB = msvc_path . 'lib\x64;' .
 		 \ winsdk_path . 'lib\' . winsdk_version . '\um\x64'
 
 command! Assemble :call term_sendkeys("terminal", "assembleOutput.bat\<CR>") | call ShowTerminal()
-command! Test :call term_sendkeys("terminal", "output\\out.exe\<CR>") | call ShowTerminal()
 
 " Ignore build folder in wildcards
 set wildignore+=*/build/*
