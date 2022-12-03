@@ -198,18 +198,6 @@ inline bool TCIsAnyOtherJobRunningOrWaiting(Context *context)
 		return true;
 	if (!MTQueueIsEmpty(&context->readyJobs))
 		return true;
-#if 0
-	if (context->jobsWaitingForIdentifier.unsafe.size)
-		return true;
-	if (context->jobsWaitingForOverload.unsafe.size)
-		return true;
-	if (context->jobsWaitingForStaticDef.unsafe.size)
-		return true;
-	if (context->jobsWaitingForProcedure.unsafe.size)
-		return true;
-	if (context->jobsWaitingForType.unsafe.size)
-		return true;
-#endif
 	if (context->jobsWaitingForDeadStop.unsafe.size)
 		return true;
 
@@ -504,7 +492,7 @@ inline void TCUpdateStaticDefinition(Context *context, u32 staticDefinitionIdx,
 		for (int i = 0; i < jobsWaiting->size; ) {
 			TCJob *job = &(*jobsWaiting)[i];
 			if (job->context.index == staticDefinitionIdx) {
-				MTQueueEnqueue(&context->readyJobs, job->fiber);
+				EnqueueReadyJob(context, job->fiber);
 				// Remove
 				*job = (*jobsWaiting)[--jobsWaiting->size];
 			}
@@ -1054,6 +1042,7 @@ bool AreTypeInfosEqual(Context *context, TypeInfo a, TypeInfo b)
 	case TYPECATEGORY_FLOATING:
 		return true;
 	case TYPECATEGORY_STRUCT:
+		// @Check: for our purposes, shouldn't struct always return false?
 		if (a.structInfo.members.size != b.structInfo.members.size)
 			return false;
 		for (int i = 0; i < a.structInfo.members.size; ++i)
@@ -1067,6 +1056,9 @@ bool AreTypeInfosEqual(Context *context, TypeInfo a, TypeInfo b)
 			if (a.structInfo.members[i].typeTableIdx != b.structInfo.members[i].typeTableIdx)
 				return false;
 		return true;
+	case TYPECATEGORY_ENUM:
+		// @Check
+		return false;
 	case TYPECATEGORY_POINTER:
 		return a.pointerInfo.pointedTypeTableIdx == b.pointerInfo.pointedTypeTableIdx;
 	case TYPECATEGORY_ARRAY:
@@ -1100,10 +1092,12 @@ bool AreTypeInfosEqual(Context *context, TypeInfo a, TypeInfo b)
 			if (aParam.defaultValue.type != CONSTANTTYPE_INVALID &&
 					aParam.defaultValue.valueAsInt != bParam.defaultValue.valueAsInt)
 				return false;
-			TypeInfo aParamTypeInfo = context->typeTable.unsafe[aParam.typeTableIdx];
-			TypeInfo bParamTypeInfo = context->typeTable.unsafe[bParam.typeTableIdx];
-			if (!AreTypeInfosEqual(context, aParamTypeInfo, bParamTypeInfo))
-				return false;
+			if (aParam.typeTableIdx != bParam.typeTableIdx) {
+				TypeInfo aParamTypeInfo = context->typeTable.unsafe[aParam.typeTableIdx];
+				TypeInfo bParamTypeInfo = context->typeTable.unsafe[bParam.typeTableIdx];
+				if (!AreTypeInfosEqual(context, aParamTypeInfo, bParamTypeInfo))
+					return false;
+			}
 		}
 		return true;
 	}
@@ -1257,7 +1251,7 @@ inline void TCAddScopeName(Context *context, TCScopeName scopeName)
 		for (int i = 0; i < jobsWaiting->size; ) {
 			TCJob *job = &(*jobsWaiting)[i];
 			if (StringEquals(job->context.identifier, scopeName.name)) {
-				MTQueueEnqueue(&context->readyJobs, job->fiber);
+				EnqueueReadyJob(context, job->fiber);
 				// Remove
 				*job = (*jobsWaiting)[--jobsWaiting->size];
 			}
@@ -1323,7 +1317,7 @@ u32 TypeCheckStructDeclaration(Context *context, String name, bool isUnion,
 		.isUnion = isUnion
 	};
 	Fiber fiber = SYSCreateFiber(TCStructJobProc, (void *)args);
-	MTQueueEnqueue(&context->readyJobs, fiber);
+	EnqueueReadyJob(context, fiber);
 
 	return typeTableIdx;
 }
@@ -2936,7 +2930,7 @@ void TypeCheckExpression(Context *context, ASTExpression *expression)
 			};
 			Fiber fiber = SYSCreateFiber(IRJobExpression, (void *)args);
 
-			MTQueueEnqueue(&context->readyJobs, fiber);
+			EnqueueReadyJob(context, fiber);
 		}
 	} break;
 	case ASTNODETYPE_STATIC_DEFINITION:
@@ -3045,7 +3039,7 @@ void TypeCheckExpression(Context *context, ASTExpression *expression)
 			for (int i = 0; i < jobsWaiting->size; ) {
 				TCJob *job = &(*jobsWaiting)[i];
 				if (job->context.index == procedureIdx) {
-					MTQueueEnqueue(&context->readyJobs, job->fiber);
+					EnqueueReadyJob(context, job->fiber);
 					// Remove
 					*job = (*jobsWaiting)[--jobsWaiting->size];
 				}
@@ -3080,7 +3074,7 @@ void TypeCheckExpression(Context *context, ASTExpression *expression)
 					jobData->localValues = {}; // Safety clear
 					Fiber fiber = SYSCreateFiber(IRJobProcedure, (void *)args);
 
-					MTQueueEnqueue(&context->readyJobs, fiber);
+					EnqueueReadyJob(context, fiber);
 				}
 			}
 
@@ -4182,7 +4176,7 @@ void TypeCheckExpression(Context *context, ASTExpression *expression)
 		for (int i = 0; i < jobsWaiting->size; ) {
 			TCJob *job = &(*jobsWaiting)[i];
 			if (job->context.index == astOverload->op) {
-				MTQueueEnqueue(&context->readyJobs, job->fiber);
+				EnqueueReadyJob(context, job->fiber);
 				// Remove
 				*job = (*jobsWaiting)[--jobsWaiting->size];
 			}
@@ -4448,7 +4442,7 @@ void TCStructJobProc(void *args)
 		for (int i = 0; i < jobsWaiting->size; ) {
 			TCJob *job = &(*jobsWaiting)[i];
 			if (job->context.index == typeTableIdx) {
-				MTQueueEnqueue(&context->readyJobs, job->fiber);
+				EnqueueReadyJob(context, job->fiber);
 				// Remove
 				*job = (*jobsWaiting)[--jobsWaiting->size];
 			}
@@ -4481,7 +4475,7 @@ void GenerateTypeCheckJobs(Context *context, ASTExpression *expression) {
 			.expression = expression };
 		Fiber fiber = SYSCreateFiber(TCJobProc, (void *)args);
 
-		MTQueueEnqueue(&context->readyJobs, fiber);
+		EnqueueReadyJob(context, fiber);
 	} break;
 	case ASTNODETYPE_GARBAGE:
 	case ASTNODETYPE_RETURN:

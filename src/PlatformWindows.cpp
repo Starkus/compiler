@@ -513,7 +513,13 @@ void SYSRunLinker(String outputPath, bool makeLibrary, String extraArguments)
 	CloseHandle(processInformation.hThread);
 }
 
-inline ThreadHandle SYSCreateThread(int (*start)(void *), void *args) {
+inline void SYSSleep(int milliseconds)
+{
+	Sleep(milliseconds);
+}
+
+inline ThreadHandle SYSCreateThread(int (*start)(void *), void *args)
+{
 	return CreateThread(nullptr, 0, (DWORD (*)(void *))start, args, 0, nullptr);
 }
 
@@ -567,36 +573,61 @@ inline bool SYSSetFiberData(u32 key, void *value) {
 	return FlsSetValue(key, value);
 }
 
+Fiber g_runningFibers[8] = { SYS_INVALID_FIBER_HANDLE };
+volatile u32 g_runningFibersLock = 0; // @Delete: this was for debugging, don't think it's necessary?
+
 inline Fiber SYSCreateFiber(void (*start)(void *), void *args) {
 	const u64 fiberStackSize = 1 * 1024 * 1024; // 1MB
-	return CreateFiber(fiberStackSize, start, args);
+
+	Fiber fiber = CreateFiber(fiberStackSize, start, args);
+	ProfilerRegisterFiber(fiber);
+	return fiber;
 }
 
 inline Fiber SYSConvertThreadToFiber() {
-	return ConvertThreadToFiber(nullptr);
-}
-
-Fiber runningFibers[8] = { SYS_INVALID_FIBER_HANDLE };
-NOINLINE void SYSSwitchToFiber(Fiber fiber) {
-	ASSERT(fiber != SYS_INVALID_FIBER_HANDLE);
-
-	for (int i = 0; i < ArrayCount(runningFibers); ++i)
-		if (runningFibers[i] == fiber) {
-			Print("CRASH: Trying to run fiber on two threads at once\n");
-			PANIC;
-		}
-
-	runningFibers[t_threadIndex] = fiber;
-	SwitchToFiber(fiber);
+	Fiber fiber = ConvertThreadToFiber(nullptr);
+	ProfilerRegisterFiber(fiber);
+	return fiber;
 }
 
 inline void SYSDeleteFiber(Fiber fiber) {
-	for (int i = 0; i < ArrayCount(runningFibers); ++i)
-		if (runningFibers[i] == fiber) {
-			Print("CRASH: Trying to delete a running fiber\n");
+	SpinlockLock(&g_runningFibersLock);
+	for (int i = 0; i < ArrayCount(g_runningFibers); ++i)
+		if (g_runningFibers[i] == fiber) {
+			Print("CRASH: Trying to delete a running fiber (%llX)\n", fiber);
 			PANIC;
 		}
+	SpinlockUnlock(&g_runningFibersLock);
+
+	ProfilerUnregisterFiber(fiber);
 	DeleteFiber(fiber);
+}
+
+// Call this before a fiber ends
+inline void SYSPrepareFiberForExit() {
+	SpinlockLock(&g_runningFibersLock);
+	g_runningFibers[t_threadIndex] = 0;
+	SpinlockUnlock(&g_runningFibersLock);
+
+	ProfilerUnregisterFiber(GetCurrentFiber());
+}
+
+inline void SYSSwitchToFiber(Fiber fiber) {
+	ASSERT(fiber != SYS_INVALID_FIBER_HANDLE);
+
+	SpinlockLock(&g_runningFibersLock);
+	for (int i = 0; i < ArrayCount(g_runningFibers); ++i)
+		if (g_runningFibers[i] == fiber) {
+			Print("CRASH: Trying to run fiber on two threads at once (%llX)\n", fiber);
+			PANIC;
+		}
+	g_runningFibers[t_threadIndex] = fiber;
+	SpinlockUnlock(&g_runningFibersLock);
+
+	Fiber currentFiber = GetCurrentFiber();
+	ProfilerBeginFiberSwitch(currentFiber, fiber);
+	SwitchToFiber(fiber);
+	ProfilerEndFiberSwitch(currentFiber);
 }
 
 inline Mutex SYSCreateMutex() {
@@ -641,34 +672,6 @@ inline void SYSSleepConditionVariableRead(ConditionVariable *conditionVar, RWLoc
 
 inline void SYSWakeAllConditionVariable(ConditionVariable *conditionVar) {
 	WakeAllConditionVariable(conditionVar);
-}
-
-inline void SYSSpinlockLock(volatile u32 *locked) {
-	//ProfileScope scope("Spinlock acquiring", nullptr, PERFORMANCEAPI_MAKE_COLOR(0xA0, 0x30, 0x10));
-	// Stupid MSVC uses long for this intrinsic but it's the same size as u32.
-	static_assert(sizeof(long) == sizeof(u32));
-	for (;;)
-	{
-		long oldLocked = _InterlockedCompareExchange_HLEAcquire((volatile long *)locked, 1, 0);
-		if (!oldLocked)
-			return;
-
-		for (;;)
-		{
-			if (!*locked)
-				break;
-			_mm_pause();
-		}
-	}
-}
-
-inline void SYSSpinlockUnlock(volatile u32 *locked) {
-	static_assert(sizeof(long) == sizeof(u32));
-	_Store_HLERelease((volatile long *)locked, 0);
-}
-
-inline void SYSSleep(int milliseconds) {
-	Sleep(milliseconds);
 }
 
 inline s32 AtomicCompareExchange(volatile s32 *destination, s32 exchange, s32 comparand) {

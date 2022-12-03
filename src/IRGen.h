@@ -1,11 +1,3 @@
-struct IRJobArgs
-{
-	Context *context;
-	u32 procedureIdx;
-	BucketArray<Value, HeapAllocator, 1024> localValues;
-	const ASTExpression *expression;
-};
-
 enum IRValueType
 {
 	IRVALUETYPE_INVALID = -1,
@@ -217,6 +209,14 @@ struct IRStaticVariable
 {
 	u32 valueIdx;
 	IRValue initialValue;
+};
+
+struct IRJobArgs
+{
+	Context *context;
+	u32 procedureIdx;
+	BucketArray<Value, HeapAllocator, 1024> localValues;
+	const ASTExpression *expression;
 };
 
 void IRJobProcedure(void *args);

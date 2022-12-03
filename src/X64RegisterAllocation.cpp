@@ -666,7 +666,7 @@ void X64AllocateRegisters(Context *context)
 
 #if USE_PROFILER_API
 	String procName = GetProcedureRead(context, jobData->procedureIdx).name;
-	ProfileBegin("Liveness analisis", StringToCStr(procName, JobAllocator::Alloc), PERFORMANCEAPI_DEFAULT_COLOR);
+	ProfilerBegin("Liveness analisis", StringToCStr(procName, JobAllocator::Alloc), PERFORMANCEAPI_DEFAULT_COLOR);
 #endif
 
 	jobData->beInterferenceGraph.count = 0;
@@ -677,7 +677,7 @@ void X64AllocateRegisters(Context *context)
 	DynamicArrayInit(&liveValues, 32);
 	DoLivenessAnalisis(context, currentLeafBlock, &liveValues);
 
-	ProfileEnd();
+	ProfilerEnd();
 
 	InterferenceGraph interferenceGraph = jobData->beInterferenceGraph;
 

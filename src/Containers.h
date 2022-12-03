@@ -889,35 +889,44 @@ void MTQueueInit(MTQueue<T> *queue, u32 capacity) {
 }
 
 template <typename T>
-void MTQueueEnqueue(MTQueue<T> *queue, T item) {
-	SYSSpinlockLock(&queue->tailLock);
+bool MTQueueEnqueue(MTQueue<T> *queue, T item)
+{
+	SpinlockLock(&queue->tailLock);
 	u32 tail = queue->tail;
-	queue->buffer[tail] = item;
-	queue->tail = (tail + 1) % queue->capacity;
-	SYSSpinlockUnlock(&queue->tailLock);
+	if (tail + 1 == queue->head) {
+		SpinlockUnlock(&queue->tailLock);
+		return false;
+	}
+	else {
+		queue->buffer[tail] = item;
+		queue->tail = (tail + 1) % queue->capacity;
+		SpinlockUnlock(&queue->tailLock);
+		return true;
+	}
 }
 
 template <typename T>
-T *MTQueueDequeue(MTQueue<T> *queue) {
+T *MTQueueDequeue(MTQueue<T> *queue)
+{
 	T *result = nullptr;
-	SYSSpinlockLock(&queue->headLock);
+	SpinlockLock(&queue->headLock);
 	u32 head = queue->head;
 	u32 tail = queue->tail;
 	if (head != tail) {
 		queue->head = (head + 1) % queue->capacity;
 		result = &queue->buffer[head];
 	}
-	SYSSpinlockUnlock(&queue->headLock);
+	SpinlockUnlock(&queue->headLock);
 	return result;
 }
 
 template <typename T>
 bool MTQueueIsEmpty(MTQueue<T> *queue) {
-	SYSSpinlockLock(&queue->headLock);
-	SYSSpinlockLock(&queue->tailLock);
+	SpinlockLock(&queue->headLock);
+	SpinlockLock(&queue->tailLock);
 	u32 head = queue->head;
 	u32 tail = queue->tail;
-	SYSSpinlockUnlock(&queue->tailLock);
-	SYSSpinlockUnlock(&queue->headLock);
+	SpinlockUnlock(&queue->tailLock);
+	SpinlockUnlock(&queue->headLock);
 	return head == tail;
 }

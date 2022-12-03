@@ -23,7 +23,7 @@ void MemoryInitJob(u64 size)
 
 void *LinearAllocator::Alloc(u64 size, int alignment)
 {
-	ProfileScope scope("Linear Alloc", nullptr, PROFILER_COLOR(0xBB, 0xBB, 0x10));
+	ProfilerScope scope("Linear Alloc", nullptr, PROFILER_COLOR(0xBB, 0xBB, 0x10));
 
 	// Alignment
 	ASSERT(IsPowerOf2(alignment));

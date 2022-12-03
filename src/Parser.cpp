@@ -1656,7 +1656,7 @@ void ParserMain(Context *context)
 {
 	DynamicArrayInit(&context->sourceFiles, 64);
 
-	MTQueueInit<HeapAllocator>(&context->readyJobs, 1024);
+	MTQueueInit<HeapAllocator>(&context->readyJobs, 2048);
 
 	DynamicArrayInit(&context->jobsWaitingForIdentifier.unsafe, 64);
 	DynamicArrayInit(&context->jobsWaitingForOverload.unsafe, 64);

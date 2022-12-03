@@ -1,3 +1,52 @@
+inline void SpinlockLock(volatile u32 *locked)
+{
+#if IS_MSVC
+	//ProfileScope scope("Spinlock acquiring", nullptr, PERFORMANCEAPI_MAKE_COLOR(0xA0, 0x30, 0x10));
+	// Stupid MSVC uses long for this intrinsic but it's the same size as u32.
+	static_assert(sizeof(long) == sizeof(u32));
+	for (;;) {
+		long oldLocked = _InterlockedCompareExchange_HLEAcquire((volatile long *)locked, 1, 0);
+		if (!oldLocked)
+			return;
+
+		for (;;) {
+			if (!*locked)
+				break;
+			_mm_pause();
+		}
+	}
+#else
+	int oldLocked = 1;
+retry:
+	int eax = 0;
+	asm volatile("xacquire lock cmpxchg %2, %1"
+					: "+a" (eax), "+m" (*locked)
+					: "r" (oldLocked) : "memory", "cc");
+	if (!eax)
+		goto ret;
+
+pause:
+	if (!*locked)
+		goto retry;
+	_mm_pause();
+	goto pause;
+
+ret:
+	return;
+#endif
+}
+
+inline void SpinlockUnlock(volatile u32 *locked)
+{
+	ASSERT(*locked == 1);
+#if IS_MSVC
+	static_assert(sizeof(long) == sizeof(u32));
+	_Store_HLERelease((volatile long *)locked, 0);
+#else
+	asm volatile("xrelease movl %1, %0" : "+m"(*locked) : "i"(0) : "memory");
+#endif
+}
+
 class [[nodiscard]] ScopedLockRead
 {
 public:
@@ -35,11 +84,11 @@ public:
 	ScopedLockSpin(volatile u32 *aLock)
 	{
 		lock = aLock;
-		SYSSpinlockLock(lock);
+		SpinlockLock(lock);
 	}
 	~ScopedLockSpin()
 	{
-		SYSSpinlockUnlock(lock);
+		SpinlockUnlock(lock);
 	}
 };
 
@@ -178,7 +227,7 @@ public:
 
 	const T &Lock()
 	{
-		SYSSpinlockLock(&lock);
+		SpinlockLock(&lock);
 		//ProfileBegin("Spinlock locked", nullptr, PERFORMANCEAPI_MAKE_COLOR(0xA0, 0x30, 0x10));
 		return unsafe;
 	}
@@ -186,7 +235,7 @@ public:
 	void Unlock()
 	{
 		//ProfileEnd();
-		SYSSpinlockUnlock(&lock);
+		SpinlockUnlock(&lock);
 	}
 
 	template <typename T2>

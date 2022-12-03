@@ -344,30 +344,6 @@ inline void SYSWakeAllConditionVariable(ConditionVariable *conditionVar) {
 }
 #endif
 
-inline void SYSSpinlockLock(volatile u32 *locked) {
-	int oldLocked = 1;
-retry:
-	int eax = 0;
-	asm volatile("xacquire lock cmpxchg %2, %1"
-					: "+a" (eax), "+m" (*locked)
-					: "r" (oldLocked) : "memory", "cc");
-	if (!eax)
-		goto ret;
-
-pause:
-	if (!*locked)
-		goto retry;
-	_mm_pause();
-	goto pause;
-
-ret:
-	return;
-}
-
-inline void SYSSpinlockUnlock(volatile u32 *locked) {
-    asm volatile("xrelease movl %1, %0" : "+m"(*locked) : "i"(0) : "memory");
-}
-
 inline void SYSSleep(int milliseconds) {
 	struct timespec t = { 0, milliseconds * 1000 };
 	nanosleep(&t, nullptr);
