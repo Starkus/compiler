@@ -3,9 +3,9 @@ inline bool IsTokenKeyword(Token *token)
 	return token->type >= TOKEN_KEYWORD_Begin && token->type <= TOKEN_KEYWORD_End;
 }
 
-inline bool IsOperatorToken(Token *token)
+inline bool IsOperatorToken(enum TokenType type)
 {
-	return token->type >= TOKEN_OP_Begin && token->type <= TOKEN_OP_End;
+	return type >= TOKEN_OP_Begin && type <= TOKEN_OP_End;
 }
 
 int EatWhitespace(Tokenizer *tokenizer)
@@ -376,6 +376,8 @@ enum TokenType CalculateTokenType(Context *context, const Tokenizer *tokenizer)
 				return TOKEN_DIRECTIVE_IF;
 			else if (StringEquals(directive, "#defined"_s))
 				return TOKEN_DIRECTIVE_DEFINED;
+			else if (StringEquals(directive, "#break"_s))
+				return TOKEN_DIRECTIVE_BREAK;
 			else
 				return TOKEN_INVALID_DIRECTIVE;
 		} break;
@@ -674,6 +676,7 @@ u16 CalculateTokenSize(Context *context, const Tokenizer *tokenizer, enum TokenT
 	case TOKEN_KEYWORD_USING:
 		return 5;
 	case TOKEN_DIRECTIVE_ALIAS:
+	case TOKEN_DIRECTIVE_BREAK:
 	case TOKEN_KEYWORD_RETURN:
 	case TOKEN_KEYWORD_REMOVE:
 	case TOKEN_KEYWORD_STRUCT:

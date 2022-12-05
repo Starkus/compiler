@@ -20,13 +20,14 @@ typedef CONDITION_VARIABLE ConditionVariable;
 #define SYS_MAX_PATH MAX_PATH
 #define THREADLOCAL __declspec(thread)
 #define NOINLINE __declspec(noinline)
-#if DEBUG_BUILD
 #define BREAK __debugbreak()
+#if DEBUG_BUILD
+#define DEBUGBREAK BREAK
 #else
-#define BREAK
+#define DEBUGBREAK
 #endif
 #define ASSUME(expr) __assume(expr)
-#define PANIC do { BREAK; exit(1); } while(0)
+#define PANIC do { DEBUGBREAK; exit(1); } while(0)
 
 struct Mutex {
 	HANDLE mutexHandle;

@@ -214,23 +214,17 @@ struct ASTStaticDefinition : ASTBase
 enum ProcedureCallType
 {
 	CALLTYPE_STATIC,
-	CALLTYPE_VALUE,
 	CALLTYPE_ASTEXPRESSION
 };
 struct ASTProcedureCall : ASTBase
 {
-	String name;
+	ASTExpression *procedureExpression;
 	HybridArray<ASTExpression *, 4, LinearAllocator> arguments;
 
 	// Type check
 	u32 procedureTypeIdx;
 	ProcedureCallType callType;
-	union
-	{
-		u32 procedureIdx;
-		u32 valueIdx;
-		ASTExpression *expression;
-	};
+	u32 procedureIdx; // Only for static calls
 	ASTExpression *astBodyInlineCopy;
 	Array<u32, LinearAllocator> inlineParameterValues;
 };
@@ -352,6 +346,7 @@ enum ASTNodeType : u8
 	ASTNODETYPE_SIZEOF,
 	ASTNODETYPE_CAST,
 	ASTNODETYPE_DEFINED,
+	ASTNODETYPE_COMPILER_BREAKPOINT,
 	ASTNODETYPE_GARBAGE
 };
 struct ASTExpression
@@ -390,6 +385,7 @@ struct ASTExpression
 		ASTDefined definedNode;
 		ASTCast castNode;
 		ASTMultipleExpressions multipleExpressions;
+		String compilerBreakpointType;
 	};
 };
 

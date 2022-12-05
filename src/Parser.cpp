@@ -216,21 +216,24 @@ constexpr int GetOperatorPrecedence(s32 op)
 			return 10;
 		case TOKEN_OP_SHIFT_LEFT:
 		case TOKEN_OP_SHIFT_RIGHT:
+			return 12;
 		case TOKEN_OP_BITWISE_AND:
 		case TOKEN_OP_BITWISE_OR:
-			return 12;
+			return 14;
 		case TOKEN_OP_NOT:
 		case TOKEN_OP_BITWISE_NOT:
 		case PRECEDENCE_UNARY_SUBTRACT:
-			return 14;
+			return 16;
 		case TOKEN_OP_POINTER_TO:
 		case TOKEN_OP_DEREFERENCE:
-			return 16;
-		case TOKEN_KEYWORD_CAST:
 			return 18;
+		case TOKEN_KEYWORD_CAST:
+			return 20;
+		case '(':
+			return 22;
 		case TOKEN_OP_ARRAY_ACCESS:
 		case TOKEN_OP_MEMBER_ACCESS:
-			return 20;
+			return 24;
 		default:
 			ASSERT(false);
 	}
@@ -240,7 +243,7 @@ bool TryParseUnaryOperation(Context *context, s32 prevPrecedence, ASTUnaryOperat
 {
 	ParseJobData *jobData = (ParseJobData *)SYSGetFiberData(context->flsIndex);
 
-	if (!IsOperatorToken(jobData->token))
+	if (!IsOperatorToken(jobData->token->type))
 		return false;
 
 	Token *oldToken = jobData->token;
@@ -275,14 +278,12 @@ bool TryParseUnaryOperation(Context *context, s32 prevPrecedence, ASTUnaryOperat
 }
 
 bool TryParseBinaryOperation(Context *context, ASTExpression leftHand, s32 prevPrecedence,
-		ASTBinaryOperation *result)
+		ASTExpression *result)
 {
 	ParseJobData *jobData = (ParseJobData *)SYSGetFiberData(context->flsIndex);
 
-	if (!IsOperatorToken(jobData->token))
-		return false;
-
-	result->loc = jobData->token->loc;
+	result->any.loc = jobData->token->loc;
+	result->typeTableIdx = TYPETABLEIDX_Unset;
 
 	Token *oldToken = jobData->token;
 	s64 oldTokenIdx = jobData->currentTokenIdx;
@@ -290,17 +291,57 @@ bool TryParseBinaryOperation(Context *context, ASTExpression leftHand, s32 prevP
 	enum TokenType op = jobData->token->type;
 	Advance(context);
 
-	result->op = op;
-	result->leftHand = PNewTreeNode(context);
-	*result->leftHand = leftHand;
+	if (op == '(') {
+		// Procedure calls
+		s32 precedence = GetOperatorPrecedence('(');
+		if (precedence <= (prevPrecedence & (~1))) 
+			goto abort;
+
+		result->nodeType = ASTNODETYPE_PROCEDURE_CALL;
+		HybridArrayInit(&result->procedureCall.arguments);
+
+		result->procedureCall.procedureExpression = PNewTreeNode(context);
+		*result->procedureCall.procedureExpression = leftHand;
+
+		// Parse arguments
+		while (jobData->token->type != ')') {
+			ASTExpression *arg = PNewTreeNode(context);
+			*arg = ParseExpression(context, GetOperatorPrecedence(',') + 1);
+			*HybridArrayAdd(&result->procedureCall.arguments) = arg;
+
+			if (jobData->token->type != ')')
+			{
+				if (jobData->token->type != ',')
+				{
+					String tokenTypeGot = TokenToStringOrType(context, *jobData->token);
+					String errorStr = TPrintF("Expected ')' or ',' but got %S",
+							tokenTypeGot);
+					LogError(context, jobData->token->loc, errorStr);
+				}
+				Advance(context);
+			}
+		}
+		Advance(context);
+
+		return true;
+	}
+
+	// Other than exceptions above, if the token is not an operator, return early.
+	if (!IsOperatorToken(op))
+		goto abort;
+
+	result->nodeType = ASTNODETYPE_BINARY_OPERATION;
+	result->binaryOperation.op = op;
+	result->binaryOperation.leftHand = PNewTreeNode(context);
+	*result->binaryOperation.leftHand = leftHand;
 
 	switch (op) {
 	case TOKEN_OP_ARRAY_ACCESS:
 	{
 		s32 precedence = GetOperatorPrecedence(TOKEN_OP_ARRAY_ACCESS);
 		if (precedence > (prevPrecedence & (~1))) {
-			result->rightHand = PNewTreeNode(context);
-			*result->rightHand = ParseExpression(context, -1);
+			result->binaryOperation.rightHand = PNewTreeNode(context);
+			*result->binaryOperation.rightHand = ParseExpression(context, -1);
 
 			AssertToken(context, jobData->token, ']');
 			Advance(context);
@@ -345,8 +386,8 @@ bool TryParseBinaryOperation(Context *context, ASTExpression leftHand, s32 prevP
 		s32 precedence = GetOperatorPrecedence(op);
 		if (precedence > (prevPrecedence & (~1)))
 		{
-			result->rightHand = PNewTreeNode(context);
-			*result->rightHand = ParseExpression(context, precedence);
+			result->binaryOperation.rightHand = PNewTreeNode(context);
+			*result->binaryOperation.rightHand = ParseExpression(context, precedence);
 
 			return true;
 		}
@@ -358,6 +399,7 @@ bool TryParseBinaryOperation(Context *context, ASTExpression leftHand, s32 prevP
 	} break;
 	}
 
+abort:
 	jobData->token = oldToken;
 	jobData->currentTokenIdx = oldTokenIdx;
 	return false;
@@ -637,14 +679,12 @@ Array<ASTExpression *, LinearAllocator> ParseGroupLiteral(Context *context)
 	DynamicArray<ASTExpression *, LinearAllocator> members;
 	DynamicArrayInit(&members, 8);
 
-	while (true)
-	{
+	while (jobData->token->type != '}') {
 		ASTExpression *newTreeNode = PNewTreeNode(context);
 		*newTreeNode = ParseExpression(context, GetOperatorPrecedence(',') + 1);
 		*DynamicArrayAdd(&members) = newTreeNode;
 
-		if (jobData->token->type == TOKEN_OP_ASSIGNMENT)
-		{
+		if (jobData->token->type == TOKEN_OP_ASSIGNMENT) {
 			Advance(context);
 			ASTExpression assignment = { ASTNODETYPE_BINARY_OPERATION };
 			assignment.typeTableIdx = TYPETABLEIDX_Unset;
@@ -657,16 +697,14 @@ Array<ASTExpression *, LinearAllocator> ParseGroupLiteral(Context *context)
 			*newTreeNode = assignment;
 		}
 
-		if (jobData->token->type == '}')
-			break;
-		if (jobData->token->type == ',')
-		{
+		if (jobData->token->type == ',') {
 			Advance(context);
 			continue;
 		}
-
-		String tokenStr = TokenTypeToString(jobData->token->type);
-		LogError(context, jobData->token->loc, TPrintF("Parsing struct literal. Expected ',' or '}' but got %S", tokenStr));
+		else if (jobData->token->type != '}') {
+			String tokenStr = TokenTypeToString(jobData->token->type);
+			LogError(context, jobData->token->loc, TPrintF("Parsing struct literal. Expected ',' or '}' but got %S", tokenStr));
+		}
 	}
 
 	Array<ASTExpression *, LinearAllocator> result;
@@ -902,40 +940,8 @@ ASTExpression ParseExpression(Context *context, s32 precedence)
 		String identifier = TokenToString(context, *jobData->token);
 		Advance(context);
 
-		if (jobData->token->type == '(')
-		{
-			// Procedure call
-			result.nodeType = ASTNODETYPE_PROCEDURE_CALL;
-			result.procedureCall.name = identifier;
-			HybridArrayInit(&result.procedureCall.arguments);
-
-			// Parse arguments
-			Advance(context);
-			while (jobData->token->type != ')')
-			{
-				ASTExpression *arg = PNewTreeNode(context);
-				*arg = ParseExpression(context, GetOperatorPrecedence(',') + 1);
-				*HybridArrayAdd(&result.procedureCall.arguments) = arg;
-
-				if (jobData->token->type != ')')
-				{
-					if (jobData->token->type != ',')
-					{
-						String tokenTypeGot = TokenToStringOrType(context, *jobData->token);
-						String errorStr = TPrintF("Expected ')' or ',' but got %S",
-								tokenTypeGot);
-						LogError(context, jobData->token->loc, errorStr);
-					}
-					Advance(context);
-				}
-			}
-			Advance(context);
-		}
-		else
-		{
-			result.nodeType = ASTNODETYPE_IDENTIFIER;
-			result.identifier.string = identifier;
-		}
+		result.nodeType = ASTNODETYPE_IDENTIFIER;
+		result.identifier.string = identifier;
 	} break;
 	case TOKEN_LITERAL_NUMBER:
 	{
@@ -1116,7 +1122,7 @@ ASTExpression ParseExpression(Context *context, s32 precedence)
 	} break;
 	default:
 	{
-		if (!IsOperatorToken(jobData->token))
+		if (!IsOperatorToken(jobData->token->type))
 			UNEXPECTED_TOKEN_ERROR(context, jobData->token);
 		// Operators are handled in the loop below.
 	}
@@ -1138,12 +1144,10 @@ ASTExpression ParseExpression(Context *context, s32 precedence)
 		}
 		else
 		{
-			ASTBinaryOperation binaryOp = result.binaryOperation;
-			bool success = TryParseBinaryOperation(context, result, precedence, &binaryOp);
-			if (success)
-			{
-				result.nodeType = ASTNODETYPE_BINARY_OPERATION;
-				result.binaryOperation = binaryOp;
+			ASTExpression exp;
+			bool success = TryParseBinaryOperation(context, result, precedence, &exp);
+			if (success) {
+				result = exp;
 				continue;
 			}
 		}
@@ -1449,6 +1453,25 @@ ASTExpression ParseStatement(Context *context)
 		result.nodeType = ASTNODETYPE_USING;
 		result.usingNode.expression = PNewTreeNode(context);
 		*result.usingNode.expression = ParseStatement(context);
+	} break;
+	case TOKEN_DIRECTIVE_BREAK:
+	{
+		Advance(context);
+		result.any.loc = jobData->token->loc;
+		result.nodeType = ASTNODETYPE_COMPILER_BREAKPOINT;
+
+		AssertToken(context, jobData->token, '(');
+		Advance(context);
+		AssertToken(context, jobData->token, TOKEN_IDENTIFIER);
+		result.compilerBreakpointType = TokenToString(context, *jobData->token);
+		Advance(context);
+		AssertToken(context, jobData->token, ')');
+		Advance(context);
+		AssertToken(context, jobData->token, ';');
+		Advance(context);
+
+		if (StringEquals(result.compilerBreakpointType, "parser"_s))
+			BREAK;
 	} break;
 	default:
 	{

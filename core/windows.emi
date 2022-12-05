@@ -252,10 +252,10 @@ PIXELFORMATDESCRIPTOR :: struct
 };
 LARGE_INTEGER :: union {
 	struct {
-		lowPart : DWORD;
-		highPart : LONG;
+		LowPart : DWORD;
+		HighPart : LONG;
 	};
-	quadPart : LONGLONG;
+	QuadPart : LONGLONG;
 };
 GUID :: struct
 {

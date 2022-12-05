@@ -439,9 +439,9 @@ Main :: () -> s64 {
 	{
 		largeInteger : LARGE_INTEGER;
 		QueryPerformanceCounter(^largeInteger);
-		lastPerformanceCounter = largeInteger.quadPart;
+		lastPerformanceCounter = largeInteger.QuadPart;
 		QueryPerformanceFrequency(^largeInteger);
-		performanceFrequency = largeInteger.quadPart;
+		performanceFrequency = largeInteger.QuadPart;
 	}
 
 	deltaTime : f32;
@@ -452,7 +452,7 @@ Main :: () -> s64 {
 		{
 			largeInteger : LARGE_INTEGER;
 			QueryPerformanceCounter(^largeInteger);
-			newPerfCounter := largeInteger.quadPart;
+			newPerfCounter := largeInteger.QuadPart;
 			deltaTime = cast(f32)(newPerfCounter - lastPerformanceCounter) /
 				cast(f32)performanceFrequency;
 			lastPerformanceCounter = newPerfCounter;

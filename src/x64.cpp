@@ -1513,6 +1513,9 @@ void X64ConvertInstruction(Context *context, IRInstruction inst)
 		return;
 	case IRINSTRUCTIONTYPE_RETURN:
 		return;
+	case IRINSTRUCTIONTYPE_COMPILER_BREAKPOINT:
+		BREAK;
+		return;
 	default:
 		ASSERT(!"Unrecognized IR instruction type");
 		return;
@@ -1971,19 +1974,19 @@ void X64PrintStaticData(Context *context, String name, IRValue value, u32 typeTa
 		switch (typeInfo.size)
 		{
 		case 1:
-			PrintOut(context, "%S DB %.2llxH\n", name,
+			PrintOut(context, "%S DB 0%.2llxH\n", name,
 					value.immediate);
 			break;
 		case 2:
-			PrintOut(context, "%S DW %.4llxH\n", name,
+			PrintOut(context, "%S DW 0%.4llxH\n", name,
 					value.immediate);
 			break;
 		case 4:
-			PrintOut(context, "%S DD %.8llxH\n", name,
+			PrintOut(context, "%S DD 0%.8llxH\n", name,
 					value.immediate);
 			break;
 		case 8:
-			PrintOut(context, "%S DQ %.16llxH\n", name,
+			PrintOut(context, "%S DQ 0%.16llxH\n", name,
 					value.immediate);
 			break;
 		default:

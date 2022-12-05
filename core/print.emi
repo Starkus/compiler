@@ -230,6 +230,27 @@ PrintF :: (format : String, ..args)
 				PrintArgument(pointedThing);
 			}
 		}
+		else if typeInfo.typeKind == TypeKind_ProcedurePointer
+		{
+			pointer : u64 = @cast(^u64)arg.asU64;
+			if pointer == null
+				Print("null");
+			else {
+				buffer : [18] u8 = ?;
+				buffer[0] = '0';
+				buffer[1] = 'x';
+				for 0..16 {
+					digit := cast(u8)(pointer & 0xF);
+					if digit <= 9
+						buffer[17 - i] = '0' + digit;
+					else
+						buffer[17 - i] = 'A' - 0xA + digit;
+					pointer >>= 4;
+				}
+				string : String = { 18, ^buffer };
+				Print(string);
+			}
+		}
 		else
 			Print("<Unknown type>");
 	}
@@ -245,7 +266,7 @@ PrintF :: (format : String, ..args)
 		}
 		else
 		{
-			// @Improve: don't call full blown Print just to print one char?
+			// @Improve: call only one print between every pair of '%' (and at each end)
 			str : String = { 1, ^char };
 			Print(str);
 		}

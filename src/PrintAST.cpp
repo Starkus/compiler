@@ -62,6 +62,8 @@ String OperatorToString(s32 op)
 			return "<"_s;
 		case TOKEN_OP_LESS_THAN_OR_EQUAL:
 			return "<="_s;
+		case TOKEN_OP_NOT_EQUALS:
+			return "!="_s;
 		case TOKEN_OP_PLUS:
 			return "+"_s;
 		case TOKEN_OP_MINUS:
@@ -365,12 +367,13 @@ void PrintExpression(Context *context, const ASTExpression *e) {
 	} break;
 	case ASTNODETYPE_PROCEDURE_CALL:
 	{
-		Print("Procedure call \"%S\"", e->procedureCall.name);
+		Print("Procedure call");
 
 		PrintSourceLocation(context, e->any.loc);
 		Print("\n");
 
 		++indentLevels;
+		PrintExpression(context, e->procedureCall.procedureExpression);
 		for (int i = 0; i < e->procedureCall.arguments.size; ++i)
 		{
 			PrintExpression(context, e->procedureCall.arguments[i]);

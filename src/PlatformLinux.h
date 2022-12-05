@@ -25,12 +25,13 @@ typedef u32 Fiber;
 #define SYS_INVALID_FIBER_HANDLE (0xFFFFFFFF)
 #define SYS_MAX_PATH PATH_MAX
 
-#if DEBUG_BUILD
 #define BREAK asm("int $3")
+#if DEBUG_BUILD
+#define DEBUGBREAK BREAK
 #else
-#define BREAK
+#define DEBUGBREAK
 #endif
 
-#define PANIC do { BREAK; exit(1); } while(0)
+#define PANIC do { DEBUGBREAK; exit(1); } while(0)
 
 #define ASSUME(expr) do { __builtin_assume(expr); /*(void)(expr);*/ } while(0)

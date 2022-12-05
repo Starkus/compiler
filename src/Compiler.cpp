@@ -359,8 +359,9 @@ bool CompilerAddSourceFile(Context *context, String filename, SourceLocation loc
 		FileHandle currentFile = SYSOpenFileRead(currentFilename);
 
 		if (SYSAreSameFile(file, currentFile)) {
-			LogWarning(context, loc, TPrintF("File included twice: \"%S\"", filename));
-			LogNote(context, context->sourceFiles[i].includeLoc, "First included here"_s);
+			// Don't think we should to warn this...
+			//LogWarning(context, loc, TPrintF("File included twice: \"%S\"", filename));
+			//LogNote(context, context->sourceFiles[i].includeLoc, "First included here"_s);
 			return false;
 		}
 	}

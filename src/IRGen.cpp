@@ -676,16 +676,15 @@ IRValue IRInstructionFromBinaryOperation(Context *context, const ASTExpression *
 	ASTExpression *leftHand  = expression->binaryOperation.leftHand;
 	ASTExpression *rightHand = expression->binaryOperation.rightHand;
 
-	if (expression->binaryOperation.op == TOKEN_OP_MEMBER_ACCESS)
-	{
+	if (expression->binaryOperation.op == TOKEN_OP_MEMBER_ACCESS) {
 		IRValue irValue = IRGenFromExpression(context, leftHand);
 
 		TypeInfo structTypeInfo = GetTypeInfo(context, irValue.typeTableIdx);
-		if (irValue.valueType == IRVALUETYPE_VALUE_DEREFERENCE &&
-			structTypeInfo.typeCategory == TYPECATEGORY_POINTER)
-		{
+		if (structTypeInfo.typeCategory == TYPECATEGORY_POINTER) {
 			// Dereference the pointer to the struct
-			String name = SStringConcat("_derefstrctptr_"_s, IRGetValue(context, irValue.value.valueIdx).name);
+			String valueName = IRGetValue(context, irValue.value.valueIdx).name; 
+			IRAddComment(context, SNPrintF("Dereference struct pointer \"%S\"", 64, valueName));
+			String name = SStringConcat("_derefstrctptr_"_s, valueName);
 			u32 newValueIdx = IRNewValue(context, name, irValue.typeTableIdx,
 					VALUEFLAGS_FORCE_REGISTER);
 			IRValue newValue = IRValueValue(newValueIdx, irValue.typeTableIdx);
@@ -706,21 +705,18 @@ IRValue IRInstructionFromBinaryOperation(Context *context, const ASTExpression *
 
 		result = IRDoMemberAccess(context, irValue, structMember);
 	}
-	else if (expression->binaryOperation.op == TOKEN_OP_ARRAY_ACCESS)
-	{
+	else if (expression->binaryOperation.op == TOKEN_OP_ARRAY_ACCESS) {
 		IRValue arrayValue = IRGenFromExpression(context, leftHand);
 		IRValue indexValue = IRGenFromExpression(context, rightHand);
 
-		if (GetTypeInfo(context, arrayValue.typeTableIdx).typeCategory == TYPECATEGORY_POINTER)
-		{
+		if (GetTypeInfo(context, arrayValue.typeTableIdx).typeCategory == TYPECATEGORY_POINTER) {
 			// Dereference the pointer to the array
 			arrayValue = IRDereferenceValue(context, arrayValue);
 		}
 
 		result = IRDoArrayAccess(context, arrayValue, indexValue, expression->typeTableIdx);
 	}
-	else if (expression->binaryOperation.op == TOKEN_OP_AND)
-	{
+	else if (expression->binaryOperation.op == TOKEN_OP_AND) {
 		IRLabel *assignZeroLabel = NewLabel(context, "assignZero"_s);
 
 		IRValue leftValue  = IRGenFromExpression(context, leftHand);
@@ -753,8 +749,7 @@ IRValue IRInstructionFromBinaryOperation(Context *context, const ASTExpression *
 
 		result = outValue;
 	}
-	else if (expression->binaryOperation.op == TOKEN_OP_OR)
-	{
+	else if (expression->binaryOperation.op == TOKEN_OP_OR) {
 		IRLabel *assignZeroLabel = NewLabel(context, "assignZero"_s);
 		IRLabel *skipRightLabel = NewLabel(context, "skipRight"_s);
 
@@ -790,8 +785,7 @@ IRValue IRInstructionFromBinaryOperation(Context *context, const ASTExpression *
 
 		result = outValue;
 	}
-	else if (expression->binaryOperation.op == TOKEN_OP_ASSIGNMENT_AND)
-	{
+	else if (expression->binaryOperation.op == TOKEN_OP_ASSIGNMENT_AND) {
 		IRLabel *skipAssignZeroLabel = NewLabel(context, "skipAssignZero"_s);
 
 		IRValue leftValue  = IRGenFromExpression(context, leftHand);
@@ -812,8 +806,7 @@ IRValue IRInstructionFromBinaryOperation(Context *context, const ASTExpression *
 
 		IRInsertLabelInstruction(context, skipAssignZeroLabel);
 	}
-	else if (expression->binaryOperation.op == TOKEN_OP_ASSIGNMENT_OR)
-	{
+	else if (expression->binaryOperation.op == TOKEN_OP_ASSIGNMENT_OR) {
 		IRLabel *skipAssignOneLabel = NewLabel(context, "skipAssignOne"_s);
 
 		IRValue leftValue  = IRGenFromExpression(context, leftHand);
@@ -834,8 +827,7 @@ IRValue IRInstructionFromBinaryOperation(Context *context, const ASTExpression *
 
 		IRInsertLabelInstruction(context, skipAssignOneLabel);
 	}
-	else
-	{
+	else {
 #if DEBUG_BUILD
 		TypeInfo leftTypeInfo = GetTypeInfo(context, leftHand->typeTableIdx);
 		ASSERT(leftTypeInfo.typeCategory != TYPECATEGORY_STRUCT &&
@@ -852,8 +844,7 @@ IRValue IRInstructionFromBinaryOperation(Context *context, const ASTExpression *
 		inst.binaryOperation.left  = left;
 		inst.binaryOperation.right = right;
 
-		switch (expression->binaryOperation.op)
-		{
+		switch (expression->binaryOperation.op) {
 		case TOKEN_OP_PLUS:
 		case TOKEN_OP_ASSIGNMENT_PLUS:
 		{
@@ -1675,6 +1666,7 @@ IRValue IRGenFromExpression(Context *context, const ASTExpression *expression)
 				}
 				else {
 					// Initialize to zero
+					IRAddComment(context, "Initialize to zero"_s);
 					TypeCategory dstTypeCat = GetTypeInfo(context, varDecl.typeIndices[varIdx]).typeCategory;
 					if (dstTypeCat == TYPECATEGORY_STRUCT ||
 						dstTypeCat == TYPECATEGORY_UNION ||
@@ -1682,6 +1674,7 @@ IRValue IRGenFromExpression(Context *context, const ASTExpression *expression)
 					{
 						IRValue dstValue = IRValueValue(context, varDecl.valueIndices[varIdx]);
 						u64 size = GetTypeInfo(context, dstValue.typeTableIdx).size;
+						size = GetTypeInfo(context, varDecl.typeIndices[varIdx]).size;
 						IRValue sizeValue = IRValueImmediate(size);
 
 						IRInstruction inst = {};
@@ -1770,17 +1763,10 @@ IRValue IRGenFromExpression(Context *context, const ASTExpression *expression)
 			procCallInst.procedureCall.procedureIdx = astProcCall->procedureIdx;
 			procTypeIdx = proc.typeTableIdx;
 		} break;
-		case CALLTYPE_VALUE:
-		{
-			procCallInst.type = IRINSTRUCTIONTYPE_PROCEDURE_CALL_INDIRECT;
-			IRValue irValue = IRValueValue(context, astProcCall->valueIdx);
-			procCallInst.procedureCall.procIRValue = irValue;
-			procTypeIdx = irValue.typeTableIdx;
-		} break;
 		case CALLTYPE_ASTEXPRESSION:
 		{
 			procCallInst.type = IRINSTRUCTIONTYPE_PROCEDURE_CALL_INDIRECT;
-			IRValue irValue = IRGenFromExpression(context, astProcCall->expression);
+			IRValue irValue = IRGenFromExpression(context, astProcCall->procedureExpression);
 			procCallInst.procedureCall.procIRValue = irValue;
 			procTypeIdx = irValue.typeTableIdx;
 		} break;
@@ -2455,6 +2441,15 @@ skipGeneratingVarargsArray:
 	case ASTNODETYPE_TYPE:
 	{
 		LogError(context, expression->any.loc, "COMPILER ERROR! Type found while generating IR."_s);
+	} break;
+	case ASTNODETYPE_COMPILER_BREAKPOINT:
+	{
+		if (StringEquals(expression->compilerBreakpointType, "irgen"_s))
+			BREAK;
+		else if (StringEquals(expression->compilerBreakpointType, "backend"_s)) {
+			IRInstruction breakInstruction = { IRINSTRUCTIONTYPE_COMPILER_BREAKPOINT };
+			*AddInstruction(context) = breakInstruction;
+		}
 	} break;
 	default:
 		ASSERT(!"Unknown ast node found type while generating IR");
