@@ -77,6 +77,7 @@ FileHandle SYSOpenFileRead(String filename)
 		return file;
 
 	String absolutePath = SYSExpandPathWorkingDirectoryRelative(filename);
+	ASSERT(absolutePath.data[absolutePath.size] == 0);
 	file = CreateFileA(
 			absolutePath.data, // We know this string is null terminated.
 			GENERIC_READ,
@@ -92,6 +93,7 @@ FileHandle SYSOpenFileRead(String filename)
 
 	// This exe's full name, up to second-to-last slash, plus filename.
 	absolutePath = SYSExpandPathCompilerRelative(filename);
+	ASSERT(absolutePath.data[absolutePath.size] == 0);
 	file = CreateFileA(
 			absolutePath.data, // We know this string is null terminated.
 			GENERIC_READ,
@@ -122,6 +124,7 @@ FileHandle SYSOpenFileWrite(String filename)
 		return file;
 
 	String absolutePath = SYSExpandPathWorkingDirectoryRelative(filename);
+	ASSERT(absolutePath.data[absolutePath.size] == 0);
 	file = CreateFileA(
 			absolutePath.data,
 			GENERIC_WRITE,
@@ -237,6 +240,7 @@ void SYSCreateDirectory(String pathname)
 {
 	char pathnameCStr[SYS_MAX_PATH];
 	strncpy(pathnameCStr, pathname.data, pathname.size);
+	pathnameCStr[pathname.size] = 0;
 	CreateDirectoryA(pathnameCStr, nullptr);
 }
 
@@ -406,6 +410,7 @@ void SYSRunLinker(String outputPath, bool makeLibrary, String extraArguments)
 	PROCESS_INFORMATION processInformation = {};
 
 	String workingPath = SYSExpandPathWorkingDirectoryRelative({});
+	ASSERT(workingPath.data[workingPath.size] == 0);
 
 	if (!makeLibrary) {
 		String commandLine = TPrintF(
