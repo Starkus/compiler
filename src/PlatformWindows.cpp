@@ -596,6 +596,7 @@ inline Fiber SYSConvertThreadToFiber() {
 }
 
 inline void SYSDeleteFiber(Fiber fiber) {
+	auto scope = ProfilerScope("Deleting a fiber");
 	SpinlockLock(&g_runningFibersLock);
 	for (int i = 0; i < ArrayCount(g_runningFibers); ++i)
 		if (g_runningFibers[i] == fiber) {

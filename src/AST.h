@@ -151,7 +151,12 @@ struct ASTType : ASTBase
 
 struct ASTVariableDeclaration : ASTBase
 {
-	HybridArray<String, 2, ThreadAllocator> names;
+	u32 nameCount;
+	// Either embedded or external array of names. Depends on nameCount.
+	union {
+		String name;
+		String *arrayOfNames;
+	};
 	ASTExpression *astInitialValue;
 	ASTType *astType;
 	bool isInline;
@@ -161,9 +166,15 @@ struct ASTVariableDeclaration : ASTBase
 	// TypeCheck
 	u32 anonymousVariableValueIdx;
 	u32 specifiedTypeIdx;
-	// @Improve: AOS or better SOA...
-	HybridArray<u32, 2, ThreadAllocator> valueIndices;
-	HybridArray<u32, 2, ThreadAllocator> typeIndices;
+	// These also depend on nameCount
+	union {
+		u32 valueIdx;
+		u32 *arrayOfValueIndices;
+	};
+	union {
+		u32 typeIdx;
+		u32 *arrayOfTypeIndices;
+	};
 };
 
 struct ASTProcedureParameter : ASTBase
@@ -204,7 +215,11 @@ struct ASTOperatorOverload : ASTBase
 
 struct ASTStaticDefinition : ASTBase
 {
-	HybridArray<String, 2, ThreadAllocator> names;
+	u32 nameCount;
+	union {
+		String name;
+		String *arrayOfNames;
+	};
 	ASTExpression *expression;
 
 	// Type check
@@ -219,7 +234,7 @@ enum ProcedureCallType
 struct ASTProcedureCall : ASTBase
 {
 	ASTExpression *procedureExpression;
-	HybridArray<ASTExpression *, 4, LinearAllocator> arguments;
+	DynamicArray<ASTExpression *, LinearAllocator> arguments;
 
 	// Type check
 	u32 procedureTypeIdx;

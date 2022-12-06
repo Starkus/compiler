@@ -142,10 +142,10 @@ struct BEInstruction
 				u32 procedureIdx;
 				IRValue procedureIRValue;
 			};
-			Array<u32, JobAllocator> liveValues;
+			Array<u32, ThreadAllocator> liveValues;
 
 			// These tell the liveness analisis what registers to flag as live.
-			Array<u32, JobAllocator> parameterValues;
+			Array<u32, ThreadAllocator> parameterValues;
 		};
 		u32 valueIdx;
 		struct
@@ -162,9 +162,9 @@ typedef BEInstruction X64Instruction;
 struct BEFinalProcedure
 {
 	u32 procedureIdx;
-	BucketArray<X64Instruction, HeapAllocator, 1024> instructions;
+	BucketArray<X64Instruction, LinearAllocator, 1024> instructions;
 	u64 stackSize;
-	BucketArray<Value, HeapAllocator, 1024> localValues;
+	BucketArray<Value, LinearAllocator, 1024> localValues;
 };
 typedef BEFinalProcedure X64FinalProcedure;
 
@@ -183,7 +183,7 @@ struct X64InstructionStream
 		s64 idx;
 	};
 
-	BucketArray<X64Instruction, HeapAllocator, 1024> *instructionArray;
+	BucketArray<X64Instruction, LinearAllocator, 1024> *instructionArray;
 	s64 idx;
 	s64 instructionArrayCount;
 	FixedArray<Frame, 16> stack;

@@ -3,12 +3,12 @@ struct BasicBlock
 	s64 beginIdx;
 	s64 endIdx;
 	bool livenessAnalizedOnce;
-	DynamicArray<BasicBlock *, JobAllocator> inputs;
-	DynamicArray<BasicBlock *, JobAllocator> outputs;
+	DynamicArray<BasicBlock *, ThreadAllocator> inputs;
+	DynamicArray<BasicBlock *, ThreadAllocator> outputs;
 
 	// @Todo: bitmaps
-	DynamicArray<u32, JobAllocator> liveValuesAtInput;
-	DynamicArray<u32, JobAllocator> liveValuesAtOutput;
+	DynamicArray<u32, ThreadAllocator> liveValuesAtInput;
+	DynamicArray<u32, ThreadAllocator> liveValuesAtOutput;
 };
 
 void X64Patch(Context *context, X64Instruction *original, X64Instruction newInst)
@@ -26,7 +26,7 @@ void X64Patch(Context *context, X64Instruction *original, X64Instruction newInst
 }
 
 BasicBlock *PushBasicBlock(BasicBlock *currentBasicBlock,
-		BucketArray<BasicBlock, JobAllocator, 512> *basicBlocks)
+		BucketArray<BasicBlock, ThreadAllocator, 512> *basicBlocks)
 {
 	s64 endOfLastBlock = -1;
 	if (currentBasicBlock)
@@ -68,7 +68,7 @@ bool CanBeRegister(Context *context, u32 valueIdx)
 	return true;
 }
 
-inline bool AddValue(Context *context, u32 valueIdx, DynamicArray<u32, JobAllocator> *array)
+inline bool AddValue(Context *context, u32 valueIdx, DynamicArray<u32, ThreadAllocator> *array)
 {
 	IRSetValueFlags(context, valueIdx, VALUEFLAGS_IS_USED);
 
@@ -89,7 +89,7 @@ inline bool AddValue(Context *context, u32 valueIdx, DynamicArray<u32, JobAlloca
 }
 
 // @Speed: delete? this will most likely get inlined anyways
-inline bool AddIfValue(Context *context, IRValue irValue, DynamicArray<u32, JobAllocator> *array)
+inline bool AddIfValue(Context *context, IRValue irValue, DynamicArray<u32, ThreadAllocator> *array)
 {
 	if (irValue.valueType != IRVALUETYPE_VALUE &&
 			irValue.valueType != IRVALUETYPE_VALUE_DEREFERENCE)
@@ -105,7 +105,7 @@ inline bool AddIfValue(Context *context, IRValue irValue, DynamicArray<u32, JobA
 }
 
 inline void RemoveIfValue(Context *context, IRValue irValue,
-		DynamicArray<u32, JobAllocator> *array)
+		DynamicArray<u32, ThreadAllocator> *array)
 {
 	if (irValue.valueType == IRVALUETYPE_VALUE)
 	{
@@ -137,7 +137,7 @@ inline bool IsXMMFast(IRJobData *jobData, u32 valueIdx)
 }
 
 void DoLivenessAnalisisOnInstruction(Context *context, BasicBlock *basicBlock, X64Instruction *inst,
-		DynamicArray<u32, JobAllocator> *liveValues)
+		DynamicArray<u32, ThreadAllocator> *liveValues)
 {
 	IRJobData *jobData = (IRJobData *)SYSGetFiberData(context->flsIndex);
 
@@ -264,17 +264,17 @@ void DoLivenessAnalisisOnInstruction(Context *context, BasicBlock *basicBlock, X
 			{
 				jobData->beInterferenceGraph.capacity *= 2;
 				jobData->beInterferenceGraph.valueIndices = (u32 *)
-						JobAllocator::Realloc(jobData->beInterferenceGraph.valueIndices,
+						ThreadAllocator::Realloc(jobData->beInterferenceGraph.valueIndices,
 						sizeof(jobData->beInterferenceGraph.valueIndices[0]) *
 						jobData->beInterferenceGraph.capacity, alignof(u32));
 				jobData->beInterferenceGraph.removed = (u8 *)
-						JobAllocator::Realloc(jobData->beInterferenceGraph.removed,
+						ThreadAllocator::Realloc(jobData->beInterferenceGraph.removed,
 						sizeof(jobData->beInterferenceGraph.removed[0]) *
 						jobData->beInterferenceGraph.capacity, alignof(u8));
-				jobData->beInterferenceGraph.edges = (HashSet<u32, JobAllocator> *)
-						JobAllocator::Realloc(jobData->beInterferenceGraph.edges,
+				jobData->beInterferenceGraph.edges = (HashSet<u32, ThreadAllocator> *)
+						ThreadAllocator::Realloc(jobData->beInterferenceGraph.edges,
 						sizeof(jobData->beInterferenceGraph.edges[0]) *
-						jobData->beInterferenceGraph.capacity, alignof(HashSet<u32, JobAllocator>));
+						jobData->beInterferenceGraph.capacity, alignof(HashSet<u32, ThreadAllocator>));
 			}
 			jobData->beInterferenceGraph.valueIndices[nodeIdx] = valueIdx;
 			jobData->beInterferenceGraph.removed[nodeIdx]      = false;
@@ -283,7 +283,7 @@ void DoLivenessAnalisisOnInstruction(Context *context, BasicBlock *basicBlock, X
 			*HashMapGetOrAdd(&jobData->beInterferenceGraph.valueToNodeMap, valueIdx) = nodeIdx;
 		}
 
-		HashSet<u32, JobAllocator> *edges = &jobData->beInterferenceGraph.edges[nodeIdx];
+		HashSet<u32, ThreadAllocator> *edges = &jobData->beInterferenceGraph.edges[nodeIdx];
 		bool isXMM = IsXMMFast(jobData, valueIdx);
 		for (int j = 0; j < liveValuesCount; ++j)
 		{
@@ -308,7 +308,7 @@ void DoLivenessAnalisisOnInstruction(Context *context, BasicBlock *basicBlock, X
 }
 
 void DoLivenessAnalisis(Context *context, BasicBlock *basicBlock,
-		DynamicArray<u32, JobAllocator> *liveValues)
+		DynamicArray<u32, ThreadAllocator> *liveValues)
 {
 	IRJobData *jobData = (IRJobData *)SYSGetFiberData(context->flsIndex);
 
@@ -349,7 +349,7 @@ void DoLivenessAnalisis(Context *context, BasicBlock *basicBlock,
 	{
 		BasicBlock *inputBlock = basicBlock->inputs[i];
 		// Copy live registers array
-		DynamicArray<u32, JobAllocator> liveValuesCopy;
+		DynamicArray<u32, ThreadAllocator> liveValuesCopy;
 		DynamicArrayInit(&liveValuesCopy, liveValues->capacity);
 		DynamicArrayCopy(&liveValuesCopy, liveValues);
 
@@ -452,7 +452,7 @@ void ResolveStackOffsets(Context *context)
 {
 	IRJobData *jobData = (IRJobData *)SYSGetFiberData(context->flsIndex);
 
-	DynamicArray<s64, JobAllocator> stack;
+	DynamicArray<s64, ThreadAllocator> stack;
 	DynamicArrayInit(&stack, 16);
 
 	s64 stackCursor = 0;
@@ -623,11 +623,12 @@ void X64AllocateRegisters(Context *context)
 	jobData->beInterferenceGraph = {};
 	jobData->beInterferenceGraph.capacity = 128;
 	jobData->beInterferenceGraph.valueIndices = (u32 *)
-		JobAllocator::Alloc(sizeof(u32) * 128, alignof(u32));
+		ThreadAllocator::Alloc(sizeof(u32) * 128, alignof(u32));
 	jobData->beInterferenceGraph.removed = (u8 *)
-		JobAllocator::Alloc(sizeof(u8) * 128, alignof(u8));
-	jobData->beInterferenceGraph.edges = (HashSet<u32, JobAllocator> *)
-		JobAllocator::Alloc(sizeof(HashSet<u32, JobAllocator>) * 128, alignof(HashSet<u32, JobAllocator>));
+		ThreadAllocator::Alloc(sizeof(u8) * 128, alignof(u8));
+	jobData->beInterferenceGraph.edges = (HashSet<u32, ThreadAllocator> *)
+		ThreadAllocator::Alloc(sizeof(HashSet<u32, ThreadAllocator>) * 128, alignof(HashSet<u32,
+					ThreadAllocator>));
 
 	HashMapInit(&jobData->beInterferenceGraph.valueToNodeMap, 256);
 
@@ -666,14 +667,14 @@ void X64AllocateRegisters(Context *context)
 
 #if USE_PROFILER_API
 	String procName = GetProcedureRead(context, jobData->procedureIdx).name;
-	ProfilerBegin("Liveness analisis", StringToCStr(procName, JobAllocator::Alloc), PERFORMANCEAPI_DEFAULT_COLOR);
+	ProfilerBegin("Liveness analisis", StringToCStr(procName, ThreadAllocator::Alloc), PERFORMANCEAPI_DEFAULT_COLOR);
 #endif
 
 	jobData->beInterferenceGraph.count = 0;
 	HashMapClear(jobData->beInterferenceGraph.valueToNodeMap);
 
 	// @Todo: iterative instead of recursive?
-	DynamicArray<u32, JobAllocator> liveValues;
+	DynamicArray<u32, ThreadAllocator> liveValues;
 	DynamicArrayInit(&liveValues, 32);
 	DoLivenessAnalisis(context, currentLeafBlock, &liveValues);
 
@@ -686,7 +687,7 @@ void X64AllocateRegisters(Context *context)
 		for (u32 nodeIdx = 0; nodeIdx < interferenceGraph.count; ++nodeIdx)
 		{
 			u32 currentNodeValueIdx = interferenceGraph.valueIndices[nodeIdx];
-			HashSet<u32, JobAllocator> currentNodeEdges = interferenceGraph.edges[nodeIdx];
+			HashSet<u32, ThreadAllocator> currentNodeEdges = interferenceGraph.edges[nodeIdx];
 			Print("Value %S coexists with: ", X64IRValueToStr(context,
 						IRValueValue(context, currentNodeValueIdx), &jobData->localValues));
 
@@ -699,7 +700,7 @@ void X64AllocateRegisters(Context *context)
 		}
 	}
 
-	Array<u32, JobAllocator> nodeStack;
+	Array<u32, ThreadAllocator> nodeStack;
 	ArrayInit(&nodeStack, interferenceGraph.count);
 
 	// Allocate values to registers when possible
@@ -766,7 +767,7 @@ gotNodeToRemove:
 			if (interferenceGraph.removed[nodeIdx])
 				continue;
 
-			HashSet<u32, JobAllocator> *edges = &interferenceGraph.edges[nodeIdx];
+			HashSet<u32, ThreadAllocator> *edges = &interferenceGraph.edges[nodeIdx];
 			u32 valueIdx = interferenceGraph.valueIndices[nodeToRemoveIdx];
 			if (!(valueIdx & VALUE_GLOBAL_BIT) &&
 				(valueIdx < parameterValuesBegin || valueIdx > parameterValuesEnd) &&
@@ -792,7 +793,7 @@ gotNodeToRemove:
 			continue;
 
 		Value *v = IRGetLocalValue(context, valueIdx);
-		const HashSet<u32, JobAllocator> edges = interferenceGraph.edges[currentNodeIdx];
+		const HashSet<u32, ThreadAllocator> edges = interferenceGraph.edges[currentNodeIdx];
 		const u32 *edgesKeys = HashSetKeys(edges);
 
 		// We don't allocate static values, the assembler/linker does.

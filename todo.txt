@@ -1,8 +1,7 @@
+* Defer creation of fibers.
 * Create fibers up to a maximum count, then wait for others to finish and get deleted. This would
 	enable very edge cases where we could get full of fibers that can't finish but we can't create
 	new ones to keep going...
-* Not adding procedure scope names before typechecking parameters produces dumb error messages like
-	"procedure not found"
 * Local procedures can access the parent's local variables.
 * Proper error message when initializing a variable to multiple values.
 * Error when assignment is not at statement level.
@@ -13,7 +12,6 @@
 * #defined is set to 0 even if another #defined would potentially define what we are looking for. I
 	don't know how to solve this other than coming up with a complex dependency resolver. Right now
 	jobs just make their own thing and ocasionally check other jobs' states.
-* g_ breaks external variables, they won't link obviously.
 * Is the whole thing where I make 'push value to stack' IR instruction necessary?
 * Reduce moving things from one register to another unnecessarily
 * Verify small structs are passed properly through parameters

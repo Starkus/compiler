@@ -8,9 +8,9 @@ struct InterferenceGraph
 	u32 capacity;
 	u32 *valueIndices;
 	u8 *removed;
-	HashSet<u32, JobAllocator> *edges; // @Improve?
+	HashSet<u32, ThreadAllocator> *edges; // @Improve?
 
-	HashMap<u32, u32, JobAllocator> valueToNodeMap;
+	HashMap<u32, u32, ThreadAllocator> valueToNodeMap;
 };
 
 void BackendJobProc(Context *context, u32 procedureIdx);

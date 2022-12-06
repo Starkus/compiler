@@ -187,8 +187,8 @@ struct TCScopeName
 };
 struct TCScope
 {
-	DynamicArray<TCScopeName, JobAllocator> names;
-	DynamicArray<u32, JobAllocator> typeIndices;
+	DynamicArray<TCScopeName, ThreadAllocator> names;
+	DynamicArray<u32, ThreadAllocator> typeIndices;
 };
 
 struct TCGlobalScope

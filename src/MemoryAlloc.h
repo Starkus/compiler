@@ -5,7 +5,6 @@ struct Memory {
 
 	void *linearMem, *linearMemPtr;
 	static const u64 linearMemSize = 64 * 1024 * 1024;
-	Mutex linearMemMutex;
 };
 
 class LinearAllocator {
@@ -16,13 +15,6 @@ public:
 };
 
 class ThreadAllocator {
-public:
-	static void *Alloc(u64 size, int alignment);
-	static void *Realloc(void *ptr, u64 newSize, int alignment);
-	static void Free(void *ptr);
-};
-
-class JobAllocator {
 public:
 	static void *Alloc(u64 size, int alignment);
 	static void *Realloc(void *ptr, u64 newSize, int alignment);

@@ -1,5 +1,5 @@
 X64InstructionStream X64InstructionStreamBegin(
-		BucketArray<X64Instruction, HeapAllocator, 1024> *instructionArray)
+		BucketArray<X64Instruction, LinearAllocator, 1024> *instructionArray)
 {
 	X64InstructionStream stream;
 	stream.idx = -1;
@@ -100,7 +100,7 @@ s64 PrintOut(Context *context, const char *format, ...) {
 }
 
 String X64IRValueToStr(Context *context, IRValue value,
-		BucketArray<Value, HeapAllocator, 1024> *localValues) {
+		BucketArray<Value, LinearAllocator, 1024> *localValues) {
 	String result = "???VALUE"_s;
 
 	ASSERT(value.valueType != IRVALUETYPE_IMMEDIATE_FLOAT);
@@ -591,13 +591,13 @@ bool X64WinABIShouldPassByCopy(Context *context, u32 typeTableIdx) {
 			typeInfo.size != 8);
 }
 
-Array<u32, JobAllocator> X64ReadyWin64Parameters(Context *context,
+Array<u32, ThreadAllocator> X64ReadyWin64Parameters(Context *context,
 		ArrayView<IRValue> parameters, bool isCaller) {
 	IRJobData *jobData = (IRJobData *)SYSGetFiberData(context->flsIndex);
 
 	int parameterCount = (int)parameters.size;
 
-	Array<u32, JobAllocator> parameterValues;
+	Array<u32, ThreadAllocator> parameterValues;
 	ArrayInit(&parameterValues, parameterCount * 2);
 
 	for (int i = 0; i < parameterCount; ++i) {
@@ -668,13 +668,13 @@ Array<u32, JobAllocator> X64ReadyWin64Parameters(Context *context,
 	return parameterValues;
 }
 
-Array<u32, JobAllocator> X64ReadyLinuxParameters(Context *context,
+Array<u32, ThreadAllocator> X64ReadyLinuxParameters(Context *context,
 		ArrayView<IRValue> parameters, bool isCaller) {
 	IRJobData *jobData = (IRJobData *)SYSGetFiberData(context->flsIndex);
 
 	int parameterCount = (int)parameters.size;
 
-	Array<u32, JobAllocator> parameterValues;
+	Array<u32, ThreadAllocator> parameterValues;
 	ArrayInit(&parameterValues, parameterCount * 2);
 
 	s32 numberOfGPR = 0;
@@ -1310,7 +1310,7 @@ void X64ConvertInstruction(Context *context, IRInstruction inst)
 		for (int i = 0; i < inst.procedureCall.parameters.size; ++i)
 			*FixedArrayAdd(&paramSources) = inst.procedureCall.parameters[i];
 
-		Array<u32, JobAllocator> paramValues;
+		Array<u32, ThreadAllocator> paramValues;
 		switch (callingConvention)
 		{
 			case CC_WIN64:
@@ -1755,7 +1755,7 @@ doTwoArgIntrinsic:
 }
 
 String X64InstructionToStr(Context *context, X64Instruction inst,
-	BucketArray<Value, HeapAllocator, 1024> *localValues)
+	BucketArray<Value, LinearAllocator, 1024> *localValues)
 {
 	String mnemonic = x64InstructionInfos[inst.type].mnemonic;
 	switch (inst.type)
@@ -1821,7 +1821,7 @@ printLabel:
 }
 
 inline s64 X64PrintInstruction(Context *context, X64Instruction inst,
-	BucketArray<Value, HeapAllocator, 1024> *localValues)
+	BucketArray<Value, LinearAllocator, 1024> *localValues)
 {
 	return PrintOut(context, "%S", X64InstructionToStr(context, inst, localValues));
 }
@@ -2366,7 +2366,8 @@ void BackendGenerateOutputFile(Context *context)
 		u32 pointerToTypeInfoIdx =
 			GetTypeInfoPointerOf(context, TYPETABLEIDX_TYPE_INFO_STRUCT);
 
-		const auto &typeTable = context->typeTable.LockForRead();
+		SpinlockLock(&context->typeTable.lock);
+		const auto &typeTable = context->typeTable.unsafe;
 		u64 tableSize = BucketArrayCount(&typeTable);
 		for (u32 typeTableIdx = TYPETABLEIDX_Begin; typeTableIdx < tableSize; ++typeTableIdx)
 		{
@@ -2598,7 +2599,7 @@ void BackendGenerateOutputFile(Context *context)
 			auto staticVars = context->irStaticVariables.GetForWrite();
 			*DynamicArrayAdd(&staticVars) = newStaticVar;
 		}
-		context->typeTable.UnlockForRead();
+		SpinlockUnlock(&context->typeTable.lock);
 	}
 
 	BucketArrayInit(&context->outputBuffer);
@@ -2858,11 +2859,46 @@ void BackendJobProc(Context *context, u32 procedureIdx)
 {
 	IRJobData *jobData = (IRJobData *)SYSGetFiberData(context->flsIndex);
 
+	static const String paramNames[] = {
+		"_param0"_s,
+		"_param1"_s,
+		"_param2"_s,
+		"_param3"_s,
+		"_param4"_s,
+		"_param5"_s,
+		"_param6"_s,
+		"_param7"_s,
+		"_param8"_s,
+		"_param9"_s,
+		"_param10"_s,
+		"_param11"_s,
+		"_param12"_s,
+		"_param13"_s,
+		"_param14"_s,
+		"_param15"_s,
+		"_param16"_s,
+		"_param17"_s,
+		"_param18"_s,
+		"_param19"_s,
+		"_param20"_s,
+		"_param21"_s,
+		"_param22"_s,
+		"_param23"_s,
+		"_param24"_s,
+		"_param25"_s,
+		"_param26"_s,
+		"_param27"_s,
+		"_param28"_s,
+		"_param29"_s,
+		"_param30"_s,
+		"_param31"_s,
+	};
+
 	// Initialize generic parameter values
 	for (int paramIdx = 0; paramIdx < 32; ++paramIdx)
 	{
 		Value newValue = {};
-		newValue.name = SNPrintF("_param%d", 8, paramIdx);
+		newValue.name = paramNames[paramIdx];
 		newValue.typeTableIdx = TYPETABLEIDX_S64;
 		newValue.flags = VALUEFLAGS_IS_ALLOCATED | VALUEFLAGS_IS_MEMORY | VALUEFLAGS_BASE_RELATIVE;
 		newValue.stackOffset = 16 + paramIdx * 8; // Add 16, 8 for return address, and 8 because we push RBP
@@ -2873,7 +2909,7 @@ void BackendJobProc(Context *context, u32 procedureIdx)
 	for (int paramIdx = 0; paramIdx < 32; ++paramIdx)
 	{
 		Value newValue = {};
-		newValue.name = SNPrintF("_param%d", 8, paramIdx);
+		newValue.name = paramNames[paramIdx];
 		newValue.typeTableIdx = TYPETABLEIDX_S64;
 		newValue.flags = VALUEFLAGS_IS_ALLOCATED | VALUEFLAGS_IS_MEMORY;
 		newValue.stackOffset = paramIdx * 8; // Add 16, 8 for return address, and 8 because we push RBP
@@ -2895,7 +2931,7 @@ void BackendJobProc(Context *context, u32 procedureIdx)
 
 	// Allocate parameters
 	int paramCount = (int)proc.parameterValues.size;
-	Array<IRValue, JobAllocator> params;
+	Array<IRValue, ThreadAllocator> params;
 	ArrayInit(&params, paramCount + 1);
 
 	if (procTypeInfo.callingConvention != CC_DEFAULT)

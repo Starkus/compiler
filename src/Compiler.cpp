@@ -35,12 +35,6 @@ PerformanceAPI_Functions performanceAPI;
 #endif
 #include "Profiler.cpp"
 
-struct JobDataCommon
-{
-	void *jobMem, *jobMemPtr;
-	u64 jobMemSize;
-};
-
 enum TCYieldReason : u32
 {
 	TCYIELDREASON_READY,
@@ -217,6 +211,8 @@ struct Context
 	MXContainer<DynamicArray<TCJob, HeapAllocator>> jobsWaitingForType;
 	MXContainer<DynamicArray<TCJob, HeapAllocator>> jobsWaitingForDeadStop;
 
+	MTQueue<Fiber> fibersToDelete;
+
 	Array<TCScopeName, HeapAllocator> tcPrimitiveTypes;
 
 	RWContainer<BucketArray<Value, HeapAllocator, 1024>> globalValues;
@@ -226,7 +222,7 @@ struct Context
 	RWContainer<BucketArray<StaticDefinition, HeapAllocator, 512>> staticDefinitions;
 
 	/* Don't add types to the type table by hand without checking what AddType() does! */
-	RWContainer<BucketArray<const TypeInfo, HeapAllocator, 1024>> typeTable;
+	SLContainer<BucketArray<const TypeInfo, HeapAllocator, 1024>> typeTable; // Lock only to add
 
 	RWContainer<DynamicArray<TCScopeName, LinearAllocator>> tcGlobalNames;
 	RWContainer<DynamicArray<u32, LinearAllocator>> tcGlobalTypeIndices;
@@ -241,7 +237,7 @@ struct Context
 	RWContainer<DynamicArray<BEFinalProcedure, HeapAllocator>> beFinalProcedureData;
 };
 
-struct ParseJobData : JobDataCommon
+struct ParseJobData
 {
 	u32 fileIdx;
 	u64 currentTokenIdx;
@@ -252,22 +248,22 @@ struct ParseJobData : JobDataCommon
 	BucketArray<ASTType, HeapAllocator, 1024> astTypes;
 };
 
-struct TCJobData : JobDataCommon
+struct TCJobData
 {
 	ASTExpression *expression;
 	bool onStaticContext;
-	DynamicArray<TCScope, JobAllocator> scopeStack;
+	DynamicArray<TCScope, ThreadAllocator> scopeStack;
 	ArrayView<u32> currentReturnTypes;
 	u32 currentForLoopArrayType;
-	BucketArray<Value, HeapAllocator, 1024> localValues;
+	BucketArray<Value, LinearAllocator, 1024> localValues;
 };
 
-struct IRJobData : JobDataCommon
+struct IRJobData
 {
 	u32 procedureIdx;
 	BucketArray<IRInstruction, LinearAllocator, 256> irInstructions;
-	DynamicArray<IRScope, JobAllocator> irStack;
-	BucketArray<IRLabel, HeapAllocator, 1024> irLabels;
+	DynamicArray<IRScope, ThreadAllocator> irStack;
+	BucketArray<IRLabel, LinearAllocator, 1024> irLabels;
 	IRLabel *returnLabel;
 	IRLabel *currentBreakLabel;
 	IRLabel *currentContinueLabel;
@@ -278,18 +274,18 @@ struct IRJobData : JobDataCommon
 	} irCurrentForLoopInfo;
 	ArrayView<u32> returnValueIndices;
 	u32 shouldReturnValueIdx;
-	BucketArray<Value, HeapAllocator, 1024> localValues;
+	BucketArray<Value, LinearAllocator, 1024> localValues;
 
 	// Back end
-	BucketArray<BEInstruction, HeapAllocator, 1024> beInstructions;
+	BucketArray<BEInstruction, LinearAllocator, 1024> beInstructions;
 	u64 stackSize;
 	s64 allocatedParameterCount;
-	DynamicArray<u32, JobAllocator> spilledValues;
-	BucketArray<BasicBlock, JobAllocator, 512> beBasicBlocks;
+	DynamicArray<u32, ThreadAllocator> spilledValues;
+	BucketArray<BasicBlock, ThreadAllocator, 512> beBasicBlocks;
 	BasicBlock *beLeafBasicBlock;
 	InterferenceGraph beInterferenceGraph;
-	BucketArray<BEInstruction, HeapAllocator, 128> bePatchedInstructions;
-	Array<u64, JobAllocator> valueIsXmmBits;
+	BucketArray<BEInstruction, LinearAllocator, 128> bePatchedInstructions;
+	Array<u64, ThreadAllocator> valueIsXmmBits;
 	u32 x64SpilledParametersRead[32];
 	u32 x64SpilledParametersWrite[32];
 };
@@ -431,7 +427,7 @@ int main(int argc, char **argv)
 	memory.linearMem = SYSAlloc(Memory::linearMemSize);
 	MemoryInit(&memory);
 
-	MemoryInitThread(1 * 1024 * 1024);
+	MemoryInitThread(128 * 1024 * 1024);
 
 	if (argc < 2) {
 		Print("Usage: compiler [options] <source file>\n");

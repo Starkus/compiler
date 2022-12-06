@@ -39,7 +39,10 @@ void SchedulerProc(Context *context)
 			switch (t_previousYieldReason) {
 			case TCYIELDREASON_DONE:
 			{
-				SYSDeleteFiber(t_previousFiber);
+				// Try to schedule this fiber for deletion. If queue is full for some reason, just
+				// delete now.
+				if (!MTQueueEnqueue(&context->fibersToDelete, t_previousFiber))
+					SYSDeleteFiber(t_previousFiber);
 			} break;
 			case TCYIELDREASON_WAITING_FOR_STOP:
 			{
@@ -48,9 +51,10 @@ void SchedulerProc(Context *context)
 			} break;
 			case TCYIELDREASON_UNKNOWN_IDENTIFIER:
 			{
-				// IMPORTANT! jobsWaitingForIdentifier should be locked before calling SwitchJob!
-				*DynamicArrayAdd(&context->jobsWaitingForIdentifier.unsafe) = job;
-				SYSMutexUnlock(context->jobsWaitingForIdentifier.lock);
+				// IMPORTANT! tcGlobalNames should be locked before calling SwitchJob!
+				auto jobs = context->jobsWaitingForIdentifier.Get();
+				*DynamicArrayAdd(&jobs) = job;
+				SYSUnlockForRead(&context->tcGlobalNames.rwLock);
 			} break;
 			case TCYIELDREASON_UNKNOWN_OVERLOAD:
 			{
@@ -64,9 +68,10 @@ void SchedulerProc(Context *context)
 			} break;
 			case TCYIELDREASON_STATIC_DEF_NOT_READY:
 			{
-				// IMPORTANT! jobsWaitingForStaticDef should be locked before calling SwitchJob!
-				*DynamicArrayAdd(&context->jobsWaitingForStaticDef.unsafe) = job;
-				SYSMutexUnlock(context->jobsWaitingForStaticDef.lock);
+				// IMPORTANT! staticDefinitions should be locked before calling SwitchJob!
+				auto jobs = context->jobsWaitingForStaticDef.Get();
+				*DynamicArrayAdd(&jobs) = job;
+				SYSUnlockForRead(&context->staticDefinitions.rwLock);
 			} break;
 			case TCYIELDREASON_TYPE_NOT_READY:
 			{
@@ -81,13 +86,20 @@ void SchedulerProc(Context *context)
 		}
 		t_previousFiber = (Fiber)0xDEADBEEFDEADBEEF;
 
+		// Task one of the threads on deleting fibers
+		if (t_threadIndex == 0) {
+			Fiber fiberToDelete;
+			while (MTQueueDequeue(&context->fibersToDelete, &fiberToDelete))
+				SYSDeleteFiber(fiberToDelete);
+		}
+
 		// Try to get next fiber to run
 		Fiber nextFiber = SYS_INVALID_FIBER_HANDLE;
 		while (true) {
-			Fiber *dequeue = MTQueueDequeue(&context->readyJobs);
-			if (dequeue) {
-				nextFiber = *dequeue;
-				*dequeue = (Fiber)0xFEEEFEEEFEEEFEEE;
+			Fiber dequeue;
+			if (MTQueueDequeue(&context->readyJobs, &dequeue)) {
+				nextFiber = dequeue;
+				dequeue = (Fiber)0xFEEEFEEEFEEEFEEE;
 				break;
 			}
 			else {
@@ -138,7 +150,7 @@ int WorkerThreadProc(void *args)
 
 	t_threadIndex = threadArgs->threadIndex;
 
-	MemoryInitThread(1 * 1024 * 1024);
+	MemoryInitThread(512 * 1024 * 1024);
 
 	_InterlockedIncrement((LONG volatile *)&context->threadsDoingWork);
 

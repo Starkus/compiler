@@ -61,8 +61,8 @@ struct IRProcedureCall
 		u32 procedureIdx;
 		IRValue procIRValue;
 	};
-	Array<IRValue, LinearAllocator> parameters;
-	Array<IRValue, LinearAllocator> returnValues;
+	DynamicArray<IRValue, LinearAllocator> parameters;
+	DynamicArray<IRValue, LinearAllocator> returnValues;
 
 	// Filled during register allocation
 	u64 liveRegisters;
@@ -204,7 +204,7 @@ struct IRInstruction
 struct IRScope
 {
 	IRLabel *closeLabel;
-	DynamicArray<ASTExpression *, JobAllocator> deferredStatements;
+	DynamicArray<ASTExpression *, ThreadAllocator> deferredStatements;
 };
 
 struct IRStaticVariable
@@ -217,7 +217,7 @@ struct IRJobArgs
 {
 	Context *context;
 	u32 procedureIdx;
-	BucketArray<Value, HeapAllocator, 1024> localValues;
+	BucketArray<Value, LinearAllocator, 1024> localValues;
 	const ASTExpression *expression;
 };
 

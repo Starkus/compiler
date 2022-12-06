@@ -1620,11 +1620,12 @@ IRValue IRGenFromExpression(Context *context, const ASTExpression *expression)
 				varDecl.astInitialValue->nodeType != ASTNODETYPE_GARBAGE)
 			initialValue = IRGenFromExpression(context, varDecl.astInitialValue);
 
-		u64 varCount = varDecl.names.size;
+		u64 varCount = varDecl.nameCount;
 		for (int varIdx = 0; varIdx < varCount; ++varIdx) {
+			u32 valueIdx = *GetVariableValueIdx(&varDecl, varIdx);
 			if (varDecl.isStatic) {
 				IRStaticVariable newStaticVar = {};
-				newStaticVar.valueIdx = varDecl.valueIndices[varIdx];
+				newStaticVar.valueIdx = valueIdx;
 				newStaticVar.initialValue.valueType = IRVALUETYPE_INVALID;
 
 				// Initial value
@@ -1649,15 +1650,15 @@ IRValue IRGenFromExpression(Context *context, const ASTExpression *expression)
 			else if (varDecl.isExternal) {
 				ASSERT(varDecl.astInitialValue == nullptr);
 				auto externalVars = context->irExternalVariables.GetForWrite();
-				*DynamicArrayAdd(&externalVars) = varDecl.valueIndices[varIdx];
+				*DynamicArrayAdd(&externalVars) = valueIdx;
 			}
 			else {
-				IRPushValueIntoStack(context, varDecl.valueIndices[varIdx]);
+				IRPushValueIntoStack(context, valueIdx);
 
 				// Initial value
 				if (varDecl.astInitialValue) {
 					if (varDecl.astInitialValue->nodeType != ASTNODETYPE_GARBAGE) {
-						IRValue dstValue = IRValueValue(context, varDecl.valueIndices[varIdx]);
+						IRValue dstValue = IRValueValue(context, valueIdx);
 						if (initialValue.valueType == IRVALUETYPE_TUPLE)
 							IRDoAssignment(context, dstValue, initialValue.tuple[varIdx]);
 						else
@@ -1666,15 +1667,14 @@ IRValue IRGenFromExpression(Context *context, const ASTExpression *expression)
 				}
 				else {
 					// Initialize to zero
-					IRAddComment(context, "Initialize to zero"_s);
-					TypeCategory dstTypeCat = GetTypeInfo(context, varDecl.typeIndices[varIdx]).typeCategory;
-					if (dstTypeCat == TYPECATEGORY_STRUCT ||
-						dstTypeCat == TYPECATEGORY_UNION ||
-						dstTypeCat == TYPECATEGORY_ARRAY)
+					u32 typeIdx = *GetVariableTypeIdx(&varDecl, varIdx);
+					TypeInfo dstTypeInfo = GetTypeInfo(context, typeIdx);
+					if (dstTypeInfo.typeCategory == TYPECATEGORY_STRUCT ||
+						dstTypeInfo.typeCategory == TYPECATEGORY_UNION ||
+						dstTypeInfo.typeCategory == TYPECATEGORY_ARRAY)
 					{
-						IRValue dstValue = IRValueValue(context, varDecl.valueIndices[varIdx]);
-						u64 size = GetTypeInfo(context, dstValue.typeTableIdx).size;
-						size = GetTypeInfo(context, varDecl.typeIndices[varIdx]).size;
+						IRValue dstValue = IRValueValue(context, valueIdx);
+						u64 size = dstTypeInfo.size;
 						IRValue sizeValue = IRValueImmediate(size);
 
 						IRInstruction inst = {};
@@ -1685,8 +1685,8 @@ IRValue IRGenFromExpression(Context *context, const ASTExpression *expression)
 						*AddInstruction(context) = inst;
 					}
 					else {
-						IRValue dstValue = IRValueValue(context, varDecl.valueIndices[varIdx]);
-						IRValue srcValue = IRValueImmediate(0, varDecl.typeIndices[varIdx]);
+						IRValue dstValue = IRValueValue(context, valueIdx);
+						IRValue srcValue = IRValueImmediate(0, typeIdx);
 						IRDoAssignment(context, dstValue, srcValue);
 					}
 				}
@@ -1782,31 +1782,31 @@ IRValue IRGenFromExpression(Context *context, const ASTExpression *expression)
 		s32 procParamCount = (s32)procTypeInfo.parameters.size;
 		s32 callParamCount = (s32)astProcCall->arguments.size;
 		s32 paramCount = Max(procParamCount, callParamCount) + /*isReturnByCopy +*/ isVarargs;
-		ArrayInit(&procCallInst.procedureCall.parameters, paramCount);
+		if (paramCount)
+			DynamicArrayInit(&procCallInst.procedureCall.parameters, paramCount);
 
 		// Return value(s)
 		u64 returnValueCount = procTypeInfo.returnTypeIndices.size;
-		ArrayInit(&procCallInst.procedureCall.returnValues, returnValueCount);
-		if (returnValueCount > 1)
-		{
-			result.valueType = IRVALUETYPE_TUPLE;
-			ArrayInit(&result.tuple, returnValueCount);
-			for (int i = 0; i < returnValueCount; ++i)
-			{
-				u32 returnTypeIdx = procTypeInfo.returnTypeIndices[i];
+		if (returnValueCount) {
+			DynamicArrayInit(&procCallInst.procedureCall.returnValues, returnValueCount);
+			if (returnValueCount > 1) {
+				result.valueType = IRVALUETYPE_TUPLE;
+				ArrayInit(&result.tuple, returnValueCount);
+				for (int i = 0; i < returnValueCount; ++i) {
+					u32 returnTypeIdx = procTypeInfo.returnTypeIndices[i];
+					u32 returnValueIdx = IRAddTempValue(context, "_return"_s, returnTypeIdx, 0);
+					IRValue value = IRValueValue(returnValueIdx, returnTypeIdx);
+					*DynamicArrayAdd(&procCallInst.procedureCall.returnValues) = value;
+					*ArrayAdd(&result.tuple) = value;
+				}
+			}
+			else {
+				u32 returnTypeIdx = procTypeInfo.returnTypeIndices[0];
 				u32 returnValueIdx = IRAddTempValue(context, "_return"_s, returnTypeIdx, 0);
 				IRValue value = IRValueValue(returnValueIdx, returnTypeIdx);
-				*ArrayAdd(&procCallInst.procedureCall.returnValues) = value;
-				*ArrayAdd(&result.tuple) = value;
+				*DynamicArrayAdd(&procCallInst.procedureCall.returnValues) = value;
+				result = value;
 			}
-		}
-		else if (returnValueCount == 1)
-		{
-			u32 returnTypeIdx = procTypeInfo.returnTypeIndices[0];
-			u32 returnValueIdx = IRAddTempValue(context, "_return"_s, returnTypeIdx, 0);
-			IRValue value = IRValueValue(returnValueIdx, returnTypeIdx);
-			*ArrayAdd(&procCallInst.procedureCall.returnValues) = value;
-			result = value;
 		}
 
 		// Set up parameters
@@ -1819,7 +1819,7 @@ IRValue IRGenFromExpression(Context *context, const ASTExpression *expression)
 			IRValue param = IRGenFromExpression(context, arg);
 			if (param.typeTableIdx != argTypeTableIdx)
 				param = IRDoCast(context, param, argTypeTableIdx);
-			*ArrayAdd(&procCallInst.procedureCall.parameters) = param;
+			*DynamicArrayAdd(&procCallInst.procedureCall.parameters) = param;
 		}
 
 		// Default parameters
@@ -1836,7 +1836,7 @@ IRValue IRGenFromExpression(Context *context, const ASTExpression *expression)
 						procParam.typeTableIdx);
 			else
 				ASSERT(!"Invalid constant type");
-			*ArrayAdd(&procCallInst.procedureCall.parameters) = param;
+			*DynamicArrayAdd(&procCallInst.procedureCall.parameters) = param;
 		}
 
 		// Varargs
@@ -1858,7 +1858,7 @@ IRValue IRGenFromExpression(Context *context, const ASTExpression *expression)
 
 					ASSERT(varargsArray.valueType == IRVALUETYPE_VALUE ||
 						   varargsArray.valueType == IRVALUETYPE_VALUE_DEREFERENCE);
-					*ArrayAdd(&procCallInst.procedureCall.parameters) = varargsArray;
+					*DynamicArrayAdd(&procCallInst.procedureCall.parameters) = varargsArray;
 
 					goto skipGeneratingVarargsArray;
 				}
@@ -1923,7 +1923,7 @@ IRValue IRGenFromExpression(Context *context, const ASTExpression *expression)
 			}
 
 			// Pass array as parameter!
-			*ArrayAdd(&procCallInst.procedureCall.parameters) = arrayIRValue;
+			*DynamicArrayAdd(&procCallInst.procedureCall.parameters) = arrayIRValue;
 		}
 
 skipGeneratingVarargsArray:
@@ -2490,8 +2490,6 @@ void IRJobProcedure(void *args)
 	jobData.localValues = argsStruct->localValues;
 	SYSSetFiberData(context->flsIndex, &jobData);
 
-	MemoryInitJob(1 * 1024 * 1024);
-
 #if 0
 	{
 #if !FINAL_BUILD
@@ -2511,8 +2509,6 @@ void IRJobProcedure(void *args)
 	DynamicArrayInit(&jobData.irStack, 64);
 	BucketArrayInit(&jobData.irLabels);
 
-	//if (StringEquals(GetProcedureRead(context, procedureIdx).name, "PrintF"_s)) __debugbreak();
-
 	IRGenProcedure(context, procedureIdx, {});
 
 	if (context->config.logIR)
@@ -2520,7 +2516,6 @@ void IRJobProcedure(void *args)
 
 	BackendJobProc(context, procedureIdx);
 
-	SYSFree(jobData.jobMem);
 	SwitchJob(context, TCYIELDREASON_DONE, {});
 }
 
@@ -2531,8 +2526,6 @@ void IRJobExpression(void *args)
 
 	IRJobData jobData = {};
 	SYSSetFiberData(context->flsIndex, &jobData);
-
-	MemoryInitJob(512 * 1024);
 
 #if 0
 	{
@@ -2548,6 +2541,5 @@ void IRJobExpression(void *args)
 
 	IRGenFromExpression(context, argsStruct->expression);
 
-	SYSFree(jobData.jobMem);
 	SwitchJob(context, TCYIELDREASON_DONE, {});
 }

@@ -43,6 +43,42 @@ inline ASTType *NewASTType(Context *context)
 	return BucketArrayAdd(&jobData->astTypes);
 }
 
+inline String *GetVariableName(ASTVariableDeclaration *astVarDecl, u32 idx)
+{
+	ASSERT(idx < astVarDecl->nameCount);
+	if (astVarDecl->nameCount == 1)
+		return &astVarDecl->name;
+	else
+		return &astVarDecl->arrayOfNames[idx];
+}
+
+inline u32 *GetVariableTypeIdx(ASTVariableDeclaration *astVarDecl, u32 idx)
+{
+	ASSERT(idx < astVarDecl->nameCount);
+	if (astVarDecl->nameCount == 1)
+		return &astVarDecl->typeIdx;
+	else
+		return &astVarDecl->arrayOfTypeIndices[idx];
+}
+
+inline u32 *GetVariableValueIdx(ASTVariableDeclaration *astVarDecl, u32 idx)
+{
+	ASSERT(idx < astVarDecl->nameCount);
+	if (astVarDecl->nameCount == 1)
+		return &astVarDecl->valueIdx;
+	else
+		return &astVarDecl->arrayOfValueIndices[idx];
+}
+
+inline String *GetVariableName(ASTStaticDefinition *astStaticDef, u32 idx)
+{
+	ASSERT(idx < astStaticDef->nameCount);
+	if (astStaticDef->nameCount == 1)
+		return &astStaticDef->name;
+	else
+		return &astStaticDef->arrayOfNames[idx];
+}
+
 inline s64 ParseInt(Context *context, String str)
 {
 	bool isHex = false;
@@ -298,7 +334,7 @@ bool TryParseBinaryOperation(Context *context, ASTExpression leftHand, s32 prevP
 			goto abort;
 
 		result->nodeType = ASTNODETYPE_PROCEDURE_CALL;
-		HybridArrayInit(&result->procedureCall.arguments);
+		DynamicArrayInit(&result->procedureCall.arguments, 4);
 
 		result->procedureCall.procedureExpression = PNewTreeNode(context);
 		*result->procedureCall.procedureExpression = leftHand;
@@ -307,7 +343,7 @@ bool TryParseBinaryOperation(Context *context, ASTExpression leftHand, s32 prevP
 		while (jobData->token->type != ')') {
 			ASTExpression *arg = PNewTreeNode(context);
 			*arg = ParseExpression(context, GetOperatorPrecedence(',') + 1);
-			*HybridArrayAdd(&result->procedureCall.arguments) = arg;
+			*DynamicArrayAdd(&result->procedureCall.arguments) = arg;
 
 			if (jobData->token->type != ')')
 			{
@@ -722,16 +758,27 @@ ASTVariableDeclaration ParseVariableDeclaration(Context *context)
 	ASTVariableDeclaration varDecl = {};
 	varDecl.loc = jobData->token->loc;
 
-	HybridArrayInit(&varDecl.names);
-
 	AssertToken(context, jobData->token, TOKEN_IDENTIFIER);
-	*HybridArrayAdd(&varDecl.names) = TokenToString(context, *jobData->token);
+	varDecl.nameCount = 1;
+	varDecl.name = TokenToString(context, *jobData->token);
 	Advance(context);
-	while (jobData->token->type == ',') {
-		Advance(context);
-		AssertToken(context, jobData->token, TOKEN_IDENTIFIER);
-		*HybridArrayAdd(&varDecl.names) = TokenToString(context, *jobData->token);
-		Advance(context);
+	if (jobData->token->type == ',') {
+		u32 capacity = 4;
+		String *arrayOfNames = (String *)LinearAllocator::Alloc(sizeof(String) * capacity,
+				alignof(String));
+		arrayOfNames[0] = varDecl.name;
+		while (jobData->token->type == ',') {
+			Advance(context);
+			AssertToken(context, jobData->token, TOKEN_IDENTIFIER);
+			if (varDecl.nameCount >= capacity) {
+				capacity *= 2;
+				arrayOfNames = (String *)LinearAllocator::Realloc(arrayOfNames,
+						sizeof(String) * capacity, alignof(String));
+			}
+			arrayOfNames[varDecl.nameCount++] = TokenToString(context, *jobData->token);
+			Advance(context);
+		}
+		varDecl.arrayOfNames = arrayOfNames;
 	}
 
 	if (jobData->token->type == TOKEN_OP_VARIABLE_DECLARATION)
@@ -1193,19 +1240,30 @@ ASTExpression ParseExpression(Context *context, s32 precedence)
 ASTStaticDefinition ParseStaticDefinition(Context *context)
 {
 	ParseJobData *jobData = (ParseJobData *)SYSGetFiberData(context->flsIndex);
-	ASTStaticDefinition result = {};
-	result.loc = jobData->token->loc;
-
-	HybridArrayInit(&result.names);
+	ASTStaticDefinition astStaticDef = {};
+	astStaticDef.loc = jobData->token->loc;
 
 	AssertToken(context, jobData->token, TOKEN_IDENTIFIER);
-	*HybridArrayAdd(&result.names) = TokenToString(context, *jobData->token);
+	astStaticDef.nameCount = 1;
+	astStaticDef.name = TokenToString(context, *jobData->token);
 	Advance(context);
-	while (jobData->token->type == ',') {
-		Advance(context);
-		AssertToken(context, jobData->token, TOKEN_IDENTIFIER);
-		*HybridArrayAdd(&result.names) = TokenToString(context, *jobData->token);
-		Advance(context);
+	if (jobData->token->type == ',') {
+		u32 capacity = 4;
+		String *arrayOfNames = (String *)LinearAllocator::Alloc(sizeof(String) * capacity,
+				alignof(String));
+		arrayOfNames[0] = astStaticDef.name;
+		while (jobData->token->type == ',') {
+			Advance(context);
+			AssertToken(context, jobData->token, TOKEN_IDENTIFIER);
+			if (astStaticDef.nameCount >= capacity) {
+				capacity *= 2;
+				arrayOfNames = (String *)LinearAllocator::Realloc(arrayOfNames,
+						sizeof(String) * capacity, alignof(String));
+			}
+			arrayOfNames[astStaticDef.nameCount++] = TokenToString(context, *jobData->token);
+			Advance(context);
+		}
+		astStaticDef.arrayOfNames = arrayOfNames;
 	}
 
 	AssertToken(context, jobData->token, TOKEN_OP_STATIC_DEF);
@@ -1254,7 +1312,7 @@ ASTStaticDefinition ParseStaticDefinition(Context *context)
 
 		ASTProcedureDeclaration procDecl = {};
 		procDecl.loc = jobData->token->loc;
-		procDecl.name = result.names[0];
+		procDecl.name = *GetVariableName(&astStaticDef, 0);
 		procDecl.isInline = isInline;
 		procDecl.isExternal = isExternal;
 		procDecl.isExported = isExported;
@@ -1321,10 +1379,10 @@ ASTStaticDefinition ParseStaticDefinition(Context *context)
 		}
 	}
 
-	result.expression = PNewTreeNode(context);
-	*result.expression = expression;
+	astStaticDef.expression = PNewTreeNode(context);
+	*astStaticDef.expression = expression;
 
-	return result;
+	return astStaticDef;
 }
 
 ASTExpression ParseStatement(Context *context)
@@ -1643,8 +1701,6 @@ void ParseJobProc(void *args)
 
 	SYSSetFiberData(context->flsIndex, &jobData);
 
-	MemoryInitJob(1 * 1024 * 1024);
-
 #if 0
 	{
 		auto jobs = context->jobs.Get();
@@ -1670,7 +1726,6 @@ void ParseJobProc(void *args)
 	if (context->config.logAST)
 		PrintAST(context);
 
-	SYSFree(jobData.jobMem);
 	t_previousYieldReason = TCYIELDREASON_DONE;
 	SwitchJob(context, TCYIELDREASON_DONE, {});
 }
@@ -1687,4 +1742,6 @@ void ParserMain(Context *context)
 	DynamicArrayInit(&context->jobsWaitingForProcedure.unsafe, 64);
 	DynamicArrayInit(&context->jobsWaitingForType.unsafe, 64);
 	DynamicArrayInit(&context->jobsWaitingForDeadStop.unsafe, 64);
+
+	MTQueueInit<HeapAllocator>(&context->fibersToDelete, 512);
 }
