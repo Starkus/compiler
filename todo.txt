@@ -1,4 +1,4 @@
-* Defer creation of fibers.
+* Change TCAddScopeName to accept an array of scope names and lock only once.
 * Create fibers up to a maximum count, then wait for others to finish and get deleted. This would
 	enable very edge cases where we could get full of fibers that can't finish but we can't create
 	new ones to keep going...

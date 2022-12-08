@@ -3,11 +3,33 @@ THREADLOCAL Fiber t_previousFiber = SYS_INVALID_FIBER_HANDLE;
 THREADLOCAL TCYieldReason t_previousYieldReason;
 THREADLOCAL TCYieldContext t_previousYieldContext;
 
+#define DEFER_FIBER_CREATION 1
+#define DEFER_FIBER_DELETION 1
+
 inline void EnqueueReadyJob(Context *context, Fiber fiber)
 {
 	while (!MTQueueEnqueue(&context->readyJobs, fiber))
 		while (context->readyJobs.head == context->readyJobs.tail)
 			Sleep(0);
+}
+
+inline void RequestNewJob(Context *context, void (*proc)(void *), void *args)
+{
+#if DEFER_FIBER_CREATION
+	if (t_threadIndex == g_threadIdxCreateFibers) {
+		Fiber newFiber = SYSCreateFiber(proc, args);
+		EnqueueReadyJob(context, newFiber);
+	}
+	else {
+		JobRequest job = { proc, args };
+		while (!MTQueueEnqueue(&context->jobsToCreate, job))
+			while (context->jobsToCreate.head == context->jobsToCreate.tail)
+				Sleep(0);
+	}
+#else
+	Fiber newFiber = SYSCreateFiber(proc, args);
+	EnqueueReadyJob(context, newFiber);
+#endif
 }
 
 // Procedure to switch to a different job.
@@ -39,10 +61,14 @@ void SchedulerProc(Context *context)
 			switch (t_previousYieldReason) {
 			case TCYIELDREASON_DONE:
 			{
+#if DEFER_FIBER_DELETION
 				// Try to schedule this fiber for deletion. If queue is full for some reason, just
 				// delete now.
 				if (!MTQueueEnqueue(&context->fibersToDelete, t_previousFiber))
 					SYSDeleteFiber(t_previousFiber);
+#else
+				SYSDeleteFiber(t_previousFiber);
+#endif
 			} break;
 			case TCYIELDREASON_WAITING_FOR_STOP:
 			{
@@ -86,16 +112,28 @@ void SchedulerProc(Context *context)
 		}
 		t_previousFiber = (Fiber)0xDEADBEEFDEADBEEF;
 
+#if DEFER_FIBER_DELETION
 		// Task one of the threads on deleting fibers
-		if (t_threadIndex == 0) {
+		if (t_threadIndex == g_threadIdxDeleteFibers) {
 			Fiber fiberToDelete;
 			while (MTQueueDequeue(&context->fibersToDelete, &fiberToDelete))
 				SYSDeleteFiber(fiberToDelete);
 		}
+#endif
 
 		// Try to get next fiber to run
 		Fiber nextFiber = SYS_INVALID_FIBER_HANDLE;
 		while (true) {
+#if DEFER_FIBER_CREATION
+			if (t_threadIndex == g_threadIdxCreateFibers) {
+				JobRequest jobToCreate;
+				while (MTQueueDequeue(&context->jobsToCreate, &jobToCreate)) {
+					Fiber newFiber = SYSCreateFiber(jobToCreate.proc, jobToCreate.args);
+					EnqueueReadyJob(context, newFiber);
+				}
+			}
+#endif
+
 			Fiber dequeue;
 			if (MTQueueDequeue(&context->readyJobs, &dequeue)) {
 				nextFiber = dequeue;
@@ -126,6 +164,16 @@ void SchedulerProc(Context *context)
 					WAKE_UP_ONE(jobsWaitingForStaticDef)
 					WAKE_UP_ONE(jobsWaitingForType)
 #undef WAKE_UP_ONE
+
+#if DEFER_FIBER_CREATION
+					// Fallback, create the fiber on whatever thread and keep going
+					JobRequest jobToCreate;
+					if (MTQueueDequeue(&context->jobsToCreate, &jobToCreate)) {
+						nextFiber = SYSCreateFiber(jobToCreate.proc, jobToCreate.args);
+						_InterlockedIncrement((LONG volatile *)&context->threadsDoingWork);
+						break;
+					}
+#endif
 
 					// Give up!
 					break;

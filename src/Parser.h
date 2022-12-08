@@ -14,6 +14,12 @@ struct ParseJobArgs
 	u32 fileIdx;
 };
 
+struct JobRequest
+{
+	void (*proc)(void *);
+	void *args;
+};
+
 enum TokenType : u8
 {
 	TOKEN_INVALID			= 0,

@@ -31,7 +31,7 @@ inline void ProfilerEndFiberSwitch(Fiber fiber) {
 #else
 #define PROFILER_COLOR(r,g,b) (0)
 struct ProfilerScope {
-	[[nodiscard]] ProfileScope(const char *label, const char *context = nullptr,
+	[[nodiscard]] ProfilerScope(const char *label, const char *context = nullptr,
 			u32 color = 0) {
 	}
 };

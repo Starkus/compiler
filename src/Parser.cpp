@@ -1743,5 +1743,6 @@ void ParserMain(Context *context)
 	DynamicArrayInit(&context->jobsWaitingForType.unsafe, 64);
 	DynamicArrayInit(&context->jobsWaitingForDeadStop.unsafe, 64);
 
+	MTQueueInit<HeapAllocator>(&context->jobsToCreate, 512);
 	MTQueueInit<HeapAllocator>(&context->fibersToDelete, 512);
 }

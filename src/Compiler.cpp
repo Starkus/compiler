@@ -84,6 +84,9 @@ THREADLOCAL u64 t_threadMemSize;
 Memory *g_memory;
 FileHandle g_hStdout;
 FileHandle g_hStderr;
+u32 g_numberOfThreads;
+u32 g_threadIdxCreateFibers;
+u32 g_threadIdxDeleteFibers;
 
 s64 Print(const char *format, ...)
 {
@@ -211,6 +214,7 @@ struct Context
 	MXContainer<DynamicArray<TCJob, HeapAllocator>> jobsWaitingForType;
 	MXContainer<DynamicArray<TCJob, HeapAllocator>> jobsWaitingForDeadStop;
 
+	MTQueue<JobRequest> jobsToCreate;
 	MTQueue<Fiber> fibersToDelete;
 
 	Array<TCScopeName, HeapAllocator> tcPrimitiveTypes;
@@ -400,10 +404,6 @@ struct ThreadArgs
 
 int main(int argc, char **argv)
 {
-#if USE_PROFILER_API
-	PerformanceAPI_LoadFrom(L"external/Superluminal/PerformanceAPI.dll", &performanceAPI);
-#endif
-
 	SetUpTimers();
 
 #if IS_WINDOWS
@@ -433,6 +433,14 @@ int main(int argc, char **argv)
 		Print("Usage: compiler [options] <source file>\n");
 		return 1;
 	}
+
+#if USE_PROFILER_API
+	PerformanceAPI_LoadFrom(L"external/Superluminal/PerformanceAPI.dll", &performanceAPI);
+	if (performanceAPI.BeginEvent == nullptr) {
+		Print("ERROR! Couldn't load profiler API DLL!\n");
+		return 1;
+	}
+#endif
 
 	DynamicArrayInit(&context.sourceFiles, 16);
 	DynamicArrayInit(&context.libsToLink, 8);
@@ -482,6 +490,10 @@ int main(int argc, char **argv)
 	SYSTEM_INFO win32SystemInfo;
 	GetSystemInfo(&win32SystemInfo);
 	int threadCount = win32SystemInfo.dwNumberOfProcessors;
+	g_numberOfThreads = threadCount;
+	g_threadIdxCreateFibers = 0;
+	g_threadIdxDeleteFibers = Min(threadCount, 1);
+
 	Array<ThreadHandle, LinearAllocator> threads;
 	Array<ThreadArgs,   LinearAllocator> threadArgs;
 	ArrayInit(&threads,    threadCount);

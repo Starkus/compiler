@@ -117,8 +117,8 @@ struct FixedArray
 template <typename T, u64 capacity>
 T *FixedArrayAdd(FixedArray<T, capacity> *array)
 {
-	T *result = &array->data[array->size++];
 	ASSERT(array->size < capacity);
+	T *result = &array->data[array->size++];
 	return result;
 }
 
@@ -199,6 +199,7 @@ T *DynamicArrayAddMany(DynamicArray<T, A> *array, s64 count)
 	while (newSize > array->capacity)
 	{
 		array->capacity *= 2;
+		reallocate = true;
 	}
 	if (reallocate)
 		array->data = (T*)A::Realloc(array->data, array->capacity * sizeof(T), alignof(T));

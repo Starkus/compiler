@@ -188,6 +188,8 @@ inline bool TCIsAnyOtherJobRunning(Context *context)
 		return true;
 	if (!MTQueueIsEmpty(&context->readyJobs))
 		return true;
+	if (!MTQueueIsEmpty(&context->jobsToCreate))
+		return true;
 
 	return false;
 }
@@ -197,6 +199,8 @@ inline bool TCIsAnyOtherJobRunningOrWaiting(Context *context)
 	if (context->threadsDoingWork > 1)
 		return true;
 	if (!MTQueueIsEmpty(&context->readyJobs))
+		return true;
+	if (!MTQueueIsEmpty(&context->jobsToCreate))
 		return true;
 	if (context->jobsWaitingForDeadStop.unsafe.size)
 		return true;
@@ -209,6 +213,8 @@ inline bool TCAreAllJobFinished(Context *context)
 	if (context->threadsDoingWork > 0)
 		return false;
 	if (!MTQueueIsEmpty(&context->readyJobs))
+		return false;
+	if (!MTQueueIsEmpty(&context->jobsToCreate))
 		return false;
 	if (context->jobsWaitingForIdentifier.unsafe.size)
 		return false;
@@ -366,7 +372,7 @@ String TypeInfoToString(Context *context, u32 typeTableIdx)
 	return "???TYPE"_s;
 }
 
-inline void PushTCScope(Context *context)
+inline void TCPushScope(Context *context)
 {
 	TCJobData *jobData = (TCJobData *)SYSGetFiberData(context->flsIndex);
 
@@ -376,7 +382,7 @@ inline void PushTCScope(Context *context)
 	DynamicArrayInit(&newScope->typeIndices, 64);
 }
 
-inline void PopTCScope(Context *context)
+inline void TCPopScope(Context *context)
 {
 	TCJobData *jobData = (TCJobData *)SYSGetFiberData(context->flsIndex);
 	--jobData->scopeStack.size;
@@ -1225,36 +1231,39 @@ u32 GetTypeInfoArrayOf(Context *context, u32 inType, s64 count)
 	return FindOrAddTypeTableIdx(context, resultTypeInfo);
 }
 
-u32 TypeCheckType(Context *context, String name, SourceLocation loc,
-		ASTType *astType);
+u32 TypeCheckType(Context *context, String name, SourceLocation loc, ASTType *astType);
 
-inline void TCAddScopeName(Context *context, TCScopeName scopeName)
+void TCAddScopeNames(Context *context, ArrayView<TCScopeName> scopeNames)
 {
 	// Primitives
 	for (int i = 0; i < context->tcPrimitiveTypes.size; ++i) {
 		const TCScopeName *currentName = &context->tcPrimitiveTypes[i];
-		if (currentName->type == NAMETYPE_PRIMITIVE && StringEquals(scopeName.name, currentName->name))
-			LogError(context, scopeName.loc, TPrintF("Can not use name \"%S\", it is a language primitive",
-					scopeName.name));
+		ASSERT(currentName->type == NAMETYPE_PRIMITIVE);
+		for (int j = 0; j < scopeNames.size; ++j) {
+			if (StringEquals(scopeNames[j].name, currentName->name))
+				LogError(context, scopeNames[j].loc, TPrintF("Can not use name \"%S\", it is a "
+						"language primitive", scopeNames[j].name));
+		}
 	}
 
 	TCScope *stackTop = GetTopMostScope(context);
 	if (stackTop) {
 		// Check if already exists
-		for (int i = 0; i < stackTop->names.size; ++i)
-		{
+		for (int i = 0; i < stackTop->names.size; ++i) {
 			TCScopeName *currentName = &stackTop->names[i];
-			if (!StringEquals(scopeName.name, currentName->name))
-				continue;
-
-			LogErrorNoCrash(context, scopeName.loc, TPrintF("Name \"%S\" already assigned",
-						scopeName.name));
-			LogNote(context, currentName->loc, "First defined here"_s);
-			PANIC;
-			break;
+			for (int j = 0; j < scopeNames.size; ++j) {
+				if (StringEquals(scopeNames[j].name, currentName->name)) {
+					LogErrorNoCrash(context, scopeNames[j].loc, TPrintF("Name \"%S\" already assigned",
+								scopeNames[j].name));
+					LogNote(context, currentName->loc, "First defined here"_s);
+					PANIC;
+				}
+			}
 		}
 
-		*DynamicArrayAdd(&stackTop->names) = scopeName;
+		TCScopeName *newNames = DynamicArrayAddMany(&stackTop->names, scopeNames.size);
+		for (int i = 0; i < scopeNames.size; ++i)
+			newNames[i] = scopeNames[i];
 	}
 	else {
 		{
@@ -1263,29 +1272,34 @@ inline void TCAddScopeName(Context *context, TCScopeName scopeName)
 			// Check if already exists
 			for (int i = 0; i < globalNames->size; ++i) {
 				const TCScopeName *currentName = &(*globalNames)[i];
-				if (!StringEquals(scopeName.name, currentName->name))
-					continue;
-
-				LogErrorNoCrash(context, scopeName.loc, TPrintF("Name \"%S\" already assigned",
-							scopeName.name));
-				LogNote(context, currentName->loc, "First defined here"_s);
-				PANIC;
+				for (int j = 0; j < scopeNames.size; ++j) {
+					if (StringEquals(scopeNames[j].name, currentName->name)) {
+						LogErrorNoCrash(context, scopeNames[j].loc, TPrintF("Name \"%S\" already "
+									"assigned", scopeNames[j].name));
+						LogNote(context, currentName->loc, "First defined here"_s);
+						PANIC;
+					}
+				}
 			}
 
-			*DynamicArrayAdd(&globalNames) = scopeName;
+			TCScopeName *newNames = DynamicArrayAddMany(&globalNames, scopeNames.size);
+			for (int i = 0; i < scopeNames.size; ++i)
+				newNames[i] = scopeNames[i];
 		}
 
 		// Wake up any jobs that were waiting for this name
 		auto jobsWaiting = context->jobsWaitingForIdentifier.Get();
 		for (int i = 0; i < jobsWaiting->size; ) {
 			TCJob *job = &(*jobsWaiting)[i];
-			if (StringEquals(job->context.identifier, scopeName.name)) {
-				EnqueueReadyJob(context, job->fiber);
-				// Remove
-				*job = (*jobsWaiting)[--jobsWaiting->size];
+			for (int j = 0; j < scopeNames.size; ++j) {
+				if (StringEquals(job->context.identifier, scopeNames[j].name)) {
+					EnqueueReadyJob(context, job->fiber);
+					// Remove
+					*job = (*jobsWaiting)[--jobsWaiting->size];
+				}
+				else
+					++i;
 			}
-			else
-				++i;
 		}
 	}
 }
@@ -1345,8 +1359,7 @@ u32 TypeCheckStructDeclaration(Context *context, String name, bool isUnion,
 		.name = name,
 		.isUnion = isUnion
 	};
-	Fiber fiber = SYSCreateFiber(TCStructJobProc, (void *)args);
-	EnqueueReadyJob(context, fiber);
+	RequestNewJob(context, TCStructJobProc, (void *)args);
 
 	return typeTableIdx;
 }
@@ -1676,17 +1689,21 @@ u32 TypeCheckType(Context *context, String name, SourceLocation loc, ASTType *as
 			typeTableIdx = AddType(context, t);
 		}
 
-		DynamicArray<String, LinearAllocator> enumNames;
-		DynamicArray<s64, LinearAllocator> enumValues;
-		DynamicArrayInit(&enumNames, 16);
-		DynamicArrayInit(&enumValues, 16);
+		u64 memberCount = astType->enumDeclaration.members.size;
+
+		Array<TCScopeName, ThreadAllocator> scopeNamesToAdd;
+		ArrayInit(&scopeNamesToAdd, memberCount);
+
+		ArrayInit(&t.enumInfo.names,  memberCount);
+		ArrayInit(&t.enumInfo.values, memberCount);
 
 		Array<u32, LinearAllocator> valueStaticDefs;
-		ArrayInit(&valueStaticDefs, astType->enumDeclaration.members.size);
+		ArrayInit(&valueStaticDefs, memberCount);
+
+		TCPushScope(context);
 
 		s64 currentValue = 0;
-		for (int memberIdx = 0; memberIdx < astType->enumDeclaration.members.size; ++memberIdx)
-		{
+		for (int memberIdx = 0; memberIdx < memberCount; ++memberIdx) {
 			ASTEnumMember astMember = astType->enumDeclaration.members[memberIdx];
 
 			ASTExpression *memberValue = astMember.value;
@@ -1698,8 +1715,7 @@ u32 TypeCheckType(Context *context, String name, SourceLocation loc, ASTType *as
 			staticDefinition.definitionType = STATICDEFINITIONTYPE_CONSTANT;
 			staticDefinition.typeTableIdx = typeTableIdx;
 
-			if (astMember.value)
-			{
+			if (astMember.value) {
 				Constant constant = TryEvaluateConstant(context, astMember.value);
 				if (constant.type == CONSTANTTYPE_INVALID)
 					LogError(context, astMember.value->any.loc,
@@ -1716,26 +1732,23 @@ u32 TypeCheckType(Context *context, String name, SourceLocation loc, ASTType *as
 			u32 newStaticDefIdx = TCNewStaticDefinition(context, &staticDefinition);
 			*ArrayAdd(&valueStaticDefs) = newStaticDefIdx;
 
-			TCScopeName newName;
-			newName.type = NAMETYPE_STATIC_DEFINITION;
-			newName.name = astMember.name;
-			newName.staticDefinitionIdx = newStaticDefIdx;
-			newName.loc = astMember.loc;
-			TCAddScopeName(context, newName);
+			// Add scope names one by one since every one could depend on any previous one.
+			TCScopeName newScopeName;
+			newScopeName.type = NAMETYPE_STATIC_DEFINITION;
+			newScopeName.name = astMember.name;
+			newScopeName.staticDefinitionIdx = newStaticDefIdx;
+			newScopeName.loc = astMember.loc;
+			TCAddScopeNames(context, { &newScopeName, 1 });
+			*ArrayAdd(&scopeNamesToAdd) = newScopeName;
 
-			*DynamicArrayAdd(&enumNames) = astMember.name;
-			*DynamicArrayAdd(&enumValues) = currentValue;
+			*ArrayAdd(&t.enumInfo.names)  = astMember.name;
+			*ArrayAdd(&t.enumInfo.values) = currentValue;
 			++currentValue;
 		}
 
-		t.enumInfo.names.data = enumNames.data;
-		t.enumInfo.names.size = enumNames.size;
-		t.enumInfo.values.data = enumValues.data;
-		t.enumInfo.values.size = enumValues.size;
-#if DEBUG_BUILD
-		t.enumInfo.names._capacity  = enumNames.capacity;
-		t.enumInfo.values._capacity = enumValues.capacity;
-#endif
+		TCPopScope(context);
+		// Add global names
+		TCAddScopeNames(context, scopeNamesToAdd);
 
 		// Update type info
 		{
@@ -1804,8 +1817,10 @@ void AddStructMembersToScope(Context *context, SourceLocation loc, ASTExpression
 	ASSERT(typeInfo.typeCategory == TYPECATEGORY_STRUCT ||
 		   typeInfo.typeCategory == TYPECATEGORY_UNION);
 
-	for (int memberIdx = 0; memberIdx < typeInfo.structInfo.members.size; ++memberIdx)
-	{
+	Array<TCScopeName, ThreadAllocator> scopeNamesToAdd;
+	ArrayInit(&scopeNamesToAdd, typeInfo.structInfo.members.size);
+
+	for (int memberIdx = 0; memberIdx < typeInfo.structInfo.members.size; ++memberIdx) {
 		const StructMember *member = &typeInfo.structInfo.members[memberIdx];
 
 		ASTExpression *memberAccessExp = TCNewTreeNode(context);
@@ -1826,21 +1841,20 @@ void AddStructMembersToScope(Context *context, SourceLocation loc, ASTExpression
 			*memberAccessExp = e;
 		}
 
-		if (member->name.size && !member->isUsing)
-		{
+		if (member->name.size && !member->isUsing) {
 			TCScopeName newScopeName;
 			newScopeName.type = NAMETYPE_ASTEXPRESSION;
 			newScopeName.name = member->name;
 			newScopeName.expression = memberAccessExp;
 			newScopeName.loc = loc;
-			TCAddScopeName(context, newScopeName);
+			*ArrayAdd(&scopeNamesToAdd) = newScopeName;
 		}
-		else
-		{
+		else {
 			// For using/anonymous members we recurse, spilling it's members too.
 			AddStructMembersToScope(context, loc, memberAccessExp);
 		}
 	}
+	TCAddScopeNames(context, scopeNamesToAdd);
 }
 
 bool IsExpressionAType(Context *context, ASTExpression *expression)
@@ -1958,6 +1972,9 @@ void TypeCheckVariableDeclaration(Context *context, ASTVariableDeclaration *varD
 	newValueFlags     |= varDecl->isStatic   ? VALUEFLAGS_ON_STATIC_STORAGE : 0;
 	newValueFlags     |= varDecl->isExternal ? VALUEFLAGS_IS_EXTERNAL       : 0;
 
+	Array<TCScopeName, ThreadAllocator> scopeNamesToAdd;
+	ArrayInit(&scopeNamesToAdd, varCount);
+
 	for (int varIdx = 0; varIdx < varCount; ++varIdx) {
 		String varName = *GetVariableName(varDecl, varIdx);
 		u32 typeIdx = *GetVariableTypeIdx(varDecl, varIdx);
@@ -1974,8 +1991,9 @@ void TypeCheckVariableDeclaration(Context *context, ASTVariableDeclaration *varD
 		newScopeName.variableInfo.valueIdx = valueIdx;
 		newScopeName.variableInfo.typeTableIdx = typeIdx;
 		newScopeName.loc = varDecl->loc;
-		TCAddScopeName(context, newScopeName);
+		*ArrayAdd(&scopeNamesToAdd) = newScopeName;
 	}
+	TCAddScopeNames(context, scopeNamesToAdd);
 
 	if (varCount == 0) {
 		TypeCategory typeCat = TCGetTypeInfo(context, varDecl->specifiedTypeIdx).typeCategory;
@@ -2193,7 +2211,7 @@ ASTExpression InlineProcedureCopyTreeBranch(Context *context, const ASTExpressio
 		ASTBlock astBlock = {};
 		DynamicArrayInit(&astBlock.statements, expression->block.statements.size);
 
-		PushTCScope(context);
+		TCPushScope(context);
 
 		for (int i = 0; i < expression->block.statements.size; ++i)
 		{
@@ -2203,7 +2221,7 @@ ASTExpression InlineProcedureCopyTreeBranch(Context *context, const ASTExpressio
 				*DynamicArrayAdd(&astBlock.statements) = statement;
 		}
 
-		PopTCScope(context);
+		TCPopScope(context);
 
 		result.block = astBlock;
 		return result;
@@ -2217,6 +2235,10 @@ ASTExpression InlineProcedureCopyTreeBranch(Context *context, const ASTExpressio
 					(varDecl.isExternal ? VALUEFLAGS_IS_EXTERNAL       : 0);
 
 		u64 varCount = varDecl.nameCount;
+
+		Array<TCScopeName, ThreadAllocator> scopeNamesToAdd;
+		ArrayInit(&scopeNamesToAdd, varCount);
+
 		if (varCount > 1)
 			varDecl.arrayOfValueIndices = (u32 *)LinearAllocator::Alloc(sizeof(u32) * varCount, alignof(u32));
 		for (int varIdx = 0; varIdx < varCount; ++varIdx) {
@@ -2235,22 +2257,23 @@ ASTExpression InlineProcedureCopyTreeBranch(Context *context, const ASTExpressio
 			newScopeName.variableInfo.valueIdx = valueIdx;
 			newScopeName.variableInfo.typeTableIdx = typeTableIdx;
 			newScopeName.loc = varDecl.loc;
-			TCAddScopeName(context, newScopeName);
+			*ArrayAdd(&scopeNamesToAdd) = newScopeName;
 		}
+		TCAddScopeNames(context, scopeNamesToAdd);
 
 		if (varCount == 0) {
 			ASSERT(!varDecl.isStatic && !varDecl.isExternal);
 			varDecl.anonymousVariableValueIdx = TCNewValue(context, ""_s, varDecl.specifiedTypeIdx, flags);
 
 			ASTExpression *varExp = TCNewTreeNode(context);
-			{
-				ASTExpression e = {};
-				e.typeTableIdx = varDecl.specifiedTypeIdx;
-				e.nodeType = ASTNODETYPE_IDENTIFIER;
-				e.identifier.type = NAMETYPE_VARIABLE;
-				e.identifier.valueIdx = varDecl.anonymousVariableValueIdx;
-				*varExp = e;
-			}
+			*varExp = {
+				.nodeType = ASTNODETYPE_IDENTIFIER,
+				.typeTableIdx = varDecl.specifiedTypeIdx,
+				.identifier = {
+					.type = NAMETYPE_VARIABLE,
+					.valueIdx = varDecl.anonymousVariableValueIdx
+				}
+			};
 			AddStructMembersToScope(context, varDecl.loc, varExp);
 		}
 
@@ -2300,14 +2323,18 @@ ASTExpression InlineProcedureCopyTreeBranch(Context *context, const ASTExpressio
 		ASTStaticDefinition astStaticDef = expression->staticDefinition;
 
 		// Add scope names
-		TCScopeName staticDefScopeName;
-		staticDefScopeName.type = NAMETYPE_STATIC_DEFINITION;
-		staticDefScopeName.staticDefinitionIdx = expression->staticDefinition.staticDefinitionIdx;
-		staticDefScopeName.loc = astStaticDef.loc;
+		Array<TCScopeName, ThreadAllocator> scopeNamesToAdd;
+		ArrayInit(&scopeNamesToAdd, astStaticDef.nameCount);
+
+		TCScopeName newScopeName;
+		newScopeName.type = NAMETYPE_STATIC_DEFINITION;
+		newScopeName.staticDefinitionIdx = expression->staticDefinition.staticDefinitionIdx;
+		newScopeName.loc = astStaticDef.loc;
 		for (u32 i = 0; i < astStaticDef.nameCount; ++i) {
-			staticDefScopeName.name = *GetVariableName(&astStaticDef, i);
-			TCAddScopeName(context, staticDefScopeName);
+			newScopeName.name = *GetVariableName(&astStaticDef, i);
+			*ArrayAdd(&scopeNamesToAdd) = newScopeName;
 		}
+		TCAddScopeNames(context, scopeNamesToAdd);
 
 		return {};
 	}
@@ -2464,7 +2491,9 @@ ASTExpression InlineProcedureCopyTreeBranch(Context *context, const ASTExpressio
 		u32 oldForArray = jobData->currentForLoopArrayType;
 		jobData->currentForLoopArrayType = TYPETABLEIDX_Unset;
 
-		PushTCScope(context);
+		TCPushScope(context);
+
+		FixedArray<TCScopeName, 2> scopeNamesToAdd = {};
 
 		String indexValueName = "i"_s;
 		u32 indexValueIdx = TCNewValue(context, indexValueName, TYPETABLEIDX_S64, 0);
@@ -2476,7 +2505,7 @@ ASTExpression InlineProcedureCopyTreeBranch(Context *context, const ASTExpressio
 		newScopeName.variableInfo.valueIdx = indexValueIdx;
 		newScopeName.variableInfo.typeTableIdx = TYPETABLEIDX_S64;
 		newScopeName.loc = expression->any.loc;
-		TCAddScopeName(context, newScopeName);
+		*FixedArrayAdd(&scopeNamesToAdd) = newScopeName;
 
 		ASTExpression *rangeExp = astFor.range;
 		bool isExplicitRange = rangeExp->nodeType == ASTNODETYPE_BINARY_OPERATION &&
@@ -2494,14 +2523,15 @@ ASTExpression InlineProcedureCopyTreeBranch(Context *context, const ASTExpressio
 			newScopeName.variableInfo.valueIdx = elementValueIdx;
 			newScopeName.variableInfo.typeTableIdx = origValueTypeIdx;
 			newScopeName.loc = expression->any.loc;
-			TCAddScopeName(context, newScopeName);
+			*FixedArrayAdd(&scopeNamesToAdd) = newScopeName;
 		}
+		TCAddScopeNames(context, scopeNamesToAdd);
 
 		e = TCNewTreeNode(context);
 		*e = InlineProcedureCopyTreeBranch(context, expression->forNode.body);
 		astFor.body = e;
 
-		PopTCScope(context);
+		TCPopScope(context);
 
 		jobData->currentForLoopArrayType = oldForArray;
 
@@ -2547,13 +2577,13 @@ ASTExpression InlineProcedureCopyTreeBranch(Context *context, const ASTExpressio
 void TCAddParametersToScope(Context *context, ArrayView<u32> parameterValues,
 		const ASTProcedurePrototype *astPrototype)
 {
-	for (int i = 0; i < astPrototype->astParameters.size; ++i)
-	{
+	Array<TCScopeName, ThreadAllocator> scopeNamesToAdd;
+	ArrayInit(&scopeNamesToAdd, astPrototype->astParameters.size + astPrototype->isVarargs);
+	for (int i = 0; i < astPrototype->astParameters.size; ++i) {
 		ASTProcedureParameter astParameter = astPrototype->astParameters[i];
 		u32 paramValueIdx = parameterValues[i];
 
-		if (astParameter.isUsing)
-		{
+		if (astParameter.isUsing) {
 			ASTExpression *varExp = TCNewTreeNode(context);
 			{
 				ASTExpression e = {};
@@ -2572,12 +2602,11 @@ void TCAddParametersToScope(Context *context, ArrayView<u32> parameterValues,
 		newScopeName.variableInfo.valueIdx = paramValueIdx;
 		newScopeName.variableInfo.typeTableIdx = astParameter.typeTableIdx;
 		newScopeName.loc = astParameter.loc;
-		TCAddScopeName(context, newScopeName);
+		*ArrayAdd(&scopeNamesToAdd) = newScopeName;
 	}
 
 	// Varargs array
-	if (astPrototype->isVarargs)
-	{
+	if (astPrototype->isVarargs) {
 		static u32 arrayTableIdx = GetTypeInfoArrayOf(context, TYPETABLEIDX_ANY_STRUCT, 0);
 
 		u32 paramValueIdx = { parameterValues[astPrototype->astParameters.size] };
@@ -2588,8 +2617,9 @@ void TCAddParametersToScope(Context *context, ArrayView<u32> parameterValues,
 		newScopeName.variableInfo.valueIdx = paramValueIdx;
 		newScopeName.variableInfo.typeTableIdx = arrayTableIdx;
 		newScopeName.loc = astPrototype->varargsLoc;
-		TCAddScopeName(context, newScopeName);
+		*ArrayAdd(&scopeNamesToAdd) = newScopeName;
 	}
+	TCAddScopeNames(context, scopeNamesToAdd);
 }
 
 u32 NewProcedure(Context *context, Procedure p, bool isExternal)
@@ -2623,7 +2653,7 @@ bool TCPushParametersAndInlineProcedureCall(Context *context, ASTProcedureCall *
 	ASSERT(TCGetTypeInfo(context, proc.typeTableIdx).typeCategory == TYPECATEGORY_PROCEDURE);
 	TypeInfoProcedure procTypeInfo = TCGetTypeInfo(context, proc.typeTableIdx).procedureInfo;
 
-	PushTCScope(context);
+	TCPushScope(context);
 
 	s64 totalArguments = procTypeInfo.parameters.size;
 	ArrayInit(&astProcCall->inlineParameterValues, totalArguments + 1);
@@ -2648,7 +2678,7 @@ bool TCPushParametersAndInlineProcedureCall(Context *context, ASTProcedureCall *
 	*e = InlineProcedureCopyTreeBranch(context, proc.astBody);
 	astProcCall->astBodyInlineCopy = e;
 
-	PopTCScope(context);
+	TCPopScope(context);
 
 	return true;
 }
@@ -2961,12 +2991,12 @@ void TypeCheckExpression(Context *context, ASTExpression *expression)
 	case ASTNODETYPE_BLOCK:
 	{
 		ASTBlock *astBlock = &expression->block;
-		PushTCScope(context);
+		TCPushScope(context);
 
 		for (int i = 0; i < astBlock->statements.size; ++i)
 			TypeCheckExpression(context, &astBlock->statements[i]);
 
-		PopTCScope(context);
+		TCPopScope(context);
 	} break;
 	case ASTNODETYPE_MULTIPLE_EXPRESSIONS:
 	{
@@ -2988,9 +3018,7 @@ void TypeCheckExpression(Context *context, ASTExpression *expression)
 				.localValues = {},
 				.expression = expression
 			};
-			Fiber fiber = SYSCreateFiber(IRJobExpression, (void *)args);
-
-			EnqueueReadyJob(context, fiber);
+			RequestNewJob(context, IRJobExpression, (void *)args);
 		}
 	} break;
 	case ASTNODETYPE_STATIC_DEFINITION:
@@ -3041,17 +3069,21 @@ void TypeCheckExpression(Context *context, ASTExpression *expression)
 
 			// Add scope name
 			{
-				TCScopeName staticDefScopeName;
-				staticDefScopeName.type = NAMETYPE_STATIC_DEFINITION;
-				staticDefScopeName.staticDefinitionIdx = newStaticDefIdx;
-				staticDefScopeName.loc = astStaticDef->loc;
+				Array<TCScopeName, ThreadAllocator> scopeNamesToAdd;
+				ArrayInit(&scopeNamesToAdd, astStaticDef->nameCount);
+
+				TCScopeName newScopeName;
+				newScopeName.type = NAMETYPE_STATIC_DEFINITION;
+				newScopeName.staticDefinitionIdx = newStaticDefIdx;
+				newScopeName.loc = astStaticDef->loc;
 				for (u32 i = 0; i < astStaticDef->nameCount; ++i) {
-					staticDefScopeName.name = *GetVariableName(astStaticDef, i);
-					TCAddScopeName(context, staticDefScopeName);
+					newScopeName.name = *GetVariableName(astStaticDef, i);
+					*ArrayAdd(&scopeNamesToAdd) = newScopeName;
 				}
+				TCAddScopeNames(context, scopeNamesToAdd);
 			}
 
-			PushTCScope(context);
+			TCPushScope(context);
 
 			if (procedure.astBody)
 			{
@@ -3094,20 +3126,22 @@ void TypeCheckExpression(Context *context, ASTExpression *expression)
 			UpdateProcedure(context, procedureIdx, &procedure);
 
 			// Wake up any jobs that were waiting for this procedure body
-			auto jobsWaiting = context->jobsWaitingForProcedure.Get();
-			for (int i = 0; i < jobsWaiting->size; ) {
-				TCJob *job = &(*jobsWaiting)[i];
-				if (job->context.index == procedureIdx) {
-					EnqueueReadyJob(context, job->fiber);
-					// Remove
-					*job = (*jobsWaiting)[--jobsWaiting->size];
+			{
+				auto jobsWaiting = context->jobsWaitingForProcedure.Get();
+				for (int i = 0; i < jobsWaiting->size; ) {
+					TCJob *job = &(*jobsWaiting)[i];
+					if (job->context.index == procedureIdx) {
+						EnqueueReadyJob(context, job->fiber);
+						// Remove
+						*job = (*jobsWaiting)[--jobsWaiting->size];
+					}
+					else
+						++i;
 				}
-				else
-					++i;
 			}
 
 			expression->typeTableIdx = procedure.typeTableIdx;
-			PopTCScope(context);
+			TCPopScope(context);
 
 			if (procedure.astBody)
 			{
@@ -3131,9 +3165,7 @@ void TypeCheckExpression(Context *context, ASTExpression *expression)
 						.expression = nullptr
 					};
 					jobData->localValues = {}; // Safety clear
-					Fiber fiber = SYSCreateFiber(IRJobProcedure, (void *)args);
-
-					EnqueueReadyJob(context, fiber);
+					RequestNewJob(context, IRJobProcedure, (void *)args);
 				}
 			}
 
@@ -3153,14 +3185,18 @@ void TypeCheckExpression(Context *context, ASTExpression *expression)
 
 			// Add scope name
 			{
-				TCScopeName staticDefScopeName;
-				staticDefScopeName.type = NAMETYPE_STATIC_DEFINITION;
-				staticDefScopeName.staticDefinitionIdx = newStaticDefIdx;
-				staticDefScopeName.loc = astStaticDef->loc;
+				Array<TCScopeName, ThreadAllocator> scopeNamesToAdd;
+				ArrayInit(&scopeNamesToAdd, astStaticDef->nameCount);
+
+				TCScopeName newScopeName;
+				newScopeName.type = NAMETYPE_STATIC_DEFINITION;
+				newScopeName.staticDefinitionIdx = newStaticDefIdx;
+				newScopeName.loc = astStaticDef->loc;
 				for (u32 i = 0; i < astStaticDef->nameCount; ++i) {
-					staticDefScopeName.name = *GetVariableName(astStaticDef, i);
-					TCAddScopeName(context, staticDefScopeName);
+					newScopeName.name = *GetVariableName(astStaticDef, i);
+					*ArrayAdd(&scopeNamesToAdd) = newScopeName;
 				}
+				TCAddScopeNames(context, scopeNamesToAdd);
 			}
 
 			u32 result = TypeCheckType(context, *GetVariableName(astStaticDef, 0),
@@ -3194,30 +3230,17 @@ void TypeCheckExpression(Context *context, ASTExpression *expression)
 		{
 			TypeCheckExpression(context, astStaticDef->expression);
 
+			StaticDefinition newStaticDef;
+
 			if (astStaticDef->expression->nodeType == ASTNODETYPE_IDENTIFIER &&
 				astStaticDef->expression->identifier.type == NAMETYPE_STATIC_DEFINITION)
 			{
 				ASSERT(astStaticDef->expression->typeTableIdx != TYPETABLEIDX_Unset);
 				u32 identifierStaticDefIdx = astStaticDef->expression->identifier.staticDefinitionIdx;
-				StaticDefinition newStaticDef = TCGetStaticDefinition(context, identifierStaticDefIdx, true);
+				newStaticDef = TCGetStaticDefinition(context, identifierStaticDefIdx, true);
 				newStaticDef.name = *GetVariableName(astStaticDef, 0);
 				newStaticDef.typeTableIdx = astStaticDef->expression->typeTableIdx;
 				expression->typeTableIdx = astStaticDef->expression->typeTableIdx;
-
-				u32 newStaticDefIdx = TCNewStaticDefinition(context, &newStaticDef);
-				astStaticDef->staticDefinitionIdx = newStaticDefIdx;
-
-				// Add scope name
-				{
-					TCScopeName staticDefScopeName;
-					staticDefScopeName.type = NAMETYPE_STATIC_DEFINITION;
-					staticDefScopeName.staticDefinitionIdx = newStaticDefIdx;
-					staticDefScopeName.loc = astStaticDef->loc;
-					for (u32 i = 0; i < astStaticDef->nameCount; ++i) {
-						staticDefScopeName.name = *GetVariableName(astStaticDef, i);
-						TCAddScopeName(context, staticDefScopeName);
-					}
-				}
 			}
 			else
 			{
@@ -3227,7 +3250,7 @@ void TypeCheckExpression(Context *context, ASTExpression *expression)
 					LogError(context, astStaticDef->expression->any.loc,
 							"Failed to evaluate constant"_s);
 
-				StaticDefinition newStaticDef = {};
+				newStaticDef = {};
 				newStaticDef.typeTableIdx = TYPETABLEIDX_Unset;
 				newStaticDef.name = *GetVariableName(astStaticDef, 0);
 				newStaticDef.definitionType = STATICDEFINITIONTYPE_CONSTANT;
@@ -3238,20 +3261,25 @@ void TypeCheckExpression(Context *context, ASTExpression *expression)
 				expression->typeTableIdx = constantTypeIdx;
 				newStaticDef.typeTableIdx = constantTypeIdx;
 
-				u32 newStaticDefIdx = TCNewStaticDefinition(context, &newStaticDef);
-				astStaticDef->staticDefinitionIdx = newStaticDefIdx;
+			}
 
-				// Add scope name
-				{
-					TCScopeName staticDefScopeName;
-					staticDefScopeName.type = NAMETYPE_STATIC_DEFINITION;
-					staticDefScopeName.staticDefinitionIdx = newStaticDefIdx;
-					staticDefScopeName.loc = astStaticDef->loc;
-					for (u32 i = 0; i < astStaticDef->nameCount; ++i) {
-						staticDefScopeName.name = *GetVariableName(astStaticDef, i);
-						TCAddScopeName(context, staticDefScopeName);
-					}
+			u32 newStaticDefIdx = TCNewStaticDefinition(context, &newStaticDef);
+			astStaticDef->staticDefinitionIdx = newStaticDefIdx;
+
+			// Add scope names
+			{
+				Array<TCScopeName, ThreadAllocator> scopeNamesToAdd;
+				ArrayInit(&scopeNamesToAdd, astStaticDef->nameCount);
+
+				TCScopeName newScopeName;
+				newScopeName.type = NAMETYPE_STATIC_DEFINITION;
+				newScopeName.staticDefinitionIdx = newStaticDefIdx;
+				newScopeName.loc = astStaticDef->loc;
+				for (u32 i = 0; i < astStaticDef->nameCount; ++i) {
+					newScopeName.name = *GetVariableName(astStaticDef, i);
+					*ArrayAdd(&scopeNamesToAdd) = newScopeName;
 				}
+				TCAddScopeNames(context, scopeNamesToAdd);
 			}
 		} break;
 		}
@@ -3415,8 +3443,7 @@ void TypeCheckExpression(Context *context, ASTExpression *expression)
 		ASSERT(TCGetTypeInfo(context, procedureTypeIdx).typeCategory == TYPECATEGORY_PROCEDURE);
 
 		s64 givenArguments = astProcCall->arguments.size;
-		for (int argIdx = 0; argIdx < givenArguments; ++argIdx)
-		{
+		for (int argIdx = 0; argIdx < givenArguments; ++argIdx) {
 			ASTExpression *arg = astProcCall->arguments[argIdx];
 			TypeCheckExpression(context, arg);
 		}
@@ -3971,11 +3998,13 @@ void TypeCheckExpression(Context *context, ASTExpression *expression)
 
 		TypeCheckExpression(context, astFor->range);
 
-		PushTCScope(context);
+		TCPushScope(context);
 
 		u32 indexValueIdx = TCNewValue(context, astFor->indexVariableName,
 				TYPETABLEIDX_S64, 0);
 		astFor->indexValueIdx = indexValueIdx;
+
+		FixedArray<TCScopeName, 2> scopeNamesToAdd = {};
 
 		TCScopeName newScopeName;
 		newScopeName.type = NAMETYPE_VARIABLE;
@@ -3983,17 +4012,15 @@ void TypeCheckExpression(Context *context, ASTExpression *expression)
 		newScopeName.variableInfo.valueIdx = indexValueIdx;
 		newScopeName.variableInfo.typeTableIdx = TYPETABLEIDX_S64;
 		newScopeName.loc = expression->any.loc;
-		TCAddScopeName(context, newScopeName);
+		*FixedArrayAdd(&scopeNamesToAdd) = newScopeName;
 
 		ASTExpression *rangeExp = astFor->range;
 		bool isExplicitRange = rangeExp->nodeType == ASTNODETYPE_BINARY_OPERATION &&
 			rangeExp->binaryOperation.op == TOKEN_OP_RANGE;
 
-		if (!isExplicitRange)
-		{
+		if (!isExplicitRange) {
 			u32 elementTypeTableIdx = TYPETABLEIDX_U8;
-			if (rangeExp->typeTableIdx != TYPETABLEIDX_STRING_STRUCT)
-			{
+			if (rangeExp->typeTableIdx != TYPETABLEIDX_STRING_STRUCT) {
 				TypeInfo rangeTypeInfo = TCGetTypeInfo(context, rangeExp->typeTableIdx);
 				if (rangeTypeInfo.typeCategory == TYPECATEGORY_POINTER)
 					rangeTypeInfo = TCGetTypeInfo(context, rangeTypeInfo.pointerInfo.pointedTypeTableIdx);
@@ -4014,8 +4041,9 @@ void TypeCheckExpression(Context *context, ASTExpression *expression)
 			newScopeName.variableInfo.valueIdx = elementValueIdx;
 			newScopeName.variableInfo.typeTableIdx = pointerToElementTypeTableIdx;
 			newScopeName.loc = expression->any.loc;
-			TCAddScopeName(context, newScopeName);
+			*FixedArrayAdd(&scopeNamesToAdd) = newScopeName;
 		}
+		TCAddScopeNames(context, scopeNamesToAdd);
 
 		u32 oldForArray = jobData->currentForLoopArrayType;
 		jobData->currentForLoopArrayType = astFor->range->typeTableIdx;
@@ -4025,7 +4053,7 @@ void TypeCheckExpression(Context *context, ASTExpression *expression)
 		// Important to restore whether we yield or not!
 		jobData->currentForLoopArrayType = oldForArray;
 
-		PopTCScope(context);
+		TCPopScope(context);
 	} break;
 	case ASTNODETYPE_BREAK:
 	case ASTNODETYPE_CONTINUE:
@@ -4160,7 +4188,7 @@ void TypeCheckExpression(Context *context, ASTExpression *expression)
 
 		astOverload->procedureIdx = overload.procedureIdx;
 
-		PushTCScope(context);
+		TCPushScope(context);
 
 		Procedure procedure = GetProcedureRead(context, astOverload->procedureIdx);
 
@@ -4263,7 +4291,7 @@ void TypeCheckExpression(Context *context, ASTExpression *expression)
 
 		UpdateProcedure(context, astOverload->procedureIdx, &procedure);
 
-		PopTCScope(context);
+		TCPopScope(context);
 
 		// Check all paths return
 		if (astOverload->astBody && t.procedureInfo.returnTypeIndices.size)
@@ -4548,9 +4576,7 @@ void GenerateTypeCheckJobs(Context *context, ASTExpression *expression) {
 		*args = {
 			.context = context,
 			.expression = expression };
-		Fiber fiber = SYSCreateFiber(TCJobProc, (void *)args);
-
-		EnqueueReadyJob(context, fiber);
+		RequestNewJob(context, TCJobProc, (void *)args);
 	} break;
 	case ASTNODETYPE_GARBAGE:
 	case ASTNODETYPE_RETURN:

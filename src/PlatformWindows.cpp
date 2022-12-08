@@ -583,6 +583,7 @@ volatile u32 g_runningFibersLock = 0; // @Delete: this was for debugging, don't 
 
 inline Fiber SYSCreateFiber(void (*start)(void *), void *args) {
 	const u64 fiberStackSize = 1 * 1024 * 1024; // 1MB
+	auto scope = ProfilerScope("Creating a fiber");
 
 	Fiber fiber = CreateFiber(fiberStackSize, start, args);
 	ProfilerRegisterFiber(fiber);
