@@ -3,16 +3,16 @@
 cls
 
 set SourceFiles=..\src\Compiler.cpp
-set CompilerFlags=-MTd -nologo -Gm- -GR- -Oi -EHa- -W4 -wd4201 -wd4100 -wd4996 -wd4063 -FC -Z7 -I ..\external\ -std:c++latest
+set CompilerFlags=-nologo -Gm- -GR- -Oi -EHa- -W4 -wd4201 -wd4100 -wd4996 -wd4063 -FC -Z7 -I ..\external\ -std:c++latest
 set LinkerFlags=-opt:ref -incremental:no
 set Libraries=user32.lib winmm.lib shell32.lib advapi32.lib
 
 IF "%1"=="-r" (
 	set CompilerFlags=%CompilerFlags% -MT -O2
-	set Libraries=%Libraries% -debug:none
+	set LinkerFlags=%LinkerFlags% -debug:none
 ) ELSE (
 	set CompilerFlags=%CompilerFlags% -MTd -Od -DDEBUG_BUILD=1
-	set Libraries=%Libraries% -debug:full
+	set LinkerFlags=%LinkerFlags% -debug:full
 )
 
 IF NOT EXIST .\bin mkdir .\bin
