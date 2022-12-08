@@ -334,6 +334,7 @@ bool TryParseBinaryOperation(Context *context, ASTExpression leftHand, s32 prevP
 			goto abort;
 
 		result->nodeType = ASTNODETYPE_PROCEDURE_CALL;
+		result->procedureCall.inlineType = CALLINLINETYPE_DONT_CARE;
 		DynamicArrayInit(&result->procedureCall.arguments, 4);
 
 		result->procedureCall.procedureExpression = PNewTreeNode(context);
@@ -358,6 +359,19 @@ bool TryParseBinaryOperation(Context *context, ASTExpression leftHand, s32 prevP
 			}
 		}
 		Advance(context);
+
+		if (jobData->token->type == TOKEN_DIRECTIVE_INLINE) {
+			result->procedureCall.inlineType = CALLINLINETYPE_ALWAYS_INLINE;
+			Advance(context);
+		}
+		else if (jobData->token->type == TOKEN_DIRECTIVE_NOINLINE) {
+			result->procedureCall.inlineType = CALLINLINETYPE_NEVER_INLINE;
+			Advance(context);
+		}
+
+		if (jobData->token->type == TOKEN_DIRECTIVE_INLINE ||
+			jobData->token->type == TOKEN_DIRECTIVE_NOINLINE)
+			LogError(context, jobData->token->loc, "Multiple inline directives"_s);
 
 		return true;
 	}

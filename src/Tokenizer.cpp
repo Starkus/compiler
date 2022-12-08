@@ -362,6 +362,8 @@ enum TokenType CalculateTokenType(Context *context, const Tokenizer *tokenizer)
 				return TOKEN_DIRECTIVE_ALIAS;
 			else if (StringEquals(directive, "#inline"_s))
 				return TOKEN_DIRECTIVE_INLINE;
+			else if (StringEquals(directive, "#noinline"_s))
+				return TOKEN_DIRECTIVE_NOINLINE;
 			else if (StringEquals(directive, "#external"_s))
 				return TOKEN_DIRECTIVE_EXTERNAL;
 			else if (StringEquals(directive, "#export"_s))
@@ -693,6 +695,7 @@ u16 CalculateTokenSize(Context *context, const Tokenizer *tokenizer, enum TokenT
 		return 8;
 	case TOKEN_DIRECTIVE_EXTERNAL:
 	case TOKEN_DIRECTIVE_OPERATOR:
+	case TOKEN_DIRECTIVE_NOINLINE:
 		return 9;
 	case TOKEN_DIRECTIVE_INTRINSIC:
 		return 10;

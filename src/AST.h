@@ -231,10 +231,17 @@ enum ProcedureCallType
 	CALLTYPE_STATIC,
 	CALLTYPE_ASTEXPRESSION
 };
+enum CallInlineType
+{
+	CALLINLINETYPE_DONT_CARE,
+	CALLINLINETYPE_ALWAYS_INLINE,
+	CALLINLINETYPE_NEVER_INLINE,
+};
 struct ASTProcedureCall : ASTBase
 {
 	ASTExpression *procedureExpression;
 	DynamicArray<ASTExpression *, LinearAllocator> arguments;
+	CallInlineType inlineType;
 
 	// Type check
 	u32 procedureTypeIdx;

@@ -51,6 +51,11 @@ CyclicB :: #inline (i : s32)
 }
 */
 
+OriginallyNotInline :: ()
+{
+	Print("Not originally inlined!\n");
+}
+
 Main :: () -> s64
 {
 	AProc();
@@ -65,6 +70,9 @@ Main :: () -> s64
 	DefaultParam();
 
 	InlinedPrintFWrapper("Inlined PrintF wrapper! args are %, %, %\n", 42, inlineRet, square);
+
+	AProc() #noinline;
+	OriginallyNotInline() #inline;
 
 	Print("Test ok\n");
 	return 0;

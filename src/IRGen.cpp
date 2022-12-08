@@ -1756,7 +1756,8 @@ IRValue IRGenFromExpression(Context *context, const ASTExpression *expression)
 		case CALLTYPE_STATIC:
 		{
 			Procedure proc = GetProcedureRead(context, astProcCall->procedureIdx);
-			if (proc.isInline)
+			if ((proc.isInline || astProcCall->inlineType == CALLINLINETYPE_ALWAYS_INLINE) &&
+					astProcCall->inlineType != CALLINLINETYPE_NEVER_INLINE)
 				return IRDoInlineProcedureCall(context, *astProcCall);
 
 			procCallInst.type = IRINSTRUCTIONTYPE_PROCEDURE_CALL;

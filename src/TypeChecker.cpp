@@ -2543,6 +2543,7 @@ ASTExpression InlineProcedureCopyTreeBranch(Context *context, const ASTExpressio
 	case ASTNODETYPE_TYPE:
 	case ASTNODETYPE_TYPEOF:
 	case ASTNODETYPE_SIZEOF:
+	case ASTNODETYPE_GARBAGE:
 	{
 		return *expression;
 	}
@@ -2647,7 +2648,9 @@ bool TCPushParametersAndInlineProcedureCall(Context *context, ASTProcedureCall *
 
 	Procedure proc = GetProcedureRead(context, astProcCall->procedureIdx);
 
-	if (!proc.isInline)
+	if (astProcCall->inlineType == CALLINLINETYPE_NEVER_INLINE)
+		return false;
+	if (!proc.isInline && astProcCall->inlineType != CALLINLINETYPE_ALWAYS_INLINE)
 		return false;
 
 	ASSERT(TCGetTypeInfo(context, proc.typeTableIdx).typeCategory == TYPECATEGORY_PROCEDURE);
@@ -3436,7 +3439,8 @@ void TypeCheckExpression(Context *context, ASTExpression *expression)
 
 				procedureIdx = staticDefinition.procedureIdx;
 				Procedure proc = GetProcedureRead(context, procedureIdx);
-				if (proc.isInline) {
+				if ((proc.isInline || astProcCall->inlineType == CALLINLINETYPE_ALWAYS_INLINE) &&
+						astProcCall->inlineType != CALLINLINETYPE_NEVER_INLINE) {
 					// Register inline call
 					u32 callingProcIdx = jobData->currentProcedureIdx;
 					{
