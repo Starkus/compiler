@@ -230,6 +230,7 @@ struct Context
 
 	RWContainer<DynamicArray<TCScopeName, LinearAllocator>> tcGlobalNames;
 	RWContainer<DynamicArray<u32, LinearAllocator>> tcGlobalTypeIndices;
+	RWContainer<DynamicArray<DynamicArray<u32, LinearAllocator>, LinearAllocator>> tcInlineCalls;
 
 	// IR -----
 	RWContainer<BucketArray<String, HeapAllocator, 1024>> stringLiterals;
@@ -256,6 +257,7 @@ struct TCJobData
 {
 	ASTExpression *expression;
 	bool onStaticContext;
+	u32 currentProcedureIdx;
 	DynamicArray<TCScope, ThreadAllocator> scopeStack;
 	ArrayView<u32> currentReturnTypes;
 	u32 currentForLoopArrayType;

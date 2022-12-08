@@ -50,6 +50,11 @@ struct Array
 	{
 		return { data, size };
 	}
+
+	operator ArrayView<const T>() const
+	{
+		return { data, size };
+	}
 };
 
 template <typename T, typename A>
@@ -112,6 +117,11 @@ struct FixedArray
 	{
 		return { data, size };
 	}
+
+	operator ArrayView<const T>() const
+	{
+		return { data, size };
+	}
 };
 
 template <typename T, u64 capacity>
@@ -149,6 +159,11 @@ struct DynamicArray
 	}
 
 	operator ArrayView<T>()
+	{
+		return { data, size };
+	}
+
+	operator ArrayView<const T>() const
 	{
 		return { data, size };
 	}

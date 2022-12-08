@@ -3087,6 +3087,16 @@ void TypeCheckExpression(Context *context, ASTExpression *expression)
 
 			if (procedure.astBody)
 			{
+				{
+					DynamicArray<u32, LinearAllocator> array;
+					DynamicArrayInit(&array, 4);
+
+					auto inlineCalls = context->tcInlineCalls.GetForWrite();
+					if (inlineCalls->size <= procedureIdx)
+						DynamicArrayAddMany(&inlineCalls, procedureIdx - inlineCalls->size);
+					(*inlineCalls)[procedureIdx] = array;
+				}
+
 				// Parameters
 				ArrayView<ASTProcedureParameter> astParameters = astPrototype->astParameters;
 				for (int i = 0; i < astParameters.size; ++i)
@@ -3114,12 +3124,16 @@ void TypeCheckExpression(Context *context, ASTExpression *expression)
 							astPrototype->returnTypeIndices[i], 0);
 				}
 
+				u32 previousCurrentProcIdx = jobData->currentProcedureIdx;
+				jobData->currentProcedureIdx = procedureIdx;
+
 				ArrayView<u32> previousReturnTypes = jobData->currentReturnTypes;
 				jobData->currentReturnTypes = t.procedureInfo.returnTypeIndices;
 
 				TypeCheckExpression(context, procedure.astBody);
 
-				jobData->currentReturnTypes = previousReturnTypes;
+				jobData->currentProcedureIdx = previousCurrentProcIdx;
+				jobData->currentReturnTypes  = previousReturnTypes;
 			}
 			procedure.isBodyTypeChecked = true;
 
@@ -3423,11 +3437,35 @@ void TypeCheckExpression(Context *context, ASTExpression *expression)
 				procedureIdx = staticDefinition.procedureIdx;
 				Procedure proc = GetProcedureRead(context, procedureIdx);
 				if (proc.isInline) {
+					// Register inline call
+					u32 callingProcIdx = jobData->currentProcedureIdx;
+					{
+						auto inlineCalls = context->tcInlineCalls.GetForWrite();
+						*DynamicArrayAdd(&(*inlineCalls)[callingProcIdx]) = procedureIdx;
+					}
+
+					// Check for cyclic dependencies
+					{
+						auto inlineCalls = context->tcInlineCalls.GetForRead();
+						if (inlineCalls->size > procedureIdx) {
+							ArrayView<const u32> inlinedCalls = (*inlineCalls)[procedureIdx];
+							for (int i = 0; i < inlinedCalls.size; ++i) {
+								if (inlinedCalls[i] == callingProcIdx)
+									// @Incomplete: improve error message
+									LogError(context, astProcExp->any.loc, TPrintF("Procedures "
+											"\"%S\" and \"%S\" are trying to inline each other.",
+											GetProcedureRead(context, callingProcIdx).name,
+											GetProcedureRead(context, procedureIdx).name));
+							}
+						}
+					}
+
 					// We need the whole body type checked
 					while (!proc.isBodyTypeChecked) {
-						if (!TCIsAnyOtherJobRunningOrWaiting(context))
-							LogError(context, expression->any.loc, TPrintF("COMPILER ERROR! Body of "
+						if (!TCIsAnyOtherJobRunningOrWaiting(context)) {
+							LogError(context, astProcExp->any.loc, TPrintF("COMPILER ERROR! Body of "
 										"inline procedure \"%S\" never type checked", proc.name));
+						}
 						SwitchJob(context, TCYIELDREASON_PROC_BODY_NOT_READY, { .index = procedureIdx });
 						proc = GetProcedureRead(context, procedureIdx);
 					}
@@ -3437,7 +3475,7 @@ void TypeCheckExpression(Context *context, ASTExpression *expression)
 		}
 
 		if (procedureTypeIdx == TYPETABLEIDX_Unset)
-			LogError(context, expression->any.loc, TPrintF("COMPILER ERROR! Procedure "
+			LogError(context, astProcExp->any.loc, TPrintF("COMPILER ERROR! Procedure "
 							"\"%S\" not type checked",
 							GetProcedureRead(context, procedureIdx).name));
 		ASSERT(TCGetTypeInfo(context, procedureTypeIdx).typeCategory == TYPECATEGORY_PROCEDURE);
@@ -3474,18 +3512,18 @@ void TypeCheckExpression(Context *context, ASTExpression *expression)
 		s64 totalArguments = procTypeInfo.parameters.size;
 		if (procTypeInfo.isVarargs) {
 			if (requiredArguments > givenArguments)
-				LogError(context, expression->any.loc,
+				LogError(context, astProcExp->any.loc,
 						TPrintF("Procedure%S needs at least %d arguments but only %d were given",
 							errorProcedureName, requiredArguments, givenArguments));
 		}
 		else {
 			if (requiredArguments > givenArguments)
-				LogError(context, expression->any.loc,
+				LogError(context, astProcExp->any.loc,
 						TPrintF("Procedure%S needs at least %d arguments but only %d were given",
 						errorProcedureName, requiredArguments, givenArguments));
 
 			if (givenArguments > totalArguments)
-				LogError(context, expression->any.loc,
+				LogError(context, astProcExp->any.loc,
 						TPrintF("Procedure%S needs %d arguments but %d were given",
 						errorProcedureName, totalArguments, givenArguments));
 		}
@@ -4278,11 +4316,15 @@ void TypeCheckExpression(Context *context, ASTExpression *expression)
 
 		if (astOverload->astBody)
 		{
+			u32 previousCurrentProcIdx = jobData->currentProcedureIdx;
+			jobData->currentProcedureIdx = astOverload->procedureIdx;
+
 			ArrayView<u32> previousReturnTypes = jobData->currentReturnTypes;
 			jobData->currentReturnTypes = t.procedureInfo.returnTypeIndices;
 
 			TypeCheckExpression(context, astOverload->astBody);
 
+			jobData->currentProcedureIdx = previousCurrentProcIdx;
 			jobData->currentReturnTypes = previousReturnTypes;
 		}
 		procedure.isBodyTypeChecked = true;
@@ -4374,6 +4416,7 @@ void TCJobProc(void *args)
 
 	ASTExpression *expression = argsStruct->expression;
 	TCJobData jobData = {};
+	jobData.currentProcedureIdx = U32_MAX;
 	jobData.onStaticContext = true;
 	jobData.currentReturnTypes = {};
 	SYSSetFiberData(context->flsIndex, &jobData);
@@ -4805,5 +4848,10 @@ void TypeCheckMain(Context *context) {
 		scopeNamePrimitive.primitiveTypeTableIdx = TYPETABLEIDX_VOID;
 		*ArrayAdd(&context->tcPrimitiveTypes) = scopeNamePrimitive;
 		*DynamicArrayAdd(&globalNames) = scopeNamePrimitive;
+	}
+
+	{
+		auto inlineCalls = context->tcInlineCalls.GetForWrite();
+		DynamicArrayInit(&inlineCalls, 128);
 	}
 }

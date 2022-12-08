@@ -40,9 +40,9 @@ void *LinearAllocator::Alloc(u64 size, int alignment)
 	}
 
 #if DEBUG_BUILD
+	ASSERT((u8 *)result + size < (u8 *)g_memory->linearMem + Memory::linearMemSize); // Out of memory!
 	for (int i = 0; i < Min(size, 8); ++i)
 		if (*((u8 *)(result + i)) != 0x00) CRASH; // Watch for memory corruption
-	ASSERT((u8 *)result + size < (u8 *)g_memory->linearMem + Memory::linearMemSize); // Out of memory!
 #endif
 
 	return (void *)result;
@@ -63,9 +63,8 @@ void LinearAllocator::Free(void *ptr)
 void *ThreadAllocator::Alloc(u64 size, int alignment)
 {
 #if DEBUG_BUILD
+	ASSERT((u8 *)t_threadMemPtr + size < (u8 *)t_threadMem + t_threadMemSize); // Out of memory!
 	if (*((u64 *)t_threadMemPtr) != 0x0000000000000000) CRASH; // Watch for memory corruption
-	ASSERT((u8 *)t_threadMemPtr + size < (u8 *)t_threadMem +
-			t_threadMemSize); // Out of memory!
 #endif
 	u64 result = (u64)t_threadMemPtr;
 
