@@ -1834,7 +1834,7 @@ void X64PrintInstructions(Context *context)
 	int procCount = (int)beFinalProcedureData->size;
 	for (int finalProcIdx = 0; finalProcIdx < procCount; ++finalProcIdx)
 	{
-		X64FinalProcedure finalProc = (*beFinalProcedureData)[finalProcIdx];
+		X64FinalProcedure finalProc = beFinalProcedureData[finalProcIdx];
 		Procedure proc = GetProcedureRead(context, finalProc.procedureIdx);
 #if IS_WINDOWS
 		if (proc.isExported)
@@ -1892,7 +1892,7 @@ void X64PrintStaticData(Context *context, String name, IRValue value, u32 typeTa
 		String str;
 		{
 			auto stringLiterals = context->stringLiterals.GetForRead();
-			str = (*stringLiterals)[value.immediateStringIdx];
+			str = stringLiterals[value.immediateStringIdx];
 		}
 		s64 size = str.size;
 		if (size == 0) {
@@ -2007,7 +2007,7 @@ void X64PrintStaticDataUninitialized(Context *context, String name, IRValue valu
 		String str;
 		{
 			auto stringLiterals = context->stringLiterals.GetForRead();
-			str = (*stringLiterals)[value.immediateStringIdx];
+			str = stringLiterals[value.immediateStringIdx];
 		}
 		ASSERT(str.size == 0);
 #if IS_WINDOWS
@@ -2606,7 +2606,7 @@ void BackendGenerateOutputFile(Context *context)
 		s64 bytesWritten = 0;
 		for (s64 stringLiteralIdx = 1; stringLiteralIdx < strCount; ++stringLiteralIdx) {
 			PrintOut(context, TPrintF("_str_%lld DB ", stringLiteralIdx));
-			String str = (*stringLiterals)[stringLiteralIdx];
+			String str = stringLiterals[stringLiteralIdx];
 			s64 size = str.size;
 			bool first = true;
 			char *buffer = (char *)t_threadMemPtr;
@@ -2674,7 +2674,7 @@ void BackendGenerateOutputFile(Context *context)
 		const u64 staticVariableCount = staticVars->size;
 		// Initialized
 		for (int staticVariableIdx = 0; staticVariableIdx < staticVariableCount; ++staticVariableIdx) {
-			IRStaticVariable staticVar = (*staticVars)[staticVariableIdx];
+			IRStaticVariable staticVar = staticVars[staticVariableIdx];
 			if (staticVar.initialValue.valueType != IRVALUETYPE_INVALID &&
 					staticVar.initialValue.immediate != 0) {
 				Value value = GetGlobalValue(context, staticVar.valueIdx);
@@ -2697,7 +2697,7 @@ void BackendGenerateOutputFile(Context *context)
 		// Uninitialized
 		// @Speed: don't iterate this twice...
 		for (int staticVariableIdx = 0; staticVariableIdx < staticVariableCount; ++staticVariableIdx) {
-			IRStaticVariable staticVar = (*staticVars)[staticVariableIdx];
+			IRStaticVariable staticVar = staticVars[staticVariableIdx];
 			if (staticVar.initialValue.valueType == IRVALUETYPE_INVALID ||
 					staticVar.initialValue.immediate == 0) {
 				Value value = GetGlobalValue(context, staticVar.valueIdx);
@@ -2730,7 +2730,7 @@ void BackendGenerateOutputFile(Context *context)
 
 		auto externalVars = context->irExternalVariables.GetForRead();
 		for (int varIdx = 0; varIdx < externalVars->size; ++varIdx) {
-			Value v = GetGlobalValue(context, (*externalVars)[varIdx]);
+			Value v = GetGlobalValue(context, externalVars[varIdx]);
 			s64 size = GetTypeInfo(context, v.typeTableIdx).size;
 			String type;
 			switch (size) {
@@ -2759,7 +2759,7 @@ void BackendGenerateOutputFile(Context *context)
 			if (externalProcIdx == copyMemoryProcIdx || externalProcIdx == zeroMemoryProcIdx)
 				continue;
 
-			String procName = (*externalProcedures)[procedureIdx].name;
+			String procName = externalProcedures[procedureIdx].name;
 #if IS_WINDOWS
 			PrintOut(context, TPrintF("EXTRN %S:proc\n", procName));
 #else
@@ -2795,7 +2795,7 @@ void BackendGenerateOutputFile(Context *context)
 		u64 staticDefinitionCount = BucketArrayCount(&staticDefinitions);
 		for (u64 i = 0; i < staticDefinitionCount; ++i)
 		{
-			const StaticDefinition *currentDef = &(*staticDefinitions)[i];
+			const StaticDefinition *currentDef = &staticDefinitions[i];
 			if (StringEquals("compiler_output_type"_s, currentDef->name))
 			{
 				ASSERT(currentDef->definitionType == STATICDEFINITIONTYPE_CONSTANT);
@@ -2817,7 +2817,7 @@ void BackendGenerateOutputFile(Context *context)
 		u64 staticDefinitionCount = BucketArrayCount(&staticDefinitions);
 		for (u64 i = 0; i < staticDefinitionCount; ++i)
 		{
-			const StaticDefinition *currentDef = &(*staticDefinitions)[i];
+			const StaticDefinition *currentDef = &staticDefinitions[i];
 			if (StringEquals("compiler_subsystem"_s, currentDef->name))
 			{
 				ASSERT(currentDef->definitionType == STATICDEFINITIONTYPE_CONSTANT);

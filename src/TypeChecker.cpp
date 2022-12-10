@@ -112,20 +112,20 @@ u32 NewGlobalValue(Context *context, Value value) {
 inline Value GetGlobalValue(Context *context, u32 valueIdx) {
 	ASSERT(valueIdx & VALUE_GLOBAL_BIT);
 	auto globalValues = context->globalValues.GetForRead();
-	Value result = (*globalValues)[valueIdx & VALUE_GLOBAL_MASK];
+	Value result = globalValues[valueIdx & VALUE_GLOBAL_MASK];
 	return result;
 }
 
 inline void UpdateGlobalValue(Context *context, u32 valueIdx, Value *value) {
 	ASSERT(valueIdx & VALUE_GLOBAL_BIT);
 	auto globalValues = context->globalValues.GetForWrite();
-	(*globalValues)[valueIdx & VALUE_GLOBAL_MASK] = *value;
+	globalValues[valueIdx & VALUE_GLOBAL_MASK] = *value;
 }
 
 inline void TCSetValueFlags(Context *context, u32 valueIdx, u32 flags) {
 	if (valueIdx & VALUE_GLOBAL_BIT) {
 		auto globalValues = context->globalValues.GetForWrite();
-		(*globalValues)[valueIdx & VALUE_GLOBAL_MASK].flags |= flags;
+		globalValues[valueIdx & VALUE_GLOBAL_MASK].flags |= flags;
 	}
 	else {
 		TCJobData *jobData = (TCJobData *)SYSGetFiberData(context->flsIndex);
@@ -148,11 +148,11 @@ inline Procedure GetProcedureRead(Context *context, u32 procedureIdx) {
 	ASSERT(procedureIdx != 0);
 	if (procedureIdx & PROCEDURE_EXTERNAL_BIT) {
 		auto externalProcedures = context->externalProcedures.GetForRead();
-		result = (*externalProcedures)[procedureIdx & PROCEDURE_EXTERNAL_MASK];
+		result = externalProcedures[procedureIdx & PROCEDURE_EXTERNAL_MASK];
 	}
 	else {
 		auto procedures = context->procedures.GetForRead();
-		result = (*procedures)[procedureIdx];
+		result = procedures[procedureIdx];
 	}
 
 	return result;
@@ -162,11 +162,11 @@ inline void UpdateProcedure(Context *context, u32 procedureIdx, Procedure *value
 	ASSERT(procedureIdx != 0);
 	if (procedureIdx & PROCEDURE_EXTERNAL_BIT) {
 		auto externalProcedures = context->externalProcedures.GetForWrite();
-		(*externalProcedures)[procedureIdx & PROCEDURE_EXTERNAL_MASK] = *value;
+		externalProcedures[procedureIdx & PROCEDURE_EXTERNAL_MASK] = *value;
 	}
 	else {
 		auto procedures = context->procedures.GetForWrite();
-		(*procedures)[procedureIdx] = *value;
+		procedures[procedureIdx] = *value;
 	}
 }
 
@@ -444,7 +444,7 @@ inline u32 TCNewStaticDefinition(Context *context, StaticDefinition *value)
 inline StaticDefinition GetStaticDefinition(Context *context, u32 staticDefinitionIdx)
 {
 	auto staticDefinitions = context->staticDefinitions.GetForRead();
-	return (*staticDefinitions)[staticDefinitionIdx];
+	return staticDefinitions[staticDefinitionIdx];
 }
 
 inline StaticDefinition TCGetStaticDefinition(Context *context, u32 staticDefinitionIdx,
@@ -495,18 +495,18 @@ inline void TCUpdateStaticDefinition(Context *context, u32 staticDefinitionIdx,
 		StaticDefinition *value) {
 	{
 		auto staticDefinitions = context->staticDefinitions.GetForWrite();
-		(*staticDefinitions)[staticDefinitionIdx] = *value;
+		staticDefinitions[staticDefinitionIdx] = *value;
 	}
 
 	if (value->definitionType != STATICDEFINITIONTYPE_NOT_READY && value->typeTableIdx != TYPETABLEIDX_Unset) {
 		// Wake up any job waiting for this static def to be ready.
 		auto jobsWaiting = context->jobsWaitingForStaticDef.Get();
 		for (int i = 0; i < jobsWaiting->size; ) {
-			TCJob *job = &(*jobsWaiting)[i];
+			TCJob *job = &jobsWaiting[i];
 			if (job->context.index == staticDefinitionIdx) {
 				EnqueueReadyJob(context, job->fiber);
 				// Remove
-				*job = (*jobsWaiting)[--jobsWaiting->size];
+				*job = jobsWaiting[--jobsWaiting->size];
 			}
 			else
 				++i;
@@ -1195,7 +1195,7 @@ u32 FindOrAddTypeTableIdx(Context *context, TypeInfo typeInfo)
 		u32 tableSize = (u32)BucketArrayCount(&typeTable);
 		for (u32 i = 0; i < tableSize; ++i)
 		{
-			TypeInfo t = (*typeTable)[i];
+			TypeInfo t = typeTable[i];
 			if (AreTypeInfosEqual(context, typeInfo, t))
 				return i;
 		}
@@ -1271,7 +1271,7 @@ void TCAddScopeNames(Context *context, ArrayView<TCScopeName> scopeNames)
 
 			// Check if already exists
 			for (int i = 0; i < globalNames->size; ++i) {
-				const TCScopeName *currentName = &(*globalNames)[i];
+				const TCScopeName *currentName = &globalNames[i];
 				for (int j = 0; j < scopeNames.size; ++j) {
 					if (StringEquals(scopeNames[j].name, currentName->name)) {
 						LogErrorNoCrash(context, scopeNames[j].loc, TPrintF("Name \"%S\" already "
@@ -1290,12 +1290,12 @@ void TCAddScopeNames(Context *context, ArrayView<TCScopeName> scopeNames)
 		// Wake up any jobs that were waiting for this name
 		auto jobsWaiting = context->jobsWaitingForIdentifier.Get();
 		for (int i = 0; i < jobsWaiting->size; ) {
-			TCJob *job = &(*jobsWaiting)[i];
+			TCJob *job = &jobsWaiting[i];
 			for (int j = 0; j < scopeNames.size; ++j) {
 				if (StringEquals(job->context.identifier, scopeNames[j].name)) {
 					EnqueueReadyJob(context, job->fiber);
 					// Remove
-					*job = (*jobsWaiting)[--jobsWaiting->size];
+					*job = jobsWaiting[--jobsWaiting->size];
 				}
 				else
 					++i;
@@ -1337,7 +1337,13 @@ u32 TypeCheckStructDeclaration(Context *context, String name, bool isUnion,
 	{
 		auto typeTable = context->typeTable.Get();
 		ASSERT(BucketArrayCount(&context->typeTable.unsafe) < U32_MAX);
-		typeTableIdx = AddType(context, { TYPECATEGORY_NOT_READY, U32_MAX });
+		TypeInfo t = {
+			.typeCategory = TYPECATEGORY_NOT_READY,
+			.structInfo = {
+				.name = name
+			}
+		};
+		typeTableIdx = AddType(context, t);
 	}
 
 	TCScope *stackTop = GetTopMostScope(context);
@@ -1889,14 +1895,14 @@ void TypeCheckVariableDeclaration(Context *context, ASTVariableDeclaration *varD
 	bool isGlobal = varDecl->isStatic || varDecl->isExternal;
 
 	if (jobData->onStaticContext && !isGlobal)
-		LogError(context, varDecl->loc, "Variable on static scope has to be declared "
-				"either static or external"_s);
+		LogError(context, varDecl->loc, "Variable on static scope has to be declared either "
+				"static or external"_s);
 
 	int varCount = (int)varDecl->nameCount;
 
 	if (varCount > 1) {
 		// Do one allocation for both
-		varDecl->arrayOfValueIndices = (u32 *)LinearAllocator::Alloc(sizeof(u32) * varCount * 2, alignof(u32));
+		varDecl->arrayOfValueIndices = ALLOC_N(LinearAllocator, u32, varCount * 2);
 		varDecl->arrayOfTypeIndices  = varDecl->arrayOfValueIndices + varCount;
 	}
 
@@ -1918,31 +1924,34 @@ void TypeCheckVariableDeclaration(Context *context, ASTVariableDeclaration *varD
 			LogError(context, varDecl->astInitialValue->any.loc, "Initial value of variable is a "
 					"type"_s);
 
+		ASTExpression *astInitialValue = varDecl->astInitialValue;
+
 		if (varDecl->astType) {
 			ASSERT(varDecl->specifiedTypeIdx != TYPETABLEIDX_Unset);
-			if (varDecl->astInitialValue->typeTableIdx == TYPETABLEIDX_VOID)
-				LogError(context, varDecl->loc, "Trying to initialize a variable with a void "
-						"expression"_s);
+			if (astInitialValue->typeTableIdx == TYPETABLEIDX_VOID)
+				LogError(context, astInitialValue->any.loc, "Trying to initialize a variable with "
+						"a void expression"_s);
 
 			TypeCheckResult typeCheckResult = CheckTypesMatchAndSpecialize(context,
-					varDecl->specifiedTypeIdx, varDecl->astInitialValue);
+					varDecl->specifiedTypeIdx, astInitialValue);
 			if (typeCheckResult.errorCode != TYPECHECK_COOL) {
 				Print("Variable declaration type and initial type don't match\n");
 				ReportTypeCheckError(context, typeCheckResult.errorCode, varDecl->loc,
-						varDecl->specifiedTypeIdx, varDecl->astInitialValue->typeTableIdx);
+						varDecl->specifiedTypeIdx, astInitialValue->typeTableIdx);
 			}
 
-			varDecl->astInitialValue->typeTableIdx = typeCheckResult.leftTableIdx;
+			astInitialValue->typeTableIdx = typeCheckResult.leftTableIdx;
 
 			if (typeCheckResult.leftTableIdx != varDecl->specifiedTypeIdx) {
 				varDecl->specifiedTypeIdx = typeCheckResult.leftTableIdx;
-				varDecl->astInitialValue->typeTableIdx = typeCheckResult.rightTableIdx;
+				astInitialValue->typeTableIdx = typeCheckResult.rightTableIdx;
 				for (int varIdx = 0; varIdx < varCount; ++varIdx)
 					*GetVariableTypeIdx(varDecl, varIdx) = varDecl->specifiedTypeIdx;
 			}
 		}
-		else if (varDecl->astInitialValue->nodeType == ASTNODETYPE_PROCEDURE_CALL) {
-			u32 procTypeIdx = varDecl->astInitialValue->procedureCall.procedureTypeIdx;
+		else if (astInitialValue->nodeType == ASTNODETYPE_PROCEDURE_CALL) {
+			// Infer type: return values
+			u32 procTypeIdx = astInitialValue->procedureCall.procedureTypeIdx;
 			TypeInfoProcedure procTypeInfo = GetTypeInfo(context, procTypeIdx).procedureInfo;
 			if (varCount < procTypeInfo.returnTypeIndices.size)
 				LogError(context, varDecl->loc, "Not enough variables to receive all return "
@@ -1957,14 +1966,43 @@ void TypeCheckVariableDeclaration(Context *context, ASTVariableDeclaration *varD
 			}
 		}
 		else {
-			if (varDecl->astInitialValue->typeTableIdx == TYPETABLEIDX_VOID)
-				LogError(context, varDecl->loc, "Cannot initialize a variable with a void "
-						"expression"_s);
+			// Infer type: not return values
+			if (astInitialValue->typeTableIdx == TYPETABLEIDX_VOID)
+				LogError(context, astInitialValue->any.loc, "Cannot initialize a variable with a "
+						"void expression"_s);
 
-			u32 variableTypeIdx = InferType(varDecl->astInitialValue->typeTableIdx);
-			ASSERT(variableTypeIdx != TYPETABLEIDX_Unset);
-			for (int varIdx = 0; varIdx < varCount; ++varIdx)
-				*GetVariableTypeIdx(varDecl, varIdx) = variableTypeIdx;
+			if (astInitialValue->nodeType == ASTNODETYPE_MULTIPLE_EXPRESSIONS) {
+				u64 givenValuesCount = astInitialValue->multipleExpressions.array.size;
+				// We shouldn't have 1-value multiple expression nodes
+				ASSERT(givenValuesCount > 1);
+				if (varCount != givenValuesCount) {
+					SourceLocation endLoc =
+						(*DynamicArrayBack(&astInitialValue->multipleExpressions.array))->any.loc;
+					if (varCount == 1)
+						Log2Error(context, varDecl->loc, endLoc,
+								"Trying to initialize a variable to multiple values"_s);
+					else
+						Log2Error(context, varDecl->loc, endLoc,
+								TPrintF("Trying to initialize %d variables to %d values",
+									varCount, givenValuesCount));
+				}
+
+				for (int varIdx = 0; varIdx < varCount; ++varIdx) {
+					u32 valueTypeIdx =
+						InferType(astInitialValue->multipleExpressions.array[varIdx]->typeTableIdx);
+					ASSERT(valueTypeIdx != TYPETABLEIDX_Unset);
+					*GetVariableTypeIdx(varDecl, varIdx) = valueTypeIdx;
+				}
+			}
+			else {
+				if (varCount > 1)
+					Log2Error(context, varDecl->loc, astInitialValue->any.loc,
+							"Trying to initialize multiple variables to a single value"_s);
+				u32 valueTypeIdx = InferType(astInitialValue->typeTableIdx);
+				ASSERT(valueTypeIdx != TYPETABLEIDX_Unset);
+				for (int varIdx = 0; varIdx < varCount; ++varIdx)
+					*GetVariableTypeIdx(varDecl, varIdx) = valueTypeIdx;
+			}
 		}
 	}
 
@@ -2879,7 +2917,7 @@ bool LookForOperatorOverload(Context *context, ASTExpression *expression)
 			auto operatorOverloads = context->operatorOverloads.GetForRead();
 			for (int overloadIdx = 0; overloadIdx < operatorOverloads->size; ++overloadIdx)
 			{
-				OperatorOverload currentOverload = (*operatorOverloads)[overloadIdx];
+				OperatorOverload currentOverload = operatorOverloads[overloadIdx];
 
 				if (op != currentOverload.op)
 					continue;
@@ -3032,9 +3070,13 @@ void TypeCheckExpression(Context *context, ASTExpression *expression)
 		case ASTNODETYPE_PROCEDURE_DECLARATION:
 		{
 			BucketArray<Value, LinearAllocator, 1024> oldLocalValues = jobData->localValues;
-
 			BucketArrayInit(&jobData->localValues);
 			*BucketArrayAdd(&jobData->localValues) = {}; // No value number 0?
+
+			DynamicArray<TCScope, ThreadAllocator> oldScopeStack = jobData->scopeStack;
+			// Don't allocate a new array if old is empty.
+			if (oldScopeStack.size)
+				DynamicArrayInit(&jobData->scopeStack, 8);
 
 			bool oldOnStaticContext = jobData->onStaticContext;
 			jobData->onStaticContext = false;
@@ -3097,7 +3139,7 @@ void TypeCheckExpression(Context *context, ASTExpression *expression)
 					auto inlineCalls = context->tcInlineCalls.GetForWrite();
 					if (inlineCalls->size <= procedureIdx)
 						DynamicArrayAddMany(&inlineCalls, procedureIdx - inlineCalls->size);
-					(*inlineCalls)[procedureIdx] = array;
+					inlineCalls[procedureIdx] = array;
 				}
 
 				// Parameters
@@ -3146,11 +3188,11 @@ void TypeCheckExpression(Context *context, ASTExpression *expression)
 			{
 				auto jobsWaiting = context->jobsWaitingForProcedure.Get();
 				for (int i = 0; i < jobsWaiting->size; ) {
-					TCJob *job = &(*jobsWaiting)[i];
+					TCJob *job = &jobsWaiting[i];
 					if (job->context.index == procedureIdx) {
 						EnqueueReadyJob(context, job->fiber);
 						// Remove
-						*job = (*jobsWaiting)[--jobsWaiting->size];
+						*job = jobsWaiting[--jobsWaiting->size];
 					}
 					else
 						++i;
@@ -3187,6 +3229,10 @@ void TypeCheckExpression(Context *context, ASTExpression *expression)
 			}
 
 			jobData->localValues = oldLocalValues;
+			if (oldScopeStack.size)
+				jobData->scopeStack = oldScopeStack;
+			else
+				jobData->scopeStack.size = 0;
 			jobData->onStaticContext = oldOnStaticContext;
 		} break;
 		case ASTNODETYPE_TYPE:
@@ -3445,14 +3491,14 @@ void TypeCheckExpression(Context *context, ASTExpression *expression)
 					u32 callingProcIdx = jobData->currentProcedureIdx;
 					{
 						auto inlineCalls = context->tcInlineCalls.GetForWrite();
-						*DynamicArrayAdd(&(*inlineCalls)[callingProcIdx]) = procedureIdx;
+						*DynamicArrayAdd(&inlineCalls[callingProcIdx]) = procedureIdx;
 					}
 
 					// Check for cyclic dependencies
 					{
 						auto inlineCalls = context->tcInlineCalls.GetForRead();
 						if (inlineCalls->size > procedureIdx) {
-							ArrayView<const u32> inlinedCalls = (*inlineCalls)[procedureIdx];
+							ArrayView<const u32> inlinedCalls = inlineCalls[procedureIdx];
 							for (int i = 0; i < inlinedCalls.size; ++i) {
 								if (inlinedCalls[i] == callingProcIdx)
 									// @Incomplete: improve error message
@@ -4205,6 +4251,11 @@ void TypeCheckExpression(Context *context, ASTExpression *expression)
 		BucketArrayInit(&jobData->localValues);
 		*BucketArrayAdd(&jobData->localValues) = {}; // No value number 0?
 
+		DynamicArray<TCScope, ThreadAllocator> oldScopeStack = jobData->scopeStack;
+		// Don't allocate a new array if old is empty.
+		if (oldScopeStack.size)
+			DynamicArrayInit(&jobData->scopeStack, 8);
+
 		bool oldOnStaticContext = jobData->onStaticContext;
 		jobData->onStaticContext = false;
 
@@ -4297,11 +4348,11 @@ void TypeCheckExpression(Context *context, ASTExpression *expression)
 		// Wake up any job waiting for this overload.
 		auto jobsWaiting = context->jobsWaitingForOverload.Get();
 		for (int i = 0; i < jobsWaiting->size; ) {
-			TCJob *job = &(*jobsWaiting)[i];
+			TCJob *job = &jobsWaiting[i];
 			if (job->context.index == astOverload->op) {
 				EnqueueReadyJob(context, job->fiber);
 				// Remove
-				*job = (*jobsWaiting)[--jobsWaiting->size];
+				*job = jobsWaiting[--jobsWaiting->size];
 			}
 			else
 				++i;
@@ -4350,6 +4401,10 @@ void TypeCheckExpression(Context *context, ASTExpression *expression)
 		}
 
 		jobData->localValues = oldLocalValues;
+		if (oldScopeStack.size)
+			jobData->scopeStack = oldScopeStack;
+		else
+			jobData->scopeStack.size = 0;
 		jobData->onStaticContext = oldOnStaticContext;
 	} break;
 	case ASTNODETYPE_INCLUDE:
@@ -4386,7 +4441,7 @@ void TypeCheckExpression(Context *context, ASTExpression *expression)
 			{
 				auto globalNames = context->tcGlobalNames.GetForRead();
 				for (int i = 0; i < globalNames->size; ++i) {
-					const TCScopeName *currentName = &(*globalNames)[i];
+					const TCScopeName *currentName = &globalNames[i];
 					if (StringEquals(identifier, currentName->name)) {
 						isDefined = true;
 						goto done;
@@ -4457,7 +4512,7 @@ void TCJobProc(void *args)
 			threadName = "TC:Static if"_s;
 			break;
 		}
-		(*jobs)[jobIdx].title = threadName;
+		jobs[jobIdx].title = threadName;
 #endif
 	}
 #endif
@@ -4591,11 +4646,11 @@ void TCStructJobProc(void *args)
 	{
 		auto jobsWaiting = context->jobsWaitingForType.Get();
 		for (int i = 0; i < jobsWaiting->size; ) {
-			TCJob *job = &(*jobsWaiting)[i];
+			TCJob *job = &jobsWaiting[i];
 			if (job->context.index == typeTableIdx) {
 				EnqueueReadyJob(context, job->fiber);
 				// Remove
-				*job = (*jobsWaiting)[--jobsWaiting->size];
+				*job = jobsWaiting[--jobsWaiting->size];
 			}
 			else
 				++i;

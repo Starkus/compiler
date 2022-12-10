@@ -22,8 +22,6 @@ typedef double f64;
 #include "Strings.h"
 #include "MemoryAlloc.h"
 
-#define USE_PROFILER_API IS_WINDOWS
-
 const String TPrintF(const char *format, ...);
 
 #define STB_SPRINTF_IMPLEMENTATION
@@ -334,6 +332,49 @@ void __Log(Context *context, SourceLocation loc, String str,
 #endif
 }
 
+void __LogRange(Context *context, SourceLocation locBegin, SourceLocation locEnd, String str,
+			const char *inFile, const char *inFunc, int inLine)
+{
+	FatSourceLocation fatLocBegin = ExpandSourceLocation(context, locBegin);
+	FatSourceLocation fatLocEnd   = ExpandSourceLocation(context, locEnd);
+
+	// Info
+	SourceFile sourceFile;
+	{
+		// @Speed: shouldn't need this lock
+		ScopedLockSpin filesLock(&context->filesLock);
+		sourceFile = context->sourceFiles[locBegin.fileIdx];
+	}
+
+	ScopedLockMutex lock(context->consoleMutex);
+
+	Print("%S %d:%d %S\n", sourceFile.name, fatLocBegin.line, fatLocBegin.character, str);
+
+	// Source line
+	Print("... %.*s\n... ", fatLocBegin.lineSize, fatLocBegin.beginingOfLine);
+
+	// Token underline
+	u32 underlineCount = fatLocEnd.character - fatLocBegin.character + fatLocEnd.size;
+	for (u32 i = 0; i < fatLocBegin.character; ++i)
+	{
+		if (fatLocBegin.beginingOfLine[i] == '\t')
+			Print("\t");
+		else
+			Print(" ");
+	}
+	for (u32 i = 0; i < underlineCount; ++i) {
+		char c = fatLocBegin.beginingOfLine[fatLocBegin.character + i];
+		if (c == '\n' || c == '\r')
+			break;
+		Print("^");
+	}
+	Print("\n");
+
+#if DEBUG_BUILD
+	Print("~~~ In %s - %s:%d\n", inFunc, inFile, inLine);
+#endif
+}
+
 #define Log(context, loc, str) \
 	do { __Log(context, loc, str, __FILE__, __func__, __LINE__); } while (0)
 
@@ -348,6 +389,21 @@ void __Log(Context *context, SourceLocation loc, String str,
 
 #define LogNote(context, loc, str) \
 	do { __Log(context, loc, TStringConcat("NOTE: "_s, str), __FILE__, __func__, __LINE__); } while (0)
+
+#define Log2(context, locBegin, locEnd, str) \
+	do { __LogRange(context, locBegin, locEnd, str, __FILE__, __func__, __LINE__); } while (0)
+
+#define Log2ErrorNoCrash(context, locBegin, locEnd, str) \
+	do { __LogRange(context, locBegin, locEnd, TStringConcat("ERROR: "_s, str), __FILE__, __func__, __LINE__); } while (0)
+
+#define Log2Error(context, locBegin, locEnd, str) \
+	do { Log2ErrorNoCrash(context, locBegin, locEnd, str); PANIC; } while(0)
+
+#define Log2Warning(context, locBegin, locEnd, str) \
+	do { __LogRange(context, locBegin, locEnd, TStringConcat("WARNING: "_s, str), __FILE__, __func__, __LINE__); } while (0)
+
+#define Log2Note(context, locBegin, locEnd, str) \
+	do { __LogRange(context, locBegin, locEnd, TStringConcat("NOTE: "_s, str), __FILE__, __func__, __LINE__); } while (0)
 
 void EnqueueReadyJob(Context *context, Fiber fiber);
 bool CompilerAddSourceFile(Context *context, String filename, SourceLocation loc) {

@@ -22,9 +22,10 @@ inline void RequestNewJob(Context *context, void (*proc)(void *), void *args)
 	}
 	else {
 		JobRequest job = { proc, args };
-		while (!MTQueueEnqueue(&context->jobsToCreate, job))
-			while (context->jobsToCreate.head == context->jobsToCreate.tail)
-				Sleep(0);
+		if (!MTQueueEnqueue(&context->jobsToCreate, job)) {
+			Fiber newFiber = SYSCreateFiber(proc, args);
+			EnqueueReadyJob(context, newFiber);
+		}
 	}
 #else
 	Fiber newFiber = SYSCreateFiber(proc, args);
@@ -147,13 +148,10 @@ void SchedulerProc(Context *context)
 					{ \
 						auto jobsWaiting = context-> _waitingJobs .Get(); \
 						if (jobsWaiting->size) { \
+							_InterlockedIncrement((LONG volatile *)&context->threadsDoingWork); \
 							TCJob *job = &(*jobsWaiting)[0]; \
 							nextFiber = job->fiber; \
-							\
-							/* Remove */ \
 							DynamicArrayRemoveOrdered(&jobsWaiting, 0); \
-							\
-							_InterlockedIncrement((LONG volatile *)&context->threadsDoingWork); \
 							break; \
 						} \
 					}
@@ -169,8 +167,8 @@ void SchedulerProc(Context *context)
 					// Fallback, create the fiber on whatever thread and keep going
 					JobRequest jobToCreate;
 					if (MTQueueDequeue(&context->jobsToCreate, &jobToCreate)) {
-						nextFiber = SYSCreateFiber(jobToCreate.proc, jobToCreate.args);
 						_InterlockedIncrement((LONG volatile *)&context->threadsDoingWork);
+						nextFiber = SYSCreateFiber(jobToCreate.proc, jobToCreate.args);
 						break;
 					}
 #endif

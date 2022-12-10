@@ -21,7 +21,7 @@ outerProc :: ()
 	outerVar : s64 = 25;
 	innerProc :: ()
 	{
-		innerVar : s64 = outerVar;
+		innerVar : s64 = 50;
 	}
 
 	innerProc();

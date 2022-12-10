@@ -631,10 +631,14 @@ inline void SYSSwitchToFiber(Fiber fiber) {
 	g_runningFibers[t_threadIndex] = fiber;
 	SpinlockUnlock(&g_runningFibersLock);
 
+#if USE_PROFILER_API
 	Fiber currentFiber = GetCurrentFiber();
 	ProfilerBeginFiberSwitch(currentFiber, fiber);
+#endif
 	SwitchToFiber(fiber);
+#if USE_PROFILER_API
 	ProfilerEndFiberSwitch(currentFiber);
+#endif
 }
 
 inline Mutex SYSCreateMutex() {

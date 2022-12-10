@@ -1,0 +1,12 @@
+Main :: () -> s64
+{
+	localVar : s32 = 3;
+	LocalProc :: () {
+		localVar = 5;
+	}
+
+	LocalProc();
+	PrintF("localVar: %\n", localVar);
+
+	return 0;
+}

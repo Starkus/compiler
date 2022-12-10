@@ -69,7 +69,7 @@ inline Value *IRGetLocalValue(Context *context, u32 valueIdx) {
 inline void IRUpdateValue(Context *context, u32 valueIdx, Value *value) {
 	if (valueIdx & VALUE_GLOBAL_BIT) {
 		auto globalValues = context->globalValues.GetForWrite();
-		(*globalValues)[valueIdx & VALUE_GLOBAL_MASK] = *value;
+		globalValues[valueIdx & VALUE_GLOBAL_MASK] = *value;
 	}
 	else {
 		IRJobData *jobData = (IRJobData *)SYSGetFiberData(context->flsIndex);
@@ -80,7 +80,7 @@ inline void IRUpdateValue(Context *context, u32 valueIdx, Value *value) {
 inline void IRSetValueFlags(Context *context, u32 valueIdx, u32 flags) {
 	if (valueIdx & VALUE_GLOBAL_BIT) {
 		auto globalValues = context->globalValues.GetForWrite();
-		(*globalValues)[valueIdx & VALUE_GLOBAL_MASK].flags |= flags;
+		globalValues[valueIdx & VALUE_GLOBAL_MASK].flags |= flags;
 	}
 	else {
 		IRJobData *jobData = (IRJobData *)SYSGetFiberData(context->flsIndex);
@@ -195,7 +195,7 @@ IRValue IRValueImmediateString(Context *context, String string)
 		ASSERT(stringCount < U32_MAX);
 		for (u32 stringIdx = 0; stringIdx < stringCount; ++stringIdx)
 		{
-			if (StringEquals((*stringLiterals)[stringIdx], string))
+			if (StringEquals(stringLiterals[stringIdx], string))
 			{
 				result.immediateStringIdx = stringIdx;
 				goto done;
@@ -216,7 +216,7 @@ IRValue IRValueImmediateFloat(Context *context, f64 f, u32 typeTableIdx = TYPETA
 	auto staticVars = context->irStaticVariables.GetForWrite();
 	for (int i = 0; i < staticVars->size; ++i)
 	{
-		IRStaticVariable staticVar = (*staticVars)[i];
+		IRStaticVariable staticVar = staticVars[i];
 		if (staticVar.initialValue.valueType == IRVALUETYPE_IMMEDIATE_FLOAT &&
 			staticVar.initialValue.typeTableIdx == typeTableIdx)
 		{
@@ -2495,7 +2495,7 @@ void IRJobProcedure(void *args)
 	{
 #if !FINAL_BUILD
 		auto jobs = context->jobs.Get();
-		(*jobs)[jobIdx].title = SStringConcat("IR:"_s, GetProcedureRead(context, procedureIdx).name);
+		jobs[jobIdx].title = SStringConcat("IR:"_s, GetProcedureRead(context, procedureIdx).name);
 #endif
 
 		ASSERT(context->jobs.unsafe[jobIdx].state == TCYIELDREASON_READY);
@@ -2535,7 +2535,7 @@ void IRJobExpression(void *args)
 
 #if !FINAL_BUILD
 		auto jobs = context->jobs.Get();
-		(*jobs)[jobIdx].title = "IR:Expression"_s;
+		jobs[jobIdx].title = "IR:Expression"_s;
 #endif
 	}
 #endif

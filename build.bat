@@ -4,15 +4,15 @@ cls
 
 set SourceFiles=..\src\Compiler.cpp
 set CompilerFlags=-nologo -Gm- -GR- -Oi -EHa- -W4 -wd4201 -wd4100 -wd4996 -wd4063 -FC -Z7 -I ..\external\ -std:c++latest
-set LinkerFlags=-opt:ref -incremental:no
+set LinkerFlags=-opt:ref -incremental:no -debug:full
 set Libraries=user32.lib winmm.lib shell32.lib advapi32.lib
 
 IF "%1"=="-r" (
 	set CompilerFlags=%CompilerFlags% -MT -O2
-	set LinkerFlags=%LinkerFlags% -debug:none
+) ELSE IF "%1"=="-p" (
+	set CompilerFlags=%CompilerFlags% -MT -O2 -DUSE_PROFILER=1
 ) ELSE (
 	set CompilerFlags=%CompilerFlags% -MTd -Od -DDEBUG_BUILD=1
-	set LinkerFlags=%LinkerFlags% -debug:full
 )
 
 IF NOT EXIST .\bin mkdir .\bin

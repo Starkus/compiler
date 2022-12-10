@@ -51,13 +51,11 @@ class [[nodiscard]] ScopedLockRead
 {
 public:
 	RWLock *lock;
-	ScopedLockRead(RWLock *aLock)
-	{
+	ScopedLockRead(RWLock *aLock) {
 		lock = aLock;
 		SYSLockForRead(lock);
 	}
-	~ScopedLockRead()
-	{
+	~ScopedLockRead() {
 		SYSUnlockForRead(lock);
 	}
 };
@@ -66,13 +64,11 @@ class [[nodiscard]] ScopedLockWrite
 {
 public:
 	RWLock *lock;
-	ScopedLockWrite(RWLock *aLock)
-	{
+	ScopedLockWrite(RWLock *aLock) {
 		lock = aLock;
 		SYSLockForWrite(lock);
 	}
-	~ScopedLockWrite()
-	{
+	~ScopedLockWrite() {
 		SYSUnlockForWrite(lock);
 	}
 };
@@ -81,13 +77,11 @@ class [[nodiscard]] ScopedLockSpin
 {
 public:
 	volatile u32 *lock;
-	ScopedLockSpin(volatile u32 *aLock)
-	{
+	ScopedLockSpin(volatile u32 *aLock) {
 		lock = aLock;
 		SpinlockLock(lock);
 	}
-	~ScopedLockSpin()
-	{
+	~ScopedLockSpin() {
 		SpinlockUnlock(lock);
 	}
 };
@@ -114,30 +108,22 @@ public:
 	T unsafe;
 	RWLock rwLock;
 
-	RWContainer()
-	{
+	RWContainer() {
 		SYSCreateRWLock(&rwLock);
 	}
 
-	T &LockForRead()
-	{
+	T &LockForRead() {
 		SYSLockForRead(&rwLock);
 		return unsafe;
 	}
-
-	void UnlockForRead()
-	{
+	void UnlockForRead() {
 		SYSUnlockForRead(&rwLock);
 	}
-
-	T &LockForWrite()
-	{
+	T &LockForWrite() {
 		SYSLockForWrite(&rwLock);
 		return unsafe;
 	}
-
-	void UnlockForWrite()
-	{
+	void UnlockForWrite() {
 		SYSUnlockForWrite(&rwLock);
 	}
 
@@ -147,35 +133,24 @@ public:
 	public:
 		RWContainer<T2> *safeContainer;
 
-		HandleRead(RWContainer<T2> *safe)
-		{
+		HandleRead(RWContainer<T2> *safe) {
 			safeContainer = safe;
 			safeContainer->LockForRead();
 		}
-
-		~HandleRead()
-		{
+		~HandleRead() {
 			safeContainer->UnlockForRead();
 		}
 
-		const T2 &operator*()
-		{
-			return safeContainer->unsafe;
-		}
+		const T2 &operator*() { return safeContainer->unsafe; }
+		const T2 *operator->() { return &safeContainer->unsafe; }
+		const T2 *operator&() { return &safeContainer->unsafe; }
 
-		const T2 *operator->()
-		{
-			return &safeContainer->unsafe;
-		}
-
-		const T2 *operator&()
-		{
-			return &safeContainer->unsafe;
+		const decltype(safeContainer->unsafe[0]) &operator[](s64 index) {
+			return safeContainer->unsafe[index];
 		}
 	};
 
-	HandleRead<T> GetForRead()
-	{
+	HandleRead<T> GetForRead() {
 		return HandleRead<T>(this);
 	}
 
@@ -185,35 +160,24 @@ public:
 	public:
 		RWContainer<T2> *safeContainer;
 
-		HandleWrite(RWContainer<T2> *safe)
-		{
+		HandleWrite(RWContainer<T2> *safe) {
 			safe->LockForWrite();
 			safeContainer = safe;
 		}
-
-		~HandleWrite()
-		{
+		~HandleWrite() {
 			safeContainer->UnlockForWrite();
 		}
 
-		T2 &operator*()
-		{
-			return safeContainer->unsafe;
-		}
+		T2 &operator*() { return safeContainer->unsafe; }
+		T2 *operator->() { return &safeContainer->unsafe; }
+		T2 *operator&() { return &safeContainer->unsafe; }
 
-		T2 *operator->()
-		{
-			return &safeContainer->unsafe;
-		}
-
-		T2 *operator&()
-		{
-			return &safeContainer->unsafe;
+		const decltype(safeContainer->unsafe[0]) &operator[](s64 index) {
+			return safeContainer->unsafe[index];
 		}
 	};
 
-	HandleWrite<T> GetForWrite()
-	{
+	HandleWrite<T> GetForWrite() {
 		return HandleWrite<T>(this);
 	}
 };
@@ -225,15 +189,12 @@ public:
 	T unsafe;
 	volatile u32 lock;
 
-	const T &Lock()
-	{
+	const T &Lock() {
 		SpinlockLock(&lock);
 		//ProfileBegin("Spinlock locked", nullptr, PERFORMANCEAPI_MAKE_COLOR(0xA0, 0x30, 0x10));
 		return unsafe;
 	}
-
-	void Unlock()
-	{
+	void Unlock() {
 		//ProfileEnd();
 		SpinlockUnlock(&lock);
 	}
@@ -244,35 +205,22 @@ public:
 	public:
 		SLContainer<T2> *safeContainer;
 
-		Handle(SLContainer<T2> *safe)
-		{
+		Handle(SLContainer<T2> *safe) {
 			safe->Lock();
 			safeContainer = safe;
 		}
+		~Handle() { safeContainer->Unlock(); }
 
-		~Handle()
-		{
-			safeContainer->Unlock();
-		}
+		T2 &operator*() { return safeContainer->unsafe; }
+		T2 *operator->() { return &safeContainer->unsafe; }
+		T2 *operator&() { return &safeContainer->unsafe; }
 
-		T2 &operator*()
-		{
-			return safeContainer->unsafe;
-		}
-
-		T2 *operator->()
-		{
-			return &safeContainer->unsafe;
-		}
-
-		T2 *operator&()
-		{
-			return &safeContainer->unsafe;
+		const decltype(safeContainer->unsafe[0]) &operator[](s64 index) {
+			return safeContainer->unsafe[index];
 		}
 	};
 
-	Handle<T> Get()
-	{
+	Handle<T> Get() {
 		return Handle<T>(this);
 	}
 };
@@ -284,19 +232,14 @@ public:
 	T unsafe;
 	Mutex lock;
 
-	MXContainer()
-	{
+	MXContainer() {
 		lock = SYSCreateMutex();
 	}
-
-	const T &Lock()
-	{
+	const T &Lock() {
 		SYSMutexLock(lock);
 		return unsafe;
 	}
-
-	void Unlock()
-	{
+	void Unlock() {
 		SYSMutexUnlock(lock);
 	}
 
@@ -306,35 +249,22 @@ public:
 	public:
 		MXContainer<T2> *safeContainer;
 
-		Handle(MXContainer<T2> *safe)
-		{
+		Handle(MXContainer<T2> *safe) {
 			safe->Lock();
 			safeContainer = safe;
 		}
+		~Handle() { safeContainer->Unlock(); }
 
-		~Handle()
-		{
-			safeContainer->Unlock();
-		}
+		T2 &operator*() { return safeContainer->unsafe; }
+		T2 *operator->() { return &safeContainer->unsafe; }
+		T2 *operator&() { return &safeContainer->unsafe; }
 
-		T2 &operator*()
-		{
-			return safeContainer->unsafe;
-		}
-
-		T2 *operator->()
-		{
-			return &safeContainer->unsafe;
-		}
-
-		T2 *operator&()
-		{
-			return &safeContainer->unsafe;
+		const decltype(safeContainer->unsafe[0]) &operator[](s64 index) {
+			return safeContainer->unsafe[index];
 		}
 	};
 
-	Handle<T> Get()
-	{
+	Handle<T> Get() {
 		return Handle<T>(this);
 	}
 };
