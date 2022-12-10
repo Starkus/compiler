@@ -559,7 +559,7 @@ Main :: () -> s64 {
 		glBindBuffer(GL_ARRAY_BUFFER, vertexBuffer);
 		glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, 0, 0);
 
-		DrawSprite :: #inline (position: v2, size: v2) {
+		DrawSprite :: #inline (programId: GLuint, position: v2, size: v2) {
 			dimensions : v4 = { position.x, position.y, size.x, size.y };
 			dimensionsUniform := glGetUniformLocation(programId, "dimensions\0".data);
 			glUniform4fv(dimensionsUniform, 1, ^dimensions.x);
@@ -567,13 +567,13 @@ Main :: () -> s64 {
 		}
 
 		glBindTexture(GL_TEXTURE_2D, textureIdShip);
-		DrawSprite(playerPos, { 64.0, 64.0 });
+		DrawSprite(programId, playerPos, { 64.0, 64.0 });
 		glBindTexture(GL_TEXTURE_2D, textureIdBullet);
-		for bullets DrawSprite(@it,    { BULLET_WIDTH, BULLET_HEIGHT });
+		for bullets DrawSprite(programId, @it,    { BULLET_WIDTH, BULLET_HEIGHT });
 		glBindTexture(GL_TEXTURE_2D, textureIdEnemy);
-		for enemies DrawSprite(it.pos, { ENEMY_WIDTH,  ENEMY_HEIGHT  });
+		for enemies DrawSprite(programId, it.pos, { ENEMY_WIDTH,  ENEMY_HEIGHT  });
 		glBindTexture(GL_TEXTURE_2D, textureIdSmoke);
-		for particles DrawSprite(it.pos, { 24, 24 });
+		for particles DrawSprite(programId, it.pos, { 24, 24 });
 
 		SwapBuffers(deviceContext);
 
