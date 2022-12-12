@@ -188,15 +188,36 @@ IRValue IRValueImmediateString(Context *context, String string)
 	result.valueType = IRVALUETYPE_IMMEDIATE_STRING;
 	if (string.size == 0)
 		result.immediateStringIdx = 0;
-	else
-	{
+	else {
 		auto stringLiterals = context->stringLiterals.GetForWrite();
 		s64 stringCount = BucketArrayCount(&stringLiterals);
 		ASSERT(stringCount < U32_MAX);
-		for (u32 stringIdx = 0; stringIdx < stringCount; ++stringIdx)
-		{
-			if (StringEquals(stringLiterals[stringIdx], string))
-			{
+		for (u32 stringIdx = 0; stringIdx < stringCount; ++stringIdx) {
+			if (StringEquals(stringLiterals[stringIdx], string)) {
+				result.immediateStringIdx = stringIdx;
+				goto done;
+			}
+		}
+		u32 idx = (u32)stringCount;
+		result.immediateStringIdx = idx;
+		*BucketArrayAdd(&stringLiterals) = string;
+	}
+done:
+	return result;
+}
+
+IRValue IRValueImmediateCStr(Context *context, String string)
+{
+	IRValue result;
+	result.valueType = IRVALUETYPE_IMMEDIATE_CSTR;
+	if (string.size == 0)
+		result.immediateStringIdx = 0;
+	else {
+		auto stringLiterals = context->cStringLiterals.GetForWrite();
+		s64 stringCount = BucketArrayCount(&stringLiterals);
+		ASSERT(stringCount < U32_MAX);
+		for (u32 stringIdx = 0; stringIdx < stringCount; ++stringIdx) {
+			if (StringEquals(stringLiterals[stringIdx], string)) {
 				result.immediateStringIdx = stringIdx;
 				goto done;
 			}
@@ -1634,6 +1655,10 @@ IRValue IRGenFromExpression(Context *context, const ASTExpression *expression)
 						newStaticVar.initialValue = IRValueImmediateString(context,
 								varDecl.astInitialValue->literal.string);
 					}
+					else if (varDecl.astInitialValue->literal.type == LITERALTYPE_CSTR) {
+						newStaticVar.initialValue = IRValueImmediateCStr(context,
+								varDecl.astInitialValue->literal.string);
+					}
 					else {
 						Constant constant  = TryEvaluateConstant(context, varDecl.astInitialValue);
 						if (constant.type == CONSTANTTYPE_INVALID)
@@ -2058,6 +2083,25 @@ skipGeneratingVarargsArray:
 			IRFillValueWithGroupLiteral(context, groupIRValue, expression->literal);
 			result = groupIRValue;
 		} break;
+		case LITERALTYPE_CSTR:
+		{
+			static u64 stringStaticVarUniqueID = 0;
+
+			u32 charPointerTypeIdx = GetTypeInfoPointerOf(context, TYPETABLEIDX_U8);
+			IRStaticVariable newStaticVar = {};
+			newStaticVar.valueIdx = NewGlobalValue(context,
+					SNPrintF("staticCString%d", 20, stringStaticVarUniqueID++),
+					charPointerTypeIdx, VALUEFLAGS_ON_STATIC_STORAGE);
+			newStaticVar.initialValue = IRValueImmediateCStr(context, expression->literal.string);
+			newStaticVar.initialValue.typeTableIdx = charPointerTypeIdx;
+
+			{
+				auto staticVars = context->irStaticVariables.GetForWrite();
+				*DynamicArrayAdd(&staticVars) = newStaticVar;
+			}
+
+			result = IRPointerToValue(context, IRValueValue(context, newStaticVar.valueIdx));
+		} break;
 		default:
 			ASSERT(!"Unexpected literal type");
 		}
@@ -2475,6 +2519,12 @@ void IRGenMain(Context *context)
 		BucketArrayInit(&stringLiterals);
 		// Empty string
 		*BucketArrayAdd(&stringLiterals) = {};
+	}
+	{
+		auto cStringLiterals = context->cStringLiterals.GetForWrite();
+		BucketArrayInit(&cStringLiterals);
+		// Empty string
+		*BucketArrayAdd(&cStringLiterals) = {};
 	}
 }
 

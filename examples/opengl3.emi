@@ -1,184 +1,26 @@
-#include "core/windows.emi";
-#include "core/opengl.emi";
+#include "core/glh.emi";
 #include "core/vector.emi";
 #include "core/math.emi";
-#linklib "opengl32.lib";
 
-//compiler_subsystem :: COMPILER_SUBSYSTEM_WINDOWS;
+compiler_subsystem :: COMPILER_SUBSYSTEM_WINDOWS;
 
-running :s bool = true;
-windowHandle :s ^void;
-windowWidth :s s32 = 800;
-windowHeight :s s32 = 600;
-deviceContext :s ^void;
-glContext :s ^void;
+g_running :s bool = true;
+g_windowHandle :s ^void;
+g_deviceContext :s ^void;
+g_glContext :s ^void;
 
-Win32WindowCallback :: #convention(win64) (hWnd : ^void, message : u32, wParam : u64, lParam : u64) -> u64
+Main :: (args : [] String) -> s64
 {
-	if message == WM_CLOSE
-		PostQuitMessage(0);
-	else if message == WM_SIZE
-	{
-		windowWidth = cast(s32)(lParam & 0xFFFF);
-		windowHeight = cast(s32)((lParam >> 16) & 0xFFFF);
-		glViewport(0, 0, windowWidth, windowHeight);
-	}
-	else
-		return DefWindowProcA(hWnd, message, wParam, lParam);
-
-	return 0;
-}
-
-LoadShader :: (filename : String, shaderType : GLenum) -> GLuint
-{
-	filenameCStr : [512] CHAR = ?;
-	for filename filenameCStr[i] = cast(CHAR)(@it);
-	filenameCStr[filename.size] = 0;
-	fileHandle := CreateFileA(^filenameCStr, GENERIC_READ, FILE_SHARE_READ, null, OPEN_EXISTING,
-		FILE_ATTRIBUTE_NORMAL, null);
-	defer CloseHandle(fileHandle);
-
-	if fileHandle == INVALID_HANDLE_VALUE
-	{
-		PrintF("Shader file \"%\" not found!\n", filename);
-		return 0;
-	}
-
-	fileSize := GetFileSize(fileHandle, null);
-	fileBuffer := cast(^u8)VirtualAlloc(0, fileSize, MEM_COMMIT, PAGE_READWRITE);
-	defer VirtualFree(fileBuffer, 0, MEM_RELEASE);
-	bytesRead : u32 = ?;
-	success := ReadFile(fileHandle, fileBuffer, fileSize, ^bytesRead, null);
-
-	if !success
-	{
-		PrintF("Couldn't read shader file \"%\"!\n", filename);
-		return 0;
-	}
-
-	fileStr : String;
-	fileStr.size = fileSize;
-	fileStr.data = fileBuffer;
-
-	shaderId := glCreateShader(shaderType);
-	glShaderSource(shaderId, 1, ^fileBuffer, null);
-	glCompileShader(shaderId);
-
-	logSize : s32;
-	glGetShaderiv(shaderId, GL_INFO_LOG_LENGTH, ^logSize);
-	if (logSize > 0)
-	{
-		shaderLog : String;
-		shaderLog.size = cast(u64)logSize;
-		shaderLog.data = cast(^u8)VirtualAlloc(0, shaderLog.size, MEM_COMMIT, PAGE_READWRITE);
-		defer VirtualFree(shaderLog.data, 0, MEM_RELEASE);
-		glGetShaderInfoLog(shaderId, logSize, null, shaderLog.data);
-		PrintF("%\n", shaderLog);
-	}
-
-	return shaderId;
-}
-
-InitOpenGLContext :: ()
-{
-	windowClass : WNDCLASSEXA;
-	hInstance := ^__ImageBase;
-	windowClassName := cast(^CHAR)("window\0".data);
-	windowTitle := cast(^CHAR)("Hello OpenGL 3.3!\0".data);
-
-	windowClass.cbSize = cast(u32)sizeof(windowClass);
-	windowClass.style = CS_HREDRAW | CS_VREDRAW | CS_OWNDC;
-	windowClass.lpfnWndProc = Win32WindowCallback;
-	windowClass.hInstance = hInstance;
-	windowClass.lpszClassName = windowClassName;
-
-	RegisterClassExA(^windowClass);
-
-	// Fake window
-	fakeWindow := CreateWindowExA(0, windowClassName, windowTitle, WS_CLIPSIBLINGS |
-			WS_CLIPCHILDREN, 0, 0, 1, 1, null, null, hInstance, null);
-
-	// Fake context
-	fakeContext := GetDC(fakeWindow);
-
-	pfd : PIXELFORMATDESCRIPTOR;
-	pfd.nSize = cast(u16) sizeof(PIXELFORMATDESCRIPTOR);
-	pfd.nVersion = 1;
-	pfd.dwFlags = PFD_DOUBLEBUFFER | PFD_SUPPORT_OPENGL | PFD_DRAW_TO_WINDOW;
-	pfd.iPixelType = PFD_TYPE_RGBA;
-	pfd.cColorBits = 32;
-	pfd.cDepthBits = 32;
-
-	choose := ChoosePixelFormat(fakeContext, ^pfd);
-
-	SetPixelFormat(fakeContext, choose, ^pfd);
-
-	fakeGlContext := wglCreateContext(fakeContext);
-	wglMakeCurrent(fakeContext, fakeGlContext);
-
-	// Real context
-	LoadWGLProcedures();
-
-	windowHandle = CreateWindowExA(0, windowClassName, windowTitle,
-			WS_OVERLAPPEDWINDOW | WS_VISIBLE, 100, 100, windowWidth, windowHeight, 0, 0, hInstance, 0);
-
-	deviceContext = GetDC(windowHandle);
-
-	pixelAttribs : [23] u32 = {
-		WGL_DRAW_TO_WINDOW_ARB, true,
-		WGL_SUPPORT_OPENGL_ARB, true,
-		WGL_DOUBLE_BUFFER_ARB, true,
-		WGL_PIXEL_TYPE_ARB,
-		WGL_TYPE_RGBA_ARB,
-		WGL_ACCELERATION_ARB,
-		WGL_FULL_ACCELERATION_ARB,
-		WGL_COLOR_BITS_ARB, 32,
-		WGL_ALPHA_BITS_ARB, 8,
-		WGL_DEPTH_BITS_ARB, 24,
-		WGL_STENCIL_BITS_ARB, 8,
-		WGL_SAMPLE_BUFFERS_ARB, true,
-		WGL_SAMPLES_ARB, 4,
-		0
-	};
-	pixelFormatId : s32 = ?;
-	numFormats: u32 = ?;
-	wglChoosePixelFormatARB(deviceContext, ^pixelAttribs, null, 1,
-			^pixelFormatId, ^numFormats);
-
-	DescribePixelFormat(deviceContext, pixelFormatId, cast(u32)sizeof(pfd), ^pfd);
-	SetPixelFormat(deviceContext, pixelFormatId, ^pfd);
-
-	contextAttribs : [7] s32 =
-	{
-		WGL_CONTEXT_MAJOR_VERSION_ARB, 3,
-		WGL_CONTEXT_MINOR_VERSION_ARB, 3,
-		WGL_CONTEXT_PROFILE_MASK_ARB,
-		WGL_CONTEXT_CORE_PROFILE_BIT_ARB,
-		0
-	};
-
-	glContext = wglCreateContextAttribsARB(deviceContext, 0, ^contextAttribs);
-
-	wglMakeCurrent(null, null);
-	wglDeleteContext(fakeGlContext);
-	ReleaseDC(fakeWindow, fakeContext);
-	DestroyWindow(fakeWindow);
-
-	wglMakeCurrent(deviceContext, glContext);
-}
-
-Main :: () -> s64
-{
-	InitOpenGLContext();
+	g_windowHandle, g_deviceContext, g_glContext =
+		GLHInitOpenGLContext(#cstr "Hello OpenGL 3.3!", #cstr "openglexample", 800, 600);
 
 	vertexArrayId : GLuint = ?;
 	glGenVertexArrays(1, ^vertexArrayId);
 	glBindVertexArray(vertexArrayId);
 
-	Vertex :: struct
-	{
+	Vertex :: struct {
 		x : GLfloat; y : GLfloat; z : GLfloat;
-		u : GLfloat; v :GLfloat;
+		u : GLfloat; v : GLfloat;
 		r : GLfloat; g : GLfloat; b : GLfloat;
 	};
 
@@ -196,8 +38,7 @@ Main :: () -> s64
 	{
 		near : f32 = 0.01;
 		far : f32 = 2000.0;
-		projectionMatrix =
-		{
+		projectionMatrix = {
 			0.5625, 0.0, 0.0, 0.0,
 			0.0, 1.0, 0.0, 0.0,
 			0.0, 0.0, -(far + near) / (far - near), -1.0,
@@ -213,8 +54,7 @@ Main :: () -> s64
 		z : v3 = { 0, 0, 1 };
 		right : v3 = V3Normalize(V3Cross(camFw, z));
 		up : v3 = V3Cross(right, camFw);
-		invViewMatrix : mat4 =
-		{
+		invViewMatrix : mat4 = {
 			right.x,	right.y,	right.z,	0.0,
 			up.x,		up.y,		up.z,		0.0,
 			-camFw.x,	-camFw.y,	-camFw.z,	0.0,
@@ -231,8 +71,12 @@ Main :: () -> s64
 	glBindBuffer(GL_ARRAY_BUFFER, vertexBuffer);
 	glBufferData(GL_ARRAY_BUFFER, sizeof(vertexBufferData), ^vertexBufferData, GL_STATIC_DRAW);
 
-	vertexShaderId   := LoadShader("examples/opengl3example_vertexshader.glsl",   GL_VERTEX_SHADER);
-	fragmentShaderId := LoadShader("examples/opengl3example_fragmentshader.glsl", GL_FRAGMENT_SHADER);
+	vertexShaderId, fragmentShaderId : GLuint = ?;
+	errorCode : GLHError = ?;
+	errorCode, vertexShaderId   = GLHLoadShader("examples/opengl3example_vertexshader.glsl",   GL_VERTEX_SHADER);
+	if errorCode != GLHERROR_OK return 1;
+	errorCode, fragmentShaderId = GLHLoadShader("examples/opengl3example_fragmentshader.glsl", GL_FRAGMENT_SHADER);
+	if errorCode != GLHERROR_OK return 1;
 	programId := glCreateProgram();
 	glAttachShader(programId, vertexShaderId);
 	glAttachShader(programId, fragmentShaderId);
@@ -240,80 +84,26 @@ Main :: () -> s64
 
 	logSize : s32 = ?;
 	glGetProgramiv(programId, GL_INFO_LOG_LENGTH, ^logSize);
-	if logSize > 0
-	{
+	if logSize > 0 {
 		programLog : String;
 		programLog.size = cast(u64)logSize;
 		programLog.data = cast(^u8)VirtualAlloc(0, programLog.size, MEM_COMMIT, PAGE_READWRITE);
 		defer VirtualFree(programLog.data, 0, MEM_RELEASE);
-		glGetProgramInfoLog(programId, logSize, null, programLog.data);
+		glGetProgramInfoLog(programId, logSize, null, cast(^GLchar)programLog.data);
 		PrintF("%\n", programLog);
 	}
 
 	glUseProgram(programId);
 
-	uniformName := "mvpMatrix\0";
-	mvpUniform := glGetUniformLocation(programId, uniformName.data);
+	mvpUniform := glGetUniformLocation(programId, #cstr "mvpMatrix");
 
 	glEnable(GL_BLEND);
 	glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
 
 	// Read texture
 	textureId : GLuint;
-	{
-		texFileName := "examples/texture.bmp\0";
-		file := CreateFileA(
-				cast(^CHAR)(texFileName.data),
-				GENERIC_READ,
-				FILE_SHARE_READ,
-				null,
-				OPEN_EXISTING,
-				FILE_ATTRIBUTE_NORMAL,
-				null
-				);
-		if file == INVALID_HANDLE_VALUE
-		{
-			Print("Failed to open texture file!\n");
-			return 1;
-		}
-		defer CloseHandle(file);
-		fileSize := GetFileSize(file, null);
-		fileBuffer := cast(^u8)VirtualAlloc(0, fileSize, MEM_COMMIT, PAGE_READWRITE);
-		defer VirtualFree(fileBuffer, 0, MEM_RELEASE);
-		bytesRead : u32;
-		success := ReadFile(
-				file,
-				fileBuffer,
-				fileSize,
-				^bytesRead,
-				null
-				);
-		if !success
-		{
-			Print("Failed to read texture file!\n");
-			return 1;
-		}
-
-		scan := fileBuffer;
-		scan += 10;
-		imageDataOffset := @cast(^u32)scan;
-		scan += 4;
-		headerSize := @cast(^u32)scan;
-		scan += 4;
-		textureWidth  := @cast(^u32)scan;
-		scan += 4;
-		textureHeight := @cast(^u32)scan;
-		scan += 6;
-		bitsPerPixel := @cast(^u16)scan;
-		imageData := fileBuffer + imageDataOffset;
-
-		glGenTextures(1, ^textureId);
-		glBindTexture(GL_TEXTURE_2D, textureId);
-		glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, cast(s32)textureWidth, cast(s32)textureHeight, 0,
-				GL_RGBA, GL_UNSIGNED_BYTE, imageData);
-		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
-		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
-	}
+	errorCode, textureId = GLHLoadTexture("examples/texture.bmp");
+	if errorCode != GLHERROR_OK return 1;
 
 	lastPerformanceCounter : s64;
 	performanceFrequency : s64;
@@ -330,8 +120,7 @@ Main :: () -> s64
 	angle : f32 = 0;
 
 	message : MSG = ?;
-	while running
-	{
+	while g_running {
 		// Timer
 		{
 			largeInteger : LARGE_INTEGER;
@@ -372,16 +161,13 @@ Main :: () -> s64
 		glDisableVertexAttribArray(1);
 		glDisableVertexAttribArray(2);
 
-		SwapBuffers(deviceContext);
+		SwapBuffers(g_deviceContext);
 
-		while PeekMessageA(^message, 0, 0, 0, PM_REMOVE)
-		{
-			if message.message == WM_QUIT
-			{
-				running = 0;
+		while PeekMessageA(^message, 0, 0, 0, PM_REMOVE) {
+			if message.message == WM_QUIT {
+				g_running = 0;
 			}
-			else
-			{
+			else {
 				TranslateMessage(^message);
 				DispatchMessageA(^message);
 			}

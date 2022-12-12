@@ -1,0 +1,4 @@
+Main :: (args: [] String) -> s64
+{	PrintF("args: %\n", args);
+	return 0;
+}

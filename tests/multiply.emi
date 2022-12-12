@@ -1,4 +1,4 @@
-Main :: () -> s64
+Main :: (args : [] String) -> s64
 {
 	immediates := 4 * 5;
 	n := 6;

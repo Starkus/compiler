@@ -2,25 +2,24 @@
 
 compiler_subsystem :: COMPILER_SUBSYSTEM_WINDOWS;
 
-running :s bool = true;
+g_running :s bool = true;
 
 Win32WindowCallback :: #convention(win64) (hWnd : ^void, uMsg : u32, wParam : u64, lParam : u64) -> u64
 {
-	if (uMsg == WM_DESTROY || uMsg == WM_CLOSE)
-	{
-		running = false;
+	if (uMsg == WM_DESTROY || uMsg == WM_CLOSE) {
+		g_running = false;
 		return 0;
 	}
 	else
 		return DefWindowProcA(hWnd, uMsg, wParam, lParam);
 }
 
-Main :: () -> s64
+Main :: (args : [] String) -> s64
 {
 	hInstance := ^__ImageBase;
 
-	windowClassName := cast(^CHAR)("window\0".data);
-	windowTitle := cast(^CHAR)("Hello, Sailor!\0".data);
+	windowClassName := #cstr "window";
+	windowTitle := #cstr "Hello, Sailor!";
 
 	windowClass : WNDCLASSEXA;
 	windowClass.cbSize = cast(u32)sizeof(windowClass);
@@ -29,7 +28,7 @@ Main :: () -> s64
 	windowClass.hInstance = hInstance;
 	windowClass.lpszClassName = windowClassName;
 
-	success : bool = RegisterClassExA(^windowClass);
+	success := RegisterClassExA(^windowClass);
 	PrintF("Window succeded: % Last error: %\n", success, GetLastError());
 
 	window := CreateWindowExA(0, windowClassName, windowTitle, WS_CLIPSIBLINGS |
@@ -40,14 +39,11 @@ Main :: () -> s64
 
 	message : MSG = ?;
 
-	while running
-	{
-		while PeekMessageA(^message, 0, 0, 0, PM_REMOVE)
-		{
+	while g_running {
+		while PeekMessageA(^message, 0, 0, 0, PM_REMOVE) {
 			if message.message == WM_QUIT
-				running = 0;
-			else
-			{
+				g_running = 0;
+			else {
 				TranslateMessage(^message);
 				DispatchMessageA(^message);
 			}

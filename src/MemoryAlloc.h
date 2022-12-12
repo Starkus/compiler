@@ -11,20 +11,20 @@ struct Memory {
 class LinearAllocator {
 public:
 	static void *Alloc(u64 size, int alignment);
-	static void *Realloc(void *ptr, u64 newSize, int alignment);
+	static void *Realloc(void *ptr, u64 oldSize, u64 newSize, int alignment);
 	static void Free(void *ptr);
 };
 
 class ThreadAllocator {
 public:
 	static void *Alloc(u64 size, int alignment);
-	static void *Realloc(void *ptr, u64 newSize, int alignment);
+	static void *Realloc(void *ptr, u64 oldSize, u64 newSize, int alignment);
 	static void Free(void *ptr);
 };
 
 class HeapAllocator {
 public:
 	static void *Alloc(u64 size, int alignment);
-	static void *Realloc(void *ptr, u64 newSize, int alignment);
+	static void *Realloc(void *ptr, u64 oldSize, u64 newSize, int alignment);
 	static void Free(void *ptr);
 };

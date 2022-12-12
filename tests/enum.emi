@@ -4,7 +4,7 @@ Color :: enum : s8 {
 	COLOR_BLUE
 };
 
-Main :: () -> s64
+Main :: (args : [] String) -> s64
 {
 	color : Color = COLOR_RED;
 	PrintF("Color is %\n", color);

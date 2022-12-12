@@ -60,6 +60,11 @@ void SchedulerProc(Context *context)
 			job.fiber = t_previousFiber;
 			job.context = t_previousYieldContext;
 			switch (t_previousYieldReason) {
+			case TCYIELDREASON_FAILED:
+			{
+				_InterlockedIncrement((LONG volatile *)&context->failedJobsCount); \
+				// Fall through
+			}
 			case TCYIELDREASON_DONE:
 			{
 #if DEFER_FIBER_DELETION

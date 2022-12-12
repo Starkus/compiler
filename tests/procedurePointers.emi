@@ -28,7 +28,7 @@ ProcWrapper :: struct
 	proc : ();
 };
 
-Main :: () -> s64
+Main :: (args : [] String) -> s64
 {
 	pointerToProce : () = Proce;
 	pointerToProce();

@@ -270,6 +270,7 @@ LUID :: struct
 	HighPart: LONG;
 };
 
+OutputDebugStringA :: #external #convention(win64) (str : ^CHAR);
 CreateFileA :: #external #convention(win64) (
 		lpFileName : ^CHAR,
 		dwDesiredAccess : DWORD,

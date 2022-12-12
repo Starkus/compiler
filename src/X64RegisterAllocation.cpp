@@ -262,17 +262,21 @@ void DoLivenessAnalisisOnInstruction(Context *context, BasicBlock *basicBlock, X
 			nodeIdx = jobData->beInterferenceGraph.count++;
 			if (nodeIdx >= jobData->beInterferenceGraph.capacity)
 			{
+				u64 oldCapacity = jobData->beInterferenceGraph.capacity;
 				jobData->beInterferenceGraph.capacity *= 2;
 				jobData->beInterferenceGraph.valueIndices = (u32 *)
 						ThreadAllocator::Realloc(jobData->beInterferenceGraph.valueIndices,
+						sizeof(jobData->beInterferenceGraph.valueIndices[0]) * oldCapacity,
 						sizeof(jobData->beInterferenceGraph.valueIndices[0]) *
 						jobData->beInterferenceGraph.capacity, alignof(u32));
 				jobData->beInterferenceGraph.removed = (u8 *)
 						ThreadAllocator::Realloc(jobData->beInterferenceGraph.removed,
+						sizeof(jobData->beInterferenceGraph.removed[0]) * oldCapacity,
 						sizeof(jobData->beInterferenceGraph.removed[0]) *
 						jobData->beInterferenceGraph.capacity, alignof(u8));
 				jobData->beInterferenceGraph.edges = (HashSet<u32, ThreadAllocator> *)
 						ThreadAllocator::Realloc(jobData->beInterferenceGraph.edges,
+						sizeof(jobData->beInterferenceGraph.edges[0]) * oldCapacity,
 						sizeof(jobData->beInterferenceGraph.edges[0]) *
 						jobData->beInterferenceGraph.capacity, alignof(HashSet<u32, ThreadAllocator>));
 			}

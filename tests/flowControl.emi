@@ -1,4 +1,4 @@
-Main :: () -> s64
+Main :: (args : [] String) -> s64
 {
 	result : s32;
 	if 2 == 2

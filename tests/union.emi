@@ -9,7 +9,7 @@ Test :: union
 	};
 };
 
-Main :: () -> s64
+Main :: (args : [] String) -> s64
 {
 	test : Test;
 	test.float = 2.0;

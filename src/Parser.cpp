@@ -442,10 +442,16 @@ bool TryParseBinaryOperation(Context *context, ASTExpression leftHand, s32 prevP
 			return true;
 		}
 	} break;
+	// Unary ops
+	//case TOKEN_OP_POINTER_TO: // this is actually binary XOR
+	case TOKEN_OP_DEREFERENCE:
+	case TOKEN_OP_NOT:
+	case TOKEN_OP_BITWISE_NOT:
+		goto abort;
 	default:
 	{
-		String opStr = TokenTypeToString(jobData->token->type);
-		LogError(context, jobData->token->loc, TPrintF("Unexpected operator %S", opStr));
+		String opStr = TokenTypeToString(op);
+		LogError(context, result->any.loc, TPrintF("Unexpected operator %S", opStr));
 	} break;
 	}
 
@@ -785,9 +791,10 @@ ASTVariableDeclaration ParseVariableDeclaration(Context *context)
 			Advance(context);
 			AssertToken(context, jobData->token, TOKEN_IDENTIFIER);
 			if (varDecl.nameCount >= capacity) {
-				capacity *= 2;
+				u32 newCapacity = capacity * 2;
 				arrayOfNames = (String *)LinearAllocator::Realloc(arrayOfNames,
-						sizeof(String) * capacity, alignof(String));
+						sizeof(String) * capacity, sizeof(String) * newCapacity, alignof(String));
+				capacity = newCapacity;
 			}
 			arrayOfNames[varDecl.nameCount++] = TokenToString(context, *jobData->token);
 			Advance(context);
@@ -1013,27 +1020,22 @@ ASTExpression ParseExpression(Context *context, s32 precedence)
 
 		bool isHex = false;
 		bool isFloating = false;
-		if (tokenStr.data[0] == '0')
-		{
+		if (tokenStr.data[0] == '0') {
 			if (tokenStr.data[1] == 'x' || tokenStr.data[1] == 'X')
 				isHex = true;
 		}
 
-		for (u32 i = 0; i < jobData->token->size; ++i)
-		{
-			if (tokenStr.data[i] == '.')
-			{
+		for (u32 i = 0; i < jobData->token->size; ++i) {
+			if (tokenStr.data[i] == '.') {
 				isFloating = true;
 				break;
 			}
 		}
-		if (!isFloating)
-		{
+		if (!isFloating) {
 			result.literal.type = LITERALTYPE_INTEGER;
 			result.literal.integer = ParseInt(context, tokenStr);
 		}
-		else
-		{
+		else {
 			result.literal.type = LITERALTYPE_FLOATING;
 			result.literal.floating = ParseFloat(context, tokenStr);
 		}
@@ -1044,7 +1046,30 @@ ASTExpression ParseExpression(Context *context, s32 precedence)
 		result.any.loc = jobData->token->loc;
 		result.nodeType = ASTNODETYPE_LITERAL;
 		result.literal.type = LITERALTYPE_CHARACTER;
-		result.literal.character = TokenToString(context, *jobData->token).data[0];
+
+		String str = TokenToString(context, *jobData->token);
+		if (str.size == 1)
+			result.literal.character = str.data[0];
+		else {
+			ASSERT(str.size == 2);
+			ASSERT(str.data[0] == '\\');
+			switch (str.data[1]) {
+			case 'n':
+				result.literal.character = '\n';
+				break;
+			case 'r':
+				result.literal.character = '\r';
+				break;
+			case 't':
+				result.literal.character = '\t';
+				break;
+			case '\\':
+				result.literal.character = '\\';
+				break;
+			default:
+				LogError(context, result.any.loc, "Invalid escape character"_s);
+			}
+		}
 		Advance(context);
 	} break;
 	case TOKEN_LITERAL_STRING:
@@ -1052,6 +1077,17 @@ ASTExpression ParseExpression(Context *context, s32 precedence)
 		result.any.loc = jobData->token->loc;
 		result.nodeType = ASTNODETYPE_LITERAL;
 		result.literal.type = LITERALTYPE_STRING;
+		result.literal.string = TokenToString(context, *jobData->token);
+		Advance(context);
+	} break;
+	case TOKEN_DIRECTIVE_CSTR:
+	{
+		Advance(context);
+		AssertToken(context, jobData->token, TOKEN_LITERAL_STRING);
+
+		result.any.loc = jobData->token->loc;
+		result.nodeType = ASTNODETYPE_LITERAL;
+		result.literal.type = LITERALTYPE_CSTR;
 		result.literal.string = TokenToString(context, *jobData->token);
 		Advance(context);
 	} break;
@@ -1270,9 +1306,10 @@ ASTStaticDefinition ParseStaticDefinition(Context *context)
 			Advance(context);
 			AssertToken(context, jobData->token, TOKEN_IDENTIFIER);
 			if (astStaticDef.nameCount >= capacity) {
-				capacity *= 2;
+				u32 newCapacity = capacity * 2;
 				arrayOfNames = (String *)LinearAllocator::Realloc(arrayOfNames,
-						sizeof(String) * capacity, alignof(String));
+						sizeof(String) * capacity, sizeof(String) * newCapacity, alignof(String));
+				capacity = newCapacity;
 			}
 			arrayOfNames[astStaticDef.nameCount++] = TokenToString(context, *jobData->token);
 			Advance(context);

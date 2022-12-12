@@ -1,6 +1,4 @@
-Main :: () -> s64
-{
-	filename := "file.txt\0";
-	fd := open(filename.data, O_RDONLY, 0x1FF);
+Main :: (args : [] String) -> s64
+{	fd := open(#cstr "file.txt", O_RDONLY, 0x1FF);
 	return 0;
 }

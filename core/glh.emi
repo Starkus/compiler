@@ -1,0 +1,310 @@
+// @Todo: linux support?
+#include "core/windows.emi";
+#include "core/opengl.emi";
+#linklib "opengl32.lib";
+
+//compiler_output_type :: COMPILER_OUTPUT_LIBRARY;
+
+GLHError :: enum
+{
+	GLHERROR_OK,
+	GLHERROR_BAD_PARAMETER,
+	GLHERROR_FILE_NOT_FOUND,
+	GLHERROR_FILE_CANNOT_READ,
+	GLHERROR_FILE_CANNOT_WRITE,
+	GLHERROR_WRONG_FORMAT
+};
+
+GLHToCStr :: #inline (string: String, cstrBuffer: ^[512] s8) -> ^s8
+{
+	result : ^s8 = cstrBuffer;
+	if string.size > 512
+		result = cast(^s8)VirtualAlloc(0, string.size + 1, MEM_COMMIT, PAGE_READWRITE);
+	for string @(result + i) = cast(s8)@it;
+	@(result + string.size) = 0;
+	return result;
+}
+
+GLHInitOpenGLContext :: (windowTitle: ^CHAR, windowClassName: ^CHAR, screenWidth: s32,
+		screenHeight: s32) -> HANDLE, ^void, ^void
+{
+	windowClass : WNDCLASSEXA;
+	hInstance := ^__ImageBase;
+
+	windowClass.cbSize = cast(u32)sizeof(windowClass);
+	windowClass.style = CS_HREDRAW | CS_VREDRAW | CS_OWNDC;
+	windowClass.lpfnWndProc = GLHDefaultWin32WindowCallback;
+	windowClass.hInstance = hInstance;
+	windowClass.lpszClassName = windowClassName;
+
+	RegisterClassExA(^windowClass);
+
+	// Fake window
+	fakeWindow := CreateWindowExA(0, windowClassName, windowTitle, WS_CLIPSIBLINGS |
+			WS_CLIPCHILDREN, 0, 0, 1, 1, null, null, hInstance, null);
+
+	// Fake context
+	fakeContext := GetDC(fakeWindow);
+
+	pfd : PIXELFORMATDESCRIPTOR;
+	pfd.nSize = cast(u16) sizeof(PIXELFORMATDESCRIPTOR);
+	pfd.nVersion = 1;
+	pfd.dwFlags = PFD_DOUBLEBUFFER | PFD_SUPPORT_OPENGL | PFD_DRAW_TO_WINDOW;
+	pfd.iPixelType = PFD_TYPE_RGBA;
+	pfd.cColorBits = 32;
+	pfd.cDepthBits = 32;
+
+	choose := ChoosePixelFormat(fakeContext, ^pfd);
+
+	SetPixelFormat(fakeContext, choose, ^pfd);
+
+	fakeGlContext := wglCreateContext(fakeContext);
+	wglMakeCurrent(fakeContext, fakeGlContext);
+
+	// Real context
+	LoadWGLProcedures();
+
+	windowHandle := CreateWindowExA(0, windowClassName, windowTitle,
+			WS_OVERLAPPEDWINDOW | WS_VISIBLE, 100, 100, screenWidth + 16, screenHeight + 39, 0, 0, hInstance, 0);
+
+	deviceContext := GetDC(windowHandle);
+
+	pixelAttribs : [23] u32 = {
+		WGL_DRAW_TO_WINDOW_ARB, true,
+		WGL_SUPPORT_OPENGL_ARB, true,
+		WGL_DOUBLE_BUFFER_ARB, true,
+		WGL_PIXEL_TYPE_ARB,
+		WGL_TYPE_RGBA_ARB,
+		WGL_ACCELERATION_ARB,
+		WGL_FULL_ACCELERATION_ARB,
+		WGL_COLOR_BITS_ARB, 32,
+		WGL_ALPHA_BITS_ARB, 8,
+		WGL_DEPTH_BITS_ARB, 24,
+		WGL_STENCIL_BITS_ARB, 8,
+		WGL_SAMPLE_BUFFERS_ARB, true,
+		WGL_SAMPLES_ARB, 4,
+		0
+	};
+	pixelFormatId : s32 = ?;
+	numFormats: u32 = ?;
+	wglChoosePixelFormatARB(deviceContext, ^pixelAttribs, null, 1,
+			^pixelFormatId, ^numFormats);
+
+	DescribePixelFormat(deviceContext, pixelFormatId, cast(u32)sizeof(pfd), ^pfd);
+	SetPixelFormat(deviceContext, pixelFormatId, ^pfd);
+
+	contextAttribs : [7] s32 =
+	{
+		WGL_CONTEXT_MAJOR_VERSION_ARB, 3,
+		WGL_CONTEXT_MINOR_VERSION_ARB, 3,
+		WGL_CONTEXT_PROFILE_MASK_ARB,
+		WGL_CONTEXT_CORE_PROFILE_BIT_ARB,
+		0
+	};
+
+	glContext := wglCreateContextAttribsARB(deviceContext, 0, ^contextAttribs);
+
+	wglMakeCurrent(null, null);
+	wglDeleteContext(fakeGlContext);
+	ReleaseDC(fakeWindow, fakeContext);
+	DestroyWindow(fakeWindow);
+
+	wglMakeCurrent(deviceContext, glContext);
+
+	return windowHandle, deviceContext, glContext;
+}
+
+GLHLoadShader :: (filename: String, shaderType: GLenum) -> GLHError, GLuint
+{
+	if shaderType != GL_VERTEX_SHADER && shaderType != GL_FRAGMENT_SHADER {
+		Print("Second parameter should be GL_VERTEX_SHADER or GL_FRAGMENT_SHADER");
+		return GLHERROR_BAD_PARAMETER, 0;
+	}
+
+	cstrBuffer: [512] s8 = ?;
+	filenameCStr := GLHToCStr(filename, ^cstrBuffer);
+	OutputDebugStringA(filenameCStr);
+	fileHandle := CreateFileA(filenameCStr, GENERIC_READ, FILE_SHARE_READ, null,
+			OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, null);
+	defer CloseHandle(fileHandle);
+
+	if fileHandle == INVALID_HANDLE_VALUE {
+		PrintF("Shader file \"%\" not found!\n", filename);
+		return GLHERROR_FILE_NOT_FOUND, 0;
+	}
+
+	fileSize := GetFileSize(fileHandle, null);
+	fileBuffer := cast(^u8)VirtualAlloc(0, fileSize, MEM_COMMIT, PAGE_READWRITE);
+	defer VirtualFree(fileBuffer, 0, MEM_RELEASE);
+	bytesRead : u32 = ?;
+	success := ReadFile(fileHandle, fileBuffer, fileSize, ^bytesRead, null);
+
+	if !success {
+		PrintF("Couldn't read shader file \"%\"!\n", filename);
+		return GLHERROR_FILE_CANNOT_READ, 0;
+	}
+
+	fileStr : String;
+	fileStr.size = fileSize;
+	fileStr.data = fileBuffer;
+
+	shaderId := glCreateShader(shaderType);
+	glShaderSource(shaderId, 1, cast(^GLchar)^fileBuffer, null);
+	glCompileShader(shaderId);
+
+	logSize : s32;
+	glGetShaderiv(shaderId, GL_INFO_LOG_LENGTH, ^logSize);
+	if (logSize > 0) {
+		shaderLog : String;
+		shaderLog.size = cast(u64)logSize;
+		shaderLog.data = cast(^u8)VirtualAlloc(0, shaderLog.size, MEM_COMMIT, PAGE_READWRITE);
+		defer VirtualFree(shaderLog.data, 0, MEM_RELEASE);
+		glGetShaderInfoLog(shaderId, logSize, null, cast(^GLchar)shaderLog.data);
+		PrintF("%\n", shaderLog);
+	}
+
+	return GLHERROR_OK, shaderId;
+}
+
+GLHLoadTexture :: (filename : String) -> GLHError, GLuint
+{
+	textureId : GLuint;
+	cstrBuffer: [512] s8 = ?;
+	filenameCStr := GLHToCStr(filename, ^cstrBuffer);
+	OutputDebugStringA(filenameCStr);
+	file := CreateFileA(
+			filenameCStr,
+			GENERIC_READ,
+			FILE_SHARE_READ,
+			null,
+			OPEN_EXISTING,
+			FILE_ATTRIBUTE_NORMAL,
+			null
+			);
+	if file == INVALID_HANDLE_VALUE {
+		PrintF("Failed to open texture file %!\n", filename);
+		return GLHERROR_FILE_NOT_FOUND, 0;
+	}
+	defer CloseHandle(file);
+	fileSize := GetFileSize(file, null);
+	fileBuffer := cast(^u8)VirtualAlloc(0, fileSize, MEM_COMMIT, PAGE_READWRITE);
+	defer VirtualFree(fileBuffer, 0, MEM_RELEASE);
+	bytesRead : u32;
+	success := ReadFile(
+			file,
+			fileBuffer,
+			fileSize,
+			^bytesRead,
+			null
+			);
+	if !success {
+		PrintF("Failed to read texture file %!\n", filename);
+		return GLHERROR_FILE_CANNOT_READ, 0;
+	}
+
+	scan := fileBuffer;
+
+	magicNumber := @cast(^u16)scan;
+	if magicNumber != 0x4D42 {
+		PrintF("File is not a valid BMP file \"%\"\n", filename);
+		return GLHERROR_WRONG_FORMAT, 0;
+	}
+	scan += 10;
+
+	imageDataOffset := @cast(^u32)scan;
+	scan += 4;
+	headerSize := @cast(^u32)scan;
+	scan += 4;
+	textureWidth  := @cast(^u32)scan;
+	scan += 4;
+	textureHeight := @cast(^u32)scan;
+	scan += 6;
+	bitsPerPixel := @cast(^u16)scan;
+	scan += 2;
+
+	if headerSize < 40 {
+		PrintF("File BMP format not supported \"%\"\n", filename);
+		return GLHERROR_WRONG_FORMAT, 0;
+	}
+
+	compressionMethod := @cast(^u16)scan;
+	if compressionMethod != 3 { // BI_BITFIELDS
+		PrintF("File BMP compression method not supported \"%\"\n", filename);
+		return GLHERROR_WRONG_FORMAT, 0;
+	}
+	scan += 24;
+
+	redBitfield := @cast(^u32)scan;
+	scan += 4;
+	greenBitfield := @cast(^u32)scan;
+	scan += 4;
+	blueBitfield := @cast(^u32)scan;
+	scan += 4;
+	alphaBitfield := ~(redBitfield | greenBitfield | blueBitfield);
+
+	bitfield := redBitfield;
+	redShift : u8 = 0;
+	while ((bitfield & 1) == 0) {
+		redShift += 1;
+		bitfield >>= 1;
+	}
+	bitfield = greenBitfield;
+	greenShift : u8 = 0;
+	while ((bitfield & 1) == 0) {
+		greenShift += 1;
+		bitfield >>= 1;
+	}
+	bitfield = blueBitfield;
+	blueShift : u8 = 0;
+	while ((bitfield & 1) == 0) {
+		blueShift += 1;
+		bitfield >>= 1;
+	}
+	bitfield = alphaBitfield;
+	alphaShift : u8 = 0;
+	while ((bitfield & 1) == 0) {
+		alphaShift += 1;
+		bitfield >>= 1;
+	}
+
+	imageData := fileBuffer + imageDataOffset;
+
+	// Repack colors
+	pixel : ^u32 = cast(^u32)imageData;
+	for 0..textureWidth * textureHeight {
+		word := @pixel;
+
+		red   : u32 = ((word & redBitfield)   >> redShift)   & 0xFF;
+		green : u32 = ((word & greenBitfield) >> greenShift) & 0xFF;
+		blue  : u32 = ((word & blueBitfield)  >> blueShift)  & 0xFF;
+		alpha : u32 = ((word & alphaBitfield) >> alphaShift) & 0xFF;
+
+		@pixel = (alpha << 24) | (blue << 16) | (green << 8) | red;
+		pixel += 4;
+	}
+
+	glGenTextures(1, ^textureId);
+	glBindTexture(GL_TEXTURE_2D, textureId);
+	glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, cast(s32)textureWidth, cast(s32)textureHeight, 0,
+			GL_RGBA, GL_UNSIGNED_BYTE, imageData);
+	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+	return GLHERROR_OK, textureId;
+}
+
+GLHDefaultWin32WindowCallback :: #convention(win64) (hWnd: HANDLE, message: DWORD,
+		wParam: WPARAM, lParam: LPARAM) -> LRESULT
+{
+	if message == WM_CLOSE
+		PostQuitMessage(0);
+	else if message == WM_SIZE
+	{
+		screenWidth := cast(s32)(lParam & 0xFFFF);
+		screenHeight := cast(s32)((lParam >> 16) & 0xFFFF);
+		glViewport(0, 0, screenWidth, screenHeight);
+	}
+	else
+		return DefWindowProcA(hWnd, message, wParam, lParam);
+
+	return 0;
+}

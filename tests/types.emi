@@ -9,7 +9,7 @@ AProc :: (a : s32, b : u64, bool) -> f32
 	return 5.9879;
 }
 
-Main :: () -> s64
+Main :: (args : [] String) -> s64
 {
 	anS16 : MyType = 5;
 	ptr : PointerType;

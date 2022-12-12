@@ -54,7 +54,7 @@ Vertex :: struct
 	color: v4;
 };
 
-Main :: () -> s64
+Main :: (args : [] String) -> s64
 {
 	error : s64;
 
@@ -186,8 +186,8 @@ InitWindow :: () -> s64
 	}
 
 	hInstance := ^__ImageBase;
-	windowClassName := cast(^CHAR)"window\0".data;
-	windowTitle := cast(^CHAR)"Hello DirectX11!\0".data;
+	windowClassName := #cstr "window";
+	windowTitle := #cstr "Hello DirectX11!";
 
 	windowClass : WNDCLASSEXA;
 	windowClass.cbSize = cast(u32)sizeof(WNDCLASSEXA);
@@ -342,7 +342,7 @@ InitD3D :: () -> s64
 		shaderNameAsStupidWideString[i] = cast(WCHAR)@it;
 
 	errorCode = D3DCompileFromFile(^shaderNameAsStupidWideString, null, null,
-			cast(^CHAR)"VShader\0".data, cast(^CHAR)"vs_4_0\0".data, flags, 0, ^vertexShaderBlob, ^errorBlob);
+			#cstr "VShader", #cstr "vs_4_0", flags, 0, ^vertexShaderBlob, ^errorBlob);
 	if (errorCode != S_OK) {
 		PrintF("Error compiling vertex shader: %\n", errorCode);
 		PrintErrorBlob(errorBlob);
@@ -350,7 +350,7 @@ InitD3D :: () -> s64
 	}
 
 	errorCode = D3DCompileFromFile(^shaderNameAsStupidWideString, null, null,
-			cast(^CHAR)"PShader\0".data, cast(^CHAR)"ps_4_0\0".data, flags, 0, ^pixelShaderBlob, ^errorBlob);
+			#cstr "PShader", #cstr "ps_4_0", flags, 0, ^pixelShaderBlob, ^errorBlob);
 	if (errorCode != S_OK) {
 		PrintF("Error compiling pixel shader: %\n", errorCode);
 		PrintErrorBlob(errorBlob);
@@ -358,7 +358,7 @@ InitD3D :: () -> s64
 	}
 
 	errorCode = D3DCompileFromFile(^shaderNameAsStupidWideString, null, D3D_COMPILE_STANDARD_FILE_INCLUDE,
-			cast(^CHAR)"CShader\0".data, cast(^CHAR)"cs_5_0\0".data, flags, 0, ^computeShaderBlob, ^errorBlob);
+			#cstr "CShader", #cstr "cs_5_0", flags, 0, ^computeShaderBlob, ^errorBlob);
 	if (errorCode != S_OK) {
 		PrintF("Error compiling compute shader: %\n", errorCode);
 		PrintErrorBlob(errorBlob);
@@ -384,8 +384,8 @@ InitD3D :: () -> s64
 
 	// Input layout
 	inputElementsDesc: [2] D3D11_INPUT_ELEMENT_DESC = {
-		{ cast(^CHAR)"POSITION\0".data, 0, DXGI_FORMAT_R32G32B32_FLOAT, 0, 0,  D3D11_INPUT_PER_VERTEX_DATA, 0 },
-		{ cast(^CHAR)"COLOR\0".data, 0, DXGI_FORMAT_R32G32B32A32_FLOAT, 0, 12, D3D11_INPUT_PER_VERTEX_DATA, 0 }
+		{ #cstr "POSITION", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0, 0,  D3D11_INPUT_PER_VERTEX_DATA, 0 },
+		{ #cstr "COLOR", 0, DXGI_FORMAT_R32G32B32A32_FLOAT, 0, 12, D3D11_INPUT_PER_VERTEX_DATA, 0 }
 	};
 	g_device.vtbl.CreateInputLayout(g_device, ^inputElementsDesc, 2,
 			vertexShaderBlob.vtbl.GetBufferPointer(vertexShaderBlob),

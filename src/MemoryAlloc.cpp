@@ -47,11 +47,11 @@ void *LinearAllocator::Alloc(u64 size, int alignment)
 
 	return (void *)result;
 }
-void *LinearAllocator::Realloc(void *ptr, u64 newSize, int alignment)
+void *LinearAllocator::Realloc(void *ptr, u64 oldSize, u64 newSize, int alignment)
 {
 	void *newBlock = Alloc(newSize, alignment);
 	if (ptr)
-		memcpy(newBlock, ptr, newSize);
+		memcpy(newBlock, ptr, oldSize);
 
 	return newBlock;
 }
@@ -83,11 +83,11 @@ void *ThreadAllocator::Alloc(u64 size, int alignment)
 
 	return (void *)result;
 }
-void *ThreadAllocator::Realloc(void *ptr, u64 newSize, int alignment)
+void *ThreadAllocator::Realloc(void *ptr, u64 oldSize, u64 newSize, int alignment)
 {
 	void *newBlock = Alloc(newSize, alignment);
 	if (ptr)
-		memcpy(newBlock, ptr, newSize);
+		memcpy(newBlock, ptr, oldSize);
 
 	return newBlock;
 }
@@ -101,9 +101,8 @@ void *HeapAllocator::Alloc(u64 size, int alignment)
 	(void)alignment;
 	return malloc(size);
 }
-void *HeapAllocator::Realloc(void *ptr, u64 newSize, int alignment)
+void *HeapAllocator::Realloc(void *ptr, u64, u64 newSize, int)
 {
-	(void)alignment;
 	return realloc(ptr, newSize);
 }
 void HeapAllocator::Free(void *ptr)

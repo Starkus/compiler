@@ -182,10 +182,11 @@ template <typename T, typename A>
 T *DynamicArrayAdd(DynamicArray<T, A> *array)
 {
 	ASSERT(array->capacity != 0);
-	if (array->size >= array->capacity)
-	{
-		array->capacity *= 2;
-		array->data = (T*)A::Realloc(array->data, array->capacity * sizeof(T), alignof(T));
+	if (array->size >= array->capacity) {
+		u64 newCapacity = array->capacity * 2;
+		array->data = (T*)A::Realloc(array->data, array->capacity * sizeof(T),
+				newCapacity * sizeof(T), alignof(T));
+		array->capacity = newCapacity;
 	}
 	return &array->data[array->size++];
 }
@@ -195,10 +196,11 @@ template <typename T, typename A>
 T *DynamicArrayAddMT(DynamicArray<T, A> *array, T value)
 {
 	ASSERT(array->capacity != 0);
-	if (array->size >= array->capacity)
-	{
-		array->capacity *= 2;
-		array->data = (T*)A::Realloc(array->data, array->capacity * sizeof(T), alignof(T));
+	if (array->size >= array->capacity) {
+		u64 newCapacity = array->capacity * 2;
+		array->data = (T*)A::Realloc(array->data, array->capacity * sizeof(T),
+				newCapacity * sizeof(T), alignof(T));
+		array->capacity = newCapacity;
 	}
 	T *result = &array->data[array->size];
 	*result = value;
@@ -209,15 +211,15 @@ T *DynamicArrayAddMT(DynamicArray<T, A> *array, T value)
 template <typename T, typename A>
 T *DynamicArrayAddMany(DynamicArray<T, A> *array, s64 count)
 {
-	bool reallocate = false;
 	u64 newSize = array->size + count;
-	while (newSize > array->capacity)
-	{
-		array->capacity *= 2;
-		reallocate = true;
+	u64 newCapacity = array->capacity;
+	while (newSize > newCapacity)
+		newCapacity *= 2;
+	if (newCapacity != array->capacity) {
+		array->data = (T*)A::Realloc(array->data, array->capacity * sizeof(T),
+				newCapacity * sizeof(T), alignof(T));
+		array->capacity = newCapacity;
 	}
-	if (reallocate)
-		array->data = (T*)A::Realloc(array->data, array->capacity * sizeof(T), alignof(T));
 
 	T *first = &array->data[array->size];
 	array->size = newSize;
@@ -227,15 +229,15 @@ T *DynamicArrayAddMany(DynamicArray<T, A> *array, s64 count)
 template <typename T, typename A>
 bool DynamicArrayAddUnique(DynamicArray<T, A> *array, T value)
 {
-	for (int i = 0; i < array->size; ++i)
-	{
+	for (int i = 0; i < array->size; ++i) {
 		if ((*array)[i] == value)
 			return false;
 	}
-	if (array->size >= array->capacity)
-	{
-		array->capacity *= 2;
-		array->data = (T*)A::Realloc(array->data, array->capacity * sizeof(T), alignof(T));
+	if (array->size >= array->capacity) {
+		u64 newCapacity = array->capacity * 2;
+		array->data = (T*)A::Realloc(array->data, array->capacity * sizeof(T),
+				newCapacity * sizeof(T), alignof(T));
+		array->capacity = newCapacity;
 	}
 	array->data[array->size++] = value;
 	return true;

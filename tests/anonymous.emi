@@ -10,7 +10,7 @@ AnonParam :: (param : struct { three : s64; four : s64; }) -> s64
 	return 0;
 }
 
-Main :: () -> s64
+Main :: (args : [] String) -> s64
 {
 	struct
 	{

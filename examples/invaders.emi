@@ -1,297 +1,31 @@
-#include "core/windows.emi";
-#include "core/opengl.emi";
 #include "core/vector.emi";
 #include "core/math.emi";
-#linklib "opengl32.lib";
+#include "core/glh.emi";
 
 //compiler_subsystem :: COMPILER_SUBSYSTEM_WINDOWS;
 
-running :s bool = true;
-windowHandle :s ^void;
-screenWidth :s s32 = 800;
-screenHeight :s s32 = 600;
-deviceContext :s ^void;
-glContext :s ^void;
+g_running :s bool = true;
+g_windowHandle :s HANDLE;
+g_screenWidth :s s32 = 800;
+g_screenHeight :s s32 = 600;
+g_deviceContext :s ^void;
+g_glContext :s ^void;
 
 Win32WindowCallback :: #convention(win64) (hWnd : HANDLE, message : DWORD, wParam : WPARAM,
 		lParam : LPARAM) -> LRESULT
 {
 	if message == WM_CLOSE
-		PostQuitMessage(0);
+		g_running = false;
 	else if message == WM_SIZE
 	{
-		screenWidth = cast(s32)(lParam & 0xFFFF);
-		screenHeight = cast(s32)((lParam >> 16) & 0xFFFF);
-		glViewport(0, 0, screenWidth, screenHeight);
+		g_screenWidth = cast(s32)(lParam & 0xFFFF);
+		g_screenHeight = cast(s32)((lParam >> 16) & 0xFFFF);
+		glViewport(0, 0, g_screenWidth, g_screenHeight);
 	}
 	else
 		return DefWindowProcA(hWnd, message, wParam, lParam);
 
 	return 0;
-}
-
-LoadShader :: (filename : String, shaderType : GLenum) -> GLuint
-{
-	filenameCStr : [512] u8 = ?;
-	for filename filenameCStr[i] = @it;
-	filenameCStr[filename.size] = 0;
-	fileHandle := CreateFileA(cast(^CHAR)(^filenameCStr), GENERIC_READ, FILE_SHARE_READ, null,
-			OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, null);
-	defer CloseHandle(fileHandle);
-
-	if fileHandle == INVALID_HANDLE_VALUE {
-		PrintF("Shader file \"%\" not found!\n", filename);
-		return 0;
-	}
-
-	fileSize := GetFileSize(fileHandle, null);
-	fileBuffer := cast(^u8)VirtualAlloc(0, fileSize, MEM_COMMIT, PAGE_READWRITE);
-	defer VirtualFree(fileBuffer, 0, MEM_RELEASE);
-	bytesRead : u32 = ?;
-	success := ReadFile(fileHandle, fileBuffer, fileSize, ^bytesRead, null);
-
-	if !success {
-		PrintF("Couldn't read shader file \"%\"!\n", filename);
-		return 0;
-	}
-
-	fileStr : String;
-	fileStr.size = fileSize;
-	fileStr.data = fileBuffer;
-
-	shaderId := glCreateShader(shaderType);
-	glShaderSource(shaderId, 1, ^fileBuffer, null);
-	glCompileShader(shaderId);
-
-	logSize : s32;
-	glGetShaderiv(shaderId, GL_INFO_LOG_LENGTH, ^logSize);
-	if (logSize > 0) {
-		shaderLog : String;
-		shaderLog.size = cast(u64)logSize;
-		shaderLog.data = cast(^u8)VirtualAlloc(0, shaderLog.size, MEM_COMMIT, PAGE_READWRITE);
-		defer VirtualFree(shaderLog.data, 0, MEM_RELEASE);
-		glGetShaderInfoLog(shaderId, logSize, null, shaderLog.data);
-		PrintF("%\n", shaderLog);
-	}
-
-	return shaderId;
-}
-
-LoadTextureErrorCode :: enum
-{
-	LOADTEXTURE_OK = 0,
-	LOADTEXTURE_FILE_NOT_FOUND = 1,
-	LOADTEXTURE_COULD_NOT_READ = 2,
-	LOADTEXTURE_WRONG_FORMAT = 3
-};
-LoadTexture :: (filename : String) -> GLuint, LoadTextureErrorCode
-{
-	textureId : GLuint;
-	file := CreateFileA(
-			cast(^CHAR)(filename.data),
-			GENERIC_READ,
-			FILE_SHARE_READ,
-			null,
-			OPEN_EXISTING,
-			FILE_ATTRIBUTE_NORMAL,
-			null
-			);
-	if file == INVALID_HANDLE_VALUE {
-		PrintF("Failed to open texture file %!\n", filename);
-		return 0, LOADTEXTURE_FILE_NOT_FOUND;
-	}
-	defer CloseHandle(file);
-	fileSize := GetFileSize(file, null);
-	fileBuffer := cast(^u8)VirtualAlloc(0, fileSize, MEM_COMMIT, PAGE_READWRITE);
-	defer VirtualFree(fileBuffer, 0, MEM_RELEASE);
-	bytesRead : u32;
-	success := ReadFile(
-			file,
-			fileBuffer,
-			fileSize,
-			^bytesRead,
-			null
-			);
-	if !success {
-		PrintF("Failed to read texture file %!\n", filename);
-		return 0, LOADTEXTURE_COULD_NOT_READ;
-	}
-
-	scan := fileBuffer;
-
-	magicNumber := @cast(^u16)scan;
-	if magicNumber != 0x4D42 {
-		PrintF("File is not a valid BMP file \"%\"\n", filename);
-		return 0, LOADTEXTURE_WRONG_FORMAT;
-	}
-	scan += 10;
-
-	imageDataOffset := @cast(^u32)scan;
-	scan += 4;
-	headerSize := @cast(^u32)scan;
-	scan += 4;
-	textureWidth  := @cast(^u32)scan;
-	scan += 4;
-	textureHeight := @cast(^u32)scan;
-	scan += 6;
-	bitsPerPixel := @cast(^u16)scan;
-	scan += 2;
-
-	if headerSize < 40 {
-		PrintF("File BMP format not supported \"%\"\n", filename);
-		return 0, LOADTEXTURE_WRONG_FORMAT;
-	}
-
-	compressionMethod := @cast(^u16)scan;
-	if compressionMethod != 3 { // BI_BITFIELDS
-		PrintF("File BMP compression method not supported \"%\"\n", filename);
-		return 0, LOADTEXTURE_WRONG_FORMAT;
-	}
-	scan += 24;
-
-	redBitfield := @cast(^u32)scan;
-	scan += 4;
-	greenBitfield := @cast(^u32)scan;
-	scan += 4;
-	blueBitfield := @cast(^u32)scan;
-	scan += 4;
-	alphaBitfield := ~(redBitfield | greenBitfield | blueBitfield);
-
-	bitfield := redBitfield;
-	redShift : u8 = 0;
-	while ((bitfield & 1) == 0) {
-		redShift += 1;
-		bitfield >>= 1;
-	}
-	bitfield = greenBitfield;
-	greenShift : u8 = 0;
-	while ((bitfield & 1) == 0) {
-		greenShift += 1;
-		bitfield >>= 1;
-	}
-	bitfield = blueBitfield;
-	blueShift : u8 = 0;
-	while ((bitfield & 1) == 0) {
-		blueShift += 1;
-		bitfield >>= 1;
-	}
-	bitfield = alphaBitfield;
-	alphaShift : u8 = 0;
-	while ((bitfield & 1) == 0) {
-		alphaShift += 1;
-		bitfield >>= 1;
-	}
-
-	imageData := fileBuffer + imageDataOffset;
-
-	// Repack colors
-	pixel : ^u32 = cast(^u32)imageData;
-	for 0..textureWidth * textureHeight {
-		word := @pixel;
-
-		red   : u32 = ((word & redBitfield)   >> redShift)   & 0xFF;
-		green : u32 = ((word & greenBitfield) >> greenShift) & 0xFF;
-		blue  : u32 = ((word & blueBitfield)  >> blueShift)  & 0xFF;
-		alpha : u32 = ((word & alphaBitfield) >> alphaShift) & 0xFF;
-
-		@pixel = (alpha << 24) | (blue << 16) | (green << 8) | red;
-		pixel += 4;
-	}
-
-	glGenTextures(1, ^textureId);
-	glBindTexture(GL_TEXTURE_2D, textureId);
-	glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, cast(s32)textureWidth, cast(s32)textureHeight, 0,
-			GL_RGBA, GL_UNSIGNED_BYTE, imageData);
-	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
-	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
-	return textureId, LOADTEXTURE_OK;
-}
-
-InitOpenGLContext :: () {
-	windowClass : WNDCLASSEXA;
-	hInstance := ^__ImageBase;
-	windowClassName := cast(^CHAR)"window\0".data;
-	windowTitle := cast(^CHAR)"Hello OpenGL 3.3!\0".data;
-
-	windowClass.cbSize = cast(u32)sizeof(windowClass);
-	windowClass.style = CS_HREDRAW | CS_VREDRAW | CS_OWNDC;
-	windowClass.lpfnWndProc = Win32WindowCallback;
-	windowClass.hInstance = hInstance;
-	windowClass.lpszClassName = windowClassName;
-
-	RegisterClassExA(^windowClass);
-
-	// Fake window
-	fakeWindow := CreateWindowExA(0, windowClassName, windowTitle, WS_CLIPSIBLINGS |
-			WS_CLIPCHILDREN, 0, 0, 1, 1, null, null, hInstance, null);
-
-	// Fake context
-	fakeContext := GetDC(fakeWindow);
-
-	pfd : PIXELFORMATDESCRIPTOR;
-	pfd.nSize = cast(u16) sizeof(PIXELFORMATDESCRIPTOR);
-	pfd.nVersion = 1;
-	pfd.dwFlags = PFD_DOUBLEBUFFER | PFD_SUPPORT_OPENGL | PFD_DRAW_TO_WINDOW;
-	pfd.iPixelType = PFD_TYPE_RGBA;
-	pfd.cColorBits = 32;
-	pfd.cDepthBits = 32;
-
-	choose := ChoosePixelFormat(fakeContext, ^pfd);
-
-	SetPixelFormat(fakeContext, choose, ^pfd);
-
-	fakeGlContext := wglCreateContext(fakeContext);
-	wglMakeCurrent(fakeContext, fakeGlContext);
-
-	// Real context
-	LoadWGLProcedures();
-
-	windowHandle = CreateWindowExA(0, windowClassName, windowTitle,
-			WS_OVERLAPPEDWINDOW | WS_VISIBLE, 100, 100, screenWidth + 16, screenHeight + 39, 0, 0, hInstance, 0);
-
-	deviceContext = GetDC(windowHandle);
-
-	pixelAttribs : [23] u32 = {
-		WGL_DRAW_TO_WINDOW_ARB, true,
-		WGL_SUPPORT_OPENGL_ARB, true,
-		WGL_DOUBLE_BUFFER_ARB, true,
-		WGL_PIXEL_TYPE_ARB,
-		WGL_TYPE_RGBA_ARB,
-		WGL_ACCELERATION_ARB,
-		WGL_FULL_ACCELERATION_ARB,
-		WGL_COLOR_BITS_ARB, 32,
-		WGL_ALPHA_BITS_ARB, 8,
-		WGL_DEPTH_BITS_ARB, 24,
-		WGL_STENCIL_BITS_ARB, 8,
-		WGL_SAMPLE_BUFFERS_ARB, true,
-		WGL_SAMPLES_ARB, 4,
-		0
-	};
-	pixelFormatId : s32 = ?;
-	numFormats: u32 = ?;
-	wglChoosePixelFormatARB(deviceContext, ^pixelAttribs, null, 1,
-			^pixelFormatId, ^numFormats);
-
-	DescribePixelFormat(deviceContext, pixelFormatId, cast(u32)sizeof(pfd), ^pfd);
-	SetPixelFormat(deviceContext, pixelFormatId, ^pfd);
-
-	contextAttribs : [7] s32 =
-	{
-		WGL_CONTEXT_MAJOR_VERSION_ARB, 3,
-		WGL_CONTEXT_MINOR_VERSION_ARB, 3,
-		WGL_CONTEXT_PROFILE_MASK_ARB,
-		WGL_CONTEXT_CORE_PROFILE_BIT_ARB,
-		0
-	};
-
-	glContext = wglCreateContextAttribsARB(deviceContext, 0, ^contextAttribs);
-
-	wglMakeCurrent(null, null);
-	wglDeleteContext(fakeGlContext);
-	ReleaseDC(fakeWindow, fakeContext);
-	DestroyWindow(fakeWindow);
-
-	wglMakeCurrent(deviceContext, glContext);
 }
 
 g_randomSeed :s u32;
@@ -332,8 +66,10 @@ bullets :s [] v2;
 enemies :s [] Enemy;
 particles :s [] Particle;
 
-Main :: () -> s64 {
-	InitOpenGLContext();
+Main :: (args : [] String) -> s64
+{
+	g_windowHandle, g_deviceContext, g_glContext = GLHInitOpenGLContext(#cstr "Invaders",
+			#cstr "invaders", g_screenWidth, g_screenHeight);
 
 	// Allocate memory for entities
 	bullets.data = cast(^v2)VirtualAlloc(0, cast(u64)(256 * sizeof(v2)), MEM_COMMIT, PAGE_READWRITE);
@@ -343,7 +79,7 @@ Main :: () -> s64 {
 	g_randomSeed = 123456;
 
 	// Init player
-	playerPos = { cast(f32)screenWidth / 2.0, 50.0 };
+	playerPos = { cast(f32)g_screenWidth / 2.0, 50.0 };
 
 	// Init enemies
 	enemies.size = 8;
@@ -370,8 +106,8 @@ Main :: () -> s64 {
 	projectionMatrix : mat4 = ?;
 	{
 		left := 0.0;
-		right := cast(f32)screenWidth;
-		top := cast(f32)screenHeight;
+		right := cast(f32)g_screenWidth;
+		top := cast(f32)g_screenHeight;
 		bottom := 0.0;
 		near :=  1.0;
 		far  := -1.0;
@@ -390,8 +126,12 @@ Main :: () -> s64 {
 	glBufferData(GL_ARRAY_BUFFER, sizeof(vertexBufferData), ^vertexBufferData, GL_STATIC_DRAW);
 	glEnableVertexAttribArray(0);
 
-	vertexShaderId   := LoadShader("examples/invaders_vertexshader.glsl",   GL_VERTEX_SHADER);
-	fragmentShaderId := LoadShader("examples/invaders_fragmentshader.glsl", GL_FRAGMENT_SHADER);
+	vertexShaderId, fragmentShaderId: GLuint = ?;
+	shaderError: GLHError = ?;
+	shaderError, vertexShaderId   = GLHLoadShader("examples/invaders_vertexshader.glsl",   GL_VERTEX_SHADER);
+	if shaderError != GLHERROR_OK return 1;
+	shaderError, fragmentShaderId = GLHLoadShader("examples/invaders_fragmentshader.glsl", GL_FRAGMENT_SHADER);
+	if shaderError != GLHERROR_OK return 1;
 	programId := glCreateProgram();
 	glAttachShader(programId, vertexShaderId);
 	glAttachShader(programId, fragmentShaderId);
@@ -404,14 +144,14 @@ Main :: () -> s64 {
 		programLog.size = cast(u64)logSize;
 		programLog.data = cast(^u8)VirtualAlloc(0, programLog.size, MEM_COMMIT, PAGE_READWRITE);
 		defer VirtualFree(programLog.data, 0, MEM_RELEASE);
-		glGetProgramInfoLog(programId, logSize, null, programLog.data);
+		glGetProgramInfoLog(programId, logSize, null, cast(^GLchar)programLog.data);
 		PrintF("%\n", programLog);
 	}
 
 	glUseProgram(programId);
 
-	uniformName := "projectionMatrix\0";
-	projectionUniform := glGetUniformLocation(programId, uniformName.data);
+	uniformName := #cstr "projectionMatrix";
+	projectionUniform := glGetUniformLocation(programId, uniformName);
 	glUniformMatrix4fv(projectionUniform, 1, false, ^projectionMatrix.m00);
 
 	glEnable(GL_BLEND);
@@ -422,17 +162,17 @@ Main :: () -> s64 {
 	textureIdBullet: GLuint = ?;
 	textureIdEnemy:	 GLuint = ?;
 	textureIdSmoke:	 GLuint = ?;
-	textureError: LoadTextureErrorCode;
-	textureId,		 textureError = LoadTexture("examples/texture.bmp\0");
-	if textureError != LOADTEXTURE_OK return 1;
-	textureIdShip,	 textureError = LoadTexture("examples/ship.bmp\0");
-	if textureError != LOADTEXTURE_OK return 1;
-	textureIdBullet, textureError = LoadTexture("examples/player_bullet.bmp\0");
-	if textureError != LOADTEXTURE_OK return 1;
-	textureIdEnemy,	 textureError = LoadTexture("examples/enemy.bmp\0");
-	if textureError != LOADTEXTURE_OK return 1;
-	textureIdSmoke,	 textureError = LoadTexture("examples/smoke.bmp\0");
-	if textureError != LOADTEXTURE_OK return 1;
+	textureError: GLHError = ?;
+	textureError, textureId = GLHLoadTexture("examples/texture.bmp");
+	if textureError != GLHERROR_OK return 1;
+	textureError, textureIdShip = GLHLoadTexture("examples/ship.bmp");
+	if textureError != GLHERROR_OK return 1;
+	textureError, textureIdBullet = GLHLoadTexture("examples/player_bullet.bmp");
+	if textureError != GLHERROR_OK return 1;
+	textureError, textureIdEnemy = GLHLoadTexture("examples/enemy.bmp");
+	if textureError != GLHERROR_OK return 1;
+	textureError, textureIdSmoke = GLHLoadTexture("examples/smoke.bmp");
+	if textureError != GLHERROR_OK return 1;
 
 	lastPerformanceCounter : s64;
 	performanceFrequency : s64;
@@ -447,7 +187,7 @@ Main :: () -> s64 {
 	deltaTime : f32;
 
 	message : MSG = ?;
-	while running {
+	while g_running {
 		// Timer
 		{
 			largeInteger : LARGE_INTEGER;
@@ -483,7 +223,7 @@ Main :: () -> s64 {
 
 		for bullets {
 			it.y += 1000.0 * deltaTime;
-			if it.y > screenHeight
+			if it.y > g_screenHeight
 				remove;
 		}
 
@@ -561,7 +301,7 @@ Main :: () -> s64 {
 
 		DrawSprite :: #inline (programId: GLuint, position: v2, size: v2) {
 			dimensions : v4 = { position.x, position.y, size.x, size.y };
-			dimensionsUniform := glGetUniformLocation(programId, "dimensions\0".data);
+			dimensionsUniform := glGetUniformLocation(programId, #cstr "dimensions");
 			glUniform4fv(dimensionsUniform, 1, ^dimensions.x);
 			glDrawArrays(GL_TRIANGLES, 0, 6);
 		}
@@ -575,16 +315,16 @@ Main :: () -> s64 {
 		glBindTexture(GL_TEXTURE_2D, textureIdSmoke);
 		for particles DrawSprite(programId, it.pos, { 24, 24 });
 
-		SwapBuffers(deviceContext);
+		SwapBuffers(g_deviceContext);
 
 		while PeekMessageA(^message, 0, 0, 0, PM_REMOVE) {
 			consumed := true;
 			if message.message == WM_QUIT
-				running = false;
+				g_running = false;
 			else if message.message == WM_KEYDOWN || message.message == WM_KEYUP {
 				isDown : bool = (message.lParam & (1 << 31)) == 0;
 				if message.wParam == 'Q'
-					running = false;
+					g_running = false;
 				else if message.wParam == 'A'
 					input.left = isDown;
 				else if message.wParam == 'D'

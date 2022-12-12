@@ -56,7 +56,7 @@ OriginallyNotInline :: ()
 	Print("Not originally inlined!\n");
 }
 
-Main :: () -> s64
+Main :: (args : [] String) -> s64
 {
 	AProc();
 	Params(5, 1.5, 123456789);

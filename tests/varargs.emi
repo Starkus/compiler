@@ -9,7 +9,7 @@ Varargs :: (..args)
 	}
 }
 
-Main :: () -> s64
+Main :: (args : [] String) -> s64
 {
 	Varargs(cast(s32) 15, 32, 98, 5.42);
 	Varargs();

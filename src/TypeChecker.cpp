@@ -372,6 +372,24 @@ String TypeInfoToString(Context *context, u32 typeTableIdx)
 	return "???TYPE"_s;
 }
 
+inline String TypeCategoryToString(TypeCategory typeCategory)
+{
+	switch (typeCategory) {
+		case TYPECATEGORY_INTEGER:		return "integer"_s;
+		case TYPECATEGORY_FLOATING:		return "floating"_s;
+		case TYPECATEGORY_STRUCT:		return "struct"_s;
+		case TYPECATEGORY_UNION:		return "union"_s;
+		case TYPECATEGORY_ENUM:			return "enum"_s;
+		case TYPECATEGORY_POINTER:		return "pointer"_s;
+		case TYPECATEGORY_ARRAY:		return "array"_s;
+		case TYPECATEGORY_PROCEDURE:	return "procedure"_s;
+		case TYPECATEGORY_ALIAS:		return "alias"_s;
+		case TYPECATEGORY_NOT_READY:	return "NOT READY"_s;
+		case TYPECATEGORY_INVALID:
+		default:						return "INVALID"_s;
+	}
+}
+
 inline void TCPushScope(Context *context)
 {
 	TCJobData *jobData = (TCJobData *)SYSGetFiberData(context->flsIndex);
@@ -2420,11 +2438,14 @@ ASTExpression InlineProcedureCopyTreeBranch(Context *context, const ASTExpressio
 		ASTProcedureCall original = expression->procedureCall;
 
 		ASTProcedureCall astProcCall = original;
-		DynamicArrayInit(&astProcCall.arguments, original.arguments.size);
-		for (int argIdx = 0; argIdx < original.arguments.size; ++argIdx) {
-			ASTExpression *arg = TCNewTreeNode(context);
-			*arg = InlineProcedureCopyTreeBranch(context, original.arguments[argIdx]);
-			*DynamicArrayAdd(&astProcCall.arguments) = arg;
+		u64 argCount = original.arguments.size;
+		if (argCount) {
+			DynamicArrayInit(&astProcCall.arguments, argCount);
+			for (int argIdx = 0; argIdx < argCount; ++argIdx) {
+				ASTExpression *arg = TCNewTreeNode(context);
+				*arg = InlineProcedureCopyTreeBranch(context, original.arguments[argIdx]);
+				*DynamicArrayAdd(&astProcCall.arguments) = arg;
+			}
 		}
 
 		ASTExpression *exp = TCNewTreeNode(context);
@@ -2533,13 +2554,12 @@ ASTExpression InlineProcedureCopyTreeBranch(Context *context, const ASTExpressio
 
 		FixedArray<TCScopeName, 2> scopeNamesToAdd = {};
 
-		String indexValueName = "i"_s;
-		u32 indexValueIdx = TCNewValue(context, indexValueName, TYPETABLEIDX_S64, 0);
+		u32 indexValueIdx = TCNewValue(context, astFor.indexVariableName, TYPETABLEIDX_S64, 0);
 		astFor.indexValueIdx = indexValueIdx;
 
 		TCScopeName newScopeName;
 		newScopeName.type = NAMETYPE_VARIABLE;
-		newScopeName.name = indexValueName;
+		newScopeName.name = astFor.indexVariableName;
 		newScopeName.variableInfo.valueIdx = indexValueIdx;
 		newScopeName.variableInfo.typeTableIdx = TYPETABLEIDX_S64;
 		newScopeName.loc = expression->any.loc;
@@ -2550,20 +2570,30 @@ ASTExpression InlineProcedureCopyTreeBranch(Context *context, const ASTExpressio
 			rangeExp->binaryOperation.op == TOKEN_OP_RANGE;
 		if (!isExplicitRange)
 		{
-			jobData->currentForLoopArrayType = rangeExp->typeTableIdx;
+			u32 elementTypeTableIdx = TYPETABLEIDX_U8;
+			if (rangeExp->typeTableIdx != TYPETABLEIDX_STRING_STRUCT) {
+				TypeInfo rangeTypeInfo = TCGetTypeInfo(context, rangeExp->typeTableIdx);
+				if (rangeTypeInfo.typeCategory == TYPECATEGORY_POINTER)
+					rangeTypeInfo = TCGetTypeInfo(context, rangeTypeInfo.pointerInfo.pointedTypeTableIdx);
+				ASSERT(rangeTypeInfo.typeCategory == TYPECATEGORY_ARRAY);
+				elementTypeTableIdx = rangeTypeInfo.arrayInfo.elementTypeTableIdx;
+			}
 
-			u32 origValueTypeIdx = TCGetValue(context, astFor.elementValueIdx)->typeTableIdx;
-			String elementValueName = "it"_s;
-			u32 elementValueIdx = TCNewValue(context, elementValueName, origValueTypeIdx, 0);
+			u32 pointerToElementTypeTableIdx = GetTypeInfoPointerOf(context, elementTypeTableIdx);
+			u32 elementValueIdx = TCNewValue(context, astFor.itemVariableName,
+					pointerToElementTypeTableIdx, 0);
 			astFor.elementValueIdx = elementValueIdx;
 
-			newScopeName.name = elementValueName;
+			newScopeName.name = astFor.itemVariableName;
 			newScopeName.variableInfo.valueIdx = elementValueIdx;
-			newScopeName.variableInfo.typeTableIdx = origValueTypeIdx;
+			newScopeName.variableInfo.typeTableIdx = pointerToElementTypeTableIdx;
 			newScopeName.loc = expression->any.loc;
 			*FixedArrayAdd(&scopeNamesToAdd) = newScopeName;
 		}
 		TCAddScopeNames(context, scopeNamesToAdd);
+
+		// @Check: this shouldn't be necessary to copy the branch
+		jobData->currentForLoopArrayType = rangeExp->typeTableIdx;
 
 		e = TCNewTreeNode(context);
 		*e = InlineProcedureCopyTreeBranch(context, expression->forNode.body);
@@ -4025,6 +4055,9 @@ void TypeCheckExpression(Context *context, ASTExpression *expression)
 			}
 			expression->typeTableIdx = TYPETABLEIDX_StructLiteral;
 			break;
+		case LITERALTYPE_CSTR:
+			expression->typeTableIdx = GetTypeInfoPointerOf(context, TYPETABLEIDX_S8);
+			break;
 		default:
 			ASSERT(!"Unexpected literal type");
 		}
@@ -4580,8 +4613,7 @@ void TCStructJobProc(void *args)
 	DynamicArrayInit(&structMembers, 16);
 
 	int largestAlignment = 0;
-	for (int memberIdx = 0; memberIdx < argsStruct->astStructDecl.members.size; ++memberIdx)
-	{
+	for (int memberIdx = 0; memberIdx < argsStruct->astStructDecl.members.size; ++memberIdx) {
 		ASTStructMemberDeclaration *astMember = &argsStruct->astStructDecl.members[memberIdx];
 
 		if (astMember->astType == nullptr)
@@ -4592,13 +4624,19 @@ void TCStructJobProc(void *args)
 			LogWarning(context, astMember->value->any.loc, TPrintF("Default value found on member "
 						"\"%S\". This is not yet supported", astMember->name));
 
-		astMember->typeTableIdx = TypeCheckType(context, {}, astMember->loc,
-				astMember->astType);
+		astMember->typeTableIdx = TypeCheckType(context, {}, astMember->loc, astMember->astType);
 
 		StructMember member = {};
 		member.name = astMember->name;
 		member.isUsing = astMember->isUsing;
 		member.typeTableIdx = astMember->typeTableIdx;
+
+		TypeInfo memberTypeInfo = TCGetTypeInfo(context, member.typeTableIdx);
+		if (astMember->isUsing && memberTypeInfo.typeCategory != TYPECATEGORY_STRUCT &&
+				memberTypeInfo.typeCategory != TYPECATEGORY_UNION)
+			LogError(context, astMember->loc, TPrintF("'using' keyword only supported for struct "
+					"or union members, but \"%S\" was %S", astMember->name,
+					TypeCategoryToString(memberTypeInfo.typeCategory)));
 
 		u64 memberSize = TCGetTypeInfo(context, member.typeTableIdx).size;
 		int alignment = GetTypeAlignment(context, member.typeTableIdx);
@@ -4606,16 +4644,14 @@ void TCStructJobProc(void *args)
 		if (alignment > largestAlignment)
 			largestAlignment = alignment;
 
-		if (!argsStruct->isUnion)
-		{
+		if (!argsStruct->isUnion) {
 			// Struct
 			if (t.size & (alignment - 1))
 				t.size = (t.size & ~(alignment - 1)) + alignment;
 			member.offset = t.size;
 			t.size += memberSize;
 		}
-		else
-		{
+		else {
 			// Union
 			member.offset = 0;
 			if (t.size < memberSize)

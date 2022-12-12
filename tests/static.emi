@@ -12,7 +12,7 @@ ProcWithStatic :: () -> s32
 	return procStatic;
 }
 
-Main :: () -> s64
+Main :: (args : [] String) -> s64
 {
 	localStatic :s s32 = 5;
 

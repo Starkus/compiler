@@ -26,6 +26,16 @@ Print :: (string: String)
 	write(STDOUT, string.data, string.size);
 }
 
+Assert :: (expr: bool)
+{
+	if !expr {
+		// @Todo: somehow pass caller file and line
+		Print("Assert failed!\n");
+		Breakpoint();
+		exit_group(1);
+	}
+}
+
 #if compiler_output_type == COMPILER_OUTPUT_EXECUTABLE
 __LinuxMain :: #export ()
 {

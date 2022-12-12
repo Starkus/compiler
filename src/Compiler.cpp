@@ -22,8 +22,6 @@ typedef double f64;
 #include "Strings.h"
 #include "MemoryAlloc.h"
 
-const String TPrintF(const char *format, ...);
-
 #define STB_SPRINTF_IMPLEMENTATION
 #include "stb/stb_sprintf.h"
 
@@ -32,6 +30,9 @@ const String TPrintF(const char *format, ...);
 PerformanceAPI_Functions performanceAPI;
 #endif
 #include "Profiler.cpp"
+
+// To properly turn this off, we'd need to make sure we don't leak locks anywhere we call LogError.
+#define EXIT_ON_FIRST_ERROR 1
 
 enum TCYieldReason : u32
 {
@@ -45,6 +46,7 @@ enum TCYieldReason : u32
 	// As of time of write, only #defined does this to determine if something isn't defined anywhere
 	// before continuing.
 	TCYIELDREASON_WAITING_FOR_STOP,
+	TCYIELDREASON_FAILED,
 	TCYIELDREASON_DONE
 };
 
@@ -70,6 +72,8 @@ struct TCJob
 THREADLOCAL u32 t_threadIndex;
 THREADLOCAL void *t_threadMem, *t_threadMemPtr;
 THREADLOCAL u64 t_threadMemSize;
+
+String TPrintF(const char *format, ...);
 
 #if _MSC_VER
 #include "PlatformWindows.cpp"
@@ -115,7 +119,7 @@ s64 Print(const char *format, ...)
 	return size;
 }
 
-const String TPrintF(const char *format, ...)
+String TPrintF(const char *format, ...)
 {
 	char *buffer = (char *)t_threadMemPtr;
 
@@ -129,7 +133,7 @@ const String TPrintF(const char *format, ...)
 	return { size, buffer };
 }
 
-const String SNPrintF(const char *format, int maxSize, ...)
+String SNPrintF(const char *format, int maxSize, ...)
 {
 	char *buffer = (char *)LinearAllocator::Alloc(maxSize, 1);
 
@@ -203,6 +207,7 @@ struct Context
 	MTQueue<Fiber> readyJobs;
 
 	volatile s32 threadsDoingWork;
+	volatile s32 failedJobsCount;
 
 	// Type check -----
 	MXContainer<DynamicArray<TCJob, HeapAllocator>> jobsWaitingForIdentifier;
@@ -232,6 +237,7 @@ struct Context
 
 	// IR -----
 	RWContainer<BucketArray<String, HeapAllocator, 1024>> stringLiterals;
+	RWContainer<BucketArray<String, HeapAllocator, 128>> cStringLiterals;
 	RWContainer<DynamicArray<IRStaticVariable, HeapAllocator>> irStaticVariables;
 	RWContainer<DynamicArray<u32, HeapAllocator>> irExternalVariables;
 
@@ -375,14 +381,13 @@ void __LogRange(Context *context, SourceLocation locBegin, SourceLocation locEnd
 #endif
 }
 
+NOINLINE void SwitchJob(Context *context, TCYieldReason yieldReason, TCYieldContext yieldContext);
+
 #define Log(context, loc, str) \
 	do { __Log(context, loc, str, __FILE__, __func__, __LINE__); } while (0)
 
 #define LogErrorNoCrash(context, loc, str) \
 	do { __Log(context, loc, TStringConcat("ERROR: "_s, str), __FILE__, __func__, __LINE__); } while (0)
-
-#define LogError(context, loc, str) \
-	do { LogErrorNoCrash(context, loc, str); PANIC; } while(0)
 
 #define LogWarning(context, loc, str) \
 	do { __Log(context, loc, TStringConcat("WARNING: "_s, str), __FILE__, __func__, __LINE__); } while (0)
@@ -396,14 +401,23 @@ void __LogRange(Context *context, SourceLocation locBegin, SourceLocation locEnd
 #define Log2ErrorNoCrash(context, locBegin, locEnd, str) \
 	do { __LogRange(context, locBegin, locEnd, TStringConcat("ERROR: "_s, str), __FILE__, __func__, __LINE__); } while (0)
 
-#define Log2Error(context, locBegin, locEnd, str) \
-	do { Log2ErrorNoCrash(context, locBegin, locEnd, str); PANIC; } while(0)
-
 #define Log2Warning(context, locBegin, locEnd, str) \
 	do { __LogRange(context, locBegin, locEnd, TStringConcat("WARNING: "_s, str), __FILE__, __func__, __LINE__); } while (0)
 
 #define Log2Note(context, locBegin, locEnd, str) \
 	do { __LogRange(context, locBegin, locEnd, TStringConcat("NOTE: "_s, str), __FILE__, __func__, __LINE__); } while (0)
+
+#if EXIT_ON_FIRST_ERROR
+#define LogError(context, loc, str) \
+	do { LogErrorNoCrash(context, loc, str); PANIC; } while(0)
+#define Log2Error(context, locBegin, locEnd, str) \
+	do { Log2ErrorNoCrash(context, locBegin, locEnd, str); SwitchJob(context, TCYIELDREASON_FAILED, {}); } while(0)
+#else
+#define LogError(context, loc, str) \
+	do { LogErrorNoCrash(context, loc, str); PANIC; } while(0)
+#define Log2Error(context, locBegin, locEnd, str) \
+	do { Log2ErrorNoCrash(context, locBegin, locEnd, str); SwitchJob(context, TCYIELDREASON_FAILED, {}); } while(0)
+#endif
 
 void EnqueueReadyJob(Context *context, Fiber fiber);
 bool CompilerAddSourceFile(Context *context, String filename, SourceLocation loc) {
@@ -566,6 +580,15 @@ int main(int argc, char **argv)
 	SYSWaitForThreads(threadCount, threads.data);
 
 	TimerSplit("Multithreaded parse/analyze/codegen phase"_s);
+
+	s32 failedJobsCount = context.failedJobsCount;
+	if (failedJobsCount > 0) {
+		if (failedJobsCount == 1)
+			Print("A job failed. Aborting.\n");
+		else
+			Print("%d jobs failed. Aborting.\n", failedJobsCount);
+		return 1;
+	}
 
 	ASSERT(!TCIsAnyOtherJobRunning(&context));
 	BackendGenerateOutputFile(&context);

@@ -11,7 +11,7 @@ returnArray :: (arg2 : s32) -> [4] s32
 	return array;
 }
 
-Main :: () -> s64
+Main :: (args : [] String) -> s64
 {
 	arrayA : [5] u8;
 	arrayB : [8] s32;

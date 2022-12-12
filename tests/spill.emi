@@ -175,7 +175,7 @@ Pointers :: () -> s64
 	return 0;
 }
 
-Main :: () -> s64
+Main :: (args : [] String) -> s64
 {
 	errorCode := Integers();
 

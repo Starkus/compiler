@@ -94,6 +94,7 @@ String X64IRValueToStr(Context *context, IRValue value,
 
 	ASSERT(value.valueType != IRVALUETYPE_IMMEDIATE_FLOAT);
 	ASSERT(value.valueType != IRVALUETYPE_IMMEDIATE_STRING);
+	ASSERT(value.valueType != IRVALUETYPE_IMMEDIATE_CSTR);
 
 	if (value.valueType == IRVALUETYPE_IMMEDIATE_INTEGER) {
 		result = TPrintF("%lld", value.immediate);
@@ -1879,6 +1880,63 @@ inline void X64StaticDataAlignTo(Context *context, s64 alignment, bool initializ
 #endif
 }
 
+void PrintOutEscapedString(Context *context, String str)
+{
+	s64 size = str.size;
+	bool first = true;
+	char *buffer = (char *)t_threadMemPtr;
+	char *out = buffer;
+	const u8 *in = (const u8 *)str.data;
+	for (int i = 0; i < str.size; ++i) {
+		if (*in == '\\') {
+			if (!first) PrintOut(context, ", "_s);
+
+			++in;
+			switch (*in)
+			{
+			case 'n':
+				PrintOut(context, "0AH"_s);
+				break;
+			case '0':
+				PrintOut(context, "00H"_s);
+				break;
+			case '"':
+				PrintOut(context, "22H"_s);
+				break;
+			}
+			++in;
+			++i;
+			--size; // Don't count backslash for string size.
+			first = false;
+		}
+		else if (*in == '\'') {
+			// MASM uses ' as string delimiters
+			if (!first) PrintOut(context, ", "_s);
+			PrintOut(context, "27H"_s);
+			++in;
+			first = false;
+		}
+		else {
+			*out++ = *in++;
+			if (i == str.size - 1 || *in == '\\' || *in == '\'') {
+				*out++ = 0;
+				t_threadMemPtr = out;
+
+				if (!first) PrintOut(context, ", "_s);
+				PrintOut(context, TPrintF("'%s'", buffer));
+				out = buffer;
+
+				first = false;
+			}
+		}
+	}
+#if DEBUG_BUILD
+	ASSERT(buffer <= t_threadMemPtr);
+	memset(buffer, 0x00, (char *)t_threadMemPtr - buffer);
+#endif
+	t_threadMemPtr = buffer;
+}
+
 void X64PrintStaticData(Context *context, String name, IRValue value, u32 typeTableIdx,
 		int alignmentOverride = -1)
 {
@@ -1905,6 +1963,21 @@ void X64PrintStaticData(Context *context, String name, IRValue value, u32 typeTa
 			PrintOut(context, TPrintF("%S DQ %.16llxH, _str_%d\n", name, size,
 						value.immediateStringIdx));
 		}
+	} break;
+	case IRVALUETYPE_IMMEDIATE_CSTR:
+	{
+		int alignment = alignmentOverride < 0 ? 1 : alignmentOverride;
+		X64StaticDataAlignTo(context, alignment, true);
+
+		String str;
+		{
+			auto stringLiterals = context->cStringLiterals.GetForRead();
+			str = stringLiterals[value.immediateStringIdx];
+		}
+		PrintOut(context, name);
+		PrintOut(context, " DB "_s);
+		PrintOutEscapedString(context, str);
+		PrintOut(context, ", 00H\n"_s);
 	} break;
 	case IRVALUETYPE_IMMEDIATE_FLOAT:
 	{
@@ -2603,65 +2676,11 @@ void BackendGenerateOutputFile(Context *context)
 
 		auto stringLiterals = context->stringLiterals.GetForRead();
 		s64 strCount = (s64)BucketArrayCount(&stringLiterals);
-		s64 bytesWritten = 0;
 		for (s64 stringLiteralIdx = 1; stringLiteralIdx < strCount; ++stringLiteralIdx) {
 			PrintOut(context, TPrintF("_str_%lld DB ", stringLiteralIdx));
 			String str = stringLiterals[stringLiteralIdx];
-			s64 size = str.size;
-			bool first = true;
-			char *buffer = (char *)t_threadMemPtr;
-			char *out = buffer;
-			const u8 *in = (const u8 *)str.data;
-			for (int i = 0; i < str.size; ++i) {
-				if (*in == '\\') {
-					if (!first) PrintOut(context, ", "_s);
-
-					++in;
-					switch (*in)
-					{
-					case 'n':
-						PrintOut(context, "0AH"_s);
-						break;
-					case '0':
-						PrintOut(context, "00H"_s);
-						break;
-					case '"':
-						PrintOut(context, "22H"_s);
-						break;
-					}
-					++in;
-					++i;
-					--size; // Don't count backslash for string size.
-					first = false;
-				}
-				else if (*in == '\'') {
-					// MASM uses ' as string delimiters
-					if (!first) PrintOut(context, ", "_s);
-					PrintOut(context, "27H"_s);
-					++in;
-					first = false;
-				}
-				else {
-					*out++ = *in++;
-					if (i == str.size - 1 || *in == '\\' || *in == '\'') {
-						*out++ = 0;
-						t_threadMemPtr = out;
-
-						if (!first) PrintOut(context, ", "_s);
-						PrintOut(context, TPrintF("'%s'", buffer));
-						out = buffer;
-
-						first = false;
-					}
-				}
-			}
+			PrintOutEscapedString(context, str);
 			PrintOut(context, "\n"_s);
-#if DEBUG_BUILD
-			ASSERT(buffer <= t_threadMemPtr);
-			memset(buffer, 0x00, (char *)t_threadMemPtr - buffer);
-#endif
-			t_threadMemPtr = buffer;
-			bytesWritten += size;
 		}
 	}
 
