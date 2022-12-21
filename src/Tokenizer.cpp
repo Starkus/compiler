@@ -733,7 +733,7 @@ FatSourceLocation ExpandSourceLocation(Context *context, SourceLocation loc)
 	result.beginingOfLine = (const char *)sourceFile.buffer;
 	result.lineSize = 0;
 	result.line = 1;
-	result.character = 0;
+	result.character = 1;
 
 	ASSERT(loc.character < sourceFile.size);
 
@@ -743,7 +743,7 @@ FatSourceLocation ExpandSourceLocation(Context *context, SourceLocation loc)
 		if (*scan == '\n')
 		{
 			++result.line;
-			result.character = 0;
+			result.character = 1;
 			result.beginingOfLine = ++scan;
 		}
 		else

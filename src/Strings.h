@@ -1,6 +1,6 @@
 struct String
 {
-	s64 size;
+	u64 size;
 	const char *data;
 
 	operator bool() const

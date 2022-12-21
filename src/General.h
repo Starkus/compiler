@@ -1,9 +1,5 @@
 #include <stdio.h>
 
-// I hate this programming language
-#undef near
-#undef far
-
 #if DEBUG_BUILD
 #define DEBUG_ONLY(...) __VA_ARGS__
 #else

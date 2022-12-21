@@ -2,7 +2,7 @@
 
 String StupidStrToString(const wchar_t *wstr, void *(*allocFunc)(u64, int))
 {
-	s64 size = 0;
+	u64 size = 0;
 	for (const wchar_t *scan = wstr; *scan; ++scan)
 		++size;
 	char *buffer = (char *)allocFunc(size, 1);
@@ -320,7 +320,7 @@ void Win32FindVSAndWindowsSDK()
 			{
 				if (*scan == '.' || *scan == 0)
 				{
-					ParseNumberResult parseResult = IntFromString({ numDigits, scan - numDigits });
+					ParseNumberResult parseResult = IntFromString({ (u64)numDigits, scan - numDigits });
 					ASSERT(parseResult.error == PARSENUMBERRROR_OK);
 					tuple[foundNumbers++] = parseResult.number;
 					numDigits = 0;
@@ -579,7 +579,6 @@ inline bool SYSSetFiberData(u32 key, void *value) {
 }
 
 Fiber g_runningFibers[8] = { SYS_INVALID_FIBER_HANDLE };
-volatile u32 g_runningFibersLock = 0; // @Delete: this was for debugging, don't think it's necessary?
 
 inline Fiber SYSCreateFiber(void (*start)(void *), void *args) {
 	const u64 fiberStackSize = 1 * 1024 * 1024; // 1MB
@@ -598,13 +597,11 @@ inline Fiber SYSConvertThreadToFiber() {
 
 inline void SYSDeleteFiber(Fiber fiber) {
 	auto scope = ProfilerScope("Deleting a fiber");
-	SpinlockLock(&g_runningFibersLock);
 	for (int i = 0; i < ArrayCount(g_runningFibers); ++i)
 		if (g_runningFibers[i] == fiber) {
 			Print("CRASH: Trying to delete a running fiber (%llX)\n", fiber);
 			PANIC;
 		}
-	SpinlockUnlock(&g_runningFibersLock);
 
 	ProfilerUnregisterFiber(fiber);
 	DeleteFiber(fiber);
@@ -612,9 +609,7 @@ inline void SYSDeleteFiber(Fiber fiber) {
 
 // Call this before a fiber ends
 inline void SYSPrepareFiberForExit() {
-	SpinlockLock(&g_runningFibersLock);
 	g_runningFibers[t_threadIndex] = 0;
-	SpinlockUnlock(&g_runningFibersLock);
 
 	ProfilerUnregisterFiber(GetCurrentFiber());
 }
@@ -622,14 +617,12 @@ inline void SYSPrepareFiberForExit() {
 inline void SYSSwitchToFiber(Fiber fiber) {
 	ASSERT(fiber != SYS_INVALID_FIBER_HANDLE);
 
-	SpinlockLock(&g_runningFibersLock);
 	for (int i = 0; i < ArrayCount(g_runningFibers); ++i)
 		if (g_runningFibers[i] == fiber) {
 			Print("CRASH: Trying to run fiber on two threads at once (%llX)\n", fiber);
 			PANIC;
 		}
 	g_runningFibers[t_threadIndex] = fiber;
-	SpinlockUnlock(&g_runningFibersLock);
 
 #if USE_PROFILER_API
 	Fiber currentFiber = GetCurrentFiber();
@@ -692,3 +685,5 @@ inline s32 AtomicCompareExchange(volatile s32 *destination, s32 exchange, s32 co
 inline s64 AtomicCompareExchange64(volatile s64 *destination, s64 exchange, s64 comparand) {
 	return _InterlockedCompareExchange64((volatile LONG64 *)destination, (LONG64)exchange, (LONG64)comparand);
 }
+
+extern "C" u64 SYSCallProcedureDynamically(void *start, u64 argCount, void *argValues);

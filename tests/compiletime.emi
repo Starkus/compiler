@@ -1,0 +1,42 @@
+CONSTANT :: RunThisOnCompileTime(10);
+
+TwoNumbers :: struct
+{
+	a: s32;
+	b: s32;
+};
+
+RunThisOnCompileTime :: (arg: s64) -> s64
+{
+	foo := 6 + arg;
+
+	// Pointers and dereferencing
+	ptrToFoo := ^foo;
+	@ptrToFoo += 5;
+
+	// Structs
+	bar : TwoNumbers = { 4, 5 };
+
+	// Branches
+	if foo > 6 bar.b += 1;
+	if !foo return -1;
+
+	// Arrays
+	array : [8] s64;
+	array[5] = 1000;
+	foo *= array[5];
+
+	result: s64 = foo * (bar.b + bar.a);
+
+	// Procedure calls
+	Print("Compile time execution!\n");
+	//PrintF("Constant is %\n", result); // @Todo
+
+	return result;
+}
+
+Main :: (args: [] String) -> s64
+{
+	PrintF("Constant: %\n", CONSTANT);
+	return 0;
+}

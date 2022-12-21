@@ -964,6 +964,60 @@ loop:
 	return astPrototype;
 }
 
+String EscapeString(String string)
+{
+	// Return same string if there's nothing to escape
+	int i;
+	for (i = 0; i < string.size; ++i) {
+		char c = string.data[i];
+		if (c == '\\')
+			goto escape;
+	}
+	return string;
+
+escape:
+	u64 size = string.size;
+	char *buffer = (char *)t_threadMemPtr;
+	char *out = buffer;
+	const u8 *in = (const u8 *)string.data;
+	// Copy all that we've already scanned
+	memcpy(out, in, i);
+	out += i;
+	in  += i;
+
+	for (; i < string.size; ++i) {
+		if (*in == '\\') {
+			++in;
+			switch (*in)
+			{
+			case 'n':
+				*out++ = '\n';
+				break;
+			case '0':
+				*out++ = 0;
+				break;
+			case '"':
+				*out++ = '"';
+				break;
+			case '\'':
+				*out++ = '\'';
+				break;
+			}
+			++in;
+			++i;
+			--size; // Don't count backslash for string size.
+		}
+		else {
+			*out++ = *in++;
+		}
+	}
+
+	t_threadMemPtr = (u8 *)t_threadMemPtr + size;
+
+	String result = { size, buffer };
+	return result;
+}
+
 ASTExpression ParseExpression(Context *context, s32 precedence)
 {
 	ParseJobData *jobData = (ParseJobData *)SYSGetFiberData(context->flsIndex);
@@ -1074,10 +1128,12 @@ ASTExpression ParseExpression(Context *context, s32 precedence)
 	} break;
 	case TOKEN_LITERAL_STRING:
 	{
+		String str = TokenToString(context, *jobData->token);
+		str = EscapeString(str);
 		result.any.loc = jobData->token->loc;
 		result.nodeType = ASTNODETYPE_LITERAL;
 		result.literal.type = LITERALTYPE_STRING;
-		result.literal.string = TokenToString(context, *jobData->token);
+		result.literal.string = str;
 		Advance(context);
 	} break;
 	case TOKEN_DIRECTIVE_CSTR:

@@ -94,6 +94,7 @@ void SchedulerProc(Context *context)
 				*DynamicArrayAdd(&jobs) = job;
 			} break;
 			case TCYIELDREASON_PROC_BODY_NOT_READY:
+			case TCYIELDREASON_PROC_IR_NOT_READY:
 			{
 				auto jobs = context->jobsWaitingForProcedure.Get();
 				*DynamicArrayAdd(&jobs) = job;

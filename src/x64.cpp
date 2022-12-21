@@ -93,11 +93,14 @@ String X64IRValueToStr(Context *context, IRValue value,
 	String result = "???VALUE"_s;
 
 	ASSERT(value.valueType != IRVALUETYPE_IMMEDIATE_FLOAT);
-	ASSERT(value.valueType != IRVALUETYPE_IMMEDIATE_STRING);
 	ASSERT(value.valueType != IRVALUETYPE_IMMEDIATE_CSTR);
 
 	if (value.valueType == IRVALUETYPE_IMMEDIATE_INTEGER) {
 		result = TPrintF("%lld", value.immediate);
+		return result;
+	}
+	else if (value.valueType == IRVALUETYPE_IMMEDIATE_STRING) {
+		result = TPrintF("_str_%d", value.immediateStringIdx);
 		return result;
 	}
 
@@ -546,20 +549,20 @@ void X64CopyMemory(Context *context, IRValue dst, IRValue src, IRValue size)
 		}
 		while (sizeImm - copiedBytes >= 8) {
 			X64Mov(context,
-					IRValueDereference(dstIdx, TYPETABLEIDX_S64, copiedBytes),
-					IRValueDereference(srcIdx, TYPETABLEIDX_S64, copiedBytes));
+					IRValueDereference(dstIdx, TYPETABLEIDX_U64, copiedBytes),
+					IRValueDereference(srcIdx, TYPETABLEIDX_U64, copiedBytes));
 			copiedBytes += 8;
 		}
 		while (sizeImm - copiedBytes >= 4) {
 			X64Mov(context,
-					IRValueDereference(dstIdx, TYPETABLEIDX_S32, copiedBytes),
-					IRValueDereference(srcIdx, TYPETABLEIDX_S32, copiedBytes));
+					IRValueDereference(dstIdx, TYPETABLEIDX_U32, copiedBytes),
+					IRValueDereference(srcIdx, TYPETABLEIDX_U32, copiedBytes));
 			copiedBytes += 4;
 		}
 		while (sizeImm - copiedBytes >= 1) {
 			X64Mov(context,
-					IRValueDereference(dstIdx, TYPETABLEIDX_S8, copiedBytes),
-					IRValueDereference(srcIdx, TYPETABLEIDX_S8, copiedBytes));
+					IRValueDereference(dstIdx, TYPETABLEIDX_U8, copiedBytes),
+					IRValueDereference(srcIdx, TYPETABLEIDX_U8, copiedBytes));
 			++copiedBytes;
 		}
 		return;
@@ -866,17 +869,17 @@ void X64ConvertInstruction(Context *context, IRInstruction inst)
 	bool isSigned = false;
 	{
 		u32 typeTableIdx = TYPETABLEIDX_S64;
-		if      (inst.type >= IRINSTRUCTIONTYPE_COMPARE_BEGIN &&
-				 inst.type <  IRINSTRUCTIONTYPE_COMPARE_END)
+		if      (inst.type >= IRINSTRUCTIONTYPE_CompareBegin &&
+				 inst.type <= IRINSTRUCTIONTYPE_CompareEnd)
 			typeTableIdx = inst.binaryOperation.left.typeTableIdx;
-		else if (inst.type >= IRINSTRUCTIONTYPE_BINARY_BEGIN &&
-				 inst.type <  IRINSTRUCTIONTYPE_BINARY_END)
+		else if (inst.type >= IRINSTRUCTIONTYPE_BinaryBegin &&
+				 inst.type <= IRINSTRUCTIONTYPE_BinaryEnd)
 			typeTableIdx = inst.binaryOperation.left.typeTableIdx;
-		else if (inst.type >= IRINSTRUCTIONTYPE_UNARY_BEGIN &&
-				 inst.type <  IRINSTRUCTIONTYPE_UNARY_END)
+		else if (inst.type >= IRINSTRUCTIONTYPE_UnaryBegin &&
+				 inst.type <= IRINSTRUCTIONTYPE_UnaryEnd)
 			typeTableIdx = inst.unaryOperation.in.typeTableIdx;
-		else if (inst.type >= IRINSTRUCTIONTYPE_COMPARE_JUMP_BEGIN &&
-				 inst.type <  IRINSTRUCTIONTYPE_COMPARE_JUMP_END)
+		else if (inst.type >= IRINSTRUCTIONTYPE_CompareJumpBegin &&
+				 inst.type <= IRINSTRUCTIONTYPE_CompareJumpEnd)
 			typeTableIdx = inst.conditionalJump2.left.typeTableIdx;
 		else if (inst.type == IRINSTRUCTIONTYPE_ASSIGNMENT)
 			typeTableIdx = inst.assignment.dst.typeTableIdx;
@@ -1882,43 +1885,28 @@ inline void X64StaticDataAlignTo(Context *context, s64 alignment, bool initializ
 
 void PrintOutEscapedString(Context *context, String str)
 {
-	s64 size = str.size;
 	bool first = true;
 	char *buffer = (char *)t_threadMemPtr;
 	char *out = buffer;
 	const u8 *in = (const u8 *)str.data;
 	for (int i = 0; i < str.size; ++i) {
-		if (*in == '\\') {
+		// MASM uses ' as string delimiters, so we escape them
+		if (*in < 32 || *in == '\'') {
 			if (!first) PrintOut(context, ", "_s);
 
-			++in;
-			switch (*in)
-			{
-			case 'n':
-				PrintOut(context, "0AH"_s);
-				break;
-			case '0':
-				PrintOut(context, "00H"_s);
-				break;
-			case '"':
-				PrintOut(context, "22H"_s);
-				break;
-			}
-			++in;
-			++i;
-			--size; // Don't count backslash for string size.
-			first = false;
-		}
-		else if (*in == '\'') {
-			// MASM uses ' as string delimiters
-			if (!first) PrintOut(context, ", "_s);
-			PrintOut(context, "27H"_s);
+			char number[3];
+			char digit0 = (*in >> 4) & 0xF;
+			number[0] = digit0 > 0x9 ? 'A'-0xA+digit0 : '0'+digit0;
+			char digit1 = *in & 0xF;
+			number[1] = digit1 > 0x9 ? 'A'-0xA+digit1 : '0'+digit1;
+			number[2] = 'h';
+			PrintOut(context, { 3, number });
 			++in;
 			first = false;
 		}
 		else {
 			*out++ = *in++;
-			if (i == str.size - 1 || *in == '\\' || *in == '\'') {
+			if (i == str.size - 1 || *in < 32 || *in == '\'') {
 				*out++ = 0;
 				t_threadMemPtr = out;
 
@@ -1940,8 +1928,7 @@ void PrintOutEscapedString(Context *context, String str)
 void X64PrintStaticData(Context *context, String name, IRValue value, u32 typeTableIdx,
 		int alignmentOverride = -1)
 {
-	switch (value.valueType)
-	{
+	switch (value.valueType) {
 	case IRVALUETYPE_IMMEDIATE_STRING:
 	{
 		int alignment = alignmentOverride < 0 ? 8 : alignmentOverride;
@@ -1984,8 +1971,7 @@ void X64PrintStaticData(Context *context, String name, IRValue value, u32 typeTa
 		TypeInfo typeInfo = GetTypeInfo(context, typeTableIdx);
 		int alignment = alignmentOverride < 0 ? (int)typeInfo.size : alignmentOverride;
 		X64StaticDataAlignTo(context, alignment, true);
-		switch (typeInfo.size)
-		{
+		switch (typeInfo.size) {
 		case 4:
 		{
 			union { u32 asU32; f32 asF32; };
@@ -2005,16 +1991,14 @@ void X64PrintStaticData(Context *context, String name, IRValue value, u32 typeTa
 
 		bool isArray = false;
 		u32 elementTypeIdx = TYPETABLEIDX_Unset;
-		if (typeTableIdx > TYPETABLEIDX_Unset)
-		{
+		if (typeTableIdx > TYPETABLEIDX_Unset) {
 			TypeInfo typeInfo = GetTypeInfo(context, typeTableIdx);
 			isArray = typeInfo.typeCategory == TYPECATEGORY_ARRAY;
 			elementTypeIdx = typeInfo.arrayInfo.elementTypeTableIdx;
 		}
 
 		ArrayView<IRValue> members = value.tuple;
-		for (int memberIdx = 0; memberIdx < members.size; ++memberIdx)
-		{
+		for (int memberIdx = 0; memberIdx < members.size; ++memberIdx) {
 			String memberName = memberIdx ? "   "_s : name;
 			u32 memberTypeIdx = isArray ? elementTypeIdx : members[memberIdx].typeTableIdx;
 			X64PrintStaticData(context, memberName, members[memberIdx], memberTypeIdx);
@@ -2971,10 +2955,10 @@ void BackendJobProc(Context *context, u32 procedureIdx)
 			X64ReadyLinuxParameters(context, params, false);
 	}
 
-	u64 instructionCount = BucketArrayCount(&jobData->irInstructions);
+	u64 instructionCount = BucketArrayCount(&proc.irInstructions);
 	for (int instructionIdx = 0; instructionIdx < instructionCount; ++instructionIdx)
 	{
-		IRInstruction inst = jobData->irInstructions[instructionIdx];
+		IRInstruction inst = proc.irInstructions[instructionIdx];
 		X64ConvertInstruction(context, inst);
 	}
 
@@ -3213,8 +3197,8 @@ unalignedMovups:;
 
 	X64FinalProcedure finalProc;
 	finalProc.procedureIdx = procedureIdx;
+	finalProc.localValues = proc.localValues;
 	finalProc.instructions = jobData->beInstructions;
-	finalProc.localValues = jobData->localValues;
 	finalProc.stackSize = jobData->stackSize;
 	auto finalProcs = context->beFinalProcedureData.GetForWrite();
 	*DynamicArrayAdd(&finalProcs) = finalProc;

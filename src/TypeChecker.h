@@ -199,6 +199,7 @@ struct TCGlobalScope
 
 const u32 PROCEDURE_EXTERNAL_BIT  = 0x80000000;
 const u32 PROCEDURE_EXTERNAL_MASK = 0x7FFFFFFF;
+struct IRInstruction;
 struct Procedure
 {
 	String name;
@@ -208,8 +209,11 @@ struct Procedure
 	bool isInline;
 	bool isExported;
 	bool isBodyTypeChecked;
+	bool isIRReady;
 	Array<u32, LinearAllocator> returnValueIndices;
 	u32 typeTableIdx; // Type of the procedure
+	BucketArray<Value, LinearAllocator, 1024> localValues;
+	BucketArray<IRInstruction, LinearAllocator, 256> irInstructions;
 };
 
 struct TCJobArgs

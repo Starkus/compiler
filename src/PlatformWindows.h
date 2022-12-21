@@ -6,6 +6,10 @@
 #include <Shlobj.h>
 #include <process.h>
 
+// I hate this OS
+#undef near
+#undef far
+
 #define IS_WINDOWS 1
 #define IS_MSVC 1
 

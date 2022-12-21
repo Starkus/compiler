@@ -1092,22 +1092,10 @@ bool AreTypeInfosEqual(Context *context, TypeInfo a, TypeInfo b)
 	case TYPECATEGORY_FLOATING:
 		return true;
 	case TYPECATEGORY_STRUCT:
-		// @Check: for our purposes, shouldn't struct always return false?
-		if (a.structInfo.members.size != b.structInfo.members.size)
-			return false;
-		for (int i = 0; i < a.structInfo.members.size; ++i)
-			if (a.structInfo.members[i].typeTableIdx != b.structInfo.members[i].typeTableIdx)
-				return false;
-		return true;
 	case TYPECATEGORY_UNION:
-		if (a.structInfo.members.size != b.structInfo.members.size)
-			return false;
-		for (int i = 0; i < a.structInfo.members.size; ++i)
-			if (a.structInfo.members[i].typeTableIdx != b.structInfo.members[i].typeTableIdx)
-				return false;
-		return true;
+		// Even if we declare exactly the same struct twice, they are still different types!
+		return false;
 	case TYPECATEGORY_ENUM:
-		// @Check
 		return false;
 	case TYPECATEGORY_POINTER:
 		return a.pointerInfo.pointedTypeTableIdx == b.pointerInfo.pointedTypeTableIdx;
@@ -1124,8 +1112,7 @@ bool AreTypeInfosEqual(Context *context, TypeInfo a, TypeInfo b)
 			return false;
 		if (a.procedureInfo.returnTypeIndices.size != b.procedureInfo.returnTypeIndices.size)
 			return false;
-		for (int i = 0; i < a.procedureInfo.returnTypeIndices.size; ++i)
-		{
+		for (int i = 0; i < a.procedureInfo.returnTypeIndices.size; ++i) {
 			TypeInfo aReturnTypeInfo =
 				context->typeTable.unsafe[a.procedureInfo.returnTypeIndices[i]];
 			TypeInfo bReturnTypeInfo =
@@ -1133,8 +1120,7 @@ bool AreTypeInfosEqual(Context *context, TypeInfo a, TypeInfo b)
 			if (!AreTypeInfosEqual(context, aReturnTypeInfo, bReturnTypeInfo))
 				return false;
 		}
-		for (int i = 0; i < a.procedureInfo.parameters.size; ++i)
-		{
+		for (int i = 0; i < a.procedureInfo.parameters.size; ++i) {
 			ProcedureParameter aParam = a.procedureInfo.parameters[i];
 			ProcedureParameter bParam = b.procedureInfo.parameters[i];
 			if (aParam.defaultValue.type != bParam.defaultValue.type)
@@ -1397,6 +1383,63 @@ Constant TryEvaluateConstant(Context *context, ASTExpression *expression)
 
 	switch (expression->nodeType)
 	{
+	case ASTNODETYPE_PROCEDURE_CALL:
+	{
+		// @Todo: error message
+		ASSERT(expression->procedureCall.callType == CALLTYPE_STATIC);
+
+		u32 procIdx = expression->procedureCall.procedureIdx;
+		Procedure proc = GetProcedureRead(context, procIdx);
+
+		Array<CTRegister *, ThreadAllocator> parameters;
+		u64 paramCount = expression->procedureCall.arguments.size;
+		ArrayInit(&parameters, paramCount);
+		for (int paramIdx = 0; paramIdx < paramCount; ++paramIdx) {
+			ASTExpression *astParam = expression->procedureCall.arguments[paramIdx];
+			Constant paramConstant = TryEvaluateConstant(context, astParam);
+			CTRegister *paramReg = ALLOC(ThreadAllocator, CTRegister);
+			switch (paramConstant.type) {
+			case CONSTANTTYPE_INVALID:
+				LogError(context, astParam->any.loc, TPrintF("Failed to evaluate constant for "
+							"argument %d", paramIdx + 1));
+			case CONSTANTTYPE_INTEGER:
+				paramReg->asS64 = paramConstant.valueAsInt;
+				break;
+			case CONSTANTTYPE_FLOATING:
+				paramReg->asF64 = paramConstant.valueAsFloat;
+				break;
+			default:
+				LogError(context, astParam->any.loc, "Not implemented"_s);
+			}
+			*ArrayAdd(&parameters) = paramReg;
+		}
+
+		ArrayView<const CTRegister *> returnValues = CTRunProcedure(context, procIdx, parameters);
+
+		ASSERT(returnValues.size == 1);
+
+		switch (expression->typeTableIdx) {
+		case TYPETABLEIDX_S8:
+		case TYPETABLEIDX_S16:
+		case TYPETABLEIDX_S32:
+		case TYPETABLEIDX_S64:
+		case TYPETABLEIDX_U8:
+		case TYPETABLEIDX_U16:
+		case TYPETABLEIDX_U32:
+		case TYPETABLEIDX_U64:
+			result.type = CONSTANTTYPE_INTEGER;
+			result.valueAsInt = returnValues[0]->asS64;
+			break;
+		case TYPETABLEIDX_F32:
+			result.type = CONSTANTTYPE_FLOATING;
+			result.valueAsFloat = (f64)returnValues[0]->asF32;
+			break;
+		case TYPETABLEIDX_F64:
+			result.type = CONSTANTTYPE_FLOATING;
+			result.valueAsFloat = returnValues[0]->asF64;
+			break;
+		}
+	} break;
 	case ASTNODETYPE_LITERAL:
 	{
 		switch (expression->literal.type)
@@ -2539,16 +2582,11 @@ ASTExpression InlineProcedureCopyTreeBranch(Context *context, const ASTExpressio
 	}
 	case ASTNODETYPE_FOR:
 	{
-		TCJobData *jobData = (TCJobData *)SYSGetFiberData(context->flsIndex);
-
 		ASTFor astFor = expression->forNode;
 
 		ASTExpression *e = TCNewTreeNode(context);
 		*e = InlineProcedureCopyTreeBranch(context, astFor.range);
 		astFor.range = e;
-
-		u32 oldForArray = jobData->currentForLoopArrayType;
-		jobData->currentForLoopArrayType = TYPETABLEIDX_Unset;
 
 		TCPushScope(context);
 
@@ -2592,16 +2630,11 @@ ASTExpression InlineProcedureCopyTreeBranch(Context *context, const ASTExpressio
 		}
 		TCAddScopeNames(context, scopeNamesToAdd);
 
-		// @Check: this shouldn't be necessary to copy the branch
-		jobData->currentForLoopArrayType = rangeExp->typeTableIdx;
-
 		e = TCNewTreeNode(context);
 		*e = InlineProcedureCopyTreeBranch(context, expression->forNode.body);
 		astFor.body = e;
 
 		TCPopScope(context);
-
-		jobData->currentForLoopArrayType = oldForArray;
 
 		result.forNode = astFor;
 		return result;
@@ -4121,8 +4154,7 @@ void TypeCheckExpression(Context *context, ASTExpression *expression)
 
 		TCPushScope(context);
 
-		u32 indexValueIdx = TCNewValue(context, astFor->indexVariableName,
-				TYPETABLEIDX_S64, 0);
+		u32 indexValueIdx = TCNewValue(context, astFor->indexVariableName, TYPETABLEIDX_S64, 0);
 		astFor->indexValueIdx = indexValueIdx;
 
 		FixedArray<TCScopeName, 2> scopeNamesToAdd = {};
@@ -4203,7 +4235,7 @@ void TypeCheckExpression(Context *context, ASTExpression *expression)
 	case ASTNODETYPE_SIZEOF:
 	{
 		TypeCheckExpression(context, expression->sizeOfNode.expression);
-		expression->typeTableIdx = TYPETABLEIDX_S64;
+		expression->typeTableIdx = TYPETABLEIDX_U64;
 	} break;
 	case ASTNODETYPE_CAST:
 	{

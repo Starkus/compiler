@@ -41,27 +41,37 @@ s64 PIRPrintOut(Context *context, const char *format, ...)
 	return size;
 }
 
-inline String PIRValueToStr(Context *context, u32 valueIdx)
+inline Value PIRGetValue(Context *context, u32 procedureIdx, u32 valueIdx) {
+	ASSERT(valueIdx > 0);
+	if (valueIdx & VALUE_GLOBAL_BIT)
+		return GetGlobalValue(context, valueIdx);
+	else {
+		Procedure *proc = &context->procedures.unsafe[procedureIdx];
+		return proc->localValues[valueIdx];
+	}
+}
+
+inline String PIRValueToStr(Context *context, u32 procedureIdx, u32 valueIdx)
 {
-	Value v = IRGetValue(context, valueIdx);
+	Value v = PIRGetValue(context, procedureIdx, valueIdx);
 	if (v.name)
 		return TPrintF("$v%u\"%S\"", valueIdx, v.name);
 	else
 		return TPrintF("$v%u", valueIdx);
 }
 
-void PrintIRValue(Context *context, IRValue value)
+void PrintIRValue(Context *context, u32 procedureIdx, IRValue value)
 {
 	if (value.valueType == IRVALUETYPE_VALUE_DEREFERENCE)
 	{
-		PIRPrintOut(context, "[%S", PIRValueToStr(context, value.value.valueIdx));
+		PIRPrintOut(context, "[%S", PIRValueToStr(context, procedureIdx, value.value.valueIdx));
 		if (value.value.offset)
 			PIRPrintOut(context, "+0x%llx", value.value.offset);
 		PIRPrintOut(context, "]");
 	}
 	else if (value.valueType == IRVALUETYPE_VALUE)
 	{
-		PIRPrintOut(context, "%S", PIRValueToStr(context, value.value.valueIdx));
+		PIRPrintOut(context, "%S", PIRValueToStr(context, procedureIdx, value.value.valueIdx));
 		if (value.value.offset)
 			PIRPrintOut(context, "+0x%llx", value.value.offset);
 	}
@@ -148,25 +158,25 @@ void PrintIRInstructionOperator(Context *context, IRInstruction inst)
 	}
 }
 
-void PrintIRInstruction(Context *context, IRInstruction inst)
+void PrintIRInstruction(Context *context, u32 procedureIdx, IRInstruction inst)
 {
-	if (inst.type >= IRINSTRUCTIONTYPE_UNARY_BEGIN && inst.type < IRINSTRUCTIONTYPE_UNARY_END)
+	if (inst.type >= IRINSTRUCTIONTYPE_UnaryBegin && inst.type <= IRINSTRUCTIONTYPE_UnaryEnd)
 	{
-		PrintIRValue(context, inst.unaryOperation.out);
+		PrintIRValue(context, procedureIdx, inst.unaryOperation.out);
 		PIRPrintOut(context, " := ");
 		PrintIRInstructionOperator(context, inst);
-		PrintIRValue(context, inst.unaryOperation.in);
+		PrintIRValue(context, procedureIdx, inst.unaryOperation.in);
 		PIRPrintOut(context, "\n");
 	}
-	else if (inst.type >= IRINSTRUCTIONTYPE_BINARY_BEGIN && inst.type < IRINSTRUCTIONTYPE_BINARY_END)
+	else if (inst.type >= IRINSTRUCTIONTYPE_BinaryBegin && inst.type <= IRINSTRUCTIONTYPE_BinaryEnd)
 	{
-		PrintIRValue(context, inst.binaryOperation.out);
+		PrintIRValue(context, procedureIdx, inst.binaryOperation.out);
 		PIRPrintOut(context, " := ");
-		PrintIRValue(context, inst.binaryOperation.left);
+		PrintIRValue(context, procedureIdx, inst.binaryOperation.left);
 		PIRPrintOut(context, " ");
 		PrintIRInstructionOperator(context, inst);
 		PIRPrintOut(context, " ");
-		PrintIRValue(context, inst.binaryOperation.right);
+		PrintIRValue(context, procedureIdx, inst.binaryOperation.right);
 		PIRPrintOut(context, "\n");
 	}
 	else switch (inst.type)
@@ -190,20 +200,20 @@ void PrintIRInstruction(Context *context, IRInstruction inst)
 	case IRINSTRUCTIONTYPE_JUMP_IF_ZERO:
 	{
 		PIRPrintOut(context, "if !");
-		PrintIRValue(context, inst.conditionalJump.condition);
+		PrintIRValue(context, procedureIdx, inst.conditionalJump.condition);
 		PIRPrintOut(context, " jump %S\n", inst.conditionalJump.label->name);
 	} break;
 	case IRINSTRUCTIONTYPE_JUMP_IF_NOT_ZERO:
 	{
 		PIRPrintOut(context, "if ");
-		PrintIRValue(context, inst.conditionalJump.condition);
+		PrintIRValue(context, procedureIdx, inst.conditionalJump.condition);
 		PIRPrintOut(context, " jump %S\n", inst.conditionalJump.label->name);
 	} break;
 	case IRINSTRUCTIONTYPE_PROCEDURE_CALL:
 	{
 		if (inst.procedureCall.returnValues.size) {
 			for (int i = 0; i < inst.procedureCall.returnValues.size; ++i)
-				PrintIRValue(context, inst.procedureCall.returnValues[i]);
+				PrintIRValue(context, procedureIdx, inst.procedureCall.returnValues[i]);
 			PIRPrintOut(context, " := ");
 		}
 		String name = GetProcedureRead(context, inst.procedureCall.procedureIdx).name;
@@ -211,7 +221,7 @@ void PrintIRInstruction(Context *context, IRInstruction inst)
 
 		for (int i = 0; i < inst.procedureCall.parameters.size; ++i) {
 			if (i) PIRPrintOut(context, ", ");
-			PrintIRValue(context, inst.procedureCall.parameters[i]);
+			PrintIRValue(context, procedureIdx, inst.procedureCall.parameters[i]);
 		}
 		PIRPrintOut(context, ")\n");
 	} break;
@@ -219,23 +229,23 @@ void PrintIRInstruction(Context *context, IRInstruction inst)
 	{
 		if (inst.procedureCall.returnValues.size) {
 			for (int i = 0; i < inst.procedureCall.returnValues.size; ++i)
-				PrintIRValue(context, inst.procedureCall.returnValues[i]);
+				PrintIRValue(context, procedureIdx, inst.procedureCall.returnValues[i]);
 			PIRPrintOut(context, " := ");
 		}
 		PIRPrintOut(context, "call virtual ");
-		PrintIRValue(context, inst.procedureCall.procIRValue);
+		PrintIRValue(context, procedureIdx, inst.procedureCall.procIRValue);
 		PIRPrintOut(context, "(");
 
 		for (int i = 0; i < inst.procedureCall.parameters.size; ++i)
 		{
 			if (i) PIRPrintOut(context, ", ");
-			PrintIRValue(context, inst.procedureCall.parameters[i]);
+			PrintIRValue(context, procedureIdx, inst.procedureCall.parameters[i]);
 		}
 		PIRPrintOut(context, ")\n");
 	} break;
 	case IRINSTRUCTIONTYPE_PUSH_VALUE:
 	{
-		PIRPrintOut(context, "push value %S\n", PIRValueToStr(context, inst.pushValue.valueIdx));
+		PIRPrintOut(context, "push value %S\n", PIRValueToStr(context, procedureIdx, inst.pushValue.valueIdx));
 	} break;
 	case IRINSTRUCTIONTYPE_PUSH_SCOPE:
 	{
@@ -251,34 +261,34 @@ void PrintIRInstruction(Context *context, IRInstruction inst)
 	} break;
 	case IRINSTRUCTIONTYPE_ASSIGNMENT:
 	{
-		PrintIRValue(context, inst.assignment.dst);
+		PrintIRValue(context, procedureIdx, inst.assignment.dst);
 		PIRPrintOut(context, " = ");
-		PrintIRValue(context, inst.assignment.src);
+		PrintIRValue(context, procedureIdx, inst.assignment.src);
 		PIRPrintOut(context, "\n");
 	} break;
 	case IRINSTRUCTIONTYPE_LOAD_EFFECTIVE_ADDRESS:
 	{
-		PrintIRValue(context, inst.assignment.dst);
+		PrintIRValue(context, procedureIdx, inst.assignment.dst);
 		PIRPrintOut(context, " = ^");
-		PrintIRValue(context, inst.assignment.src);
+		PrintIRValue(context, procedureIdx, inst.assignment.src);
 		PIRPrintOut(context, "\n");
 	} break;
 	case IRINSTRUCTIONTYPE_COPY_MEMORY:
 	{
 		PIRPrintOut(context, "copyMemory(");
-		PrintIRValue(context, inst.copyMemory.dst);
+		PrintIRValue(context, procedureIdx, inst.copyMemory.dst);
 		PIRPrintOut(context, ", ");
-		PrintIRValue(context, inst.copyMemory.src);
+		PrintIRValue(context, procedureIdx, inst.copyMemory.src);
 		PIRPrintOut(context, ", ");
-		PrintIRValue(context, inst.copyMemory.size);
+		PrintIRValue(context, procedureIdx, inst.copyMemory.size);
 		PIRPrintOut(context, ")\n");
 	} break;
 	case IRINSTRUCTIONTYPE_ZERO_MEMORY:
 	{
 		PIRPrintOut(context, "zeroMemory(");
-		PrintIRValue(context, inst.zeroMemory.dst);
+		PrintIRValue(context, procedureIdx, inst.zeroMemory.dst);
 		PIRPrintOut(context, ", ");
-		PrintIRValue(context, inst.zeroMemory.size);
+		PrintIRValue(context, procedureIdx, inst.zeroMemory.size);
 		PIRPrintOut(context, ")\n");
 	} break;
 	default:
@@ -288,7 +298,8 @@ void PrintIRInstruction(Context *context, IRInstruction inst)
 	}
 }
 
-void PrintJobIRInstructions(Context *context) {
+void PrintJobIRInstructions(Context *context)
+{
 	static Mutex printIRMutex = SYSCreateMutex();
 
 	IRJobData *jobData = (IRJobData *)SYSGetFiberData(context->flsIndex);
@@ -323,7 +334,7 @@ void PrintJobIRInstructions(Context *context) {
 	}
 	PIRPrintOut(context, "\n");
 
-	const auto &instructions = jobData->irInstructions;
+	const auto &instructions = proc.irInstructions;
 	const u64 instructionCount = BucketArrayCount(&instructions);
 	for (int instructionIdx = 0; instructionIdx < instructionCount; ++instructionIdx) {
 		IRInstruction inst = instructions[instructionIdx];
@@ -358,7 +369,7 @@ void PrintJobIRInstructions(Context *context) {
 				PIRPrintOut(context, " ");
 		}
 
-		PrintIRInstruction(context, inst);
+		PrintIRInstruction(context, jobData->procedureIdx, inst);
 	}
 	PIRPrintOut(context, "\n");
 

@@ -50,7 +50,7 @@ TypeKind :: enum : u8
 TypeInfo :: struct
 {
 	typeKind : TypeKind;
-	size : s64;
+	size : u64;
 };
 
 TypeInfoInteger :: struct

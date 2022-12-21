@@ -199,7 +199,7 @@ PrintF :: (format : String, ..args)
 			{
 				if i > 0 Print(", ");
 
-				element.data = buffer + i * elementSize;
+				element.data = buffer + cast(u64)i * elementSize;
 				if (element.typeInfo.typeKind == TypeKind_Integer ||
 					element.typeInfo.typeKind == TypeKind_Floating ||
 					element.typeInfo.typeKind == TypeKind_Enum ||

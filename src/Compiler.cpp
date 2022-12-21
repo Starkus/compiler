@@ -41,6 +41,7 @@ enum TCYieldReason : u32
 	TCYIELDREASON_UNKNOWN_OVERLOAD,
 	TCYIELDREASON_STATIC_DEF_NOT_READY,
 	TCYIELDREASON_PROC_BODY_NOT_READY,
+	TCYIELDREASON_PROC_IR_NOT_READY,
 	TCYIELDREASON_TYPE_NOT_READY,
 	// WAITING_FOR_STOP jobs want to wait until no jobs are running to make a decision.
 	// As of time of write, only #defined does this to determine if something isn't defined anywhere
@@ -125,7 +126,7 @@ String TPrintF(const char *format, ...)
 
 	va_list args;
 	va_start(args, format);
-	s64 size = stbsp_vsprintf(buffer, format, args);
+	u64 size = stbsp_vsprintf(buffer, format, args);
 	va_end(args);
 
 	t_threadMemPtr = (u8 *)t_threadMemPtr + size + 1;
@@ -139,7 +140,7 @@ String SNPrintF(const char *format, int maxSize, ...)
 
 	va_list args;
 	va_start(args, maxSize);
-	s64 size = stbsp_vsnprintf(buffer, maxSize, format, args);
+	u64 size = stbsp_vsnprintf(buffer, maxSize, format, args);
 	va_end(args);
 
 	return { size, buffer };
@@ -177,6 +178,7 @@ u64 CycleCountEnd(u64 begin)
 #include "Parser.h"
 #include "AST.h"
 #include "TypeChecker.h"
+#include "CompileTime.h"
 #include "IRGen.h"
 #include "Backend.h"
 #include "x64.h"
@@ -271,7 +273,6 @@ struct TCJobData
 struct IRJobData
 {
 	u32 procedureIdx;
-	BucketArray<IRInstruction, LinearAllocator, 256> irInstructions;
 	DynamicArray<IRScope, ThreadAllocator> irStack;
 	BucketArray<IRLabel, LinearAllocator, 1024> irLabels;
 	IRLabel *returnLabel;
@@ -284,7 +285,6 @@ struct IRJobData
 	} irCurrentForLoopInfo;
 	ArrayView<u32> returnValueIndices;
 	u32 shouldReturnValueIdx;
-	BucketArray<Value, LinearAllocator, 1024> localValues;
 
 	// Back end
 	BucketArray<BEInstruction, LinearAllocator, 1024> beInstructions;
@@ -304,34 +304,33 @@ FatSourceLocation ExpandSourceLocation(Context *context, SourceLocation loc);
 void __Log(Context *context, SourceLocation loc, String str,
 			const char *inFile, const char *inFunc, int inLine)
 {
-	FatSourceLocation fatLoc = ExpandSourceLocation(context, loc);
+	if (loc.fileIdx != 0) {
+		FatSourceLocation fatLoc = ExpandSourceLocation(context, loc);
+		String filename = context->sourceFiles[loc.fileIdx].name;
 
-	// Info
-	SourceFile sourceFile;
-	{
-		// @Speed: shouldn't need this lock
-		ScopedLockSpin filesLock(&context->filesLock);
-		sourceFile = context->sourceFiles[loc.fileIdx];
+		ScopedLockMutex lock(context->consoleMutex);
+
+		// Info
+		Print("%S %d:%d %S\n", filename, fatLoc.line, fatLoc.character, str);
+
+		// Source line
+		Print("... %.*s\n... ", fatLoc.lineSize, fatLoc.beginingOfLine);
+
+		// Token underline
+		for (u32 i = 0; i < fatLoc.character - 1; ++i)
+		{
+			if (fatLoc.beginingOfLine[i] == '\t')
+				Print("\t");
+			else
+				Print(" ");
+		}
+		for (u32 i = 0; i < fatLoc.size; ++i)
+			Print("^");
+		Print("\n");
 	}
-
-	ScopedLockMutex lock(context->consoleMutex);
-
-	Print("%S %d:%d %S\n", sourceFile.name, fatLoc.line, fatLoc.character, str);
-
-	// Source line
-	Print("... %.*s\n... ", fatLoc.lineSize, fatLoc.beginingOfLine);
-
-	// Token underline
-	for (u32 i = 0; i < fatLoc.character; ++i)
-	{
-		if (fatLoc.beginingOfLine[i] == '\t')
-			Print("\t");
-		else
-			Print(" ");
+	else {
+		Print("[unknown source location] %S\n", str);
 	}
-	for (u32 i = 0; i < fatLoc.size; ++i)
-		Print("^");
-	Print("\n");
 
 #if DEBUG_BUILD
 	Print("~~~ In %s - %s:%d\n", inFunc, inFile, inLine);
@@ -343,25 +342,19 @@ void __LogRange(Context *context, SourceLocation locBegin, SourceLocation locEnd
 {
 	FatSourceLocation fatLocBegin = ExpandSourceLocation(context, locBegin);
 	FatSourceLocation fatLocEnd   = ExpandSourceLocation(context, locEnd);
-
-	// Info
-	SourceFile sourceFile;
-	{
-		// @Speed: shouldn't need this lock
-		ScopedLockSpin filesLock(&context->filesLock);
-		sourceFile = context->sourceFiles[locBegin.fileIdx];
-	}
+	String filename = context->sourceFiles[locBegin.fileIdx].name;
 
 	ScopedLockMutex lock(context->consoleMutex);
 
-	Print("%S %d:%d %S\n", sourceFile.name, fatLocBegin.line, fatLocBegin.character, str);
+	// Info
+	Print("%S %d:%d %S\n", filename, fatLocBegin.line, fatLocBegin.character, str);
 
 	// Source line
 	Print("... %.*s\n... ", fatLocBegin.lineSize, fatLocBegin.beginingOfLine);
 
 	// Token underline
 	u32 underlineCount = fatLocEnd.character - fatLocBegin.character + fatLocEnd.size;
-	for (u32 i = 0; i < fatLocBegin.character; ++i)
+	for (u32 i = 0; i < fatLocBegin.character - 1; ++i)
 	{
 		if (fatLocBegin.beginingOfLine[i] == '\t')
 			Print("\t");
@@ -470,6 +463,7 @@ struct ThreadArgs
 #include "PrintAST.cpp"
 #include "Parser.cpp"
 #include "TypeChecker.cpp"
+#include "CompileTime.cpp"
 #include "IRGen.cpp"
 #include "PrintIR.cpp"
 #include "x64.cpp"
@@ -515,6 +509,7 @@ int main(int argc, char **argv)
 #endif
 
 	DynamicArrayInit(&context.sourceFiles, 16);
+	++context.sourceFiles.size; // 0 is invalid file
 	DynamicArrayInit(&context.libsToLink, 8);
 
 	DynamicArray<String, LinearAllocator> inputFiles;

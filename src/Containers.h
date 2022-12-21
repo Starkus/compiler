@@ -472,7 +472,7 @@ inline void HashSetInit(HashSet<K,A> *hashSet, u32 capacity)
 
 	u64 bookkeepSize = capacity >> 3; // divide by 8
 	u64 keyMemorySize = capacity * sizeof(K);
-	hashSet->memory = A::Alloc(bookkeepSize + keyMemorySize, 1); // @Todo: alignment!
+	hashSet->memory = A::Alloc(bookkeepSize + keyMemorySize, alignof(K));
 	hashSet->capacity = capacity;
 
 	HashSetClear(*hashSet);
@@ -634,7 +634,7 @@ inline void HashMapInit(HashMap<K,V,A> *hashMap, u32 capacity)
 	u64 bookkeepSize = capacity >> 3;
 	u64 keyMemorySize = capacity * sizeof(K);
 	u64 valueMemorySize = capacity * sizeof(V);
-	hashMap->memory = A::Alloc(bookkeepSize + keyMemorySize + valueMemorySize, 1); // @Todo: alignment!
+	hashMap->memory = A::Alloc(bookkeepSize + keyMemorySize + valueMemorySize, alignof(K));
 	hashMap->capacity = capacity;
 
 	HashMapClear(*hashMap);

@@ -140,13 +140,14 @@ void DoLivenessAnalisisOnInstruction(Context *context, BasicBlock *basicBlock, X
 		DynamicArray<u32, ThreadAllocator> *liveValues)
 {
 	IRJobData *jobData = (IRJobData *)SYSGetFiberData(context->flsIndex);
+	Procedure *proc = &context->procedures.unsafe[jobData->procedureIdx];
 
 	if (context->config.logAllocationInfo)
 	{
 		if (inst->type != X64_Patch && inst->type != X64_Patch_Many)
 		{
 			Print("\t");
-			s64 s = Print("%S", X64InstructionToStr(context, *inst, &jobData->localValues));
+			s64 s = Print("%S", X64InstructionToStr(context, *inst, &proc->localValues));
 			if (s < 40)
 			{
 				char buffer[40];
@@ -156,7 +157,7 @@ void DoLivenessAnalisisOnInstruction(Context *context, BasicBlock *basicBlock, X
 			}
 			for (int i = 0; i < liveValues->size; ++i)
 				Print("%S, ", X64IRValueToStr(context, IRValueValue(context, (*liveValues)[i]),
-							&jobData->localValues));
+							&proc->localValues));
 			Print("\n");
 		}
 	}
@@ -364,6 +365,7 @@ void DoLivenessAnalisis(Context *context, BasicBlock *basicBlock,
 void GenerateBasicBlocks(Context *context)
 {
 	IRJobData *jobData = (IRJobData *)SYSGetFiberData(context->flsIndex);
+	Procedure *proc = &context->procedures.unsafe[jobData->procedureIdx];
 
 	if (context->config.logAllocationInfo)
 		Print("GENERATING BASIC BLOCKS FOR %S\n",
@@ -377,7 +379,7 @@ void GenerateBasicBlocks(Context *context)
 		X64Instruction inst = jobData->beInstructions[instructionIdx];
 
 		if (context->config.logAllocationInfo)
-			Print("\t%S\n", X64InstructionToStr(context, inst, &jobData->localValues));
+			Print("\t%S\n", X64InstructionToStr(context, inst, &proc->localValues));
 
 		if (inst.type >= X64_Jump_Begin && inst.type <= X64_Jump_End)
 		{
@@ -621,6 +623,7 @@ inline u64 RegisterSavingInstruction(Context *context, X64Instruction *inst, u64
 void X64AllocateRegisters(Context *context)
 {
 	IRJobData *jobData = (IRJobData *)SYSGetFiberData(context->flsIndex);
+	Procedure *proc = &context->procedures.unsafe[jobData->procedureIdx];
 
 	BucketArrayInit(&jobData->beBasicBlocks);
 
@@ -640,7 +643,7 @@ void X64AllocateRegisters(Context *context)
 	// The main reasoning behind this is to avoid so many queries into cold type table data just to
 	// see if each value is an xmm register or not.
 	{
-		u64 valueCount = BucketArrayCount(&jobData->localValues);
+		u64 valueCount = BucketArrayCount(&proc->localValues);
 
 		u64 qwordCount = valueCount >> 6;
 		if (valueCount & 63) ++qwordCount;
@@ -693,13 +696,13 @@ void X64AllocateRegisters(Context *context)
 			u32 currentNodeValueIdx = interferenceGraph.valueIndices[nodeIdx];
 			HashSet<u32, ThreadAllocator> currentNodeEdges = interferenceGraph.edges[nodeIdx];
 			Print("Value %S coexists with: ", X64IRValueToStr(context,
-						IRValueValue(context, currentNodeValueIdx), &jobData->localValues));
+						IRValueValue(context, currentNodeValueIdx), &proc->localValues));
 
 			u32 *keys = HashSetKeys(currentNodeEdges);
 			for (u32 slotIdx = 0; slotIdx < currentNodeEdges.capacity; ++slotIdx)
 				if (HashSetSlotOccupied(currentNodeEdges, slotIdx))
 					Print("%S, ", X64IRValueToStr(context,
-								IRValueValue(context, keys[slotIdx]), &jobData->localValues));
+								IRValueValue(context, keys[slotIdx]), &proc->localValues));
 			Print("\n");
 		}
 	}

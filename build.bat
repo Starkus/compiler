@@ -4,7 +4,7 @@ cls
 
 set SourceFiles=..\src\Compiler.cpp
 set CompilerFlags=-nologo -Gm- -GR- -Oi -EHa- -W4 -wd4201 -wd4100 -wd4996 -wd4063 -FC -Z7 -I ..\external\ -std:c++latest
-set LinkerFlags=-opt:ref -incremental:no -debug:full
+set LinkerFlags=-opt:ref -incremental:no -debug:full DynamicCallWindows.obj
 set Libraries=user32.lib winmm.lib shell32.lib advapi32.lib
 
 IF "%1"=="-r" (
@@ -20,6 +20,7 @@ IF NOT EXIST .\bin mkdir .\bin
 pushd .\bin
 
 set start=%time%
+ml64 /nologo /c /Fo DynamicCallWindows.obj ..\src\DynamicCallWindows.asm
 cl.exe %CompilerFlags% %SourceFiles% %Libraries% -link %LinkerFlags%
 set end=%time%
 IF %ERRORLEVEL% NEQ 0 echo [31mFailed![0m
