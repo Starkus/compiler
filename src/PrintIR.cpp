@@ -1,3 +1,5 @@
+#define PRINTIR_PRINT_TYPES 1
+
 s64 PIRPrintOut(Context *context, const char *format, ...)
 {
 	char *buffer = (char *)t_threadMemPtr;
@@ -67,6 +69,10 @@ void PrintIRValue(Context *context, u32 procedureIdx, IRValue value)
 		PIRPrintOut(context, "[%S", PIRValueToStr(context, procedureIdx, value.value.valueIdx));
 		if (value.value.offset)
 			PIRPrintOut(context, "+0x%llx", value.value.offset);
+		if (value.value.elementSize) {
+			String indexValueStr = PIRValueToStr(context, procedureIdx, value.value.indexValueIdx);
+			PIRPrintOut(context, "+%S*%lld", indexValueStr, value.value.elementSize);
+		}
 		PIRPrintOut(context, "]");
 	}
 	else if (value.valueType == IRVALUETYPE_VALUE)
@@ -74,6 +80,10 @@ void PrintIRValue(Context *context, u32 procedureIdx, IRValue value)
 		PIRPrintOut(context, "%S", PIRValueToStr(context, procedureIdx, value.value.valueIdx));
 		if (value.value.offset)
 			PIRPrintOut(context, "+0x%llx", value.value.offset);
+		if (value.value.elementSize) {
+			String indexValueStr = PIRValueToStr(context, procedureIdx, value.value.indexValueIdx);
+			PIRPrintOut(context, "+%S*%lld", indexValueStr, value.value.elementSize);
+		}
 	}
 	else if (value.valueType == IRVALUETYPE_IMMEDIATE_INTEGER)
 		PIRPrintOut(context, "0x%llx", value.immediate);
@@ -84,8 +94,9 @@ void PrintIRValue(Context *context, u32 procedureIdx, IRValue value)
 	else
 		PIRPrintOut(context, "???");
 
-
+#if PRINTIR_PRINT_TYPES
 	PIRPrintOut(context, " : %S", TypeInfoToString(context, value.typeTableIdx));
+#endif
 }
 
 void PrintIRInstructionOperator(Context *context, IRInstruction inst)
@@ -133,18 +144,27 @@ void PrintIRInstructionOperator(Context *context, IRInstruction inst)
 		PIRPrintOut(context, "~");
 		break;
 	case IRINSTRUCTIONTYPE_EQUALS:
+	case IRINSTRUCTIONTYPE_JUMP_IF_EQUALS:
 		PIRPrintOut(context, "==");
 		break;
+	case IRINSTRUCTIONTYPE_NOT_EQUALS:
+	case IRINSTRUCTIONTYPE_JUMP_IF_NOT_EQUALS:
+		PIRPrintOut(context, "!=");
+		break;
 	case IRINSTRUCTIONTYPE_GREATER_THAN:
+	case IRINSTRUCTIONTYPE_JUMP_IF_GREATER_THAN:
 		PIRPrintOut(context, ">");
 		break;
 	case IRINSTRUCTIONTYPE_GREATER_THAN_OR_EQUALS:
+	case IRINSTRUCTIONTYPE_JUMP_IF_GREATER_THAN_OR_EQUALS:
 		PIRPrintOut(context, ">=");
 		break;
 	case IRINSTRUCTIONTYPE_LESS_THAN:
+	case IRINSTRUCTIONTYPE_JUMP_IF_LESS_THAN:
 		PIRPrintOut(context, "<");
 		break;
 	case IRINSTRUCTIONTYPE_LESS_THAN_OR_EQUALS:
+	case IRINSTRUCTIONTYPE_JUMP_IF_LESS_THAN_OR_EQUALS:
 		PIRPrintOut(context, "<=");
 		break;
 	case IRINSTRUCTIONTYPE_NOT:
@@ -178,6 +198,17 @@ void PrintIRInstruction(Context *context, u32 procedureIdx, IRInstruction inst)
 		PIRPrintOut(context, " ");
 		PrintIRValue(context, procedureIdx, inst.binaryOperation.right);
 		PIRPrintOut(context, "\n");
+	}
+	else if (inst.type >= IRINSTRUCTIONTYPE_CompareJumpBegin && inst.type <=
+			IRINSTRUCTIONTYPE_CompareJumpEnd)
+	{
+		PIRPrintOut(context, "if ");
+		PrintIRValue(context, procedureIdx, inst.conditionalJump2.left);
+		PIRPrintOut(context, " ");
+		PrintIRInstructionOperator(context, inst);
+		PIRPrintOut(context, " ");
+		PrintIRValue(context, procedureIdx, inst.conditionalJump2.right);
+		PIRPrintOut(context, " jump %S\n", inst.conditionalJump2.label->name);
 	}
 	else switch (inst.type)
 	{
@@ -320,7 +351,10 @@ void PrintJobIRInstructions(Context *context)
 		u32 paramValueIdx = proc.parameterValues[paramIdx];
 		Value paramValue = IRGetValue(context, paramValueIdx);
 		String typeStr = TypeInfoToString(context, paramValue.typeTableIdx);
-		PIRPrintOut(context, "%S : %S", paramValue.name, typeStr);
+		PIRPrintOut(context, "%S", paramValue.name);
+#if PRINTIR_PRINT_TYPES
+		PIRPrintOut(context, " : %S", paramValue.name, typeStr);
+#endif
 	}
 	PIRPrintOut(context, ")");
 	if (procTypeInfo.returnTypeIndices.size) {

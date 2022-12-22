@@ -1074,7 +1074,6 @@ TypeCheckResult CheckTypesMatchAndSpecialize(Context *context, u32 leftTableIdx,
 	return result;
 }
 
-// NOTE!! This procedure assumes typeTable is locked!
 bool AreTypeInfosEqual(Context *context, TypeInfo a, TypeInfo b)
 {
 	if (a.typeCategory != b.typeCategory)
@@ -1152,6 +1151,123 @@ bool AreTypeInfosEqual(Context *context, TypeInfo a, TypeInfo b)
 	}
 }
 
+UserFacingTypeInfo TCTypeInfoToUserFacingTypeInfo(Context *context, TypeInfo typeInfo)
+{
+	auto &typeTable = context->typeTable.unsafe;
+
+	UserFacingTypeInfo result = {};
+	result.size = typeInfo.size;
+	switch (typeInfo.typeCategory) {
+	case TYPECATEGORY_INTEGER:
+		result.typeCategory = USERFACINGTYPECATEGORY_INTEGER;
+		result.integer.isSigned = typeInfo.integerInfo.isSigned;
+		break;
+	case TYPECATEGORY_FLOATING:
+		result.typeCategory = USERFACINGTYPECATEGORY_FLOATING;
+		break;
+	case TYPECATEGORY_STRUCT:
+	case TYPECATEGORY_UNION:
+	{
+		result.typeCategory = USERFACINGTYPECATEGORY_STRUCT;
+		Array<UserFacingStructMember, LinearAllocator> members;
+		ArrayInit(&members, typeInfo.structInfo.members.size);
+		for (int i = 0; i < typeInfo.structInfo.members.size; ++i) {
+			StructMember *origMember = &typeInfo.structInfo.members[i];
+			u32 memberTypeInfoValueIdx = typeTable[origMember->typeTableIdx].valueIdx;
+			CTRegister *memberUfti;
+			{
+				ScopedLockSpin lock(&context->ctGlobalValuesLock);
+				memberUfti = *HashMapGet(context->ctGlobalValueContents,
+						memberTypeInfoValueIdx & VALUE_GLOBAL_MASK);
+			}
+			UserFacingStructMember member = {
+				.name = origMember->name,
+				.typeInfo = (UserFacingTypeInfo *)memberUfti,
+				.offset = origMember->offset
+			};
+			*ArrayAdd(&members) = member;
+		}
+		result.struct_.name = typeInfo.structInfo.name;
+		result.struct_.isUnion = typeInfo.typeCategory == TYPECATEGORY_UNION;
+		result.struct_.members = members;
+	} break;
+	case TYPECATEGORY_ENUM:
+	{
+		result.typeCategory = USERFACINGTYPECATEGORY_ENUM;
+		result.enum_.name = typeInfo.enumInfo.name;
+		u32 enumTypeInfoValueIdx = typeTable[typeInfo.enumInfo.typeTableIdx].valueIdx;
+		CTRegister *ufti;
+		{
+			ScopedLockSpin lock(&context->ctGlobalValuesLock);
+			ufti = *HashMapGet(context->ctGlobalValueContents,
+					enumTypeInfoValueIdx & VALUE_GLOBAL_MASK);
+		}
+		result.enum_.typeInfo = (UserFacingTypeInfo *)ufti;
+	} break;
+	case TYPECATEGORY_POINTER:
+	{
+		result.typeCategory = USERFACINGTYPECATEGORY_POINTER;
+		u32 pointedTypeIdx = typeInfo.pointerInfo.pointedTypeTableIdx;
+		if (pointedTypeIdx == TYPETABLEIDX_VOID)
+			result.pointer.typeInfo = nullptr;
+		else {
+			u32 typeInfoValueIdx = typeTable[pointedTypeIdx].valueIdx;
+			CTRegister *ufti;
+			{
+				ScopedLockSpin lock(&context->ctGlobalValuesLock);
+				ufti = *HashMapGet(context->ctGlobalValueContents, typeInfoValueIdx & VALUE_GLOBAL_MASK);
+			}
+			result.pointer.typeInfo = (UserFacingTypeInfo *)ufti;
+		}
+	} break;
+	case TYPECATEGORY_ARRAY:
+	{
+		result.typeCategory = USERFACINGTYPECATEGORY_ARRAY;
+		result.array.count = typeInfo.arrayInfo.count;
+		u32 elementTypeInfoValueIdx =
+			typeTable[typeInfo.arrayInfo.elementTypeTableIdx].valueIdx;
+		CTRegister *ufti;
+		{
+			ScopedLockSpin lock(&context->ctGlobalValuesLock);
+			ufti = *HashMapGet(context->ctGlobalValueContents, elementTypeInfoValueIdx & VALUE_GLOBAL_MASK);
+		}
+		result.array.elementTypeInfo = (UserFacingTypeInfo *)ufti;
+	} break;
+	case TYPECATEGORY_PROCEDURE:
+	{
+		result.typeCategory = USERFACINGTYPECATEGORY_PROCEDURE;
+		Array<UserFacingTypeInfo *, LinearAllocator> parameters;
+		ArrayInit(&parameters, typeInfo.procedureInfo.parameters.size);
+		for (int i = 0; i < typeInfo.procedureInfo.parameters.size; ++i) {
+			ProcedureParameter *origParam = &typeInfo.procedureInfo.parameters[i];
+			u32 paramTypeInfoValueIdx = typeTable[origParam->typeTableIdx].valueIdx;
+			CTRegister *paramUfti;
+			{
+				ScopedLockSpin lock(&context->ctGlobalValuesLock);
+				paramUfti = *HashMapGet(context->ctGlobalValueContents,
+						paramTypeInfoValueIdx & VALUE_GLOBAL_MASK);
+			}
+			*ArrayAdd(&parameters) = (UserFacingTypeInfo *)paramUfti;
+		}
+		result.procedure.parameters = parameters;
+		result.procedure.isVarargs = typeInfo.procedureInfo.isVarargs;
+	} break;
+	case TYPECATEGORY_ALIAS:
+	{
+		result.typeCategory = USERFACINGTYPECATEGORY_ALIAS;
+		u32 typeInfoValueIdx = typeTable[typeInfo.aliasInfo.aliasedTypeIdx].valueIdx;
+		CTRegister *ufti;
+		{
+			ScopedLockSpin lock(&context->ctGlobalValuesLock);
+			ufti = *HashMapGet(context->ctGlobalValueContents, typeInfoValueIdx & VALUE_GLOBAL_MASK);
+		}
+		result.alias.typeInfo = (UserFacingTypeInfo *)ufti;
+	} break;
+	}
+		
+	return result;
+}
+
 inline u32 AddType(Context *context, TypeInfo typeInfo)
 {
 	// Should lock type table before calling
@@ -1168,10 +1284,20 @@ inline u32 AddType(Context *context, TypeInfo typeInfo)
 
 		*(TypeInfo *)BucketArrayAdd(typeTable) = typeInfo;
 	}
+	SpinlockUnlock(&context->typeTable.lock);
+
 	{
 		Value value = GetGlobalValue(context, typeInfo.valueIdx);
 		value.name = SNPrintF("_typeInfo%lld", 16, typeTableIdx);
 		UpdateGlobalValue(context, typeInfo.valueIdx, &value);
+	}
+
+	UserFacingTypeInfo *ufti = ALLOC(LinearAllocator, UserFacingTypeInfo);
+	*ufti = TCTypeInfoToUserFacingTypeInfo(context, typeInfo);
+	{
+		ScopedLockSpin lock(&context->ctGlobalValuesLock);
+		*HashMapGetOrAdd(&context->ctGlobalValueContents, typeInfo.valueIdx & VALUE_GLOBAL_MASK) =
+			(CTRegister *)ufti;
 	}
 
 	return typeTableIdx;
@@ -1194,14 +1320,17 @@ u32 FindOrAddTypeTableIdx(Context *context, TypeInfo typeInfo)
 	{
 		// Check it didn't get added when we released the lock
 		// @Speed: ugh...
-		auto typeTable = context->typeTable.Get();
+		SpinlockLock(&context->typeTable.lock);
+		auto &typeTable = context->typeTable.unsafe;
 
 		u32 tableSize = (u32)BucketArrayCount(&typeTable);
 		for (u32 i = 0; i < tableSize; ++i)
 		{
 			TypeInfo t = typeTable[i];
-			if (AreTypeInfosEqual(context, typeInfo, t))
+			if (AreTypeInfosEqual(context, typeInfo, t)) {
+				SpinlockUnlock(&context->typeTable.lock);
 				return i;
+			}
 		}
 		return AddType(context, typeInfo);
 	}
@@ -1339,7 +1468,7 @@ u32 TypeCheckStructDeclaration(Context *context, String name, bool isUnion,
 		typeTableIdx = TYPETABLEIDX_TYPE_INFO_ALIAS_STRUCT;
 	else
 	{
-		auto typeTable = context->typeTable.Get();
+		SpinlockLock(&context->typeTable.lock);
 		ASSERT(BucketArrayCount(&context->typeTable.unsafe) < U32_MAX);
 		TypeInfo t = {
 			.typeCategory = TYPECATEGORY_NOT_READY,
@@ -1752,7 +1881,7 @@ u32 TypeCheckType(Context *context, String name, SourceLocation loc, ASTType *as
 		t.size = TCGetTypeInfo(context, innerTypeIdx).size;
 		u32 typeTableIdx;
 		{
-			auto typeTableLock = context->typeTable.Get();
+			SpinlockLock(&context->typeTable.lock);
 			typeTableIdx = AddType(context, t);
 		}
 
@@ -4808,12 +4937,13 @@ void TypeCheckMain(Context *context) {
 	}
 
 	{
-		auto typeTable = context->typeTable.Get();
+		SpinlockLock(&context->typeTable.lock);
+		auto &typeTable = context->typeTable.unsafe;
 		BucketArrayInit(&typeTable);
 		for (int i = 0; i < TYPETABLEIDX_Count; ++i)
 			BucketArrayAdd(&typeTable);
 
-		TypeInfo *typeTableFast = (TypeInfo *)typeTable->buckets[0].data;
+		TypeInfo *typeTableFast = (TypeInfo *)typeTable.buckets[0].data;
 
 		TypeInfo t;
 		t.typeCategory = TYPECATEGORY_INTEGER;
@@ -4890,11 +5020,21 @@ void TypeCheckMain(Context *context) {
 		t.valueIdx = NewGlobalValue(context, "_typeInfo_type_info_pointer_struct"_s, TYPETABLEIDX_Unset, VALUEFLAGS_ON_STATIC_STORAGE);
 		typeTableFast[TYPETABLEIDX_TYPE_INFO_POINTER_STRUCT] = t;
 		t.valueIdx = NewGlobalValue(context, "_typeInfo_type_info_array_struct"_s, TYPETABLEIDX_Unset, VALUEFLAGS_ON_STATIC_STORAGE);
-		typeTableFast[TYPETABLEIDX_TYPE_INFO_PROCEDURE_STRUCT] = t;
-		t.valueIdx = NewGlobalValue(context, "_typeInfo_type_info_procedure_struct"_s, TYPETABLEIDX_Unset, VALUEFLAGS_ON_STATIC_STORAGE);
-		typeTableFast[TYPETABLEIDX_TYPE_INFO_ALIAS_STRUCT] = t;
-		t.valueIdx = NewGlobalValue(context, "_typeInfo_type_info_alias_struct"_s, TYPETABLEIDX_Unset, VALUEFLAGS_ON_STATIC_STORAGE);
 		typeTableFast[TYPETABLEIDX_TYPE_INFO_ARRAY_STRUCT] = t;
+		t.valueIdx = NewGlobalValue(context, "_typeInfo_type_info_procedure_struct"_s, TYPETABLEIDX_Unset, VALUEFLAGS_ON_STATIC_STORAGE);
+		typeTableFast[TYPETABLEIDX_TYPE_INFO_PROCEDURE_STRUCT] = t;
+		t.valueIdx = NewGlobalValue(context, "_typeInfo_type_info_alias_struct"_s, TYPETABLEIDX_Unset, VALUEFLAGS_ON_STATIC_STORAGE);
+		typeTableFast[TYPETABLEIDX_TYPE_INFO_ALIAS_STRUCT] = t;
+
+		SpinlockUnlock(&context->typeTable.lock);
+
+		for (int i = 0; i < TYPETABLEIDX_Count; ++i) {
+			UserFacingTypeInfo *ufti = ALLOC(LinearAllocator, UserFacingTypeInfo);
+			t = typeTableFast[i];
+			*ufti = TCTypeInfoToUserFacingTypeInfo(context, t);
+			*HashMapGetOrAdd(&context->ctGlobalValueContents, t.valueIdx & VALUE_GLOBAL_MASK) =
+				(CTRegister *)ufti;
+		}
 	}
 
 	{

@@ -55,7 +55,7 @@ enum TypeCategory
 	TYPECATEGORY_NOT_READY,
 
 	TYPECATEGORY_ValidBegin,
-	TYPECATEGORY_INTEGER = TYPECATEGORY_ValidBegin,
+	TYPECATEGORY_INTEGER,
 	TYPECATEGORY_FLOATING,
 	TYPECATEGORY_STRUCT,
 	TYPECATEGORY_UNION,
@@ -137,6 +137,63 @@ struct TypeInfo
 		TypeInfoArray arrayInfo;
 		TypeInfoProcedure procedureInfo;
 		TypeInfoAlias aliasInfo;
+	};
+};
+
+enum UserFacingTypeCategory : u8
+{
+	USERFACINGTYPECATEGORY_INTEGER   = 0,
+	USERFACINGTYPECATEGORY_FLOATING  = 1,
+	USERFACINGTYPECATEGORY_STRUCT    = 2,
+	USERFACINGTYPECATEGORY_ENUM      = 3,
+	USERFACINGTYPECATEGORY_POINTER   = 4,
+	USERFACINGTYPECATEGORY_ARRAY     = 5,
+	USERFACINGTYPECATEGORY_PROCEDURE = 6,
+	USERFACINGTYPECATEGORY_ALIAS     = 7
+};
+
+struct UserFacingTypeInfo;
+
+struct UserFacingStructMember
+{
+	String name;
+	UserFacingTypeInfo *typeInfo;
+	u64 offset;
+};
+
+struct UserFacingTypeInfo
+{
+	UserFacingTypeCategory typeCategory;
+	u64 size;
+	union {
+		struct {
+			s32 isSigned;
+		} integer;
+		struct {
+			String name;
+			s32 isUnion;
+			ArrayView<UserFacingStructMember> members;
+		} struct_;
+		struct {
+			String name;
+			UserFacingTypeInfo *typeInfo;
+			ArrayView<String> names;
+			ArrayView<s64> values;
+		} enum_;
+		struct {
+			UserFacingTypeInfo *typeInfo;
+		} pointer;
+		struct {
+			u64 count;
+			UserFacingTypeInfo *elementTypeInfo;
+		} array;
+		struct {
+			ArrayView<UserFacingTypeInfo *> parameters;
+			s32 isVarargs;
+		} procedure;
+		struct {
+			UserFacingTypeInfo *typeInfo;
+		} alias;
 	};
 };
 

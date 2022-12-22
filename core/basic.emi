@@ -99,7 +99,7 @@ TypeInfoProcedurePointer :: struct
 {
 	using _typeInfo : TypeInfo;
 	parameters : [] ^TypeInfo;
-	isVarargs : bool;
+	isVarargs : s32;
 };
 
 TypeInfoAlias :: struct

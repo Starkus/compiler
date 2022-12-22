@@ -237,6 +237,10 @@ struct Context
 	RWContainer<DynamicArray<u32, LinearAllocator>> tcGlobalTypeIndices;
 	RWContainer<DynamicArray<DynamicArray<u32, LinearAllocator>, LinearAllocator>> tcInlineCalls;
 
+	// CompileTime -----
+	volatile u32 ctGlobalValuesLock;
+	HashMap<u32, CTRegister *, LinearAllocator> ctGlobalValueContents;
+
 	// IR -----
 	RWContainer<BucketArray<String, HeapAllocator, 1024>> stringLiterals;
 	RWContainer<BucketArray<String, HeapAllocator, 128>> cStringLiterals;
@@ -545,6 +549,7 @@ int main(int argc, char **argv)
 	TimerSplit("Initialization"_s);
 
 	ParserMain(&context);
+	CompileTimeMain(&context);
 	TypeCheckMain(&context);
 	IRGenMain(&context);
 	BackendMain(&context);
