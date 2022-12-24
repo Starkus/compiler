@@ -193,6 +193,8 @@ struct Config
 };
 
 #define OUTPUT_BUFFER_BUCKET_SIZE 8192
+#define STATIC_DATA_VIRTUAL_ADDRESS ((u8 *)0x0000044000000000)
+#define STATIC_DATA_VIRTUAL_ADDRESS_END ((u8 *)0x0000045000000000)
 struct Context
 {
 	Config config;
@@ -210,6 +212,13 @@ struct Context
 
 	volatile s32 threadsDoingWork;
 	volatile s32 failedJobsCount;
+
+	volatile u32 staticDataLock;
+	u64 staticDataSize;
+	u64 staticDataAllocatedSpace;
+	// We keep track of the types of things stored in static data in order to know what memory is
+	// pointers to relocate them.
+	DynamicArray<void *, HeapAllocator> staticDataPointersToRelocate;
 
 	// Type check -----
 	MXContainer<DynamicArray<TCJob, HeapAllocator>> jobsWaitingForIdentifier;
@@ -239,7 +248,7 @@ struct Context
 
 	// CompileTime -----
 	volatile u32 ctGlobalValuesLock;
-	HashMap<u32, CTRegister *, LinearAllocator> ctGlobalValueContents;
+	HashMap<u32, void *, LinearAllocator> ctGlobalValueContents;
 
 	// IR -----
 	RWContainer<BucketArray<String, HeapAllocator, 1024>> stringLiterals;
@@ -271,14 +280,16 @@ struct TCJobData
 	DynamicArray<TCScope, ThreadAllocator> scopeStack;
 	ArrayView<u32> currentReturnTypes;
 	u32 currentForLoopArrayType;
-	BucketArray<Value, LinearAllocator, 1024> localValues;
+	BucketArray<Value, LinearAllocator, 256> localValues;
 };
 
 struct IRJobData
 {
 	u32 procedureIdx;
+	BucketArray<Value, LinearAllocator, 256> *localValues;
+	BucketArray<IRInstruction, LinearAllocator, 256> *irInstructions;
+	BucketArray<IRLabel, LinearAllocator, 256> irLabels;
 	DynamicArray<IRScope, ThreadAllocator> irStack;
-	BucketArray<IRLabel, LinearAllocator, 1024> irLabels;
 	IRLabel *returnLabel;
 	IRLabel *currentBreakLabel;
 	IRLabel *currentContinueLabel;

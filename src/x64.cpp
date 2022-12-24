@@ -88,7 +88,7 @@ s64 PrintOut(Context *context, String string)
 }
 
 String X64IRValueToStr(Context *context, IRValue value,
-		BucketArray<Value, LinearAllocator, 1024> *localValues)
+		BucketArray<Value, LinearAllocator, 256> *localValues)
 {
 	String result = "???VALUE"_s;
 
@@ -127,8 +127,14 @@ String X64IRValueToStr(Context *context, IRValue value,
 	if (v.flags & (VALUEFLAGS_ON_STATIC_STORAGE | VALUEFLAGS_IS_EXTERNAL)) {
 		if (v.flags & VALUEFLAGS_IS_EXTERNAL)
 			result = v.name;
-		else
-			result = TStringConcat("g_"_s, v.name);
+		else {
+			u8 *ptrToStaticData = *(u8 **)HashMapGet(context->ctGlobalValueContents,
+					value.value.valueIdx & VALUE_GLOBAL_MASK);
+			ASSERT(ptrToStaticData >= STATIC_DATA_VIRTUAL_ADDRESS &&
+					ptrToStaticData < STATIC_DATA_VIRTUAL_ADDRESS_END);
+			result = TPrintF("__start_of_static_data+0%llXh", (u64)(ptrToStaticData -
+						STATIC_DATA_VIRTUAL_ADDRESS));
+		}
 
 		if (offset > 0)
 			result = TPrintF("%S+0%xh", result, offset);
@@ -1759,7 +1765,7 @@ doTwoArgIntrinsic:
 }
 
 String X64InstructionToStr(Context *context, X64Instruction inst,
-	BucketArray<Value, LinearAllocator, 1024> *localValues)
+	BucketArray<Value, LinearAllocator, 256> *localValues)
 {
 	String mnemonic = x64InstructionInfos[inst.type].mnemonic;
 	switch (inst.type)
@@ -1825,7 +1831,7 @@ printLabel:
 }
 
 inline s64 X64PrintInstruction(Context *context, X64Instruction inst,
-	BucketArray<Value, LinearAllocator, 1024> *localValues)
+	BucketArray<Value, LinearAllocator, 256> *localValues)
 {
 	return PrintOut(context, X64InstructionToStr(context, inst, localValues));
 }
@@ -2011,10 +2017,20 @@ void X64PrintStaticData(Context *context, String name, IRValue value, u32 typeTa
 		int alignment = alignmentOverride < 0 ? 8 : alignmentOverride;
 		X64StaticDataAlignTo(context, alignment, true);
 
-		Value v = IRGetValue(context, value.value.valueIdx);
-		ASSERT(v.flags & VALUEFLAGS_ON_STATIC_STORAGE);
-		ASSERT(v.name.size);
-		PrintOut(context, TPrintF("%S DQ g_%S\n", name, v.name));
+		u8 **staticDataPtrPtr = (u8 **)HashMapGet(context->ctGlobalValueContents, value.value.valueIdx &
+				VALUE_GLOBAL_MASK);
+		if (staticDataPtrPtr) {
+			u8 *staticDataPtr = *staticDataPtrPtr;
+			u64 offset = (u64)(staticDataPtr - STATIC_DATA_VIRTUAL_ADDRESS);
+			PrintOut(context, TPrintF("%S DQ __start_of_static_data+0%llXh\n", name, offset));
+		}
+		else {
+			// @Obsolete
+			Value v = IRGetValue(context, value.value.valueIdx);
+			ASSERT(v.flags & VALUEFLAGS_ON_STATIC_STORAGE);
+			ASSERT(v.name.size);
+			PrintOut(context, TPrintF("%S DQ g_%S\n", name, v.name));
+		}
 	} break;
 	case IRVALUETYPE_INVALID:
 	{
@@ -2408,6 +2424,13 @@ void BackendMain(Context *context)
 	x64Registers[31] = XMM15;
 }
 
+int ComparePointers(const void *lhs, const void *rhs)
+{
+	u64 lhsNum = (u64)(*(void **)lhs);
+	u64 rhsNum = (u64)(*(void **)rhs);
+	return (lhsNum > rhsNum) - (lhsNum < rhsNum);
+}
+
 void BackendGenerateOutputFile(Context *context)
 {
 	enum RuntimeTypeInfoType {
@@ -2673,22 +2696,100 @@ void BackendGenerateOutputFile(Context *context)
 	{
 		auto scope = ProfilerScope("Writing all static variables");
 
+		PrintOut(context, "__start_of_static_data:\n"_s);
+
+		qsort(context->staticDataPointersToRelocate.data,
+				context->staticDataPointersToRelocate.size,
+				sizeof(void *), ComparePointers);
+
+		{
+			u8 *scan = STATIC_DATA_VIRTUAL_ADDRESS;
+			u8 *end  = scan + context->staticDataSize;
+			u64 nextPointerIdx = 0;
+			void *nextPointerToRelocate = (u8 *)context->staticDataPointersToRelocate[nextPointerIdx];
+			while (scan < end) {
+				u8 *current = scan;
+				if (scan == nextPointerToRelocate) {
+					u64 qword = *(u64 *)scan;
+#if 0
+					ASSERT(qword == 0 || (
+							qword >= (u64)STATIC_DATA_VIRTUAL_ADDRESS &&
+							qword < (u64)STATIC_DATA_VIRTUAL_ADDRESS_END));
+#endif
+					if (qword != 0) {
+						u64 offset = qword - (u64)STATIC_DATA_VIRTUAL_ADDRESS;
+						PrintOut(context, TPrintF("DQ __start_of_static_data + 0%llXh", offset));
+					}
+					else
+						PrintOut(context, "DQ 00h ;nullptr"_s);
+					scan += 8;
+
+					// Find next pointer to relocate, skipping duplicates
+					++nextPointerIdx;
+					u64 pointersCount = context->staticDataPointersToRelocate.size;
+					for (void *nextPtr = 0; nextPointerIdx < pointersCount; ++nextPointerIdx) {
+						nextPtr = context->staticDataPointersToRelocate[nextPointerIdx];
+						if (nextPtr != nextPointerToRelocate) {
+							nextPointerToRelocate = nextPtr;
+							break;
+						}
+					}
+				}
+				// If there's a whole quad word to read...
+				else if (scan <= end-8) {
+					u64 qword = *(u64 *)scan;
+
+					// @Delete
+#if 0
+					ASSERT(qword < (u64)STATIC_DATA_VIRTUAL_ADDRESS ||
+						   qword > (u64)STATIC_DATA_VIRTUAL_ADDRESS_END);
+#endif
+
+					PrintOut(context, TPrintF("DQ 0%.16llXh", qword));
+					scan += 8;
+				}
+				else {
+					PrintOut(context, TPrintF("DB 0%.2Xh", *scan++));
+				}
+				PrintOut(context, TPrintF("\t\t; static_data + 0x%llX\n", (u64)(current -
+								STATIC_DATA_VIRTUAL_ADDRESS)));
+			}
+		}
+
 		auto staticVars = context->irStaticVariables.GetForRead();
 		const u64 staticVariableCount = staticVars->size;
 		// Initialized
+#if 0
 		for (int staticVariableIdx = 0; staticVariableIdx < staticVariableCount; ++staticVariableIdx) {
 			IRStaticVariable staticVar = staticVars[staticVariableIdx];
 			if (staticVar.initialValue.valueType != IRVALUETYPE_INVALID &&
 					staticVar.initialValue.immediate != 0) {
 				Value value = GetGlobalValue(context, staticVar.valueIdx);
 
+				u8 **ptrToData = (u8 **)HashMapGet(context->ctGlobalValueContents,
+						staticVar.valueIdx & VALUE_GLOBAL_MASK);
+				if (ptrToData) continue; // @Hack
+
 				String name = value.name;
 				if (!(value.flags & VALUEFLAGS_IS_EXTERNAL))
 					name = TStringConcat("g_"_s, name);
 
-				X64PrintStaticData(context, name, staticVar.initialValue, value.typeTableIdx, 16);
+				if (ptrToData) {
+					u8 *data = *ptrToData;
+					TypeInfo typeInfo = GetTypeInfo(context, value.typeTableIdx);
+					PrintOut(context, name);
+					PrintOut(context, TPrintF(" DB 0%.2Xh", data[0]));
+					for (int i = 1; i < typeInfo.size; ++i)
+						PrintOut(context, TPrintF(", 0%.2Xh", data[i]));
+					PrintOut(context, "\n"_s);
+				}
+				else {
+					// @Remove: deprecated
+					X64PrintStaticData(context, name, staticVar.initialValue, value.typeTableIdx, 16);
+				}
 			}
 		}
+#endif
 
 #if IS_WINDOWS
 		PrintOut(context, "_DATA ENDS\n"_s);
@@ -2959,6 +3060,24 @@ void BackendJobProc(Context *context, u32 procedureIdx)
 	for (int instructionIdx = 0; instructionIdx < instructionCount; ++instructionIdx)
 	{
 		IRInstruction inst = proc.irInstructions[instructionIdx];
+
+#if DEBUG_BUILD
+		static u32 lastFileIdx = inst.loc.fileIdx;
+		static u32 lastLine = ExpandSourceLocation(context, inst.loc).line;
+
+		if (inst.loc.fileIdx != 0) {
+			FatSourceLocation fatLoc = ExpandSourceLocation(context, inst.loc);
+			if (inst.loc.fileIdx != lastFileIdx || fatLoc.line != lastLine)
+				*BucketArrayAdd(&jobData->beInstructions) = {
+					.type = X64_Comment,
+					.comment = { fatLoc.lineSize, fatLoc.beginingOfLine }
+				};
+
+			lastFileIdx = inst.loc.fileIdx;
+			lastLine = fatLoc.line;
+		}
+#endif
+
 		X64ConvertInstruction(context, inst);
 	}
 
@@ -3197,7 +3316,7 @@ unalignedMovups:;
 
 	X64FinalProcedure finalProc;
 	finalProc.procedureIdx = procedureIdx;
-	finalProc.localValues = proc.localValues;
+	finalProc.localValues = *jobData->localValues;
 	finalProc.instructions = jobData->beInstructions;
 	finalProc.stackSize = jobData->stackSize;
 	auto finalProcs = context->beFinalProcedureData.GetForWrite();

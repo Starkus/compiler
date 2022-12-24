@@ -164,7 +164,7 @@ struct BEFinalProcedure
 	u32 procedureIdx;
 	BucketArray<X64Instruction, LinearAllocator, 1024> instructions;
 	u64 stackSize;
-	BucketArray<Value, LinearAllocator, 1024> localValues;
+	BucketArray<Value, LinearAllocator, 256> localValues;
 };
 typedef BEFinalProcedure X64FinalProcedure;
 

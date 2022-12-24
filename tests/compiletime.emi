@@ -1,5 +1,7 @@
 CONSTANT :: RunThisOnCompileTime(10);
 
+g_aGlobal :s s32 = 5;
+
 TwoNumbers :: struct
 {
 	a: s32;
@@ -28,9 +30,12 @@ RunThisOnCompileTime :: (arg: s64) -> s64
 
 	result: s64 = foo * (bar.b + bar.a);
 
+	g_aGlobal += 1;
+
 	// Procedure calls
 	Print("Compile time execution!\n");
 	PrintF("Constant is %\n", result);
+	PrintF("Global is %\n", g_aGlobal);
 
 	return result;
 }

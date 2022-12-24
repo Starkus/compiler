@@ -1151,121 +1151,287 @@ bool AreTypeInfosEqual(Context *context, TypeInfo a, TypeInfo b)
 	}
 }
 
-UserFacingTypeInfo TCTypeInfoToUserFacingTypeInfo(Context *context, TypeInfo typeInfo)
+void *AllocateStaticData(Context *context, u32 valueIdx, u64 size, int alignment)
+{
+	ASSERT(valueIdx & VALUE_GLOBAL_BIT);
+
+	u8 *result;
+	{
+		ScopedLockSpin lock(&context->staticDataLock);
+
+		result = STATIC_DATA_VIRTUAL_ADDRESS + context->staticDataSize;
+		// Align
+		ASSERT(IsPowerOf2(alignment));
+		int alignmentMask = alignment - 1;
+		if ((u64)result & alignmentMask) {
+			result = (u8 *)(((u64)result + alignment) & (~alignmentMask));
+		}
+
+		u8 *end = result + size;
+		while (end > STATIC_DATA_VIRTUAL_ADDRESS + context->staticDataAllocatedSpace) {
+			// Allocate more memory
+			void *newMem = VirtualAlloc(STATIC_DATA_VIRTUAL_ADDRESS + context->staticDataAllocatedSpace,
+					0x100000, MEM_COMMIT, PAGE_READWRITE);
+			memset(newMem, 0xCC, 0x100000);
+			context->staticDataAllocatedSpace += 0x100000;
+		}
+		context->staticDataSize = result + size - STATIC_DATA_VIRTUAL_ADDRESS;
+	}
+
+	if (valueIdx != U32_MAX) {
+		// @Improve: same lock for both of these?
+		ScopedLockSpin lock(&context->ctGlobalValuesLock);
+		*HashMapGetOrAdd(&context->ctGlobalValueContents, valueIdx & VALUE_GLOBAL_MASK) =
+			(CTRegister *)result;
+	}
+
+	return result;
+}
+
+inline void AddStaticDataPointerToRelocate(Context *context, void *ptr)
+{
+	ASSERT(ptr >= STATIC_DATA_VIRTUAL_ADDRESS &&
+		   ptr <  STATIC_DATA_VIRTUAL_ADDRESS_END);
+
+	ASSERT(*(void **)ptr == nullptr || (
+		   *(void **)ptr >= STATIC_DATA_VIRTUAL_ADDRESS &&
+		   *(void **)ptr <  STATIC_DATA_VIRTUAL_ADDRESS_END));
+
+	ScopedLockSpin lock(&context->staticDataLock);
+	*DynamicArrayAdd(&context->staticDataPointersToRelocate) = ptr;
+}
+
+void AddStaticDataPointersToRelocateInType(Context *context, void *ptr, u32 typeTableIdx)
+{
+	typeTableIdx = StripAllAliases(context, typeTableIdx);
+	TypeInfo typeInfo = GetTypeInfo(context, typeTableIdx);
+	ASSERT(typeInfo.typeCategory != TYPECATEGORY_NOT_READY);
+
+	// We don't allow unions since we wouldn't be certain what parts are pointers most of the time.
+	// @Todo: actual error message
+	ASSERT(typeInfo.typeCategory != TYPECATEGORY_UNION);
+
+	if (typeInfo.typeCategory == TYPECATEGORY_POINTER)
+		AddStaticDataPointerToRelocate(context, ptr);
+	else if (typeInfo.typeCategory == TYPECATEGORY_STRUCT) {
+		u64 memberCount = typeInfo.structInfo.members.size;
+		for (int i = 0; i < memberCount; ++i) {
+			// Recurse on each member
+			StructMember *member = &typeInfo.structInfo.members[i];
+			AddStaticDataPointersToRelocateInType(context, (u8 *)ptr + member->offset,
+					member->typeTableIdx);
+		}
+	}
+}
+
+inline String CopyStringToStaticData(Context *context, String string)
+{
+	char *nameCopy = (char *)AllocateStaticData(context, U32_MAX, string.size, 1);
+	memcpy(nameCopy, string.data, string.size);
+	return { string.size, nameCopy };
+}
+
+void WriteUserFacingTypeInfoToStaticData(Context *context, TypeInfo typeInfo)
 {
 	auto &typeTable = context->typeTable.unsafe;
 
-	UserFacingTypeInfo result = {};
-	result.size = typeInfo.size;
+	u64 size;
+	switch (typeInfo.typeCategory) {
+		case TYPECATEGORY_NOT_READY:
+			// We'll hopefully write this once type is ready
+			return;
+		case TYPECATEGORY_INVALID:
+			size = sizeof(UserFacingTypeInfo); break;
+		case TYPECATEGORY_INTEGER:
+			size = sizeof(UserFacingTypeInfoInteger); break;
+		case TYPECATEGORY_FLOATING:
+			size = sizeof(UserFacingTypeInfo); break;
+		case TYPECATEGORY_STRUCT:
+		case TYPECATEGORY_UNION:
+			size = sizeof(UserFacingTypeInfoStruct); break;
+		case TYPECATEGORY_ENUM:
+			size = sizeof(UserFacingTypeInfoEnum); break;
+		case TYPECATEGORY_POINTER:
+			size = sizeof(UserFacingTypeInfoPointer); break;
+		case TYPECATEGORY_ARRAY:
+			size = sizeof(UserFacingTypeInfoArray); break;
+		case TYPECATEGORY_PROCEDURE:
+			size = sizeof(UserFacingTypeInfoProcedure); break;
+		case TYPECATEGORY_ALIAS:
+			size = sizeof(UserFacingTypeInfoAlias); break;
+		default:
+			ASSERT(false);
+	}
+
+	UserFacingTypeInfo *out;
+	void **existing = HashMapGet(context->ctGlobalValueContents, typeInfo.valueIdx & VALUE_GLOBAL_MASK);
+	if (existing)
+		out = (UserFacingTypeInfo *)*existing;
+	else
+		out = (UserFacingTypeInfo *)AllocateStaticData(context, typeInfo.valueIdx, size, 8);
+
+	out->size = typeInfo.size;
 	switch (typeInfo.typeCategory) {
 	case TYPECATEGORY_INTEGER:
-		result.typeCategory = USERFACINGTYPECATEGORY_INTEGER;
-		result.integer.isSigned = typeInfo.integerInfo.isSigned;
-		break;
+	{
+		out->typeCategory = USERFACINGTYPECATEGORY_INTEGER;
+		UserFacingTypeInfoInteger *outInteger = (UserFacingTypeInfoInteger *)out;
+		outInteger->isSigned = typeInfo.integerInfo.isSigned;
+	} break;
 	case TYPECATEGORY_FLOATING:
-		result.typeCategory = USERFACINGTYPECATEGORY_FLOATING;
+		out->typeCategory = USERFACINGTYPECATEGORY_FLOATING;
 		break;
 	case TYPECATEGORY_STRUCT:
 	case TYPECATEGORY_UNION:
 	{
-		result.typeCategory = USERFACINGTYPECATEGORY_STRUCT;
-		Array<UserFacingStructMember, LinearAllocator> members;
-		ArrayInit(&members, typeInfo.structInfo.members.size);
-		for (int i = 0; i < typeInfo.structInfo.members.size; ++i) {
+		out->typeCategory = USERFACINGTYPECATEGORY_STRUCT;
+		UserFacingTypeInfoStruct *outStruct = (UserFacingTypeInfoStruct *)out;
+		ArrayView<UserFacingStructMember> members;
+		u64 memberCount = typeInfo.structInfo.members.size;
+		members.size = memberCount;
+		members.data = (UserFacingStructMember *)AllocateStaticData(context, U32_MAX, memberCount *
+				sizeof(UserFacingStructMember), 8);
+		for (int i = 0; i < memberCount; ++i) {
 			StructMember *origMember = &typeInfo.structInfo.members[i];
 			u32 memberTypeInfoValueIdx = typeTable[origMember->typeTableIdx].valueIdx;
-			CTRegister *memberUfti;
+			UserFacingTypeInfo *memberUfti;
 			{
 				ScopedLockSpin lock(&context->ctGlobalValuesLock);
-				memberUfti = *HashMapGet(context->ctGlobalValueContents,
+				memberUfti = (UserFacingTypeInfo *)*HashMapGet(context->ctGlobalValueContents,
 						memberTypeInfoValueIdx & VALUE_GLOBAL_MASK);
 			}
 			UserFacingStructMember member = {
-				.name = origMember->name,
-				.typeInfo = (UserFacingTypeInfo *)memberUfti,
+				.name = CopyStringToStaticData(context, origMember->name),
+				.typeInfo = memberUfti,
 				.offset = origMember->offset
 			};
-			*ArrayAdd(&members) = member;
+			members[i] = member;
+
+			AddStaticDataPointerToRelocate(context, &members[i].name.data);
+			AddStaticDataPointerToRelocate(context, &members[i].typeInfo);
 		}
-		result.struct_.name = typeInfo.structInfo.name;
-		result.struct_.isUnion = typeInfo.typeCategory == TYPECATEGORY_UNION;
-		result.struct_.members = members;
+
+		outStruct->name = CopyStringToStaticData(context, typeInfo.structInfo.name);
+		outStruct->isUnion = typeInfo.typeCategory == TYPECATEGORY_UNION;
+		outStruct->memberCount = members.size;
+		outStruct->members = members.data;
+
+		AddStaticDataPointerToRelocate(context, &outStruct->name.data);
+		AddStaticDataPointerToRelocate(context, &outStruct->members);
 	} break;
 	case TYPECATEGORY_ENUM:
 	{
-		result.typeCategory = USERFACINGTYPECATEGORY_ENUM;
-		result.enum_.name = typeInfo.enumInfo.name;
+		out->typeCategory = USERFACINGTYPECATEGORY_ENUM;
+		UserFacingTypeInfoEnum *outEnum = (UserFacingTypeInfoEnum *)out;
+		outEnum->name = typeInfo.enumInfo.name;
 		u32 enumTypeInfoValueIdx = typeTable[typeInfo.enumInfo.typeTableIdx].valueIdx;
-		CTRegister *ufti;
+		UserFacingTypeInfo *ufti;
 		{
 			ScopedLockSpin lock(&context->ctGlobalValuesLock);
-			ufti = *HashMapGet(context->ctGlobalValueContents,
+			ufti = (UserFacingTypeInfo *)*HashMapGet(context->ctGlobalValueContents,
 					enumTypeInfoValueIdx & VALUE_GLOBAL_MASK);
 		}
-		result.enum_.typeInfo = (UserFacingTypeInfo *)ufti;
+		outEnum->typeInfo = ufti;
+
+		u64 memberCount = typeInfo.enumInfo.names.size;
+
+		outEnum->nameCount = memberCount;
+		outEnum->names = (String *)AllocateStaticData(context, U32_MAX, memberCount * sizeof(String), 8);
+		outEnum->valueCount = memberCount;
+		outEnum->values = (s64 *)AllocateStaticData(context, U32_MAX, memberCount * sizeof(s64), 8);
+
+		for (int i = 0; i < memberCount; ++i) {
+			outEnum->names[i]  = CopyStringToStaticData(context, typeInfo.enumInfo.names[i]);
+			outEnum->values[i] = typeInfo.enumInfo.values[i];
+
+			AddStaticDataPointerToRelocate(context, &outEnum->names[i].data);
+		}
+
+		AddStaticDataPointerToRelocate(context, &outEnum->typeInfo);
+		AddStaticDataPointerToRelocate(context, &outEnum->names);
+		AddStaticDataPointerToRelocate(context, &outEnum->values);
 	} break;
 	case TYPECATEGORY_POINTER:
 	{
-		result.typeCategory = USERFACINGTYPECATEGORY_POINTER;
+		out->typeCategory = USERFACINGTYPECATEGORY_POINTER;
+		UserFacingTypeInfoPointer *outPointer = (UserFacingTypeInfoPointer *)out;
 		u32 pointedTypeIdx = typeInfo.pointerInfo.pointedTypeTableIdx;
 		if (pointedTypeIdx == TYPETABLEIDX_VOID)
-			result.pointer.typeInfo = nullptr;
+			outPointer->typeInfo = nullptr;
 		else {
 			u32 typeInfoValueIdx = typeTable[pointedTypeIdx].valueIdx;
-			CTRegister *ufti;
+			UserFacingTypeInfo *ufti;
 			{
 				ScopedLockSpin lock(&context->ctGlobalValuesLock);
-				ufti = *HashMapGet(context->ctGlobalValueContents, typeInfoValueIdx & VALUE_GLOBAL_MASK);
+				ufti = (UserFacingTypeInfo *)*HashMapGet(context->ctGlobalValueContents,
+						typeInfoValueIdx & VALUE_GLOBAL_MASK);
 			}
-			result.pointer.typeInfo = (UserFacingTypeInfo *)ufti;
+			outPointer->typeInfo = ufti;
 		}
+
+		AddStaticDataPointerToRelocate(context, &outPointer->typeInfo);
 	} break;
 	case TYPECATEGORY_ARRAY:
 	{
-		result.typeCategory = USERFACINGTYPECATEGORY_ARRAY;
-		result.array.count = typeInfo.arrayInfo.count;
+		out->typeCategory = USERFACINGTYPECATEGORY_ARRAY;
+		UserFacingTypeInfoArray *outArray = (UserFacingTypeInfoArray *)out;
+		outArray->count = typeInfo.arrayInfo.count;
 		u32 elementTypeInfoValueIdx =
 			typeTable[typeInfo.arrayInfo.elementTypeTableIdx].valueIdx;
-		CTRegister *ufti;
+		UserFacingTypeInfo *ufti;
 		{
 			ScopedLockSpin lock(&context->ctGlobalValuesLock);
-			ufti = *HashMapGet(context->ctGlobalValueContents, elementTypeInfoValueIdx & VALUE_GLOBAL_MASK);
+			ufti = (UserFacingTypeInfo *)*HashMapGet(context->ctGlobalValueContents,
+					elementTypeInfoValueIdx & VALUE_GLOBAL_MASK);
 		}
-		result.array.elementTypeInfo = (UserFacingTypeInfo *)ufti;
+		outArray->elementTypeInfo = ufti;
+
+		AddStaticDataPointerToRelocate(context, &outArray->elementTypeInfo);
 	} break;
 	case TYPECATEGORY_PROCEDURE:
 	{
-		result.typeCategory = USERFACINGTYPECATEGORY_PROCEDURE;
-		Array<UserFacingTypeInfo *, LinearAllocator> parameters;
-		ArrayInit(&parameters, typeInfo.procedureInfo.parameters.size);
-		for (int i = 0; i < typeInfo.procedureInfo.parameters.size; ++i) {
+		out->typeCategory = USERFACINGTYPECATEGORY_PROCEDURE;
+		UserFacingTypeInfoProcedure *outProcedure = (UserFacingTypeInfoProcedure *)out;
+		u64 paramCount = typeInfo.procedureInfo.parameters.size;
+		ArrayView<UserFacingTypeInfo *> parameters;
+		parameters.size = paramCount;
+		parameters.data = (UserFacingTypeInfo **)AllocateStaticData(context, U32_MAX, paramCount *
+				sizeof(UserFacingTypeInfo *), 8);
+		for (int i = 0; i < paramCount; ++i) {
 			ProcedureParameter *origParam = &typeInfo.procedureInfo.parameters[i];
 			u32 paramTypeInfoValueIdx = typeTable[origParam->typeTableIdx].valueIdx;
-			CTRegister *paramUfti;
+			UserFacingTypeInfo *paramUfti;
 			{
 				ScopedLockSpin lock(&context->ctGlobalValuesLock);
-				paramUfti = *HashMapGet(context->ctGlobalValueContents,
+				paramUfti = (UserFacingTypeInfo *)*HashMapGet(context->ctGlobalValueContents,
 						paramTypeInfoValueIdx & VALUE_GLOBAL_MASK);
 			}
-			*ArrayAdd(&parameters) = (UserFacingTypeInfo *)paramUfti;
+			parameters[i] = paramUfti;
+
+			AddStaticDataPointerToRelocate(context, &parameters[i]);
 		}
-		result.procedure.parameters = parameters;
-		result.procedure.isVarargs = typeInfo.procedureInfo.isVarargs;
+		outProcedure->parameterCount = parameters.size;
+		outProcedure->parameters = parameters.data;
+		outProcedure->isVarargs = typeInfo.procedureInfo.isVarargs;
+
+		AddStaticDataPointerToRelocate(context, &outProcedure->parameters);
 	} break;
 	case TYPECATEGORY_ALIAS:
 	{
-		result.typeCategory = USERFACINGTYPECATEGORY_ALIAS;
+		out->typeCategory = USERFACINGTYPECATEGORY_ALIAS;
+		UserFacingTypeInfoAlias *outAlias = (UserFacingTypeInfoAlias *)out;
 		u32 typeInfoValueIdx = typeTable[typeInfo.aliasInfo.aliasedTypeIdx].valueIdx;
-		CTRegister *ufti;
+		UserFacingTypeInfo *ufti;
 		{
 			ScopedLockSpin lock(&context->ctGlobalValuesLock);
-			ufti = *HashMapGet(context->ctGlobalValueContents, typeInfoValueIdx & VALUE_GLOBAL_MASK);
+			ufti = (UserFacingTypeInfo *)*HashMapGet(context->ctGlobalValueContents,
+					typeInfoValueIdx & VALUE_GLOBAL_MASK);
 		}
-		result.alias.typeInfo = (UserFacingTypeInfo *)ufti;
+		outAlias->typeInfo = ufti;
+
+		AddStaticDataPointerToRelocate(context, &outAlias->typeInfo);
 	} break;
 	}
-		
-	return result;
 }
 
 inline u32 AddType(Context *context, TypeInfo typeInfo)
@@ -1292,13 +1458,8 @@ inline u32 AddType(Context *context, TypeInfo typeInfo)
 		UpdateGlobalValue(context, typeInfo.valueIdx, &value);
 	}
 
-	UserFacingTypeInfo *ufti = ALLOC(LinearAllocator, UserFacingTypeInfo);
-	*ufti = TCTypeInfoToUserFacingTypeInfo(context, typeInfo);
-	{
-		ScopedLockSpin lock(&context->ctGlobalValuesLock);
-		*HashMapGetOrAdd(&context->ctGlobalValueContents, typeInfo.valueIdx & VALUE_GLOBAL_MASK) =
-			(CTRegister *)ufti;
-	}
+	// Set up static data for user-facing type info
+	WriteUserFacingTypeInfoToStaticData(context, typeInfo);
 
 	return typeTableIdx;
 }
@@ -1477,6 +1638,10 @@ u32 TypeCheckStructDeclaration(Context *context, String name, bool isUnion,
 			}
 		};
 		typeTableIdx = AddType(context, t);
+
+		// Allocate static data but don't fill it
+		AllocateStaticData(context, context->typeTable.unsafe[typeTableIdx].valueIdx,
+				sizeof(UserFacingTypeInfoStruct), 8);
 	}
 
 	TCScope *stackTop = GetTopMostScope(context);
@@ -3261,7 +3426,7 @@ void TypeCheckExpression(Context *context, ASTExpression *expression)
 		switch (astStaticDef->expression->nodeType) {
 		case ASTNODETYPE_PROCEDURE_DECLARATION:
 		{
-			BucketArray<Value, LinearAllocator, 1024> oldLocalValues = jobData->localValues;
+			BucketArray<Value, LinearAllocator, 256> oldLocalValues = jobData->localValues;
 			BucketArrayInit(&jobData->localValues);
 			*BucketArrayAdd(&jobData->localValues) = {}; // No value number 0?
 
@@ -4441,7 +4606,7 @@ void TypeCheckExpression(Context *context, ASTExpression *expression)
 	{
 		ASTOperatorOverload *astOverload = &expression->operatorOverload;
 
-		BucketArray<Value, LinearAllocator, 1024> oldLocalValues = jobData->localValues;
+		BucketArray<Value, LinearAllocator, 256> oldLocalValues = jobData->localValues;
 		BucketArrayInit(&jobData->localValues);
 		*BucketArrayAdd(&jobData->localValues) = {}; // No value number 0?
 
@@ -4837,6 +5002,8 @@ void TCStructJobProc(void *args)
 		ASSERT(typeTable[typeTableIdx].typeCategory == TYPECATEGORY_NOT_READY);
 		t.valueIdx = typeTable[typeTableIdx].valueIdx;
 		(TypeInfo&)typeTable[typeTableIdx] = t;
+
+		WriteUserFacingTypeInfoToStaticData(context, t);
 	}
 
 	// Wake up any jobs that were waiting for this type
@@ -4907,7 +5074,18 @@ void GenerateTypeCheckJobs(Context *context, ASTExpression *expression) {
 	}
 }
 
-void TypeCheckMain(Context *context) {
+void TypeCheckMain(Context *context)
+{
+	// Initialize memory and bookkeep of types for static data
+	u64 virtualRangeSize = (u64)(STATIC_DATA_VIRTUAL_ADDRESS_END - STATIC_DATA_VIRTUAL_ADDRESS);
+	VirtualAlloc(STATIC_DATA_VIRTUAL_ADDRESS, virtualRangeSize, MEM_RESERVE, PAGE_READWRITE);
+	VirtualAlloc(STATIC_DATA_VIRTUAL_ADDRESS, 0x100000, MEM_COMMIT, PAGE_READWRITE);
+	memset(STATIC_DATA_VIRTUAL_ADDRESS, 0xCC, 0x100000);
+	context->staticDataAllocatedSpace = 0x100000;
+	context->staticDataSize = 0;
+	context->staticDataLock = 0;
+	DynamicArrayInit(&context->staticDataPointersToRelocate, 1024);
+
 	{
 		auto staticDefinitions = context->staticDefinitions.GetForWrite();
 		BucketArrayInit(&staticDefinitions);
@@ -5028,13 +5206,11 @@ void TypeCheckMain(Context *context) {
 
 		SpinlockUnlock(&context->typeTable.lock);
 
-		for (int i = 0; i < TYPETABLEIDX_Count; ++i) {
-			UserFacingTypeInfo *ufti = ALLOC(LinearAllocator, UserFacingTypeInfo);
-			t = typeTableFast[i];
-			*ufti = TCTypeInfoToUserFacingTypeInfo(context, t);
-			*HashMapGetOrAdd(&context->ctGlobalValueContents, t.valueIdx & VALUE_GLOBAL_MASK) =
-				(CTRegister *)ufti;
-		}
+		for (int i = TYPETABLEIDX_PrimitiveBegin; i < TYPETABLEIDX_PrimitiveEnd; ++i)
+			WriteUserFacingTypeInfoToStaticData(context, typeTableFast[i]);
+
+		for (int i = TYPETABLEIDX_BuiltinStructsBegin; i < TYPETABLEIDX_BuiltinStructsEnd; ++i)
+			AllocateStaticData(context, typeTableFast[i].valueIdx, sizeof(UserFacingTypeInfoStruct), 8);
 	}
 
 	{

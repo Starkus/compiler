@@ -165,36 +165,52 @@ struct UserFacingTypeInfo
 {
 	UserFacingTypeCategory typeCategory;
 	u64 size;
-	union {
-		struct {
-			s32 isSigned;
-		} integer;
-		struct {
-			String name;
-			s32 isUnion;
-			ArrayView<UserFacingStructMember> members;
-		} struct_;
-		struct {
-			String name;
-			UserFacingTypeInfo *typeInfo;
-			ArrayView<String> names;
-			ArrayView<s64> values;
-		} enum_;
-		struct {
-			UserFacingTypeInfo *typeInfo;
-		} pointer;
-		struct {
-			u64 count;
-			UserFacingTypeInfo *elementTypeInfo;
-		} array;
-		struct {
-			ArrayView<UserFacingTypeInfo *> parameters;
-			s32 isVarargs;
-		} procedure;
-		struct {
-			UserFacingTypeInfo *typeInfo;
-		} alias;
-	};
+};
+
+struct UserFacingTypeInfoInteger : UserFacingTypeInfo
+{
+	s32 isSigned;
+};
+
+struct UserFacingTypeInfoStruct : UserFacingTypeInfo
+{
+	String name;
+	s32 isUnion;
+	u64 memberCount;
+	UserFacingStructMember *members;
+};
+
+struct UserFacingTypeInfoEnum : UserFacingTypeInfo
+{
+	String name;
+	UserFacingTypeInfo *typeInfo;
+	u64 nameCount;
+	String *names;
+	u64 valueCount;
+	s64 *values;
+};
+
+struct UserFacingTypeInfoPointer : UserFacingTypeInfo
+{
+	UserFacingTypeInfo *typeInfo;
+};
+
+struct UserFacingTypeInfoArray : UserFacingTypeInfo
+{
+	u64 count;
+	UserFacingTypeInfo *elementTypeInfo;
+};
+
+struct UserFacingTypeInfoProcedure : UserFacingTypeInfo
+{
+	u64 parameterCount;
+	UserFacingTypeInfo **parameters;
+	s32 isVarargs;
+};
+
+struct UserFacingTypeInfoAlias : UserFacingTypeInfo
+{
+	UserFacingTypeInfo *typeInfo;
 };
 
 enum StaticDefinitionType
@@ -269,7 +285,7 @@ struct Procedure
 	bool isIRReady;
 	Array<u32, LinearAllocator> returnValueIndices;
 	u32 typeTableIdx; // Type of the procedure
-	BucketArray<Value, LinearAllocator, 1024> localValues;
+	BucketArray<Value, LinearAllocator, 256> localValues;
 	BucketArray<IRInstruction, LinearAllocator, 256> irInstructions;
 };
 

@@ -20,6 +20,7 @@ Main :: (args : [] String) -> s64
 	localStatic = 50;
 
 	PrintF("procStatic: % % %\n", ProcWithStatic(), ProcWithStatic(), ProcWithStatic());
+	PrintF("global string: %\n", globalString);
 
 	f := globalFloat;
 	f2 := 2.6;
