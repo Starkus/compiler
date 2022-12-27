@@ -27,6 +27,25 @@ struct ASTLiteral : ASTBase
 	};
 };
 
+enum ConstantType
+{
+	CONSTANTTYPE_INVALID = 0,
+	CONSTANTTYPE_INTEGER,
+	CONSTANTTYPE_FLOATING,
+	CONSTANTTYPE_GROUP,
+};
+struct Constant
+{
+	ConstantType type;
+	union
+	{
+		s64 valueAsInt;
+		f64 valueAsFloat;
+		Array<Constant, LinearAllocator> valueAsGroup;
+	};
+	u32 typeTableIdx;
+};
+
 struct ASTUnaryOperation : ASTBase
 {
 	enum TokenType op;
@@ -309,6 +328,12 @@ struct ASTSimple : ASTBase
 	ASTExpression *expression;
 };
 
+struct ASTRun : ASTBase
+{
+	ASTExpression *expression;
+	Constant result;
+};
+
 struct ASTCast : ASTBase
 {
 	ASTType astType;
@@ -368,6 +393,7 @@ enum ASTNodeType : u8
 	ASTNODETYPE_TYPEOF,
 	ASTNODETYPE_SIZEOF,
 	ASTNODETYPE_CAST,
+	ASTNODETYPE_RUN,
 	ASTNODETYPE_DEFINED,
 	ASTNODETYPE_COMPILER_BREAKPOINT,
 	ASTNODETYPE_GARBAGE
@@ -405,6 +431,7 @@ struct ASTExpression
 		ASTSimple usingNode;
 		ASTSimple typeOfNode;
 		ASTSimple sizeOfNode;
+		ASTRun runNode;
 		ASTDefined definedNode;
 		ASTCast castNode;
 		ASTMultipleExpressions multipleExpressions;

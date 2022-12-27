@@ -69,7 +69,7 @@ Main :: (args : [] String) -> s64
 	vertexBuffer : GLuint = ?;
 	glGenBuffers(1, ^vertexBuffer);
 	glBindBuffer(GL_ARRAY_BUFFER, vertexBuffer);
-	glBufferData(GL_ARRAY_BUFFER, sizeof(vertexBufferData), ^vertexBufferData, GL_STATIC_DRAW);
+	glBufferData(GL_ARRAY_BUFFER, cast(s64)sizeof(vertexBufferData), ^vertexBufferData, GL_STATIC_DRAW);
 
 	vertexShaderId, fragmentShaderId : GLuint = ?;
 	errorCode : GLHError = ?;

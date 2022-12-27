@@ -29,6 +29,7 @@ GLHInitOpenGLContext :: (windowTitle: ^CHAR, windowClassName: ^CHAR, screenWidth
 		screenHeight: s32) -> HANDLE, ^void, ^void
 {
 	windowClass : WNDCLASSEXA;
+
 	hInstance := ^__ImageBase;
 
 	windowClass.cbSize = cast(u32)sizeof(windowClass);

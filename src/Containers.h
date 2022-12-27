@@ -276,10 +276,12 @@ void DynamicArrayCopy(DynamicArray<T, A> *dst,
 	memcpy(dst->data, src->data, src->size * sizeof(T));
 }
 
-template <typename T, typename A, u64 bucketSize>
-struct BucketArray
+template <typename T>
+struct BucketArrayView
 {
-	DynamicArray<Array<T, A>, A> buckets;
+	ArrayView<T *> buckets;
+	u64 count;
+	u64 bucketSize;
 
 	T &operator[](s64 idx)
 	{
@@ -298,32 +300,86 @@ struct BucketArray
 	}
 };
 
+template <typename T>
+T *BucketArrayViewBack(BucketArrayView<T> *bucketArray)
+{
+	ASSERT(bucketArray->buckets.size > 0);
+	return &(*ArrayViewBack(&bucketArray->buckets))[bucketArray->count % bucketArray->bucketSize];
+}
+
+template <typename T, typename A, u64 bucketSize>
+struct BucketArray
+{
+	DynamicArray<T *, A> buckets;
+	u64 count;
+
+	T &operator[](s64 idx)
+	{
+		s64 bucketIdx = idx / bucketSize;
+		ASSERT((u64)bucketIdx < buckets.size);
+		ASSERT((u64)idx < count);
+		return buckets[bucketIdx][idx % bucketSize];
+	}
+
+	const T &operator[](s64 idx) const
+	{
+		s64 bucketIdx = idx / bucketSize;
+		ASSERT((u64)bucketIdx < buckets.size);
+		ASSERT((u64)idx < count);
+		return buckets[bucketIdx][idx % bucketSize];
+	}
+
+	operator BucketArrayView<T>()
+	{
+		BucketArrayView<T> result;
+		result.buckets = buckets;
+		result.count = count;
+		result.bucketSize = bucketSize;
+		return result;
+	}
+
+	operator BucketArrayView<const T>() const
+	{
+		BucketArrayView<T> result;
+		result.buckets = buckets;
+		result.count = count;
+		result.bucketSize = bucketSize;
+		return result;
+	}
+};
+
 template <typename T, typename A, u64 bucketSize>
 void BucketArrayInit(BucketArray<T, A, bucketSize> *bucketArray)
 {
+	bucketArray->count = 0;
 	DynamicArrayInit(&bucketArray->buckets, 4);
 
 	// Start with one bucket
-	Array<T, A> *firstBucket = DynamicArrayAdd(&bucketArray->buckets);
-	ArrayInit(firstBucket, bucketSize);
+	T **firstBucket = DynamicArrayAdd(&bucketArray->buckets);
+	*firstBucket = (T *)A::Alloc(sizeof(T) * bucketSize, alignof(T));
 }
 
 template <typename T, typename A, u64 bucketSize>
 T *BucketArrayAdd(BucketArray<T, A, bucketSize> *bucketArray)
 {
 	ASSERT(bucketArray->buckets.size > 0);
-	Array<T, A> *lastBucket = &bucketArray->buckets[bucketArray->buckets.size - 1];
+	u64 lastBucketCount = bucketArray->count % bucketSize;
+	u64 bucketIdx = bucketArray->count / bucketSize;
 
-	if (lastBucket->size >= bucketSize)
-	{
-		Array<T, A> newBucket;
-		ArrayInit(&newBucket, bucketSize);
+	T *bucket;
+	if (bucketIdx >= bucketArray->buckets.size) {
+		T *newBucket = (T *)A::Alloc(sizeof(T) * bucketSize, alignof(T));
 		// Call AddMT so we can call BucketArrayCount without locking without risking reading an
 		// invalid bucket.
-		lastBucket = DynamicArrayAddMT(&bucketArray->buckets, newBucket);
+		DynamicArrayAddMT(&bucketArray->buckets, newBucket);
+		bucket = newBucket;
+		lastBucketCount = 0;
 	}
+	else
+		bucket = bucketArray->buckets[bucketIdx];
 
-	return ArrayAdd(lastBucket);
+	++bucketArray->count;
+	return &bucket[lastBucketCount];
 }
 
 // Good for when another thread is reading this array and we don't want to use locks.
@@ -331,34 +387,30 @@ template <typename T, typename A, u64 bucketSize>
 void BucketArrayAddMT(BucketArray<T, A, bucketSize> *bucketArray, T value)
 {
 	ASSERT(bucketArray->buckets.size > 0);
-	Array<T, A> *lastBucket = &bucketArray->buckets[bucketArray->buckets.size - 1];
+	u64 lastBucketCount = bucketArray->count % bucketSize;
+	u64 bucketIdx = bucketArray->count / bucketSize;
 
-	if (lastBucket->size >= bucketSize)
-	{
-		Array<T, A> *newBucket = DynamicArrayAdd(&bucketArray->buckets);
-		ArrayInit(newBucket, bucketSize);
-		lastBucket = newBucket;
+	T *bucket;
+	if (lastBucketCount >= bucketSize) {
+		T *newBucket = (T *)A::Alloc(sizeof(T) * bucketSize, alignof(T));
+		// Call AddMT so we can call BucketArrayCount without locking without risking reading an
+		// invalid bucket.
+		DynamicArrayAddMT(&bucketArray->buckets, newBucket);
+		bucket = newBucket;
+		lastBucketCount = 0;
 	}
+	else
+		bucket = bucketArray->buckets[bucketIdx];
 
-	ArrayAddMT(lastBucket, value);
+	bucket[lastBucketCount] = value;
+	++bucketArray->count;
 }
 
 template <typename T, typename A, u64 bucketSize>
 T *BucketArrayBack(BucketArray<T, A, bucketSize> *bucketArray)
 {
 	ASSERT(bucketArray->buckets.size > 0);
-	return DynamicArrayBack(&bucketArray->buckets[bucketArray->buckets.size - 1]);
-}
-
-template <typename T, typename A, u64 bucketSize>
-u64 BucketArrayCount(const BucketArray<T, A, bucketSize> *bucketArray)
-{
-	if (bucketArray->buckets.size == 0)
-		return 0;
-	u64 lastBucket = bucketArray->buckets.size - 1;
-	u64 count = lastBucket * bucketSize;
-	count += bucketArray->buckets[lastBucket].size;
-	return count;
+	return &(*DynamicArrayBack(&bucketArray->buckets))[bucketArray->count % bucketSize];
 }
 
 template <typename T>

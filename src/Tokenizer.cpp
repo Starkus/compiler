@@ -209,86 +209,6 @@ inline bool TokenIsEqual(Context *context, Token a, Token b)
 	return StringEquals(aStr, bStr);
 }
 
-Token ParseNumber(Context *context, Tokenizer *tokenizer, Token baseToken)
-{
-	Token result = baseToken;
-	result.type = TOKEN_LITERAL_NUMBER;
-	if (*tokenizer->cursor == '-')
-	{
-		++result.size;
-		++tokenizer->cursor;
-	}
-	if (*tokenizer->cursor == '0')
-	{
-		++result.size;
-		++tokenizer->cursor;
-
-		switch (*tokenizer->cursor)
-		{
-		case 'x':
-		case 'X':
-		{
-			++result.size;
-			++tokenizer->cursor;
-			while (IsNumericHex(*tokenizer->cursor))
-			{
-				++result.size;
-				++tokenizer->cursor;
-			}
-		} goto numberDone;
-		case 'b':
-		{
-			++result.size;
-			++tokenizer->cursor;
-			while (*tokenizer->cursor == '0' || *tokenizer->cursor == '1')
-			{
-				++result.size;
-				++tokenizer->cursor;
-			}
-		} goto numberDone;
-		}
-	}
-	// Normal base parsing
-	{
-		bool foundADot = false;
-		bool foundAnE = false;
-		while (true)
-		{
-			if (*tokenizer->cursor == 'e' || *tokenizer->cursor == 'E')
-			{
-				if (foundAnE)
-					LogError(context, result.loc, "Multiple 'e' characters found while parsing number"_s);
-				foundAnE = true;
-				++result.size;
-				++tokenizer->cursor;
-				if (*tokenizer->cursor == '-')
-				{
-					++result.size;
-					++tokenizer->cursor;
-				}
-			}
-
-			if (*tokenizer->cursor == '.')
-			{
-				if (foundADot)
-					goto numberDone;
-				else if (*(tokenizer->cursor + 1) == '.')
-					// .. is an operator
-					goto numberDone;
-
-				foundADot = true;
-			}
-			else if (!IsNumeric(*tokenizer->cursor))
-				goto numberDone;
-
-			++result.size;
-			++tokenizer->cursor;
-		}
-	}
-numberDone:
-	return result;
-}
-
 enum TokenType CalculateTokenType(Context *context, const Tokenizer *tokenizer)
 {
 	const char * const begin = tokenizer->cursor;
@@ -382,6 +302,8 @@ enum TokenType CalculateTokenType(Context *context, const Tokenizer *tokenizer)
 				return TOKEN_DIRECTIVE_BREAK;
 			else if (StringEquals(directive, "#cstr"_s))
 				return TOKEN_DIRECTIVE_CSTR;
+			else if (StringEquals(directive, "#run"_s))
+				return TOKEN_DIRECTIVE_RUN;
 			else
 				return TOKEN_INVALID_DIRECTIVE;
 		} break;
@@ -615,7 +537,7 @@ u16 CalculateTokenSize(Context *context, const Tokenizer *tokenizer, enum TokenT
 						goto numberDone;
 					foundAnE = true;
 					++scan;
-					if (*scan == '-')
+					if (*scan == '-' || *scan == '+')
 						++scan;
 				}
 
@@ -668,6 +590,7 @@ u16 CalculateTokenSize(Context *context, const Tokenizer *tokenizer, enum TokenT
 	case TOKEN_OP_ASSIGNMENT_OR:
 	case TOKEN_OP_ASSIGNMENT_AND:
 		return 3;
+	case TOKEN_DIRECTIVE_RUN:
 	case TOKEN_KEYWORD_ELSE:
 	case TOKEN_KEYWORD_ENUM:
 	case TOKEN_KEYWORD_CAST:
@@ -769,7 +692,8 @@ FatSourceLocation ExpandSourceLocation(Context *context, SourceLocation loc)
 	return result;
 }
 
-void TokenizeFile(Context *context, u32 fileIdx) {
+void TokenizeFile(Context *context, u32 fileIdx)
+{
 	ParseJobData *jobData = (ParseJobData *)SYSGetFiberData(context->flsIndex);
 
 	Tokenizer tokenizer = {};

@@ -112,6 +112,11 @@ void SchedulerProc(Context *context)
 				*DynamicArrayAdd(&context->jobsWaitingForType.unsafe) = job;
 				SYSMutexUnlock(context->jobsWaitingForType.lock);
 			} break;
+			case TCYIELDREASON_GLOBAL_VALUE_NOT_READY:
+			{
+				auto jobs = context->jobsWaitingForGlobalValue.Get();
+				*DynamicArrayAdd(&jobs) = job;
+			} break;
 			default:
 				ASSERTF(false, "Previous fiber is %llx, reason is %d", t_previousFiber,
 						t_previousYieldReason);
@@ -167,6 +172,7 @@ void SchedulerProc(Context *context)
 					WAKE_UP_ONE(jobsWaitingForProcedure)
 					WAKE_UP_ONE(jobsWaitingForStaticDef)
 					WAKE_UP_ONE(jobsWaitingForType)
+					WAKE_UP_ONE(jobsWaitingForGlobalValue)
 #undef WAKE_UP_ONE
 
 #if DEFER_FIBER_CREATION

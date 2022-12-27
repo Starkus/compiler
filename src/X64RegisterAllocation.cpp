@@ -373,7 +373,7 @@ void GenerateBasicBlocks(Context *context)
 
 	BasicBlock *currentBasicBlock = PushBasicBlock(nullptr, &jobData->beBasicBlocks);
 
-	u64 instructionCount = BucketArrayCount(&jobData->beInstructions);
+	u64 instructionCount = jobData->beInstructions.count;
 	for (int instructionIdx = 0; instructionIdx < instructionCount; ++instructionIdx)
 	{
 		X64Instruction inst = jobData->beInstructions[instructionIdx];
@@ -423,7 +423,7 @@ void GenerateBasicBlocks(Context *context)
 		Print("- End\n\n");
 
 	// Link basic blocks together
-	const u64 basicBlockCount = BucketArrayCount(&jobData->beBasicBlocks);
+	const u64 basicBlockCount = jobData->beBasicBlocks.count;
 	for (int i = 0; i < basicBlockCount; ++i)
 	{
 		BasicBlock *jumpBlock = &jobData->beBasicBlocks[i];
@@ -643,7 +643,7 @@ void X64AllocateRegisters(Context *context)
 	// The main reasoning behind this is to avoid so many queries into cold type table data just to
 	// see if each value is an xmm register or not.
 	{
-		u64 valueCount = BucketArrayCount(&proc->localValues);
+		u64 valueCount = proc->localValues.count;
 
 		u64 qwordCount = valueCount >> 6;
 		if (valueCount & 63) ++qwordCount;
@@ -976,7 +976,7 @@ skipImmitate:
 	ArrayInit(&patchTop.patchInstructions, 1 + calleeSaveRegCount);
 	ArrayInit(&patchBottom.patchInstructions, 1 + calleeSaveRegCount);
 
-	u64 instructionCount = BucketArrayCount(&jobData->beInstructions);
+	u64 instructionCount = jobData->beInstructions.count;
 	*ArrayAdd(&patchBottom.patchInstructions) = jobData->beInstructions[instructionCount - 1];
 
 	for (int i = 0; i < 64; ++i)

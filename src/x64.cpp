@@ -4,7 +4,7 @@ X64InstructionStream X64InstructionStreamBegin(
 	X64InstructionStream stream;
 	stream.idx = -1;
 	stream.instructionArray = instructionArray;
-	stream.instructionArrayCount = BucketArrayCount(instructionArray);
+	stream.instructionArrayCount = instructionArray->count;
 	stream.stack.size = 0;
 	return stream;
 }
@@ -64,26 +64,30 @@ s64 PrintOut(Context *context, String string)
 {
 	s64 bytesToWrite = string.size;
 	const char *in = string.data;
+
 	while (bytesToWrite > 0) {
-		auto *lastBucket = DynamicArrayBack(&context->outputBuffer.buckets);
-		s64 bytesLeftInBucket = OUTPUT_BUFFER_BUCKET_SIZE - lastBucket->size;
-		u8 *bufferCursor = lastBucket->data + lastBucket->size;
+		u8 *lastBucket = *DynamicArrayBack(&context->outputBuffer.buckets);
+		s64 bytesLeftInBucket = OUTPUT_BUFFER_BUCKET_SIZE * context->outputBuffer.buckets.size -
+			context->outputBuffer.count;
+		u8 *bufferCursor = lastBucket + OUTPUT_BUFFER_BUCKET_SIZE - bytesLeftInBucket;
 		if (bytesToWrite > bytesLeftInBucket) {
 			memcpy(bufferCursor, in, bytesLeftInBucket);
 			in += bytesLeftInBucket;
-			lastBucket->size += bytesLeftInBucket;
+			context->outputBuffer.count += bytesLeftInBucket;
 			bytesToWrite -= bytesLeftInBucket;
 
-			lastBucket = DynamicArrayAdd(&context->outputBuffer.buckets);
-			ArrayInit(lastBucket, OUTPUT_BUFFER_BUCKET_SIZE);
+			u8 **newBucket = DynamicArrayAdd(&context->outputBuffer.buckets);
+			*newBucket = (u8 *)HeapAllocator::Alloc(OUTPUT_BUFFER_BUCKET_SIZE, 1);
+			lastBucket = *newBucket;
 		}
 		else {
 			memcpy(bufferCursor, in, string.size);
 			in += bytesLeftInBucket;
-			lastBucket->size += bytesToWrite;
-			bytesToWrite -= bytesToWrite;
+			context->outputBuffer.count += bytesToWrite;
+			break;
 		}
 	}
+
 	return string.size;
 }
 
@@ -93,14 +97,10 @@ String X64IRValueToStr(Context *context, IRValue value,
 	String result = "???VALUE"_s;
 
 	ASSERT(value.valueType != IRVALUETYPE_IMMEDIATE_FLOAT);
-	ASSERT(value.valueType != IRVALUETYPE_IMMEDIATE_CSTR);
+	ASSERT(value.valueType != IRVALUETYPE_IMMEDIATE_STRING);
 
 	if (value.valueType == IRVALUETYPE_IMMEDIATE_INTEGER) {
 		result = TPrintF("%lld", value.immediate);
-		return result;
-	}
-	else if (value.valueType == IRVALUETYPE_IMMEDIATE_STRING) {
-		result = TPrintF("_str_%d", value.immediateStringIdx);
 		return result;
 	}
 
@@ -128,7 +128,7 @@ String X64IRValueToStr(Context *context, IRValue value,
 		if (v.flags & VALUEFLAGS_IS_EXTERNAL)
 			result = v.name;
 		else {
-			u8 *ptrToStaticData = *(u8 **)HashMapGet(context->ctGlobalValueContents,
+			u8 *ptrToStaticData = *(u8 **)HashMapGet(context->globalValueContents,
 					value.value.valueIdx & VALUE_GLOBAL_MASK);
 			ASSERT(ptrToStaticData >= STATIC_DATA_VIRTUAL_ADDRESS &&
 					ptrToStaticData < STATIC_DATA_VIRTUAL_ADDRESS_END);
@@ -143,8 +143,13 @@ String X64IRValueToStr(Context *context, IRValue value,
 
 		// Array indexing
 		if (value.value.elementSize > 0) {
+			u32 indexTypeIdx;
+			if (value.value.indexValueIdx & VALUE_GLOBAL_BIT)
+				indexTypeIdx = GetGlobalValue(context, value.value.indexValueIdx).typeTableIdx;
+			else
+				indexTypeIdx = (*localValues)[value.value.indexValueIdx].typeTableIdx;
 			String indexRegisterStr = X64IRValueToStr(context,
-					IRValueValue(context, value.value.indexValueIdx), localValues);
+					IRValueValue(value.value.indexValueIdx, indexTypeIdx), localValues);
 			result = TPrintF("%S+%S*%llu", result, indexRegisterStr, value.value.elementSize);
 		}
 
@@ -407,7 +412,16 @@ void X64MovNoTmp(Context *context, IRValue dst, IRValue src)
 			result.type = X64_MOVSS;
 		else {
 			ASSERT(srcType.size == 8);
-			result.type = X64_CVTSD2SS;
+
+			// X64_CVTSD2SS is R-RM
+			ASSERT(dst.valueType == IRVALUETYPE_VALUE ||
+				   dst.valueType == IRVALUETYPE_VALUE_DEREFERENCE);
+			IRValue newValue = IRValueNewValue(context, "_cvtsd2ss_tmp"_s, dst.typeTableIdx,
+					VALUEFLAGS_FORCE_REGISTER | VALUEFLAGS_TRY_IMMITATE, dst.value.valueIdx);
+			*BucketArrayAdd(&jobData->beInstructions) = { X64_CVTSD2SS, newValue, src };
+
+			result.type = X64_MOVSS;
+			src = newValue;
 		}
 	}
 	else {
@@ -426,8 +440,17 @@ void X64MovNoTmp(Context *context, IRValue dst, IRValue src)
 			}
 			result.type = X64_CVTSI2SD;
 		}
-		else if (srcType.size == 4)
-			result.type = X64_CVTSS2SD;
+		else if (srcType.size == 4) {
+			// X64_CVTSS2SD is R-RM
+			ASSERT(dst.valueType == IRVALUETYPE_VALUE ||
+				   dst.valueType == IRVALUETYPE_VALUE_DEREFERENCE);
+			IRValue newValue = IRValueNewValue(context, "_cvtsd2ss_tmp"_s, dst.typeTableIdx,
+					VALUEFLAGS_FORCE_REGISTER | VALUEFLAGS_TRY_IMMITATE, dst.value.valueIdx);
+			*BucketArrayAdd(&jobData->beInstructions) = { X64_CVTSS2SD, newValue, src };
+
+			result.type = X64_MOVSD;
+			src = newValue;
+		}
 		else {
 			ASSERT(srcType.size == 8);
 			result.type = X64_MOVSD;
@@ -439,26 +462,34 @@ void X64MovNoTmp(Context *context, IRValue dst, IRValue src)
 	*BucketArrayAdd(&jobData->beInstructions) = result;
 }
 
+IRValue X64CopyToRegister(Context *context, IRValue src)
+{
+	if (!CanValueBeMemory(context, src))
+		return src;
+
+	Value srcValue = IRGetValue(context, src.value.valueIdx);
+	u32 srcUsedFlag = srcValue.flags & VALUEFLAGS_IS_USED;
+	u32 immitateFlag = src.valueType == IRVALUETYPE_VALUE ? VALUEFLAGS_TRY_IMMITATE : 0;
+	IRValue tmp = IRValueNewValue(context, "_movtmp"_s, src.typeTableIdx,
+			VALUEFLAGS_FORCE_REGISTER | srcUsedFlag | immitateFlag, src.value.valueIdx);
+
+	X64MovNoTmp(context, tmp, src);
+	return tmp;
+}
+
 void X64Mov(Context *context, IRValue dst, IRValue src)
 {
-	if (CanValueBeMemory(context, dst) && CanValueBeMemory(context, src)) {
-		Value srcValue = IRGetValue(context, src.value.valueIdx);
-		u32 srcUsedFlag = srcValue.flags & VALUEFLAGS_IS_USED;
-		u32 immitateFlag = src.valueType == IRVALUETYPE_VALUE ? VALUEFLAGS_TRY_IMMITATE : 0;
-		IRValue tmp = IRValueNewValue(context, "_movtmp"_s, dst.typeTableIdx,
-				VALUEFLAGS_FORCE_REGISTER | srcUsedFlag | immitateFlag, src.value.valueIdx);
-
-		X64MovNoTmp(context, tmp, src);
-		src = tmp;
-	}
-	// Can't directly mov a 64 bit immediate to a memory location
-	else if (CanValueBeMemory(context, dst) &&
-			src.valueType == IRVALUETYPE_IMMEDIATE_INTEGER &&
+	if (CanValueBeMemory(context, dst)) {
+		// Can't directly mov a 64 bit immediate to a memory location
+		if (src.valueType == IRVALUETYPE_IMMEDIATE_INTEGER &&
 			src.immediate & 0xFFFFFFFF00000000) {
-		IRValue tmp = IRValueNewValue(context, "_movimmtmp"_s, dst.typeTableIdx,
-				VALUEFLAGS_FORCE_REGISTER);
-		X64MovNoTmp(context, tmp, src);
-		src = tmp;
+			IRValue tmp = IRValueNewValue(context, "_movimmtmp"_s, dst.typeTableIdx,
+					VALUEFLAGS_FORCE_REGISTER);
+			X64MovNoTmp(context, tmp, src);
+			src = tmp;
+		}
+		else
+			src = X64CopyToRegister(context, src);
 	}
 
 	X64MovNoTmp(context, dst, src);
@@ -956,20 +987,22 @@ void X64ConvertInstruction(Context *context, IRInstruction inst)
 		}
 	case IRINSTRUCTIONTYPE_SUBTRACT_UNARY:
 	{
-		X64Mov(context, inst.unaryOperation.out, inst.unaryOperation.in);
 		switch (floatingType)
 		{
 		case X64FLOATINGTYPE_NONE:
+			X64Mov(context, inst.unaryOperation.out, inst.unaryOperation.in);
 			result.type = X64_NEG;
 			goto doRM;
 		case X64FLOATINGTYPE_F32:
-			result.type = X64_XORPS;
-			result.src = IRValueImmediateFloat(context, -0.0, TYPETABLEIDX_F32);
-			result.src.typeTableIdx = TYPETABLEIDX_128;
+			result.type = X64_VXORPS;
+			result.src  = X64CopyToRegister(context, inst.unaryOperation.in);
+			result.src2 = IRValueImmediateFloat(context, -0.0, TYPETABLEIDX_F32);
+			result.src2.typeTableIdx = TYPETABLEIDX_128;
 			break;
 		case X64FLOATINGTYPE_F64:
-			result.type = X64_XORPD;
-			result.src = IRValueImmediateFloat(context, -0.0, TYPETABLEIDX_128);
+			result.type = X64_VXORPD;
+			result.src  = X64CopyToRegister(context, inst.unaryOperation.in);
+			result.src2 = IRValueImmediateFloat(context, -0.0, TYPETABLEIDX_128);
 			break;
 		}
 		result.dst = inst.unaryOperation.out;
@@ -1801,10 +1834,13 @@ String X64InstructionToStr(Context *context, X64Instruction inst,
 	default:
 	{
 		X64InstructionInfo instInfo = x64InstructionInfos[inst.type];
-		if (instInfo.operandTypesLeft != OPERANDTYPE_NONE)
-		{
-			if (instInfo.operandTypesRight != OPERANDTYPE_NONE)
-				goto printDstSrc;
+		if (instInfo.operandTypesLeft != OPERANDTYPE_NONE) {
+			if (instInfo.operandTypesRight != OPERANDTYPE_NONE) {
+				if (instInfo.operandTypesDest != OPERANDTYPE_NONE)
+					goto printDstSrcSrc2;
+				else
+					goto printDstSrc;
+			}
 			else
 				goto printDst;
 		}
@@ -1823,6 +1859,13 @@ printDstSrc:
 		String dst = X64IRValueToStr(context, inst.dst, localValues);
 		String src = X64IRValueToStr(context, inst.src, localValues);
 		return TPrintF("%S %S, %S", mnemonic, dst, src);
+	}
+printDstSrcSrc2:
+	{
+		String dst  = X64IRValueToStr(context, inst.dst,  localValues);
+		String src  = X64IRValueToStr(context, inst.src,  localValues);
+		String src2 = X64IRValueToStr(context, inst.src2, localValues);
+		return TPrintF("%S %S, %S, %S", mnemonic, dst, src, src2);
 	}
 printLabel:
 	{
@@ -1931,142 +1974,6 @@ void PrintOutEscapedString(Context *context, String str)
 	t_threadMemPtr = buffer;
 }
 
-void X64PrintStaticData(Context *context, String name, IRValue value, u32 typeTableIdx,
-		int alignmentOverride = -1)
-{
-	switch (value.valueType) {
-	case IRVALUETYPE_IMMEDIATE_STRING:
-	{
-		int alignment = alignmentOverride < 0 ? 8 : alignmentOverride;
-		X64StaticDataAlignTo(context, alignment, true);
-
-		String str;
-		{
-			auto stringLiterals = context->stringLiterals.GetForRead();
-			str = stringLiterals[value.immediateStringIdx];
-		}
-		s64 size = str.size;
-		if (size == 0) {
-			PrintOut(context, name);
-			PrintOut(context, " DQ 0H, 0H\n"_s);
-		}
-		else {
-			for (int i = 0; i < str.size; ++i)
-				if (str.data[i] == '\\') --size;
-			PrintOut(context, TPrintF("%S DQ %.16llxH, _str_%d\n", name, size,
-						value.immediateStringIdx));
-		}
-	} break;
-	case IRVALUETYPE_IMMEDIATE_CSTR:
-	{
-		int alignment = alignmentOverride < 0 ? 1 : alignmentOverride;
-		X64StaticDataAlignTo(context, alignment, true);
-
-		String str;
-		{
-			auto stringLiterals = context->cStringLiterals.GetForRead();
-			str = stringLiterals[value.immediateStringIdx];
-		}
-		PrintOut(context, name);
-		PrintOut(context, " DB "_s);
-		PrintOutEscapedString(context, str);
-		PrintOut(context, ", 00H\n"_s);
-	} break;
-	case IRVALUETYPE_IMMEDIATE_FLOAT:
-	{
-		TypeInfo typeInfo = GetTypeInfo(context, typeTableIdx);
-		int alignment = alignmentOverride < 0 ? (int)typeInfo.size : alignmentOverride;
-		X64StaticDataAlignTo(context, alignment, true);
-		switch (typeInfo.size) {
-		case 4:
-		{
-			union { u32 asU32; f32 asF32; };
-			asF32 = (f32)value.immediateFloat;
-			PrintOut(context, TPrintF("%S DD 0%.8xH\n", name, asU32));
-		} break;
-		case 8:
-		default:
-			PrintOut(context, TPrintF("%S DQ 0%.16llxH\n", name, value.immediate));
-			break;
-		}
-	} break;
-	case IRVALUETYPE_TUPLE:
-	{
-		int alignment = alignmentOverride < 0 ? 8 : alignmentOverride;
-		X64StaticDataAlignTo(context, alignment, true);
-
-		bool isArray = false;
-		u32 elementTypeIdx = TYPETABLEIDX_Unset;
-		if (typeTableIdx > TYPETABLEIDX_Unset) {
-			TypeInfo typeInfo = GetTypeInfo(context, typeTableIdx);
-			isArray = typeInfo.typeCategory == TYPECATEGORY_ARRAY;
-			elementTypeIdx = typeInfo.arrayInfo.elementTypeTableIdx;
-		}
-
-		ArrayView<IRValue> members = value.tuple;
-		for (int memberIdx = 0; memberIdx < members.size; ++memberIdx) {
-			String memberName = memberIdx ? "   "_s : name;
-			u32 memberTypeIdx = isArray ? elementTypeIdx : members[memberIdx].typeTableIdx;
-			X64PrintStaticData(context, memberName, members[memberIdx], memberTypeIdx);
-		}
-	} break;
-	case IRVALUETYPE_VALUE_DEREFERENCE:
-	{
-		// @Improve: We are kinda using this to mean 'this is a value in data section, just put the
-		// name in' which has nothing to do with 'VALUE_DEREFERENCE'...
-		int alignment = alignmentOverride < 0 ? 8 : alignmentOverride;
-		X64StaticDataAlignTo(context, alignment, true);
-
-		u8 **staticDataPtrPtr = (u8 **)HashMapGet(context->ctGlobalValueContents, value.value.valueIdx &
-				VALUE_GLOBAL_MASK);
-		if (staticDataPtrPtr) {
-			u8 *staticDataPtr = *staticDataPtrPtr;
-			u64 offset = (u64)(staticDataPtr - STATIC_DATA_VIRTUAL_ADDRESS);
-			PrintOut(context, TPrintF("%S DQ __start_of_static_data+0%llXh\n", name, offset));
-		}
-		else {
-			// @Obsolete
-			Value v = IRGetValue(context, value.value.valueIdx);
-			ASSERT(v.flags & VALUEFLAGS_ON_STATIC_STORAGE);
-			ASSERT(v.name.size);
-			PrintOut(context, TPrintF("%S DQ g_%S\n", name, v.name));
-		}
-	} break;
-	case IRVALUETYPE_INVALID:
-	{
-		TypeInfo typeInfo = GetTypeInfo(context, typeTableIdx);
-#if IS_WINDOWS
-		PrintOut(context, TPrintF("COMM %S:BYTE:0%llxH\n", name, typeInfo.size));
-#else
-		PrintOut(context, TPrintF("%S: RESB %llxH\n", name, typeInfo.size));
-#endif
-	} break;
-	default:
-	{
-		TypeInfo typeInfo = GetTypeInfo(context, typeTableIdx);
-		int alignment = alignmentOverride < 0 ? (int)typeInfo.size : alignmentOverride;
-		X64StaticDataAlignTo(context, alignment, true);
-		switch (typeInfo.size)
-		{
-		case 1:
-			PrintOut(context, TPrintF("%S DB 0%.2llxH\n", name, value.immediate));
-			break;
-		case 2:
-			PrintOut(context, TPrintF("%S DW 0%.4llxH\n", name, value.immediate));
-			break;
-		case 4:
-			PrintOut(context, TPrintF("%S DD 0%.8llxH\n", name, value.immediate));
-			break;
-		case 8:
-			PrintOut(context, TPrintF("%S DQ 0%.16llxH\n", name, value.immediate));
-			break;
-		default:
-			ASSERT(!"Invalid immediate size");
-		}
-	}
-	}
-}
-
 void X64PrintStaticDataUninitialized(Context *context, String name, IRValue value, u32 typeTableIdx,
 		int alignmentOverride = -1)
 {
@@ -2080,7 +1987,7 @@ void X64PrintStaticDataUninitialized(Context *context, String name, IRValue valu
 		String str;
 		{
 			auto stringLiterals = context->stringLiterals.GetForRead();
-			str = stringLiterals[value.immediateStringIdx];
+			str = stringLiterals[value.immediateStringIdx].string;
 		}
 		ASSERT(str.size == 0);
 #if IS_WINDOWS
@@ -2144,12 +2051,15 @@ void X64PrintStaticDataUninitialized(Context *context, String name, IRValue valu
 void WriteOutOutputBuffer(Context *context, String filename)
 {
 	FileHandle outputFile = SYSOpenFileWrite(filename);
-	for (int i = 0; i < context->outputBuffer.buckets.size; ++i)
-	{
+
+	for (u64 i = 0, fullBuckets = context->outputBuffer.buckets.size - 1; i < fullBuckets; ++i)
 		SYSWriteFile(outputFile,
-				context->outputBuffer.buckets[i].data,
-				context->outputBuffer.buckets[i].size);
-	}
+				context->outputBuffer.buckets[i],
+				OUTPUT_BUFFER_BUCKET_SIZE);
+	SYSWriteFile(outputFile,
+			*DynamicArrayBack(&context->outputBuffer.buckets),
+			context->outputBuffer.count % OUTPUT_BUFFER_BUCKET_SIZE);
+
 	SYSCloseFile(outputFile);
 }
 
@@ -2173,13 +2083,13 @@ void BackendMain(Context *context)
 		u32 typeTableIdx = FindOrAddTypeTableIdx(context, t);
 
 		auto externalProcedures = context->externalProcedures.GetForWrite();
-		copyMemoryProcIdx = (u32)BucketArrayCount(&externalProcedures) | PROCEDURE_EXTERNAL_BIT;
+		copyMemoryProcIdx = (u32)externalProcedures->count | PROCEDURE_EXTERNAL_BIT;
 		Procedure *copyMemory = BucketArrayAdd(&externalProcedures);
 		*copyMemory = {};
 		copyMemory->name = "CopyMemory"_s;
 		copyMemory->typeTableIdx = typeTableIdx;
 
-		zeroMemoryProcIdx = (u32)BucketArrayCount(&externalProcedures) | PROCEDURE_EXTERNAL_BIT;
+		zeroMemoryProcIdx = (u32)externalProcedures->count | PROCEDURE_EXTERNAL_BIT;
 		Procedure *zeroMemory = BucketArrayAdd(&externalProcedures);
 		*zeroMemory = {};
 		zeroMemory->name = "ZeroMemory"_s;
@@ -2252,6 +2162,8 @@ void BackendMain(Context *context)
 	x64InstructionInfos[X64_XORPD] =     { "xorpd"_s,     OPERANDTYPE_REGISTER,  OPERANDACCESS_READWRITE, OPERANDTYPE_REGMEM, OPERANDACCESS_READ };
 	x64InstructionInfos[X64_SQRTSS] =    { "sqrtss"_s,    OPERANDTYPE_REGISTER,  OPERANDACCESS_WRITE,     OPERANDTYPE_REGMEM, OPERANDACCESS_READ };
 	x64InstructionInfos[X64_SQRTSD] =    { "sqrtsd"_s,    OPERANDTYPE_REGISTER,  OPERANDACCESS_WRITE,     OPERANDTYPE_REGMEM, OPERANDACCESS_READ };
+	x64InstructionInfos[X64_VXORPS] =    { "vxorps"_s,    OPERANDTYPE_REGISTER,  OPERANDACCESS_READ,      OPERANDTYPE_REGMEM, OPERANDACCESS_READ, OPERANDTYPE_REGISTER, OPERANDACCESS_WRITE };
+	x64InstructionInfos[X64_VXORPD] =    { "vxorpd"_s,    OPERANDTYPE_REGISTER,  OPERANDACCESS_READ,      OPERANDTYPE_REGMEM, OPERANDACCESS_READ, OPERANDTYPE_REGISTER, OPERANDACCESS_WRITE };
 	x64InstructionInfos[X64_COMISS] =    { "comiss"_s,    OPERANDTYPE_REGISTER,  OPERANDACCESS_READ,      OPERANDTYPE_REGMEM, OPERANDACCESS_READ };
 	x64InstructionInfos[X64_COMISD] =    { "comisd"_s,    OPERANDTYPE_REGISTER,  OPERANDACCESS_READ,      OPERANDTYPE_REGMEM, OPERANDACCESS_READ };
 	x64InstructionInfos[X64_CVTSI2SS] =  { "cvtsi2ss"_s,  OPERANDTYPE_REGISTER,  OPERANDACCESS_WRITE,     OPERANDTYPE_REGMEM, OPERANDACCESS_READ };
@@ -2460,7 +2372,7 @@ void BackendGenerateOutputFile(Context *context)
 
 		SpinlockLock(&context->typeTable.lock);
 		const auto &typeTable = context->typeTable.unsafe;
-		u64 tableSize = BucketArrayCount(&typeTable);
+		u64 tableSize = typeTable.count;
 		for (u32 typeTableIdx = TYPETABLEIDX_Begin; typeTableIdx < tableSize; ++typeTableIdx)
 		{
 			TypeInfo typeInfo = typeTable[typeTableIdx];
@@ -2677,20 +2589,6 @@ void BackendGenerateOutputFile(Context *context)
 	PrintOut(context, "section .data\n"_s);
 #endif
 
-	// String literals
-	{
-		auto scope = ProfilerScope("Writing string literals");
-
-		auto stringLiterals = context->stringLiterals.GetForRead();
-		s64 strCount = (s64)BucketArrayCount(&stringLiterals);
-		for (s64 stringLiteralIdx = 1; stringLiteralIdx < strCount; ++stringLiteralIdx) {
-			PrintOut(context, TPrintF("_str_%lld DB ", stringLiteralIdx));
-			String str = stringLiterals[stringLiteralIdx];
-			PrintOutEscapedString(context, str);
-			PrintOut(context, "\n"_s);
-		}
-	}
-
 	X64StaticDataAlignTo(context, 16, true);
 
 	{
@@ -2711,11 +2609,12 @@ void BackendGenerateOutputFile(Context *context)
 				u8 *current = scan;
 				if (scan == nextPointerToRelocate) {
 					u64 qword = *(u64 *)scan;
-#if 0
+
+					// Assert the pointer points to static data memory (or is null)
 					ASSERT(qword == 0 || (
 							qword >= (u64)STATIC_DATA_VIRTUAL_ADDRESS &&
 							qword < (u64)STATIC_DATA_VIRTUAL_ADDRESS_END));
-#endif
+
 					if (qword != 0) {
 						u64 offset = qword - (u64)STATIC_DATA_VIRTUAL_ADDRESS;
 						PrintOut(context, TPrintF("DQ __start_of_static_data + 0%llXh", offset));
@@ -2740,7 +2639,7 @@ void BackendGenerateOutputFile(Context *context)
 					u64 qword = *(u64 *)scan;
 
 					// @Delete
-#if 0
+#if DEBUG_BUILD
 					ASSERT(qword < (u64)STATIC_DATA_VIRTUAL_ADDRESS ||
 						   qword > (u64)STATIC_DATA_VIRTUAL_ADDRESS_END);
 #endif
@@ -2756,41 +2655,6 @@ void BackendGenerateOutputFile(Context *context)
 			}
 		}
 
-		auto staticVars = context->irStaticVariables.GetForRead();
-		const u64 staticVariableCount = staticVars->size;
-		// Initialized
-#if 0
-		for (int staticVariableIdx = 0; staticVariableIdx < staticVariableCount; ++staticVariableIdx) {
-			IRStaticVariable staticVar = staticVars[staticVariableIdx];
-			if (staticVar.initialValue.valueType != IRVALUETYPE_INVALID &&
-					staticVar.initialValue.immediate != 0) {
-				Value value = GetGlobalValue(context, staticVar.valueIdx);
-
-				u8 **ptrToData = (u8 **)HashMapGet(context->ctGlobalValueContents,
-						staticVar.valueIdx & VALUE_GLOBAL_MASK);
-				if (ptrToData) continue; // @Hack
-
-				String name = value.name;
-				if (!(value.flags & VALUEFLAGS_IS_EXTERNAL))
-					name = TStringConcat("g_"_s, name);
-
-				if (ptrToData) {
-					u8 *data = *ptrToData;
-					TypeInfo typeInfo = GetTypeInfo(context, value.typeTableIdx);
-					PrintOut(context, name);
-					PrintOut(context, TPrintF(" DB 0%.2Xh", data[0]));
-					for (int i = 1; i < typeInfo.size; ++i)
-						PrintOut(context, TPrintF(", 0%.2Xh", data[i]));
-					PrintOut(context, "\n"_s);
-				}
-				else {
-					// @Remove: deprecated
-					X64PrintStaticData(context, name, staticVar.initialValue, value.typeTableIdx, 16);
-				}
-			}
-		}
-#endif
-
 #if IS_WINDOWS
 		PrintOut(context, "_DATA ENDS\n"_s);
 		PrintOut(context, "_BSS SEGMENT\n"_s);
@@ -2799,7 +2663,9 @@ void BackendGenerateOutputFile(Context *context)
 #endif
 
 		// Uninitialized
-		// @Speed: don't iterate this twice...
+		auto staticVars = context->irStaticVariables.GetForRead();
+		const u64 staticVariableCount = staticVars->size;
+
 		for (int staticVariableIdx = 0; staticVariableIdx < staticVariableCount; ++staticVariableIdx) {
 			IRStaticVariable staticVar = staticVars[staticVariableIdx];
 			if (staticVar.initialValue.valueType == IRVALUETYPE_INVALID ||
@@ -2821,7 +2687,7 @@ void BackendGenerateOutputFile(Context *context)
 #endif
 
 #if IS_LINUX
-	u64 procedureCount = BucketArrayCount(&context->procedures.GetForRead());
+	u64 procedureCount = context->procedures.GetForRead(.count);
 	for (int procedureIdx = 1; procedureIdx < procedureCount; ++procedureIdx) {
 		Procedure proc = GetProcedureRead(context, procedureIdx);
 		if (proc.isExported)
@@ -2856,7 +2722,7 @@ void BackendGenerateOutputFile(Context *context)
 		auto scope = ProfilerScope("Writing external procedures");
 
 		auto externalProcedures = context->externalProcedures.GetForRead();
-		u64 externalProcedureCount = BucketArrayCount(&externalProcedures);
+		u64 externalProcedureCount = externalProcedures->count;
 		for (u32 procedureIdx = 1; procedureIdx < externalProcedureCount; ++procedureIdx) {
 			// Don't declare hard-coded procedures that are already included in the asm file.
 			u32 externalProcIdx = procedureIdx | PROCEDURE_EXTERNAL_BIT;
@@ -2896,7 +2762,7 @@ void BackendGenerateOutputFile(Context *context)
 	bool makeLibrary = false;
 	{
 		auto staticDefinitions = context->staticDefinitions.GetForRead();
-		u64 staticDefinitionCount = BucketArrayCount(&staticDefinitions);
+		u64 staticDefinitionCount = staticDefinitions->count;
 		for (u64 i = 0; i < staticDefinitionCount; ++i)
 		{
 			const StaticDefinition *currentDef = &staticDefinitions[i];
@@ -2918,7 +2784,7 @@ void BackendGenerateOutputFile(Context *context)
 	bool useWindowsSubsystem = false;
 	{
 		auto staticDefinitions = context->staticDefinitions.GetForRead();
-		u64 staticDefinitionCount = BucketArrayCount(&staticDefinitions);
+		u64 staticDefinitionCount = staticDefinitions->count;
 		for (u64 i = 0; i < staticDefinitionCount; ++i)
 		{
 			const StaticDefinition *currentDef = &staticDefinitions[i];
@@ -3056,7 +2922,7 @@ void BackendJobProc(Context *context, u32 procedureIdx)
 			X64ReadyLinuxParameters(context, params, false);
 	}
 
-	u64 instructionCount = BucketArrayCount(&proc.irInstructions);
+	u64 instructionCount = proc.irInstructions.count;
 	for (int instructionIdx = 0; instructionIdx < instructionCount; ++instructionIdx)
 	{
 		IRInstruction inst = proc.irInstructions[instructionIdx];

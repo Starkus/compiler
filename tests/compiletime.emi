@@ -1,4 +1,4 @@
-CONSTANT :: RunThisOnCompileTime(10);
+CONSTANT :: #run RunThisOnCompileTime(10);
 
 g_aGlobal :s s32 = 5;
 

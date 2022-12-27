@@ -13,5 +13,19 @@ union CTRegister
 	CTRegister *asPtr;
 };
 
+struct CTContext
+{
+	Context *globalContext;
+	u32 procedureIdx;
+	BucketArrayView<Value> localValues;
+	SourceLocation currentLoc;
+	HashMap<u32, CTRegister *, ThreadAllocator> values;
+};
+
+CTRegister CTRunInstructions(Context *context,
+		BucketArrayView<Value> localValues,
+		BucketArrayView<IRInstruction> irInstructions,
+		IRValue resultIRValue);
+
 ArrayView<const CTRegister *> CTRunProcedure(Context *context, u32 procedureIdx,
 		ArrayView<CTRegister *> parameters);

@@ -11,27 +11,26 @@ s64 PIRPrintOut(Context *context, const char *format, ...)
 
 	s64 bytesToWrite = size;
 	const char *in = buffer;
-	while (bytesToWrite > 0)
-	{
-		auto *lastBucket = DynamicArrayBack(&context->outputBuffer.buckets);
-		s64 bytesLeftInBucket = OUTPUT_BUFFER_BUCKET_SIZE - lastBucket->size;
-		u8 *bufferCursor = lastBucket->data + lastBucket->size;
-		if (bytesToWrite > bytesLeftInBucket)
-		{
+	while (bytesToWrite > 0) {
+		u8 *lastBucket = *DynamicArrayBack(&context->outputBuffer.buckets);
+		s64 bytesLeftInBucket = OUTPUT_BUFFER_BUCKET_SIZE * context->outputBuffer.buckets.size -
+			context->outputBuffer.count;
+		u8 *bufferCursor = lastBucket + OUTPUT_BUFFER_BUCKET_SIZE - bytesLeftInBucket;
+		if (bytesToWrite > bytesLeftInBucket) {
 			memcpy(bufferCursor, in, bytesLeftInBucket);
 			in += bytesLeftInBucket;
-			lastBucket->size += bytesLeftInBucket;
+			context->outputBuffer.count += bytesLeftInBucket;
 			bytesToWrite -= bytesLeftInBucket;
 
-			lastBucket = DynamicArrayAdd(&context->outputBuffer.buckets);
-			ArrayInit(lastBucket, OUTPUT_BUFFER_BUCKET_SIZE);
+			u8 **newBucket = DynamicArrayAdd(&context->outputBuffer.buckets);
+			*newBucket = (u8 *)HeapAllocator::Alloc(OUTPUT_BUFFER_BUCKET_SIZE, 1);
+			lastBucket = *newBucket;
 		}
-		else
-		{
+		else {
 			memcpy(bufferCursor, in, size);
 			in += bytesLeftInBucket;
-			lastBucket->size += bytesToWrite;
-			bytesToWrite -= bytesToWrite;
+			context->outputBuffer.count += bytesToWrite;
+			break;
 		}
 	}
 
@@ -369,7 +368,7 @@ void PrintJobIRInstructions(Context *context)
 	PIRPrintOut(context, "\n");
 
 	const auto &instructions = proc.irInstructions;
-	const u64 instructionCount = BucketArrayCount(&instructions);
+	const u64 instructionCount = instructions.count;
 	for (int instructionIdx = 0; instructionIdx < instructionCount; ++instructionIdx) {
 		IRInstruction inst = instructions[instructionIdx];
 
@@ -408,11 +407,14 @@ void PrintJobIRInstructions(Context *context)
 	PIRPrintOut(context, "\n");
 
 	FileHandle outputFile = SYSOpenFileWrite("output/ir.txt"_s);
-	for (int i = 0; i < context->outputBuffer.buckets.size; ++i) {
+	for (u64 i = 0, fullBuckets = context->outputBuffer.buckets.size - 1; i < fullBuckets; ++i) {
 		SYSWriteFile(outputFile,
-				context->outputBuffer.buckets[i].data,
-				context->outputBuffer.buckets[i].size);
+				context->outputBuffer.buckets[i],
+				OUTPUT_BUFFER_BUCKET_SIZE);
 	}
+	SYSWriteFile(outputFile,
+			*DynamicArrayBack(&context->outputBuffer.buckets),
+			context->outputBuffer.count % OUTPUT_BUFFER_BUCKET_SIZE);
 	SYSCloseFile(outputFile);
 	SYSMutexUnlock(printIRMutex);
 }

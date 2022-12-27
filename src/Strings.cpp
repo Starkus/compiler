@@ -112,12 +112,16 @@ ParseNumberResult IntFromString(String string)
 	int i = 0;
 	const char *scan = string.data;
 	bool isNegative = false;
-	if (*scan == '-')
-	{
+	if (*scan == '-') {
 		isNegative = true;
 		++i;
 		++scan;
 	}
+	else if (*scan == '+') {
+		++i;
+		++scan;
+	}
+
 	for (; i < string.size; ++i)
 	{
 		char c = *scan++;
@@ -209,7 +213,8 @@ ParseFloatResult F64FromString(String string)
 				foundDot = true;
 			else if (*scan == 'e' || *scan == 'E')
 			{
-				ParseNumberResult parseResult = IntFromString({ string.size - i - 1, scan + 1 });
+				String exponentString = { string.size - i - 1, scan + 1 };
+				ParseNumberResult parseResult = IntFromString(exponentString);
 				if (parseResult.error)
 					return { PARSENUMBERRROR_INVALID_EXPONENT };
 				sciNot = (int)parseResult.number;

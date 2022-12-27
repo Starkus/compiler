@@ -7,8 +7,7 @@ enum IRValueType
 	IRVALUETYPE_TUPLE,
 	IRVALUETYPE_IMMEDIATE_INTEGER,
 	IRVALUETYPE_IMMEDIATE_FLOAT,
-	IRVALUETYPE_IMMEDIATE_STRING,
-	IRVALUETYPE_IMMEDIATE_CSTR
+	IRVALUETYPE_IMMEDIATE_STRING
 };
 struct IRValue
 {
@@ -22,6 +21,10 @@ struct IRValue
 		u32 procedureIdx;
 		struct
 		{
+			// When value type is DEREFERENCE, valueIdx contains the value to which a pointer has
+			// been assigned (i.e. with IRINSTRUCTIONTYPE_LOAD_EFFECTIVE_ADDRESS), offset is an
+			// immediate added to the pointer, and if elementSize is not 0, the value of
+			// indexValueIdx * elementSize is also added. The resulting pointer is dereferenced.
 			u32 valueIdx;
 			u32 indexValueIdx;
 			u64 elementSize;
@@ -229,5 +232,14 @@ struct IRJobArgs
 	const ASTExpression *expression;
 };
 
+struct StringLiteral
+{
+	// This global value is a handle to the static data where the string is.
+	// @Improve: We should probably do this in a better way...
+	u32 globalValueIdx;
+	String string;
+};
+
+IRValue IRGenFromExpression(Context *context, const ASTExpression *expression);
 void IRJobProcedure(void *args);
 void IRJobExpression(void *args);

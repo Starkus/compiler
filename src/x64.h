@@ -23,6 +23,8 @@ struct X64InstructionInfo
 	u8 operandAccessLeft;
 	u8 operandTypesRight;
 	u8 operandAccessRight;
+	u8 operandTypesDest;
+	u8 operandAccessDest;
 };
 
 enum X64InstructionType
@@ -98,6 +100,8 @@ enum X64InstructionType
 	X64_XORPD,
 	X64_SQRTSS,
 	X64_SQRTSD,
+	X64_VXORPS,
+	X64_VXORPD,
 	X64_COMISS,
 	X64_COMISD,
 	X64_CVTSI2SS,
@@ -132,6 +136,7 @@ struct BEInstruction
 		{
 			IRValue dst;
 			IRValue src;
+			IRValue src2;
 		};
 		IRLabel *label;
 		struct

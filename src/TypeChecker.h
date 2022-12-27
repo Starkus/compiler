@@ -3,16 +3,16 @@ const u32 VALUE_GLOBAL_BIT  = 0x80000000;
 const u32 VALUE_GLOBAL_MASK = 0x7FFFFFFF;
 enum ValueFlags
 {
-	VALUEFLAGS_IS_USED              = 1,
-	VALUEFLAGS_FORCE_REGISTER       = 2,
-	VALUEFLAGS_FORCE_MEMORY         = 4,
-	VALUEFLAGS_IS_MEMORY            = 8,
-	VALUEFLAGS_IS_ALLOCATED         = 16,
-	VALUEFLAGS_IS_EXTERNAL          = 32,
-	VALUEFLAGS_ON_STATIC_STORAGE    = 64,
-	VALUEFLAGS_BASE_RELATIVE        = 128,
-	VALUEFLAGS_HAS_PUSH_INSTRUCTION = 256,
-	VALUEFLAGS_TRY_IMMITATE         = 512
+	VALUEFLAGS_IS_USED              = 0x1,
+	VALUEFLAGS_FORCE_REGISTER       = 0x2,
+	VALUEFLAGS_FORCE_MEMORY         = 0x4,
+	VALUEFLAGS_IS_MEMORY            = 0x8,
+	VALUEFLAGS_IS_ALLOCATED         = 0x10,
+	VALUEFLAGS_IS_EXTERNAL          = 0x20,
+	VALUEFLAGS_ON_STATIC_STORAGE    = 0x40,
+	VALUEFLAGS_BASE_RELATIVE        = 0x80,
+	VALUEFLAGS_HAS_PUSH_INSTRUCTION = 0x100,
+	VALUEFLAGS_TRY_IMMITATE         = 0x200
 };
 
 struct Value
@@ -28,25 +28,6 @@ struct Value
 		s32 stackOffset;
 	};
 	u32 tryImmitateValueIdx;
-};
-
-enum ConstantType
-{
-	CONSTANTTYPE_INVALID = 0,
-	CONSTANTTYPE_INTEGER,
-	CONSTANTTYPE_FLOATING,
-	CONSTANTTYPE_GROUP,
-};
-struct Constant
-{
-	ConstantType type;
-	union
-	{
-		s64 valueAsInt;
-		f64 valueAsFloat;
-		Array<Constant, LinearAllocator> valueAsGroup;
-	};
-	u32 typeTableIdx;
 };
 
 enum TypeCategory

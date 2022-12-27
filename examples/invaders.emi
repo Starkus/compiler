@@ -61,10 +61,10 @@ ENEMY_WIDTH   :: 64.0;
 ENEMY_HEIGHT  :: 64.0;
 BULLET_WIDTH  :: 16.0;
 BULLET_HEIGHT :: 24.0;
-playerPos :s v2;
-bullets :s [] v2;
-enemies :s [] Enemy;
-particles :s [] Particle;
+g_playerPos :s v2;
+g_bullets :s [] v2;
+g_enemies :s [] Enemy;
+g_particles :s [] Particle;
 
 Main :: (args : [] String) -> s64
 {
@@ -72,21 +72,21 @@ Main :: (args : [] String) -> s64
 			#cstr "invaders", g_screenWidth, g_screenHeight);
 
 	// Allocate memory for entities
-	bullets.data = cast(^v2)VirtualAlloc(0, cast(u64)(256 * sizeof(v2)), MEM_COMMIT, PAGE_READWRITE);
-	enemies.data = cast(^v2)VirtualAlloc(0, cast(u64)(256 * sizeof(Enemy)), MEM_COMMIT, PAGE_READWRITE);
-	particles.data = cast(^v2)VirtualAlloc(0, cast(u64)(256 * sizeof(Particle)), MEM_COMMIT, PAGE_READWRITE);
+	g_bullets.data = cast(^v2)VirtualAlloc(0, cast(u64)(256 * sizeof(v2)), MEM_COMMIT, PAGE_READWRITE);
+	g_enemies.data = cast(^v2)VirtualAlloc(0, cast(u64)(256 * sizeof(Enemy)), MEM_COMMIT, PAGE_READWRITE);
+	g_particles.data = cast(^v2)VirtualAlloc(0, cast(u64)(256 * sizeof(Particle)), MEM_COMMIT, PAGE_READWRITE);
 
 	g_randomSeed = 123456;
 
 	// Init player
-	playerPos = { cast(f32)g_screenWidth / 2.0, 50.0 };
+	g_playerPos = { cast(f32)g_screenWidth / 2.0, 50.0 };
 
 	// Init enemies
-	enemies.size = 8;
+	g_enemies.size = 8;
 	for 0..8
 	{
-		enemies[i].pos = { 50.0 + cast(f32)i * 100.0, 500.0 };
-		enemies[i].life = 10;
+		g_enemies[i].pos = { 50.0 + cast(f32)i * 100.0, 500.0 };
+		g_enemies[i].life = 10;
 	}
 
 	vertexArrayId : GLuint = ?;
@@ -123,7 +123,7 @@ Main :: (args : [] String) -> s64
 	vertexBuffer : GLuint = ?;
 	glGenBuffers(1, ^vertexBuffer);
 	glBindBuffer(GL_ARRAY_BUFFER, vertexBuffer);
-	glBufferData(GL_ARRAY_BUFFER, sizeof(vertexBufferData), ^vertexBufferData, GL_STATIC_DRAW);
+	glBufferData(GL_ARRAY_BUFFER, cast(s64)sizeof(vertexBufferData), ^vertexBufferData, GL_STATIC_DRAW);
 	glEnableVertexAttribArray(0);
 
 	vertexShaderId, fragmentShaderId: GLuint = ?;
@@ -203,9 +203,9 @@ Main :: (args : [] String) -> s64
 		{
 			speed :: 300.0;
 			if input.right
-				playerPos.x += deltaTime * speed;
+				g_playerPos.x += deltaTime * speed;
 			if input.left
-				playerPos.x -= deltaTime * speed;
+				g_playerPos.x -= deltaTime * speed;
 		}
 
 		// Player shooting
@@ -213,15 +213,15 @@ Main :: (args : [] String) -> s64
 			shootCooldown :s f32;
 			shootCooldown += deltaTime;
 			if input.shoot && shootCooldown >= 0 {
-				bullets[bullets.size] = V2Subtract(playerPos, { 20.0, 0.0 });
-				bullets.size += 1;
-				bullets[bullets.size] = V2Add(playerPos, { 20.0, 0.0 });
-				bullets.size += 1;
+				g_bullets[g_bullets.size] = V2Subtract(g_playerPos, { 20.0, 0.0 });
+				g_bullets.size += 1;
+				g_bullets[g_bullets.size] = V2Add(g_playerPos, { 20.0, 0.0 });
+				g_bullets.size += 1;
 				shootCooldown = -0.1;
 			}
 		}
 
-		for bullets {
+		for g_bullets {
 			it.y += 1000.0 * deltaTime;
 			if it.y > g_screenHeight
 				remove;
@@ -232,14 +232,14 @@ Main :: (args : [] String) -> s64
 		HALF_BULLET_HEIGHT :: BULLET_HEIGHT * 0.5;
 		HALF_ENEMY_WIDTH   :: ENEMY_WIDTH   * 0.5;
 		HALF_ENEMY_HEIGHT  :: ENEMY_HEIGHT  * 0.5;
-		for bulletIdx, bullet : bullets {
-			for enemyIdx, enemy : enemies {
+		for bulletIdx, bullet : g_bullets {
+			for enemyIdx, enemy : g_enemies {
 				if (bullet.x - HALF_BULLET_WIDTH  < enemy.pos.x + HALF_ENEMY_WIDTH &&
 					bullet.x + HALF_BULLET_WIDTH  > enemy.pos.x - HALF_ENEMY_WIDTH &&
 					bullet.y - HALF_BULLET_HEIGHT < enemy.pos.y + HALF_ENEMY_HEIGHT &&
 					bullet.y + HALF_BULLET_HEIGHT > enemy.pos.y - HALF_ENEMY_HEIGHT) {
 
-					// Spawn particles
+					// Spawn g_particles
 					newParticle: Particle;
 					newParticle.pos = @bullet;
 					newParticle.duration = 0.15;
@@ -249,13 +249,13 @@ Main :: (args : [] String) -> s64
 						speed := 200.0 * (RandomFloat() + 0.5);
 						newParticle.vel.x *= speed;
 						newParticle.vel.y *= speed;
-						particles[particles.size] = newParticle;
-						particles.size += 1;
+						g_particles[g_particles.size] = newParticle;
+						g_particles.size += 1;
 					}
 
 					// Destroy bullet
-					bullets.size -= 1;
-					@bullet = bullets[bullets.size];
+					g_bullets.size -= 1;
+					@bullet = g_bullets[g_bullets.size];
 					bulletIdx -= 1;
 
 					// Reduce health
@@ -263,15 +263,15 @@ Main :: (args : [] String) -> s64
 
 					if enemy.life <= 0 {
 						// Destroy enemy
-						enemies.size -= 1;
-						@enemy = enemies[enemies.size];
+						g_enemies.size -= 1;
+						@enemy = g_enemies[g_enemies.size];
 						enemyIdx -= 1;
 					}
 				}
 			}
 		}
 
-		for enemies {
+		for g_enemies {
 			SPEED :: 3.0;
 			PERIOD :: PI2 * SPEED;
 			enemySinTimer :s f32 = HALFPI * SPEED;
@@ -281,8 +281,8 @@ Main :: (args : [] String) -> s64
 				enemySinTimer -= PERIOD;
 		}
 
-		// Update particles
-		for particles {
+		// Update g_particles
+		for g_particles {
 			it.life += deltaTime;
 			if it.life > it.duration
 				remove;
@@ -307,13 +307,13 @@ Main :: (args : [] String) -> s64
 		}
 
 		glBindTexture(GL_TEXTURE_2D, textureIdShip);
-		DrawSprite(programId, playerPos, { 64.0, 64.0 });
+		DrawSprite(programId, g_playerPos, { 64.0, 64.0 });
 		glBindTexture(GL_TEXTURE_2D, textureIdBullet);
-		for bullets DrawSprite(programId, @it,    { BULLET_WIDTH, BULLET_HEIGHT });
+		for g_bullets DrawSprite(programId, @it,    { BULLET_WIDTH, BULLET_HEIGHT });
 		glBindTexture(GL_TEXTURE_2D, textureIdEnemy);
-		for enemies DrawSprite(programId, it.pos, { ENEMY_WIDTH,  ENEMY_HEIGHT  });
+		for g_enemies DrawSprite(programId, it.pos, { ENEMY_WIDTH,  ENEMY_HEIGHT  });
 		glBindTexture(GL_TEXTURE_2D, textureIdSmoke);
-		for particles DrawSprite(programId, it.pos, { 24, 24 });
+		for g_particles DrawSprite(programId, it.pos, { 24, 24 });
 
 		SwapBuffers(g_deviceContext);
 

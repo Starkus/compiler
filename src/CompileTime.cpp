@@ -6,32 +6,41 @@
 #define CTVerboseLog(...)
 #endif
 
-struct CTContext
-{
-	Context *globalContext;
-	u32 procedureIdx;
-	BucketArray<Value, LinearAllocator, 256> *localValues;
-	SourceLocation currentLoc;
-	HashMap<u32, CTRegister *, ThreadAllocator> values;
-};
-
-u32 CTGetValueTypeIdx(CTContext *ctContext, u32 valueIdx)
+Value CTGetValue(CTContext *ctContext, u32 valueIdx)
 {
 	if (valueIdx & VALUE_GLOBAL_BIT) {
 		auto globalValues = ctContext->globalContext->globalValues.GetForRead();
-		return globalValues[valueIdx].typeTableIdx;
+		return globalValues[valueIdx & VALUE_GLOBAL_MASK];
 	}
 	else {
-		return (*ctContext->localValues)[valueIdx].typeTableIdx;
+		return ctContext->localValues[valueIdx];
 	}
 }
 
 CTRegister *CTGetValueContent(CTContext *ctContext, u32 valueIdx)
 {
+	Value v = CTGetValue(ctContext, valueIdx);
 	if (valueIdx & VALUE_GLOBAL_BIT) {
-		ScopedLockSpin lock(&ctContext->globalContext->ctGlobalValuesLock);
-		auto globalValues = ctContext->globalContext->ctGlobalValueContents;
-		CTRegister *value = (CTRegister *)*HashMapGet(globalValues, valueIdx & VALUE_GLOBAL_MASK);
+		if (v.flags & VALUEFLAGS_IS_EXTERNAL)
+			LogError(ctContext->globalContext, ctContext->currentLoc, TPrintF("Can't access "
+					"external variable \"%S\" during compile time", v.name));
+
+		SpinlockLock(&ctContext->globalContext->globalValuesLock);
+		auto globalValues = ctContext->globalContext->globalValueContents;
+		void **ptr = HashMapGet(globalValues, valueIdx & VALUE_GLOBAL_MASK);
+		while (!ptr) {
+			if (!TCIsAnyOtherJobRunningOrWaiting(ctContext->globalContext)) {
+				LogError(ctContext->globalContext, ctContext->currentLoc, TPrintF("Static "
+						"variable \"%S\" never set at compile time", v.name));
+			}
+			SpinlockUnlock(&ctContext->globalContext->globalValuesLock);
+			SwitchJob(ctContext->globalContext, TCYIELDREASON_GLOBAL_VALUE_NOT_READY,
+					{ .index = valueIdx });
+			SpinlockLock(&ctContext->globalContext->globalValuesLock);
+			ptr = HashMapGet(globalValues, valueIdx & VALUE_GLOBAL_MASK);
+		}
+		SpinlockUnlock(&ctContext->globalContext->globalValuesLock);
+		CTRegister *value = (CTRegister *)*ptr;
 		ASSERT(value);
 		return value;
 	}
@@ -39,7 +48,7 @@ CTRegister *CTGetValueContent(CTContext *ctContext, u32 valueIdx)
 		CTRegister **value = HashMapGet(ctContext->values, valueIdx);
 		if (!value) {
 			value = HashMapGetOrAdd(&ctContext->values, valueIdx);
-			u32 typeTableIdx = CTGetValueTypeIdx(ctContext, valueIdx);
+			u32 typeTableIdx = v.typeTableIdx;
 			u64 size = GetTypeInfo(ctContext->globalContext, typeTableIdx).size;
 			*value = (CTRegister *)LinearAllocator::Alloc(Max(8, size), 8);
 		}
@@ -57,7 +66,7 @@ CTRegister *CTRegisterFromIRValue(CTContext *ctContext, IRValue irValue, bool de
 		reg = reg->asPtr;
 	u8 *ptr = ((u8 *)reg + irValue.value.offset);
 	if (irValue.value.elementSize) {
-		u32 indexTypeIdx = CTGetValueTypeIdx(ctContext, irValue.value.indexValueIdx);
+		u32 indexTypeIdx = CTGetValue(ctContext, irValue.value.indexValueIdx).typeTableIdx;
 		IRValue indexIRValue = {
 			.valueType = IRVALUETYPE_VALUE,
 			.value = { .valueIdx = irValue.value.indexValueIdx },
@@ -181,8 +190,8 @@ void CTCopyIRValue(CTContext *ctContext, CTRegister *dst, IRValue irValue)
 
 void PrintIRInstruction(Context *context, u32 procedureIdx, IRInstruction inst);
 
-ArrayView<const CTRegister *> CTRunInstructions(CTContext *ctContext,
-		const BucketArray<IRInstruction, LinearAllocator, 256> *irInstructions, u64 returnValueCount)
+ArrayView<const CTRegister *> CTInternalRunInstructions(CTContext *ctContext,
+		BucketArrayView<IRInstruction> irInstructions)
 {
 	Context *context = ctContext->globalContext;
 
@@ -191,12 +200,10 @@ ArrayView<const CTRegister *> CTRunInstructions(CTContext *ctContext,
 #endif
 
 	Array<const CTRegister *, ThreadAllocator> returnValues;
-	if (returnValueCount)
-		ArrayInit(&returnValues, returnValueCount);
 
-	u64 instructionCount = BucketArrayCount(irInstructions);
+	u64 instructionCount = irInstructions.count;
 	for (u64 instIdx = 0; instIdx < instructionCount; ++instIdx) {
-		IRInstruction inst = (*irInstructions)[instIdx];
+		IRInstruction inst = irInstructions[instIdx];
 		ctContext->currentLoc = inst.loc;
 
 		if (inst.type == IRINSTRUCTIONTYPE_LABEL ||
@@ -262,9 +269,17 @@ ArrayView<const CTRegister *> CTRunInstructions(CTContext *ctContext,
 				case IRINSTRUCTIONTYPE_SHIFT_RIGHT:
 					result.asS64 = left.asS64 >> right.asS64;
 					break;
+				case IRINSTRUCTIONTYPE_BITWISE_AND:
+					result.asU64 = left.asS64 & right.asS64;
+					break;
+				case IRINSTRUCTIONTYPE_BITWISE_OR:
+					result.asU64 = left.asS64 | right.asS64;
+					break;
+				case IRINSTRUCTIONTYPE_BITWISE_XOR:
+					result.asU64 = left.asS64 ^ right.asS64;
+					break;
 				default:
-					LogError(context, inst.loc, "Binary operation not "
-							"implemented"_s);
+					LogError(context, inst.loc, "Binary operation not " "implemented"_s);
 				}
 				CTVerboseLog(context, inst.loc, TPrintF("Lhs: 0x%llX, "
 							"Rhs: 0x%llX, Out: 0x%llX\n", left.asS64, right.asS64, result.asS64));
@@ -297,6 +312,15 @@ ArrayView<const CTRegister *> CTRunInstructions(CTContext *ctContext,
 					break;
 				case IRINSTRUCTIONTYPE_SHIFT_RIGHT:
 					result.asU64 = left.asU64 >> right.asU64;
+					break;
+				case IRINSTRUCTIONTYPE_BITWISE_AND:
+					result.asU64 = left.asU64 & right.asU64;
+					break;
+				case IRINSTRUCTIONTYPE_BITWISE_OR:
+					result.asU64 = left.asU64 | right.asU64;
+					break;
+				case IRINSTRUCTIONTYPE_BITWISE_XOR:
+					result.asU64 = left.asU64 ^ right.asU64;
 					break;
 				default:
 					LogError(context, inst.loc, "Binary operation not implemented"_s);
@@ -649,6 +673,7 @@ ArrayView<const CTRegister *> CTRunInstructions(CTContext *ctContext,
 				srcContent = CTRegisterFromIRValue(ctContext, src, true);
 				break;
 			case IRVALUETYPE_IMMEDIATE_STRING:
+#if 0
 			{
 				String literal;
 				{
@@ -659,11 +684,12 @@ ArrayView<const CTRegister *> CTRunInstructions(CTContext *ctContext,
 				// changed by the code...
 				srcContent = (CTRegister *)literal.data;
 			} break;
+#endif
 			case IRVALUETYPE_IMMEDIATE_INTEGER:
 			case IRVALUETYPE_IMMEDIATE_FLOAT:
-			{
 				LogError(context, inst.loc, "Trying to get pointer to immediate"_s);
-			} break;
+			case IRVALUETYPE_PROCEDURE:
+				LogError(context, inst.loc, "Procedure pointers not implemented on compile time"_s);
 			default:
 				LogError(context, inst.loc, "Invalid value type to get pointer from"_s);
 			}
@@ -675,6 +701,7 @@ ArrayView<const CTRegister *> CTRunInstructions(CTContext *ctContext,
 		case IRINSTRUCTIONTYPE_RETURN:
 		{
 			u64 returnCount = inst.returnInst.returnValueIndices.size;
+			ArrayInit(&returnValues, returnCount);
 			for (int i = 0; i < returnCount; ++i) {
 				u32 valueIdx = inst.returnInst.returnValueIndices[i];
 				CTRegister *value = CTGetValueContent(ctContext, valueIdx);
@@ -730,6 +757,24 @@ ArrayView<const CTRegister *> CTRunInstructions(CTContext *ctContext,
 	return returnValues;
 }
 
+CTRegister CTRunInstructions(Context *context,
+		BucketArrayView<Value> localValues,
+		BucketArrayView<IRInstruction> irInstructions,
+		IRValue resultIRValue)
+{
+	CTContext ctContext = {
+		.globalContext = context,
+		.localValues = localValues,
+	};
+	HashMapInit(&ctContext.values, 32);
+	CTInternalRunInstructions(&ctContext, irInstructions);
+
+	if (resultIRValue.valueType != IRVALUETYPE_INVALID)
+		return CTGetIRValueContentRead(&ctContext, resultIRValue);
+	else
+		return {};
+}
+
 ArrayView<const CTRegister *> CTRunProcedure(Context *context, u32 procedureIdx,
 		ArrayView<CTRegister *> parameters)
 {
@@ -746,24 +791,20 @@ ArrayView<const CTRegister *> CTRunProcedure(Context *context, u32 procedureIdx,
 	CTContext ctContext = {
 		.globalContext = context,
 		.procedureIdx = procedureIdx,
-		.localValues = &proc.localValues
+		.localValues = proc.localValues
 	};
 
-	HashMapInit(&ctContext.values, Max(32, NextPowerOf2((u32)BucketArrayCount(&proc.localValues))));
+	HashMapInit(&ctContext.values, Max(32, NextPowerOf2((u32)proc.localValues.count)));
 
 	// Read parameters
 	ASSERT(parameters.size == proc.parameterValues.size);
 	for (int i = 0; i < parameters.size; ++i) {
 		CTRegister *varContent = CTGetValueContent(&ctContext, proc.parameterValues[i]);
-		u32 paramTypeIdx = CTGetValueTypeIdx(&ctContext, proc.parameterValues[i]);
+		u32 paramTypeIdx = CTGetValue(&ctContext, proc.parameterValues[i]).typeTableIdx;
 		CTStore(&ctContext, varContent, parameters[i], paramTypeIdx);
 	}
 
-	return CTRunInstructions(&ctContext, &proc.irInstructions, proc.returnValueIndices.size);
-}
-
-void CompileTimeMain(Context *context)
-{
-	HashMapInit(&context->ctGlobalValueContents, 64);
-	context->ctGlobalValuesLock = 0;
+	ArrayView<const CTRegister *> result = CTInternalRunInstructions(&ctContext, proc.irInstructions);
+	ASSERT(result.size == proc.returnValueIndices.size);
+	return result;
 }

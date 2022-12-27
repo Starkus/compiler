@@ -43,6 +43,7 @@ enum TCYieldReason : u32
 	TCYIELDREASON_PROC_BODY_NOT_READY,
 	TCYIELDREASON_PROC_IR_NOT_READY,
 	TCYIELDREASON_TYPE_NOT_READY,
+	TCYIELDREASON_GLOBAL_VALUE_NOT_READY,
 	// WAITING_FOR_STOP jobs want to wait until no jobs are running to make a decision.
 	// As of time of write, only #defined does this to determine if something isn't defined anywhere
 	// before continuing.
@@ -134,12 +135,12 @@ String TPrintF(const char *format, ...)
 	return { size, buffer };
 }
 
-String SNPrintF(const char *format, int maxSize, ...)
+String SNPrintF(int maxSize, const char *format, ...)
 {
 	char *buffer = (char *)LinearAllocator::Alloc(maxSize, 1);
 
 	va_list args;
-	va_start(args, maxSize);
+	va_start(args, format);
 	u64 size = stbsp_vsnprintf(buffer, maxSize, format, args);
 	va_end(args);
 
@@ -178,8 +179,8 @@ u64 CycleCountEnd(u64 begin)
 #include "Parser.h"
 #include "AST.h"
 #include "TypeChecker.h"
-#include "CompileTime.h"
 #include "IRGen.h"
+#include "CompileTime.h"
 #include "Backend.h"
 #include "x64.h"
 
@@ -220,12 +221,16 @@ struct Context
 	// pointers to relocate them.
 	DynamicArray<void *, HeapAllocator> staticDataPointersToRelocate;
 
+	volatile u32 globalValuesLock;
+	HashMap<u32, void *, LinearAllocator> globalValueContents;
+
 	// Type check -----
 	MXContainer<DynamicArray<TCJob, HeapAllocator>> jobsWaitingForIdentifier;
 	MXContainer<DynamicArray<TCJob, HeapAllocator>> jobsWaitingForOverload;
 	MXContainer<DynamicArray<TCJob, HeapAllocator>> jobsWaitingForStaticDef;
 	MXContainer<DynamicArray<TCJob, HeapAllocator>> jobsWaitingForProcedure;
 	MXContainer<DynamicArray<TCJob, HeapAllocator>> jobsWaitingForType;
+	MXContainer<DynamicArray<TCJob, HeapAllocator>> jobsWaitingForGlobalValue;
 	MXContainer<DynamicArray<TCJob, HeapAllocator>> jobsWaitingForDeadStop;
 
 	MTQueue<JobRequest> jobsToCreate;
@@ -246,13 +251,9 @@ struct Context
 	RWContainer<DynamicArray<u32, LinearAllocator>> tcGlobalTypeIndices;
 	RWContainer<DynamicArray<DynamicArray<u32, LinearAllocator>, LinearAllocator>> tcInlineCalls;
 
-	// CompileTime -----
-	volatile u32 ctGlobalValuesLock;
-	HashMap<u32, void *, LinearAllocator> ctGlobalValueContents;
-
 	// IR -----
-	RWContainer<BucketArray<String, HeapAllocator, 1024>> stringLiterals;
-	RWContainer<BucketArray<String, HeapAllocator, 128>> cStringLiterals;
+	RWContainer<BucketArray<StringLiteral, HeapAllocator, 1024>> stringLiterals;
+	RWContainer<BucketArray<StringLiteral, HeapAllocator, 128>> cStringLiterals;
 	RWContainer<DynamicArray<IRStaticVariable, HeapAllocator>> irStaticVariables;
 	RWContainer<DynamicArray<u32, HeapAllocator>> irExternalVariables;
 
@@ -560,7 +561,6 @@ int main(int argc, char **argv)
 	TimerSplit("Initialization"_s);
 
 	ParserMain(&context);
-	CompileTimeMain(&context);
 	TypeCheckMain(&context);
 	IRGenMain(&context);
 	BackendMain(&context);

@@ -5,7 +5,7 @@ u32 IRNewValue(Context *context, u32 typeTableIdx, u32 flags, u32 immitateValueI
 
 	IRJobData *jobData = (IRJobData *)SYSGetFiberData(context->flsIndex);
 
-	u64 idx = BucketArrayCount(jobData->localValues);
+	u64 idx = jobData->localValues->count;
 	Value *result = BucketArrayAdd(jobData->localValues);
 	result->name = {};
 	result->typeTableIdx = typeTableIdx;
@@ -23,7 +23,7 @@ u32 IRNewValue(Context *context, String name, u32 typeTableIdx, u32 flags, u32 i
 
 	IRJobData *jobData = (IRJobData *)SYSGetFiberData(context->flsIndex);
 
-	u64 idx = BucketArrayCount(jobData->localValues);
+	u64 idx = jobData->localValues->count;
 	Value *result = BucketArrayAdd(jobData->localValues);
 	result->name = name;
 	result->typeTableIdx = typeTableIdx;
@@ -41,7 +41,7 @@ u32 IRNewValue(Context *context, Value value)
 
 	IRJobData *jobData = (IRJobData *)SYSGetFiberData(context->flsIndex);
 
-	u64 idx = BucketArrayCount(jobData->localValues);
+	u64 idx = jobData->localValues->count;
 	Value *result = BucketArrayAdd(jobData->localValues);
 	*result = value;
 
@@ -193,44 +193,68 @@ IRValue IRValueImmediateString(Context *context, String string)
 		result.immediateStringIdx = 0;
 	else {
 		auto stringLiterals = context->stringLiterals.GetForWrite();
-		s64 stringCount = BucketArrayCount(&stringLiterals);
+		s64 stringCount = stringLiterals->count;
 		ASSERT(stringCount < U32_MAX);
 		for (u32 stringIdx = 0; stringIdx < stringCount; ++stringIdx) {
-			if (StringEquals(stringLiterals[stringIdx], string)) {
+			if (StringEquals(stringLiterals[stringIdx].string, string)) {
 				result.immediateStringIdx = stringIdx;
 				goto done;
 			}
 		}
+		// Create a new one
 		u32 idx = (u32)stringCount;
+		u32 globalValueIdx = NewGlobalValue(context, SNPrintF(8, "_str%u", idx),
+				GetTypeInfoPointerOf(context, TYPETABLEIDX_U8), VALUEFLAGS_ON_STATIC_STORAGE);
+		String staticDataStr = CopyStringToStaticData(context, string);
+
+		{
+			ScopedLockSpin lock(&context->globalValuesLock);
+			*HashMapGetOrAdd(&context->globalValueContents, globalValueIdx & VALUE_GLOBAL_MASK) =
+				(u8 *)staticDataStr.data;
+		}
+
 		result.immediateStringIdx = idx;
-		*BucketArrayAdd(&stringLiterals) = CopyStringToStaticData(context, string);
+		*BucketArrayAdd(&stringLiterals) = { globalValueIdx, staticDataStr };
 	}
 done:
 	return result;
 }
 
+IRValue IRPointerToValue(Context *context, SourceLocation loc, IRValue in);
+
 IRValue IRValueImmediateCStr(Context *context, String string)
 {
-	IRValue result;
-	result.valueType = IRVALUETYPE_IMMEDIATE_CSTR;
+	u32 charPtrTypeIdx = GetTypeInfoPointerOf(context, TYPETABLEIDX_U8);
 	if (string.size == 0)
-		result.immediateStringIdx = 0;
-	else {
+		return IRValueImmediate(0, charPtrTypeIdx);
+
+	u32 globalValueIdx;
+	{
 		auto stringLiterals = context->cStringLiterals.GetForWrite();
-		s64 stringCount = BucketArrayCount(&stringLiterals);
+		s64 stringCount = stringLiterals->count;
 		ASSERT(stringCount < U32_MAX);
 		for (u32 stringIdx = 0; stringIdx < stringCount; ++stringIdx) {
-			if (StringEquals(stringLiterals[stringIdx], string)) {
-				result.immediateStringIdx = stringIdx;
+			if (StringEquals(stringLiterals[stringIdx].string, string)) {
+				globalValueIdx = stringLiterals[stringIdx].globalValueIdx;
 				goto done;
 			}
 		}
+		// Create a new one
 		u32 idx = (u32)stringCount;
-		result.immediateStringIdx = idx;
-		*BucketArrayAdd(&stringLiterals) = string;
+		globalValueIdx = NewGlobalValue(context, SNPrintF(8, "_cstr%u", idx),
+				charPtrTypeIdx, VALUEFLAGS_ON_STATIC_STORAGE);
+		String staticDataStr = CopyStringToStaticData(context, string, true);
+
+		{
+			ScopedLockSpin lock(&context->globalValuesLock);
+			*HashMapGetOrAdd(&context->globalValueContents, globalValueIdx & VALUE_GLOBAL_MASK) =
+				(u8 *)staticDataStr.data;
+		}
+
+		*BucketArrayAdd(&stringLiterals) = { globalValueIdx, staticDataStr };
 	}
 done:
-	return result;
+	return IRPointerToValue(context, {}, IRValueValue(globalValueIdx, charPtrTypeIdx));
 }
 
 IRValue IRValueImmediateFloat(Context *context, f64 f, u32 typeTableIdx = TYPETABLEIDX_F64)
@@ -257,7 +281,7 @@ IRValue IRValueImmediateFloat(Context *context, f64 f, u32 typeTableIdx = TYPETA
 
 	IRStaticVariable newStaticVar = {};
 	newStaticVar.valueIdx = NewGlobalValue(context,
-			SNPrintF("_staticFloat%d", 18, floatStaticVarUniqueID++), typeTableIdx,
+			SNPrintF(18, "_staticFloat%d", floatStaticVarUniqueID++), typeTableIdx,
 			VALUEFLAGS_ON_STATIC_STORAGE);
 	newStaticVar.initialValue.valueType = IRVALUETYPE_IMMEDIATE_FLOAT;
 	newStaticVar.initialValue.immediateFloat = f;
@@ -390,8 +414,8 @@ IRValue IRDoMemberAccess(Context *context, SourceLocation loc, u32 structPtrValu
 {
 #if DEBUG_BUILD
 	String structValueName = IRGetValue(context, structPtrValueIdx).name;
-	IRAddComment(context, loc, SNPrintF("Accessing struct member \"%S.%S\"",
-				28 + (int)structValueName.size + (int)structMember.name.size,
+	IRAddComment(context, loc, SNPrintF(28 + (int)structValueName.size + (int)structMember.name.size,
+				"Accessing struct member \"%S.%S\"",
 				structValueName, structMember.name));
 #endif
 
@@ -531,7 +555,6 @@ void IRDoAssignment(Context *context, SourceLocation loc, IRValue dstValue, IRVa
 	ASSERT(dstValue.valueType != IRVALUETYPE_IMMEDIATE_INTEGER);
 	ASSERT(dstValue.valueType != IRVALUETYPE_IMMEDIATE_FLOAT);
 	ASSERT(dstValue.valueType != IRVALUETYPE_IMMEDIATE_STRING);
-	ASSERT(dstValue.valueType != IRVALUETYPE_IMMEDIATE_CSTR);
 
 	// Tuples
 	if (dstValue.valueType == IRVALUETYPE_TUPLE)
@@ -549,7 +572,7 @@ void IRDoAssignment(Context *context, SourceLocation loc, IRValue dstValue, IRVa
 	if (srcValue.valueType == IRVALUETYPE_IMMEDIATE_STRING) {
 		ASSERT(dstValue.typeTableIdx == TYPETABLEIDX_STRING_STRUCT);
 
-		String literal;
+		StringLiteral literal;
 		{
 			auto stringLiterals = context->stringLiterals.GetForRead();
 			literal = stringLiterals[srcValue.immediateStringIdx];
@@ -564,7 +587,7 @@ void IRDoAssignment(Context *context, SourceLocation loc, IRValue dstValue, IRVa
 			.type = IRINSTRUCTIONTYPE_ASSIGNMENT,
 			.loc = loc,
 			.assignment = {
-				.src = IRValueImmediate(literal.size),
+				.src = IRValueImmediate(literal.string.size),
 				.dst = sizeMember
 			}
 		};
@@ -579,7 +602,7 @@ void IRDoAssignment(Context *context, SourceLocation loc, IRValue dstValue, IRVa
 			.type = IRINSTRUCTIONTYPE_LOAD_EFFECTIVE_ADDRESS,
 			.loc = loc,
 			.assignment = {
-				.src = srcValue,
+				.src = IRValueValue(literal.globalValueIdx, charPtrTypeIdx),
 				.dst = dataMember
 			}
 		};
@@ -627,7 +650,7 @@ void IRDoAssignment(Context *context, SourceLocation loc, IRValue dstValue, IRVa
 		{
 			if (IRShouldPassByCopy(context, dataValue.typeTableIdx)) {
 				static u64 tempVarForAnyUniqueID = 0;
-				String tempVarName = SNPrintF("_tempVarForAny%llu", 20, tempVarForAnyUniqueID++);
+				String tempVarName = SNPrintF(20, "_tempVarForAny%llu", tempVarForAnyUniqueID++);
 				u32 tempValue = IRAddTempValue(context, loc, tempVarName, srcValue.typeTableIdx,
 						VALUEFLAGS_FORCE_MEMORY);
 				IRValue tempVarIRValue = IRValueValue(tempValue, srcValue.typeTableIdx);
@@ -778,7 +801,7 @@ void IRDoAssignment(Context *context, SourceLocation loc, IRValue dstValue, IRVa
 inline void IRInsertLabelInstruction(Context *context, SourceLocation loc, IRLabel *label)
 {
 	IRJobData *jobData = (IRJobData *)SYSGetFiberData(context->flsIndex);
-	label->instructionIdx = BucketArrayCount(jobData->irInstructions);
+	label->instructionIdx = jobData->irInstructions->count;
 	*AddInstruction(context) = {
 		.type = IRINSTRUCTIONTYPE_LABEL,
 		.loc = loc,
@@ -812,7 +835,7 @@ IRValue IRInstructionFromBinaryOperation(Context *context, const ASTExpression *
 		if (structTypeInfo.typeCategory == TYPECATEGORY_POINTER) {
 			// Dereference the pointer to the struct
 			String valueName = IRGetValue(context, irValue.value.valueIdx).name; 
-			IRAddComment(context, loc, SNPrintF("Dereference struct pointer \"%S\"", 64, valueName));
+			IRAddComment(context, loc, SNPrintF(64, "Dereference struct pointer \"%S\"", valueName));
 			String name = SStringConcat("_derefstrctptr_"_s, valueName);
 			u32 newValueIdx = IRNewValue(context, name, irValue.typeTableIdx,
 					VALUEFLAGS_FORCE_REGISTER);
@@ -1835,8 +1858,10 @@ IRValue IRGenFromExpression(Context *context, const ASTExpression *expression)
 					}
 				}
 
-				auto staticVars = context->irStaticVariables.GetForWrite();
-				*DynamicArrayAdd(&staticVars) = newStaticVar;
+				{
+					auto staticVars = context->irStaticVariables.GetForWrite();
+					*DynamicArrayAdd(&staticVars) = newStaticVar;
+				}
 
 				u32 varValueIdx = *GetVariableValueIdx(&varDecl, varIdx);
 				u32 varTypeIdx  = *GetVariableTypeIdx(&varDecl, varIdx);
@@ -1898,13 +1923,8 @@ IRValue IRGenFromExpression(Context *context, const ASTExpression *expression)
 			IRPushValueIntoStack(context, varDecl.loc, varDecl.anonymousVariableValueIdx);
 
 		if (varDecl.isStatic) {
-			CTContext ctContext = {
-				.globalContext = context,
-				.procedureIdx = U32_MAX,
-				.localValues = jobData->localValues
-			};
-			HashMapInit(&ctContext.values, 32);
-			CTRunInstructions(&ctContext, &staticVarIRInstructions, 0);
+			CTRunInstructions(context, *jobData->localValues, staticVarIRInstructions,
+					{ IRVALUETYPE_INVALID });
 			jobData->irInstructions = oldIRInstructions;
 			jobData->localValues = oldLocalValues;
 		}
@@ -1933,10 +1953,10 @@ IRValue IRGenFromExpression(Context *context, const ASTExpression *expression)
 						f = constant.valueAsFloat;
 					else
 						ASSERT(false);
-					result = IRValueImmediateFloat(context, f);
+					result = IRValueImmediateFloat(context, f, typeTableIdx);
 				}
 				else
-					result = IRValueImmediate(constant.valueAsInt, constant.typeTableIdx);
+					result = IRValueImmediate(constant.valueAsInt, typeTableIdx);
 			} break;
 			case STATICDEFINITIONTYPE_PROCEDURE:
 			{
@@ -2253,25 +2273,7 @@ skipGeneratingVarargsArray:
 			break;
 		case LITERALTYPE_STRING:
 		{
-#if 0
-			static u64 stringStaticVarUniqueID = 0;
-
-			IRStaticVariable newStaticVar = {};
-			newStaticVar.valueIdx = NewGlobalValue(context,
-					SNPrintF("staticString%d", 18, stringStaticVarUniqueID++),
-					TYPETABLEIDX_STRING_STRUCT, VALUEFLAGS_ON_STATIC_STORAGE);
-			newStaticVar.initialValue = IRValueImmediateString(context, expression->literal.string);
-			newStaticVar.initialValue.typeTableIdx = TYPETABLEIDX_STRING_STRUCT;
-
-			{
-				auto staticVars = context->irStaticVariables.GetForWrite();
-				*DynamicArrayAdd(&staticVars) = newStaticVar;
-			}
-
-			result = IRValueValue(context, newStaticVar.valueIdx);
-#else
 			result = IRValueImmediateString(context, expression->literal.string);
-#endif
 		} break;
 		case LITERALTYPE_GROUP:
 		{
@@ -2283,23 +2285,7 @@ skipGeneratingVarargsArray:
 		} break;
 		case LITERALTYPE_CSTR:
 		{
-			static u64 stringStaticVarUniqueID = 0;
-
-			u32 charPointerTypeIdx = GetTypeInfoPointerOf(context, TYPETABLEIDX_U8);
-			IRStaticVariable newStaticVar = {};
-			newStaticVar.valueIdx = NewGlobalValue(context,
-					SNPrintF("staticCString%d", 20, stringStaticVarUniqueID++),
-					charPointerTypeIdx, VALUEFLAGS_ON_STATIC_STORAGE);
-			newStaticVar.initialValue = IRValueImmediateCStr(context, expression->literal.string);
-			newStaticVar.initialValue.typeTableIdx = charPointerTypeIdx;
-
-			{
-				auto staticVars = context->irStaticVariables.GetForWrite();
-				*DynamicArrayAdd(&staticVars) = newStaticVar;
-			}
-
-			result = IRPointerToValue(context, expression->any.loc,
-					IRValueValue(context, newStaticVar.valueIdx));
+			result = IRValueImmediateCStr(context, expression->literal.string);
 		} break;
 		default:
 			ASSERT(!"Unexpected literal type");
@@ -2532,15 +2518,13 @@ skipGeneratingVarargsArray:
 			StructMember sizeMember = {
 				.typeTableIdx = GetTypeInfoPointerOf(context, TYPETABLEIDX_U8),
 				.offset = 0 };
-			StructMember dataMember = {
-				.typeTableIdx = TYPETABLEIDX_U64,
-				.offset = g_pointerSize };
 
 			IRValue arrayPtr = IRPointerToValue(context, loc, arrayValue);
 			sizeValue = IRDoMemberAccess(context, loc, arrayPtr.value.valueIdx, sizeMember);
 		}
 
-		IRInstruction decrInst = {
+		// Decrement size
+		*AddInstruction(context) = {
 			.type = IRINSTRUCTIONTYPE_SUBTRACT,
 			.loc = loc,
 			.binaryOperation = {
