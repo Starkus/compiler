@@ -327,6 +327,7 @@ inline IRValue IRValueImmediateFloat(Context *context, f64 f, u32 typeTableIdx)
 {
 	switch (typeTableIdx) {
 	case TYPETABLEIDX_F32:
+	case TYPETABLEIDX_FLOATING: // @Improve: maybe have type checker always collapse these?
 		return IRValueImmediateF32(context, (f32)f);
 	case TYPETABLEIDX_F64:
 		return IRValueImmediateF64(context, f);
@@ -1852,39 +1853,10 @@ IRValue IRGenFromExpression(Context *context, const ASTExpression *expression)
 		for (int varIdx = 0; varIdx < varCount; ++varIdx) {
 			u32 valueIdx = *GetVariableValueIdx(&varDecl, varIdx);
 			if (varDecl.isStatic) {
-				IRStaticVariable newStaticVar = {};
-				newStaticVar.valueIdx = valueIdx;
-				newStaticVar.initialValue.valueType = IRVALUETYPE_INVALID;
-
-				// Initial value
-				if (varDecl.astInitialValue) {
-					if (varDecl.astInitialValue->literal.type == LITERALTYPE_STRING) {
-						newStaticVar.initialValue = IRValueImmediateString(context,
-								varDecl.astInitialValue->literal.string);
-					}
-					else if (varDecl.astInitialValue->literal.type == LITERALTYPE_CSTR) {
-						newStaticVar.initialValue = IRValueImmediateCStr(context,
-								varDecl.astInitialValue->literal.string);
-					}
-					else {
-						Constant constant  = TryEvaluateConstant(context, varDecl.astInitialValue);
-						if (constant.type == CONSTANTTYPE_INVALID)
-							LogError(context, varDecl.astInitialValue->any.loc,
-									"Initial value of static variable isn't constant"_s);
-
-						newStaticVar.initialValue = IRValueFromConstant(context, constant);
-					}
-				}
-
-				{
-					auto staticVars = context->irStaticVariables.GetForWrite();
-					*DynamicArrayAdd(&staticVars) = newStaticVar;
-				}
-
+				// Set up static data for variable
 				u32 varValueIdx = *GetVariableValueIdx(&varDecl, varIdx);
 				u32 varTypeIdx  = *GetVariableTypeIdx(&varDecl, varIdx);
 
-				// Set up static data for variable
 				TypeInfo varTypeInfo = TCGetTypeInfo(context, varTypeIdx);
 				void *staticData = AllocateStaticData(context, varValueIdx, varTypeInfo.size, 8);
 				memset(staticData, 0, varTypeInfo.size);
@@ -2278,17 +2250,19 @@ skipGeneratingVarargsArray:
 			TypeCategory typeCat = GetTypeInfo(context, typeTableIdx).typeCategory;
 			if (typeCat == TYPECATEGORY_FLOATING)
 				result = IRValueImmediateFloat(context, (f64)expression->literal.integer,
-						expression->typeTableIdx);
+						typeTableIdx);
 			else
-				result = IRValueImmediate(expression->literal.integer, expression->typeTableIdx);
+				result = IRValueImmediate(expression->literal.integer, typeTableIdx);
 		} break;
 		case LITERALTYPE_CHARACTER:
 			result = IRValueImmediate(expression->literal.character, expression->typeTableIdx);
 			break;
 		case LITERALTYPE_FLOATING:
+		{
+			u32 typeTableIdx = StripAllAliases(context, expression->typeTableIdx);
 			result = IRValueImmediateFloat(context, expression->literal.floating,
-					expression->typeTableIdx);
-			break;
+					typeTableIdx);
+		} break;
 		case LITERALTYPE_STRING:
 		{
 			result = IRValueImmediateString(context, expression->literal.string);
@@ -2727,10 +2701,6 @@ skipGeneratingVarargsArray:
 void PrintJobIRInstructions(Context *context);
 void IRGenMain(Context *context)
 {
-	{
-		auto staticVars = context->irStaticVariables.GetForWrite();
-		DynamicArrayInit(&staticVars, 64);
-	}
 	{
 		auto externalVars = context->irExternalVariables.GetForWrite();
 		DynamicArrayInit(&externalVars, 32);

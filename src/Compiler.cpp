@@ -255,7 +255,6 @@ struct Context
 	RWContainer<BucketArray<StringLiteral, HeapAllocator, 128>> cStringLiterals;
 	RWContainer<BucketArray<FloatLiteral,  HeapAllocator, 1024>> f32Literals;
 	RWContainer<BucketArray<FloatLiteral,  HeapAllocator, 1024>> f64Literals;
-	RWContainer<DynamicArray<IRStaticVariable, HeapAllocator>> irStaticVariables;
 	RWContainer<DynamicArray<u32, HeapAllocator>> irExternalVariables;
 
 	// Backend -----

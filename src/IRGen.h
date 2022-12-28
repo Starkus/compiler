@@ -218,12 +218,6 @@ struct IRScope
 	DynamicArray<ASTExpression *, ThreadAllocator> deferredStatements;
 };
 
-struct IRStaticVariable
-{
-	u32 valueIdx;
-	IRValue initialValue;
-};
-
 struct IRJobArgs
 {
 	Context *context;

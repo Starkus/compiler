@@ -3935,8 +3935,7 @@ void TypeCheckExpression(Context *context, ASTExpression *expression)
 		}
 
 		// Infer the rest (collapse _NUMBER and _FLOATING)
-		s64 maxArguments = Max(givenArguments, totalArguments);
-		for (s64 argIdx = argsToCheck; argIdx < maxArguments; ++argIdx) {
+		for (s64 argIdx = argsToCheck; argIdx < givenArguments; ++argIdx) {
 			ASTExpression *arg = astProcCall->arguments[argIdx];
 			u32 inferred = InferType(arg->typeTableIdx);
 			if (inferred != arg->typeTableIdx)
