@@ -1795,13 +1795,8 @@ void ParserMain(Context *context)
 
 	MTQueueInit<HeapAllocator>(&context->readyJobs, 2048);
 
-	DynamicArrayInit(&context->jobsWaitingForIdentifier.unsafe, 64);
-	DynamicArrayInit(&context->jobsWaitingForOverload.unsafe, 64);
-	DynamicArrayInit(&context->jobsWaitingForStaticDef.unsafe, 64);
-	DynamicArrayInit(&context->jobsWaitingForProcedure.unsafe, 64);
-	DynamicArrayInit(&context->jobsWaitingForType.unsafe, 64);
-	DynamicArrayInit(&context->jobsWaitingForGlobalValue.unsafe, 64);
-	DynamicArrayInit(&context->jobsWaitingForDeadStop.unsafe, 64);
+	for (int i = 0; i < TCYIELDREASON_Count; ++i)
+		DynamicArrayInit(&context->waitingJobsByReason[i].unsafe, 64);
 
 	MTQueueInit<HeapAllocator>(&context->jobsToCreate, 512);
 	MTQueueInit<HeapAllocator>(&context->fibersToDelete, 512);

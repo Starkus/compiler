@@ -257,46 +257,82 @@ done:
 	return IRPointerToValue(context, {}, IRValueValue(globalValueIdx, charPtrTypeIdx));
 }
 
-IRValue IRValueImmediateFloat(Context *context, f64 f, u32 typeTableIdx = TYPETABLEIDX_F64)
+IRValue IRValueImmediateF64(Context *context, f64 f)
 {
-	static u64 floatStaticVarUniqueID = 0;
-
-	auto staticVars = context->irStaticVariables.GetForWrite();
-	for (int i = 0; i < staticVars->size; ++i)
+	u32 globalValueIdx;
 	{
-		IRStaticVariable staticVar = staticVars[i];
-		if (staticVar.initialValue.valueType == IRVALUETYPE_IMMEDIATE_FLOAT &&
-			staticVar.initialValue.typeTableIdx == typeTableIdx)
-		{
+		union { f64 in; u64 inQWord; };
+		in = f;
+
+		auto floatLiterals = context->f64Literals.GetForWrite();
+		s64 count = floatLiterals->count;
+		for (u32 floatIdx = 0; floatIdx < count; ++floatIdx) {
 			// Compare as quad word, not float (for example to distinguish 0 from -0
-			union { f64 in; u64 inQWord; };
 			union { f64 current; u64 currentQWord; };
-			in = f;
-			current = staticVar.initialValue.immediateFloat;
+			current = *floatLiterals[floatIdx].asF64;
 
-			if (inQWord == currentQWord)
-				return IRValueValue(staticVar.valueIdx, typeTableIdx);
+			if (inQWord == currentQWord) {
+				globalValueIdx = floatLiterals[floatIdx].globalValueIdx;
+				goto done;
+			}
 		}
+		// Create a new one
+		u32 idx = (u32)count;
+		globalValueIdx = NewGlobalValue(context, SNPrintF(12, "_staticF64%u", idx),
+				TYPETABLEIDX_F64, VALUEFLAGS_ON_STATIC_STORAGE);
+
+		f64 *staticData = (f64 *)AllocateStaticData(context, globalValueIdx, 8, 8);
+		*staticData = f;
+
+		*BucketArrayAdd(&floatLiterals) = { .globalValueIdx = globalValueIdx, .asF64 = staticData };
 	}
+done:
+	return IRValueValue(globalValueIdx, TYPETABLEIDX_F64);
+}
 
-	IRStaticVariable newStaticVar = {};
-	newStaticVar.valueIdx = NewGlobalValue(context,
-			SNPrintF(18, "_staticFloat%d", floatStaticVarUniqueID++), typeTableIdx,
-			VALUEFLAGS_ON_STATIC_STORAGE);
-	newStaticVar.initialValue.valueType = IRVALUETYPE_IMMEDIATE_FLOAT;
-	newStaticVar.initialValue.immediateFloat = f;
-	newStaticVar.initialValue.typeTableIdx = typeTableIdx;
-	*DynamicArrayAdd(&staticVars) = newStaticVar;
+IRValue IRValueImmediateF32(Context *context, f32 f)
+{
+	u32 globalValueIdx;
+	{
+		union { f32 in; u32 inDWord; };
+		in = f;
 
-	// Set up static data
-	CTRegister *staticData = (CTRegister *)AllocateStaticData(context, newStaticVar.valueIdx,
-			sizeof(CTRegister), 8);
-	if (typeTableIdx == TYPETABLEIDX_F32)
-		staticData->asF32 = (f32)f;
-	else
-		staticData->asF64 = f;
+		auto floatLiterals = context->f32Literals.GetForWrite();
+		s64 count = floatLiterals->count;
+		for (u32 floatIdx = 0; floatIdx < count; ++floatIdx) {
+			// Compare as quad word, not float (for example to distinguish 0 from -0
+			union { f32 current; u32 currentDWord; };
+			current = *floatLiterals[floatIdx].asF32;
 
-	return IRValueValue(newStaticVar.valueIdx, typeTableIdx);
+			if (inDWord == currentDWord) {
+				globalValueIdx = floatLiterals[floatIdx].globalValueIdx;
+				goto done;
+			}
+		}
+		// Create a new one
+		u32 idx = (u32)count;
+		globalValueIdx = NewGlobalValue(context, SNPrintF(12, "_staticF32%u", idx),
+				TYPETABLEIDX_F32, VALUEFLAGS_ON_STATIC_STORAGE);
+
+		f32 *staticData = (f32 *)AllocateStaticData(context, globalValueIdx, 4, 4);
+		*staticData = f;
+
+		*BucketArrayAdd(&floatLiterals) = { .globalValueIdx = globalValueIdx, .asF32 = staticData };
+	}
+done:
+	return IRValueValue(globalValueIdx, TYPETABLEIDX_F32);
+}
+
+inline IRValue IRValueImmediateFloat(Context *context, f64 f, u32 typeTableIdx)
+{
+	switch (typeTableIdx) {
+	case TYPETABLEIDX_F32:
+		return IRValueImmediateF32(context, (f32)f);
+	case TYPETABLEIDX_F64:
+		return IRValueImmediateF64(context, f);
+	default:
+		ASSERT(false);
+	}
 }
 
 inline IRValue IRValueProcedure(Context *context, u32 procedureIdx)
@@ -772,7 +808,7 @@ void IRDoAssignment(Context *context, SourceLocation loc, IRValue dstValue, IRVa
 			.type = IRINSTRUCTIONTYPE_ASSIGNMENT,
 			.loc = loc,
 			.assignment = {
-				.src = IRValueImmediateFloat(context, (f64)srcValue.immediate),
+				.src = IRValueImmediateF64(context, (f64)srcValue.immediate),
 				.dst = dstValue
 			}
 		};
@@ -1695,24 +1731,6 @@ void IRGenProcedure(Context *context, u32 procedureIdx, SourceLocation loc,
 IRValue IRGenFromExpression(Context *context, const ASTExpression *expression)
 {
 	IRJobData *jobData = (IRJobData *)SYSGetFiberData(context->flsIndex);
-
-	// @Todo: use SourceLocation in IR instructions to print source lines when doing PrintIR or
-	// outputting backend asm directly, instead of adding these comments.
-#if 0
-	if (jobData && jobData->procedureIdx != 0)
-	{
-		SourceLocation loc = expression->any.loc;
-		static u32 lastFileIdx = loc.fileIdx;
-		static u32 lastLine = ExpandSourceLocation(context, loc).line;
-
-		FatSourceLocation fatLoc = ExpandSourceLocation(context, loc);
-		if (loc.fileIdx != lastFileIdx || fatLoc.line != lastLine)
-			IRAddComment(context, loc, { fatLoc.lineSize, fatLoc.beginingOfLine });
-
-		lastFileIdx = loc.fileIdx;
-		lastLine = fatLoc.line;
-	}
-#endif
 
 	IRValue result = {};
 
@@ -2718,16 +2736,28 @@ void IRGenMain(Context *context)
 		DynamicArrayInit(&externalVars, 32);
 	}
 	{
-		auto stringLiterals = context->stringLiterals.GetForWrite();
+		auto &stringLiterals = context->stringLiterals.unsafe;
 		BucketArrayInit(&stringLiterals);
 		// Empty string
-		*BucketArrayAdd(&stringLiterals) = {};
+		IRValueImmediateString(context, {});
 	}
 	{
-		auto cStringLiterals = context->cStringLiterals.GetForWrite();
+		auto &cStringLiterals = context->cStringLiterals.unsafe;
 		BucketArrayInit(&cStringLiterals);
 		// Empty string
-		*BucketArrayAdd(&cStringLiterals) = {};
+		IRValueImmediateCStr(context, {});
+	}
+	{
+		auto &f32Literals = context->f32Literals.unsafe;
+		BucketArrayInit(&f32Literals);
+		// Empty string
+		IRValueImmediateF32(context, 0.0f);
+	}
+	{
+		auto &f64Literals = context->f64Literals.unsafe;
+		BucketArrayInit(&f64Literals);
+		// Empty string
+		IRValueImmediateF64(context, 0.0);
 	}
 }
 
@@ -2763,24 +2793,13 @@ void IRJobProcedure(void *args)
 
 	IRGenProcedure(context, procedureIdx, {}, &argsStruct->localValues);
 
-	// Wake up any jobs that were waiting for this procedure's IR
 	{
 		Procedure proc = GetProcedureRead(context, procedureIdx);
 		proc.isIRReady = true;
 		UpdateProcedure(context, procedureIdx, &proc);
-
-		auto jobsWaiting = context->jobsWaitingForProcedure.Get();
-		for (int i = 0; i < jobsWaiting->size; ) {
-			TCJob *job = &jobsWaiting[i];
-			if (job->context.index == procedureIdx) {
-				EnqueueReadyJob(context, job->fiber);
-				// Remove
-				*job = jobsWaiting[--jobsWaiting->size];
-			}
-			else
-				++i;
-		}
 	}
+	// Wake up any jobs that were waiting for this procedure's IR
+	WakeUpAllByIndex(context, TCYIELDREASON_PROC_IR_NOT_READY, procedureIdx);
 
 	if (context->config.logIR)
 		PrintJobIRInstructions(context);

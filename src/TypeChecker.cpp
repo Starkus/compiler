@@ -202,7 +202,7 @@ inline bool TCIsAnyOtherJobRunningOrWaiting(Context *context)
 		return true;
 	if (!MTQueueIsEmpty(&context->jobsToCreate))
 		return true;
-	if (context->jobsWaitingForDeadStop.unsafe.size)
+	if (context->waitingJobsByReason[TCYIELDREASON_WAITING_FOR_STOP].unsafe.size)
 		return true;
 
 	return false;
@@ -216,18 +216,9 @@ inline bool TCAreAllJobFinished(Context *context)
 		return false;
 	if (!MTQueueIsEmpty(&context->jobsToCreate))
 		return false;
-	if (context->jobsWaitingForIdentifier.unsafe.size)
-		return false;
-	if (context->jobsWaitingForOverload.unsafe.size)
-		return false;
-	if (context->jobsWaitingForStaticDef.unsafe.size)
-		return false;
-	if (context->jobsWaitingForProcedure.unsafe.size)
-		return false;
-	if (context->jobsWaitingForType.unsafe.size)
-		return false;
-	if (context->jobsWaitingForDeadStop.unsafe.size)
-		return false;
+	for (int yieldReason = 0; yieldReason < TCYIELDREASON_Count; ++yieldReason)
+		if (context->waitingJobsByReason[yieldReason].unsafe.size)
+			return false;
 
 	return true;
 }
@@ -257,7 +248,7 @@ inline TypeInfo TCGetTypeInfo(Context *context, u32 typeTableIdx)
 	// waiting list.
 	// We lock the list of jobs here instead of the type table because no one locks the type table
 	// to read it.
-	SYSMutexLock(context->jobsWaitingForType.lock);
+	SYSMutexLock(context->waitingJobsByReason[TCYIELDREASON_TYPE_NOT_READY].lock);
 	result = typeTable[typeTableIdx];
 
 	while (result.typeCategory == TYPECATEGORY_NOT_READY) {
@@ -265,12 +256,12 @@ inline TypeInfo TCGetTypeInfo(Context *context, u32 typeTableIdx)
 		// waiting list, so we don't miss waking it up when updating the type.
 		SwitchJob(context, TCYIELDREASON_TYPE_NOT_READY, { .index = typeTableIdx });
 		// Lock again!
-		SYSMutexLock(context->jobsWaitingForType.lock);
+		SYSMutexLock(context->waitingJobsByReason[TCYIELDREASON_TYPE_NOT_READY].lock);
 
 		result = typeTable[typeTableIdx];
 	}
 
-	SYSMutexUnlock(context->jobsWaitingForType.lock);
+	SYSMutexUnlock(context->waitingJobsByReason[TCYIELDREASON_TYPE_NOT_READY].lock);
 	return result;
 }
 
@@ -516,20 +507,10 @@ inline void TCUpdateStaticDefinition(Context *context, u32 staticDefinitionIdx,
 		staticDefinitions[staticDefinitionIdx] = *value;
 	}
 
-	if (value->definitionType != STATICDEFINITIONTYPE_NOT_READY && value->typeTableIdx != TYPETABLEIDX_Unset) {
+	if (value->definitionType != STATICDEFINITIONTYPE_NOT_READY &&
+		value->typeTableIdx != TYPETABLEIDX_Unset)
 		// Wake up any job waiting for this static def to be ready.
-		auto jobsWaiting = context->jobsWaitingForStaticDef.Get();
-		for (int i = 0; i < jobsWaiting->size; ) {
-			TCJob *job = &jobsWaiting[i];
-			if (job->context.index == staticDefinitionIdx) {
-				EnqueueReadyJob(context, job->fiber);
-				// Remove
-				*job = jobsWaiting[--jobsWaiting->size];
-			}
-			else
-				++i;
-		}
-	}
+		WakeUpAllByIndex(context, TCYIELDREASON_STATIC_DEF_NOT_READY, staticDefinitionIdx);
 }
 
 u32 FindTypeInStackByName(Context *context, SourceLocation loc, String name)
@@ -1616,7 +1597,7 @@ void TCAddScopeNames(Context *context, ArrayView<TCScopeName> scopeNames)
 		}
 
 		// Wake up any jobs that were waiting for this name
-		auto jobsWaiting = context->jobsWaitingForIdentifier.Get();
+		auto jobsWaiting = context->waitingJobsByReason[TCYIELDREASON_UNKNOWN_IDENTIFIER].Get();
 		for (int i = 0; i < jobsWaiting->size; ) {
 			TCJob *job = &jobsWaiting[i];
 			for (int j = 0; j < scopeNames.size; ++j) {
@@ -3555,19 +3536,7 @@ void TypeCheckExpression(Context *context, ASTExpression *expression)
 			UpdateProcedure(context, procedureIdx, &procedure);
 
 			// Wake up any jobs that were waiting for this procedure body
-			{
-				auto jobsWaiting = context->jobsWaitingForProcedure.Get();
-				for (int i = 0; i < jobsWaiting->size; ) {
-					TCJob *job = &jobsWaiting[i];
-					if (job->context.index == procedureIdx) {
-						EnqueueReadyJob(context, job->fiber);
-						// Remove
-						*job = jobsWaiting[--jobsWaiting->size];
-					}
-					else
-						++i;
-				}
-			}
+			WakeUpAllByIndex(context, TCYIELDREASON_PROC_BODY_NOT_READY, procedureIdx);
 
 			expression->typeTableIdx = procedure.typeTableIdx;
 			TCPopScope(context);
@@ -3963,6 +3932,15 @@ void TypeCheckExpression(Context *context, ASTExpression *expression)
 							"parameter #%d didn't match (parameter is %S but %S was given)",
 							errorProcedureName, argIdx, paramStr, givenStr));
 			}
+		}
+
+		// Infer the rest (collapse _NUMBER and _FLOATING)
+		s64 maxArguments = Max(givenArguments, totalArguments);
+		for (s64 argIdx = argsToCheck; argIdx < maxArguments; ++argIdx) {
+			ASTExpression *arg = astProcCall->arguments[argIdx];
+			u32 inferred = InferType(arg->typeTableIdx);
+			if (inferred != arg->typeTableIdx)
+				InferTypesInExpression(context, arg, inferred);
 		}
 
 		TCPushParametersAndInlineProcedureCall(context, astProcCall);
@@ -4710,17 +4688,7 @@ void TypeCheckExpression(Context *context, ASTExpression *expression)
 		}
 
 		// Wake up any job waiting for this overload.
-		auto jobsWaiting = context->jobsWaitingForOverload.Get();
-		for (int i = 0; i < jobsWaiting->size; ) {
-			TCJob *job = &jobsWaiting[i];
-			if (job->context.index == astOverload->op) {
-				EnqueueReadyJob(context, job->fiber);
-				// Remove
-				*job = jobsWaiting[--jobsWaiting->size];
-			}
-			else
-				++i;
-		}
+		WakeUpAllByIndex(context, TCYIELDREASON_UNKNOWN_OVERLOAD, astOverload->op);
 
 		for (int i = 0; i < paramCount; ++i)
 		{
@@ -5040,19 +5008,7 @@ void TCStructJobProc(void *args)
 	}
 
 	// Wake up any jobs that were waiting for this type
-	{
-		auto jobsWaiting = context->jobsWaitingForType.Get();
-		for (int i = 0; i < jobsWaiting->size; ) {
-			TCJob *job = &jobsWaiting[i];
-			if (job->context.index == typeTableIdx) {
-				EnqueueReadyJob(context, job->fiber);
-				// Remove
-				*job = jobsWaiting[--jobsWaiting->size];
-			}
-			else
-				++i;
-		}
-	}
+	WakeUpAllByIndex(context, TCYIELDREASON_TYPE_NOT_READY, typeTableIdx);
 
 	SwitchJob(context, TCYIELDREASON_DONE, {});
 }

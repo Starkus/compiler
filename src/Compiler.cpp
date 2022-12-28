@@ -36,8 +36,12 @@ PerformanceAPI_Functions performanceAPI;
 
 enum TCYieldReason : u32
 {
-	TCYIELDREASON_READY,
-	TCYIELDREASON_UNKNOWN_IDENTIFIER,
+	// Reasons without an associated list of waiting jobs are negative
+	TCYIELDREASON_DONE	 = (u32)-3,
+	TCYIELDREASON_FAILED = (u32)-2,
+	TCYIELDREASON_READY	 = (u32)-1,
+
+	TCYIELDREASON_UNKNOWN_IDENTIFIER = 0,
 	TCYIELDREASON_UNKNOWN_OVERLOAD,
 	TCYIELDREASON_STATIC_DEF_NOT_READY,
 	TCYIELDREASON_PROC_BODY_NOT_READY,
@@ -48,8 +52,8 @@ enum TCYieldReason : u32
 	// As of time of write, only #defined does this to determine if something isn't defined anywhere
 	// before continuing.
 	TCYIELDREASON_WAITING_FOR_STOP,
-	TCYIELDREASON_FAILED,
-	TCYIELDREASON_DONE
+
+	TCYIELDREASON_Count
 };
 
 union TCYieldContext
@@ -225,13 +229,8 @@ struct Context
 	HashMap<u32, void *, LinearAllocator> globalValueContents;
 
 	// Type check -----
-	MXContainer<DynamicArray<TCJob, HeapAllocator>> jobsWaitingForIdentifier;
-	MXContainer<DynamicArray<TCJob, HeapAllocator>> jobsWaitingForOverload;
-	MXContainer<DynamicArray<TCJob, HeapAllocator>> jobsWaitingForStaticDef;
-	MXContainer<DynamicArray<TCJob, HeapAllocator>> jobsWaitingForProcedure;
-	MXContainer<DynamicArray<TCJob, HeapAllocator>> jobsWaitingForType;
-	MXContainer<DynamicArray<TCJob, HeapAllocator>> jobsWaitingForGlobalValue;
-	MXContainer<DynamicArray<TCJob, HeapAllocator>> jobsWaitingForDeadStop;
+	FixedArray<MXContainer<DynamicArray<TCJob, HeapAllocator>>, TCYIELDREASON_Count>
+		waitingJobsByReason;
 
 	MTQueue<JobRequest> jobsToCreate;
 	MTQueue<Fiber> fibersToDelete;
@@ -254,6 +253,8 @@ struct Context
 	// IR -----
 	RWContainer<BucketArray<StringLiteral, HeapAllocator, 1024>> stringLiterals;
 	RWContainer<BucketArray<StringLiteral, HeapAllocator, 128>> cStringLiterals;
+	RWContainer<BucketArray<FloatLiteral,  HeapAllocator, 1024>> f32Literals;
+	RWContainer<BucketArray<FloatLiteral,  HeapAllocator, 1024>> f64Literals;
 	RWContainer<DynamicArray<IRStaticVariable, HeapAllocator>> irStaticVariables;
 	RWContainer<DynamicArray<u32, HeapAllocator>> irExternalVariables;
 

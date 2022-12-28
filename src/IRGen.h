@@ -240,6 +240,15 @@ struct StringLiteral
 	String string;
 };
 
+struct FloatLiteral
+{
+	u32 globalValueIdx;
+	union {
+		f32 *asF32;
+		f64 *asF64;
+	};
+};
+
 IRValue IRGenFromExpression(Context *context, const ASTExpression *expression);
 void IRJobProcedure(void *args);
 void IRJobExpression(void *args);

@@ -996,13 +996,13 @@ void X64ConvertInstruction(Context *context, IRInstruction inst)
 		case X64FLOATINGTYPE_F32:
 			result.type = X64_VXORPS;
 			result.src  = X64CopyToRegister(context, inst.unaryOperation.in);
-			result.src2 = IRValueImmediateFloat(context, -0.0, TYPETABLEIDX_F32);
+			result.src2 = IRValueImmediateF32(context, -0.0);
 			result.src2.typeTableIdx = TYPETABLEIDX_128;
 			break;
 		case X64FLOATINGTYPE_F64:
 			result.type = X64_VXORPD;
 			result.src  = X64CopyToRegister(context, inst.unaryOperation.in);
-			result.src2 = IRValueImmediateFloat(context, -0.0, TYPETABLEIDX_128);
+			result.src2 = IRValueImmediateF64(context, -0.0);
 			break;
 		}
 		result.dst = inst.unaryOperation.out;
@@ -2922,15 +2922,17 @@ void BackendJobProc(Context *context, u32 procedureIdx)
 			X64ReadyLinuxParameters(context, params, false);
 	}
 
+#if DEBUG_BUILD
+	u32 lastFileIdx = U32_MAX;
+	u32 lastLine = U32_MAX;
+#endif
+
 	u64 instructionCount = proc.irInstructions.count;
 	for (int instructionIdx = 0; instructionIdx < instructionCount; ++instructionIdx)
 	{
 		IRInstruction inst = proc.irInstructions[instructionIdx];
 
 #if DEBUG_BUILD
-		static u32 lastFileIdx = inst.loc.fileIdx;
-		static u32 lastLine = ExpandSourceLocation(context, inst.loc).line;
-
 		if (inst.loc.fileIdx != 0) {
 			FatSourceLocation fatLoc = ExpandSourceLocation(context, inst.loc);
 			if (inst.loc.fileIdx != lastFileIdx || fatLoc.line != lastLine)
