@@ -228,6 +228,11 @@ struct Context
 	volatile u32 globalValuesLock;
 	HashMap<u32, void *, LinearAllocator> globalValueContents;
 
+	u8 *outputBufferMem;
+	u64 outputBufferSize;
+	u64 outputBufferOffset;
+	u64 outputBufferCapacity;
+
 	// Type check -----
 	FixedArray<MXContainer<DynamicArray<TCJob, HeapAllocator>>, TCYIELDREASON_Count>
 		waitingJobsByReason;
@@ -258,7 +263,6 @@ struct Context
 	RWContainer<DynamicArray<u32, HeapAllocator>> irExternalVariables;
 
 	// Backend -----
-	BucketArray<u8, HeapAllocator, OUTPUT_BUFFER_BUCKET_SIZE> outputBuffer;
 	RWContainer<DynamicArray<BEFinalProcedure, HeapAllocator>> beFinalProcedureData;
 };
 
@@ -404,6 +408,9 @@ NOINLINE void SwitchJob(Context *context, TCYieldReason yieldReason, TCYieldCont
 #define LogNote(context, loc, str) \
 	do { __Log(context, loc, TStringConcat("NOTE: "_s, str), __FILE__, __func__, __LINE__); } while (0)
 
+#define LogCompilerError(context, loc, str) \
+	do { __Log(context, loc, TStringConcat("COMPILER ERROR: "_s, str), __FILE__, __func__, __LINE__); PANIC; } while (0)
+
 #define Log2(context, locBegin, locEnd, str) \
 	do { __LogRange(context, locBegin, locEnd, str, __FILE__, __func__, __LINE__); } while (0)
 
@@ -474,6 +481,7 @@ struct ThreadArgs
 	u32 threadIndex;
 };
 
+#include "OutputBuffer.cpp"
 #include "Scheduler.cpp"
 #include "Tokenizer.cpp"
 #include "PrintAST.cpp"
@@ -560,6 +568,8 @@ int main(int argc, char **argv)
 
 	TimerSplit("Initialization"_s);
 
+	OutputBufferInit(&context);
+
 	ParserMain(&context);
 	TypeCheckMain(&context);
 	IRGenMain(&context);
@@ -602,7 +612,11 @@ int main(int argc, char **argv)
 	}
 
 	ASSERT(!TCIsAnyOtherJobRunning(&context));
+#if 0
 	BackendGenerateOutputFile(&context);
+#else
+	BackendGenerateWindowsObj(&context);
+#endif
 
 	TimerSplit("Done"_s);
 	Print("Compilation success\n");

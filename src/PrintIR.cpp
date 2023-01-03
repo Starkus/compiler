@@ -9,30 +9,7 @@ s64 PIRPrintOut(Context *context, const char *format, ...)
 
 	s64 size = stbsp_vsprintf(buffer, format, args);
 
-	s64 bytesToWrite = size;
-	const char *in = buffer;
-	while (bytesToWrite > 0) {
-		u8 *lastBucket = *DynamicArrayBack(&context->outputBuffer.buckets);
-		s64 bytesLeftInBucket = OUTPUT_BUFFER_BUCKET_SIZE * context->outputBuffer.buckets.size -
-			context->outputBuffer.count;
-		u8 *bufferCursor = lastBucket + OUTPUT_BUFFER_BUCKET_SIZE - bytesLeftInBucket;
-		if (bytesToWrite > bytesLeftInBucket) {
-			memcpy(bufferCursor, in, bytesLeftInBucket);
-			in += bytesLeftInBucket;
-			context->outputBuffer.count += bytesLeftInBucket;
-			bytesToWrite -= bytesLeftInBucket;
-
-			u8 **newBucket = DynamicArrayAdd(&context->outputBuffer.buckets);
-			*newBucket = (u8 *)HeapAllocator::Alloc(OUTPUT_BUFFER_BUCKET_SIZE, 1);
-			lastBucket = *newBucket;
-		}
-		else {
-			memcpy(bufferCursor, in, size);
-			in += bytesLeftInBucket;
-			context->outputBuffer.count += bytesToWrite;
-			break;
-		}
-	}
+	OutputBufferPut(context, size, buffer);
 
 #if DEBUG_BUILD
 	memset(t_threadMemPtr, 0x00, size + 1);
@@ -340,7 +317,7 @@ void PrintJobIRInstructions(Context *context)
 
 	SYSMutexLock(printIRMutex);
 
-	BucketArrayInit(&context->outputBuffer);
+	OutputBufferReset(context);
 
 	String name = proc.name;
 	PIRPrintOut(context, "proc %S(", name);
@@ -406,15 +383,6 @@ void PrintJobIRInstructions(Context *context)
 	}
 	PIRPrintOut(context, "\n");
 
-	FileHandle outputFile = SYSOpenFileWrite("output/ir.txt"_s);
-	for (u64 i = 0, fullBuckets = context->outputBuffer.buckets.size - 1; i < fullBuckets; ++i) {
-		SYSWriteFile(outputFile,
-				context->outputBuffer.buckets[i],
-				OUTPUT_BUFFER_BUCKET_SIZE);
-	}
-	SYSWriteFile(outputFile,
-			*DynamicArrayBack(&context->outputBuffer.buckets),
-			context->outputBuffer.count % OUTPUT_BUFFER_BUCKET_SIZE);
-	SYSCloseFile(outputFile);
+	OutputBufferWriteToFile(context, TPrintF("output/ir_%S.txt", proc.name));
 	SYSMutexUnlock(printIRMutex);
 }

@@ -19,7 +19,7 @@ void X64Patch(Context *context, X64Instruction *original, X64Instruction newInst
 	X64Instruction *patch2 = BucketArrayAdd(&jobData->bePatchedInstructions);
 	*patch2 = *original;
 
-	X64Instruction patchInst = { X64_Patch };
+	X64Instruction patchInst = { {}, X64_Patch };
 	patchInst.patch1 = patch1;
 	patchInst.patch2 = patch2;
 	*original = patchInst;
@@ -577,7 +577,7 @@ inline u64 RegisterSavingInstruction(Context *context, X64Instruction *inst, u64
 
 		u64 usedCalleeSaveRegisters = callerSaveRegisters & liveRegisterBits;
 		s64 callerSaveRegCount = CountOnes64(usedCalleeSaveRegisters);
-		X64Instruction patchInst = { X64_Patch_Many };
+		X64Instruction patchInst = { {}, X64_Patch_Many };
 		ArrayInit(&patchInst.patchInstructions, 1 + 3 * callerSaveRegCount);
 		patchInst.patchInstructions.size = 1 + 3 * callerSaveRegCount;
 		int count = 0;
@@ -593,10 +593,10 @@ inline u64 RegisterSavingInstruction(Context *context, X64Instruction *inst, u64
 
 				X64InstructionType movType = i >= XMM0_idx ? X64_MOVSD : X64_MOV;
 
-				X64Instruction pushInst = { X64_Push_Value };
+				X64Instruction pushInst = { {}, X64_Push_Value };
 				pushInst.valueIdx = newValueIdx;
-				X64Instruction saveInst = { movType, IRValueValue(newValueIdx, TYPETABLEIDX_S64), reg };
-				X64Instruction restoreInst = { movType, reg, IRValueValue(newValueIdx, TYPETABLEIDX_S64) };
+				X64Instruction saveInst = { {}, movType, IRValueValue(newValueIdx, TYPETABLEIDX_S64), reg };
+				X64Instruction restoreInst = { {}, movType, reg, IRValueValue(newValueIdx, TYPETABLEIDX_S64) };
 
 				patchInst.patchInstructions[count * 2] = pushInst;
 				patchInst.patchInstructions[count * 2 + 1] = saveInst;
@@ -890,6 +890,13 @@ skipImmitate:
 			u64 registerBit = 1ull << candidate;
 			if (!(usedRegisters & registerBit))
 			{
+#if DEBUG_BUILD
+				TypeInfo t = GetTypeInfo(context, v->typeTableIdx);
+				if (t.typeCategory == TYPECATEGORY_FLOATING || t.size > 8)
+					ASSERT(candidate >= XMM0_idx);
+				else
+					ASSERT(candidate < XMM0_idx);
+#endif
 				v->allocatedRegister = candidate;
 				v->flags &= ~VALUEFLAGS_IS_MEMORY;
 				v->flags |= VALUEFLAGS_IS_ALLOCATED;
@@ -971,8 +978,8 @@ skipImmitate:
 	// Callee save registers
 	u64 usedCallerSaveRegisters = calleeSaveRegisters & usedRegisters;
 	s64 calleeSaveRegCount = CountOnes64(usedCallerSaveRegisters);
-	X64Instruction patchTop =    { X64_Patch_Many };
-	X64Instruction patchBottom = { X64_Patch_Many };
+	X64Instruction patchTop =    { {}, X64_Patch_Many };
+	X64Instruction patchBottom = { {}, X64_Patch_Many };
 	ArrayInit(&patchTop.patchInstructions, 1 + calleeSaveRegCount);
 	ArrayInit(&patchBottom.patchInstructions, 1 + calleeSaveRegCount);
 
@@ -992,11 +999,11 @@ skipImmitate:
 			X64InstructionType movType = i >= XMM0_idx ? X64_MOVSD : X64_MOV;
 
 			X64Instruction *saveInst = ArrayAdd(&patchTop.patchInstructions);
-			*saveInst = { movType, IRValueValue(newValueIdx, TYPETABLEIDX_S64),
+			*saveInst = { {}, movType, IRValueValue(newValueIdx, TYPETABLEIDX_S64),
 				reg };
 
 			X64Instruction *restoreInst = ArrayAdd(&patchBottom.patchInstructions);
-			*restoreInst = { movType, reg, IRValueValue(newValueIdx, TYPETABLEIDX_S64) };
+			*restoreInst = { {}, movType, reg, IRValueValue(newValueIdx, TYPETABLEIDX_S64) };
 		}
 	}
 

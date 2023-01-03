@@ -1,3 +1,7 @@
+extern "C" {
+#include "xed/xed-interface.h"
+}
+
 enum X64OperandType
 {
 	OPERANDTYPE_NONE      = 0,
@@ -25,6 +29,7 @@ struct X64InstructionInfo
 	u8 operandAccessRight;
 	u8 operandTypesDest;
 	u8 operandAccessDest;
+	xed_iclass_enum_t xedIClass;
 };
 
 enum X64InstructionType
@@ -129,6 +134,7 @@ u32 zeroMemoryProcIdx;
 
 struct BEInstruction
 {
+	SourceLocation loc;
 	X64InstructionType type;
 	union
 	{
@@ -468,6 +474,98 @@ IRValue x64Registers[X64REGISTER_Count] = {
 	XMM4,	XMM5,	XMM6,	XMM7,
 	XMM8,	XMM9,	XMM10,	XMM11,
 	XMM12,	XMM13,	XMM14,	XMM15
+};
+
+xed_reg_enum_t x64RegisterToXED[X64REGISTER_Count] = {
+	XED_REG_RAX,
+	XED_REG_RCX,
+	XED_REG_RDX,
+	XED_REG_RBX,
+	XED_REG_RSI,
+	XED_REG_RDI,
+	XED_REG_RSP,
+	XED_REG_RBP,
+	XED_REG_R8,
+	XED_REG_R9,
+	XED_REG_R10,
+	XED_REG_R11,
+	XED_REG_R12,
+	XED_REG_R13,
+	XED_REG_R14,
+	XED_REG_R15,
+	XED_REG_XMM0,
+	XED_REG_XMM1,
+	XED_REG_XMM2,
+	XED_REG_XMM3,
+	XED_REG_XMM4,
+	XED_REG_XMM5,
+	XED_REG_XMM6,
+	XED_REG_XMM7,
+	XED_REG_XMM8,
+	XED_REG_XMM9,
+	XED_REG_XMM10,
+	XED_REG_XMM11,
+	XED_REG_XMM12,
+	XED_REG_XMM13,
+	XED_REG_XMM14,
+	XED_REG_XMM15
+};
+
+xed_reg_enum_t x64RegisterToXED32[] = {
+	XED_REG_EAX,
+	XED_REG_ECX,
+	XED_REG_EDX,
+	XED_REG_EBX,
+	XED_REG_ESI,
+	XED_REG_EDI,
+	XED_REG_ESP,
+	XED_REG_EBP,
+	XED_REG_R8D,
+	XED_REG_R9D,
+	XED_REG_R10D,
+	XED_REG_R11D,
+	XED_REG_R12D,
+	XED_REG_R13D,
+	XED_REG_R14D,
+	XED_REG_R15D
+};
+
+xed_reg_enum_t x64RegisterToXED16[] = {
+	XED_REG_AX,
+	XED_REG_CX,
+	XED_REG_DX,
+	XED_REG_BX,
+	XED_REG_SI,
+	XED_REG_DI,
+	XED_REG_SP,
+	XED_REG_BP,
+	XED_REG_R8W,
+	XED_REG_R9W,
+	XED_REG_R10W,
+	XED_REG_R11W,
+	XED_REG_R12W,
+	XED_REG_R13W,
+	XED_REG_R14W,
+	XED_REG_R15W
+};
+
+xed_reg_enum_t x64RegisterToXED8[] = {
+	XED_REG_AL,
+	XED_REG_CL,
+	XED_REG_DL,
+	XED_REG_BL,
+	XED_REG_SIL,
+	XED_REG_DIL,
+	XED_REG_SPL,
+	XED_REG_BPL,
+	XED_REG_R8B,
+	XED_REG_R9B,
+	XED_REG_R10B,
+	XED_REG_R11B,
+	XED_REG_R12B,
+	XED_REG_R13B,
+	XED_REG_R14B,
+	XED_REG_R15B
 };
 
 #if IS_LINUX

@@ -349,14 +349,23 @@ struct BucketArray
 };
 
 template <typename T, typename A, u64 bucketSize>
+T *BucketArrayAllocateNewBucket(BucketArray<T, A, bucketSize> *bucketArray)
+{
+	T *newBucket = (T *)A::Alloc(sizeof(T) * bucketSize, alignof(T));
+	// Call AddMT so we can call BucketArrayCount without locking without risking reading an
+	// invalid bucket.
+	DynamicArrayAddMT(&bucketArray->buckets, newBucket);
+	return newBucket;
+}
+
+template <typename T, typename A, u64 bucketSize>
 void BucketArrayInit(BucketArray<T, A, bucketSize> *bucketArray)
 {
 	bucketArray->count = 0;
 	DynamicArrayInit(&bucketArray->buckets, 4);
 
 	// Start with one bucket
-	T **firstBucket = DynamicArrayAdd(&bucketArray->buckets);
-	*firstBucket = (T *)A::Alloc(sizeof(T) * bucketSize, alignof(T));
+	BucketArrayAllocateNewBucket(bucketArray);
 }
 
 template <typename T, typename A, u64 bucketSize>
@@ -368,11 +377,7 @@ T *BucketArrayAdd(BucketArray<T, A, bucketSize> *bucketArray)
 
 	T *bucket;
 	if (bucketIdx >= bucketArray->buckets.size) {
-		T *newBucket = (T *)A::Alloc(sizeof(T) * bucketSize, alignof(T));
-		// Call AddMT so we can call BucketArrayCount without locking without risking reading an
-		// invalid bucket.
-		DynamicArrayAddMT(&bucketArray->buckets, newBucket);
-		bucket = newBucket;
+		bucket = BucketArrayAllocateNewBucket(bucketArray);
 		lastBucketCount = 0;
 	}
 	else
@@ -392,11 +397,7 @@ void BucketArrayAddMT(BucketArray<T, A, bucketSize> *bucketArray, T value)
 
 	T *bucket;
 	if (lastBucketCount >= bucketSize) {
-		T *newBucket = (T *)A::Alloc(sizeof(T) * bucketSize, alignof(T));
-		// Call AddMT so we can call BucketArrayCount without locking without risking reading an
-		// invalid bucket.
-		DynamicArrayAddMT(&bucketArray->buckets, newBucket);
-		bucket = newBucket;
+		bucket = BucketArrayAllocateNewBucket(bucketArray);
 		lastBucketCount = 0;
 	}
 	else

@@ -1,4 +1,3 @@
-#include <intrin.h>
 
 String StupidStrToString(const wchar_t *wstr, void *(*allocFunc)(u64, int))
 {
@@ -426,6 +425,8 @@ void SYSRunLinker(String outputPath, bool makeLibrary, String extraArguments)
 				"/entry:__WindowsMain "
 				"/opt:ref "
 				"/incremental:no "
+				"/nodefaultlib "
+				"/map "
 #if !FINAL_BUILD
 				"/dynamicbase:no "
 #endif

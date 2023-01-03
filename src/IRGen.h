@@ -38,6 +38,10 @@ struct IRLabel
 {
 	String name;
 	s64 instructionIdx;
+
+	// @Improve: move this out of here?
+	// Offset into executable image, for backend
+	u64 address;
 };
 
 struct IRJump
