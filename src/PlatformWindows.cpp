@@ -417,6 +417,7 @@ void SYSRunLinker(String outputPath, bool makeLibrary, String extraArguments)
 				"out.obj "
 				"/nologo "
 				"/ignore:4216 " // Warning about exporting entry point
+				"bin\\basic.lib "
 				"kernel32.lib "
 				"user32.lib "
 				"gdi32.lib "

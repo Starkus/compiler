@@ -17,17 +17,23 @@ enum ValueFlags
 
 struct Value
 {
+#if DEBUG_BUILD
 	String name;
+#endif
 	u32 typeTableIdx;
 	u32 flags;
 
 	// Back end
-	union
-	{
-		s32 allocatedRegister;
-		s32 stackOffset;
+	union {
+		struct {
+			union {
+				s32 allocatedRegister;
+				s32 stackOffset;
+			};
+			u32 tryImmitateValueIdx;
+		};
+		SmallString externalSymbolName;
 	};
-	u32 tryImmitateValueIdx;
 };
 
 enum TypeCategory
@@ -235,7 +241,6 @@ struct TCScopeName
 		const StructMember *structMember;
 		ASTExpression *expression;
 		u32 staticDefinitionIdx;
-		u32 procedureIdx;
 		u32 typeTableIdx;
 	};
 };

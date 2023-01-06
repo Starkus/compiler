@@ -9,6 +9,12 @@ struct String
 	}
 };
 
+struct SmallString
+{
+	// We store the size (up to only 255!) on the unused bytes of the pointer
+	u64 qword;
+};
+
 enum ParseNumberErrorCode
 {
 	PARSENUMBERRROR_OK,
@@ -43,3 +49,5 @@ inline bool IsWhitespace(char c);
 ParseNumberResult IntFromString(String string);
 ParseNumberResult IntFromStringHex(String string);
 ParseFloatResult F64FromString(String string);
+inline SmallString StringMinify(String string);
+inline String StringExpand(SmallString smallString);

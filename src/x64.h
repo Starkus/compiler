@@ -129,8 +129,8 @@ enum X64InstructionType
 	X64_FullCount
 };
 
-u32 copyMemoryProcIdx;
-u32 zeroMemoryProcIdx;
+u32 g_copyMemoryProcIdx = U32_MAX;
+u32 g_zeroMemoryProcIdx = U32_MAX;
 
 struct BEInstruction
 {

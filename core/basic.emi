@@ -2,6 +2,10 @@ false :: 0;
 true  :: 1;
 null  :: 0;
 
+// These are defined in assembly
+CopyMemory :: #external (dst: ^void, src: ^void, count: u64);
+ZeroMemory :: #external (dst: ^void, count: u64);
+
 Compiler_Subsystems :: enum
 {
 	COMPILER_SUBSYSTEM_CONSOLE = 0,

@@ -389,3 +389,16 @@ ParseFloatResult F64FromString(String string)
 
 	return { PARSENUMBERRROR_OK, result };
 }
+
+inline SmallString StringMinify(String string) {
+	ASSERT(string.size <= U8_MAX);
+	ASSERT((((u64)string.data) & 0xFFFF000000000000) == 0);
+	return { string.size << 48 | (u64)string.data };
+}
+
+inline String StringExpand(SmallString smallString) {
+	return {
+		.size = smallString.qword >> 48,
+		.data = (const char *)(smallString.qword & 0x0000FFFFFFFFFFFF)
+	};
+}

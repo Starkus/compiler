@@ -117,7 +117,7 @@ String X64IRValueToStr(Context *context, IRValue value,
 
 	if (v.flags & (VALUEFLAGS_ON_STATIC_STORAGE | VALUEFLAGS_IS_EXTERNAL)) {
 		if (v.flags & VALUEFLAGS_IS_EXTERNAL)
-			result = v.name;
+			result = StringExpand(v.externalSymbolName);
 		else {
 			u8 *ptrToStaticData = *(u8 **)HashMapGet(context->globalValueContents,
 					value.value.valueIdx & VALUE_GLOBAL_MASK);
@@ -200,9 +200,11 @@ String X64IRValueToStr(Context *context, IRValue value,
 	}
 	// Not allocated
 	else {
+#if DEBUG_BUILD
 		if (v.name)
 			result = TPrintF("$vr%d\"%S\"", value.value.valueIdx, v.name);
 		else
+#endif
 			result = TPrintF("$vr%d", value.value.valueIdx);
 
 		if (offset > 0)
@@ -356,115 +358,29 @@ void X64MovNoTmp(Context *context, SourceLocation loc, IRValue dst, IRValue src)
 	ASSERT(dstType.size <= 8);
 	ASSERT(srcType.size <= 8);
 
-	if (dstType.typeCategory != TYPECATEGORY_FLOATING) {
-		if (srcType.typeCategory != TYPECATEGORY_FLOATING) {
-			result.type = X64_MOV;
-			bool isSigned = srcType.typeCategory == TYPECATEGORY_INTEGER &&
-				srcType.integerInfo.isSigned;
-			if (srcType.size == 4) {
-				if (isSigned && dstType.size > 4 && src.valueType != IRVALUETYPE_IMMEDIATE_INTEGER) {
-					// MOVSXD is R-RM
-					IRValue newValue = IRValueNewValue(context, "_movsxd_tmp"_s, dst.typeTableIdx,
-							VALUEFLAGS_FORCE_REGISTER);
-					X64AddInstruction2(context, loc, X64_MOVSXD, newValue, src);
-					src = newValue;
-				}
-				ASSERT(dstType.size >= 4);
-				dst.typeTableIdx = src.typeTableIdx;
-			}
-			else if (srcType.size < dstType.size && src.valueType != IRVALUETYPE_IMMEDIATE_INTEGER) {
-				X64InstructionType extendType = isSigned ? X64_MOVSX : X64_MOVZX;
-				// MOVSX and MOVZX are R-RM
-				IRValue newValue = IRValueNewValue(context, "_movzx_tmp"_s, dst.typeTableIdx,
-						VALUEFLAGS_FORCE_REGISTER);
-				X64AddInstruction2(context, loc, extendType, newValue, src);
-				src = newValue;
-			}
-			else if (srcType.size > dstType.size)
-				src.typeTableIdx = dst.typeTableIdx;
-		}
-		else {
-			// X64_CVTTSD2SI and CVTTSD2SI are R-RM
-			ASSERT(dst.valueType == IRVALUETYPE_VALUE ||
-				   dst.valueType == IRVALUETYPE_VALUE_DEREFERENCE);
-			IRValue newValue = IRValueNewValue(context, "_cvttsd2si_tmp"_s, dst.typeTableIdx,
-					VALUEFLAGS_FORCE_REGISTER | VALUEFLAGS_TRY_IMMITATE, dst.value.valueIdx);
-			X64InstructionType type;
+	if (dstType.size != srcType.size)
+		LogCompilerError(context, loc, TPrintF("Different sizes on MOV instruction: %d and %d",
+					dstType.size, srcType.size));
+	if (dstType.typeCategory == TYPECATEGORY_FLOATING) {
+		// MOVSS and MOVSD
+		if (srcType.typeCategory != TYPECATEGORY_FLOATING)
+			LogCompilerError(context, loc, "Conversion of integer to float requires special"
+					" instruction"_s);
 
-			if (srcType.size == 4)
-				type = X64_CVTTSS2SI;
-			else {
-				ASSERT(srcType.size == 8);
-				type = X64_CVTTSD2SI;
-			}
-			X64AddInstruction2(context, loc, type, newValue, src);
-
-			result.type = X64_MOV;
-			src = newValue;
-		}
-	}
-	else if (dstType.size == 4) {
-		if (srcType.typeCategory != TYPECATEGORY_FLOATING) {
-			// Immediates should be converted to float in previous stages.
-			ASSERT(src.valueType != IRVALUETYPE_IMMEDIATE_INTEGER);
-			if (srcType.size < 4) {
-				bool isSigned = srcType.typeCategory == TYPECATEGORY_INTEGER &&
-					srcType.integerInfo.isSigned;
-				IRValue newValue = IRValueNewValue(context, "_cvt_tmp"_s, TYPETABLEIDX_U32,
-						VALUEFLAGS_FORCE_REGISTER);
-				X64InstructionType extendType = isSigned ? X64_MOVSX : X64_MOVZX;
-				X64AddInstruction2(context, loc, extendType, newValue, src);
-				src = newValue;
-			}
-			result.type = X64_CVTSI2SS;
-		}
-		else if (srcType.size == 4)
+		if (srcType.size == 4)
 			result.type = X64_MOVSS;
 		else {
 			ASSERT(srcType.size == 8);
-
-			// X64_CVTSD2SS is R-RM
-			ASSERT(dst.valueType == IRVALUETYPE_VALUE ||
-				   dst.valueType == IRVALUETYPE_VALUE_DEREFERENCE);
-			IRValue newValue = IRValueNewValue(context, "_cvtsd2ss_tmp"_s, dst.typeTableIdx,
-					VALUEFLAGS_FORCE_REGISTER | VALUEFLAGS_TRY_IMMITATE, dst.value.valueIdx);
-			X64AddInstruction2(context, loc, X64_CVTSD2SS, newValue, src);
-
-			result.type = X64_MOVSS;
-			src = newValue;
+			result.type = X64_MOVSD;
 		}
 	}
 	else {
-		ASSERT(dstType.size == 8);
-		if (srcType.typeCategory != TYPECATEGORY_FLOATING) {
-			// Immediates should be converted to float in previous stages.
-			ASSERT(src.valueType != IRVALUETYPE_IMMEDIATE_INTEGER);
-			if (srcType.size < 4) {
-				bool isSigned = srcType.typeCategory == TYPECATEGORY_INTEGER &&
-					srcType.integerInfo.isSigned;
-				IRValue newValue = IRValueNewValue(context, "_cvt_tmp"_s, TYPETABLEIDX_U32,
-						VALUEFLAGS_FORCE_REGISTER);
-				X64InstructionType extendType = isSigned ? X64_MOVSX : X64_MOVZX;
-				X64AddInstruction2(context, loc, extendType, newValue, src);
-				src = newValue;
-			}
-			result.type = X64_CVTSI2SD;
-		}
-		else if (srcType.size == 4) {
-			// X64_CVTSS2SD is R-RM
-			ASSERT(dst.valueType == IRVALUETYPE_VALUE ||
-				   dst.valueType == IRVALUETYPE_VALUE_DEREFERENCE);
-			IRValue newValue = IRValueNewValue(context, "_cvtsd2ss_tmp"_s, dst.typeTableIdx,
-					VALUEFLAGS_FORCE_REGISTER | VALUEFLAGS_TRY_IMMITATE, dst.value.valueIdx);
-			X64AddInstruction2(context, loc, X64_CVTSS2SD, newValue, src);
+		// MOV
+		if (srcType.typeCategory == TYPECATEGORY_FLOATING)
+			LogCompilerError(context, loc, "Conversion of float to integer requires special"
+					" instruction"_s);
 
-			result.type = X64_MOVSD;
-			src = newValue;
-		}
-		else {
-			ASSERT(srcType.size == 8);
-			result.type = X64_MOVSD;
-		}
+		result.type = X64_MOV;
 	}
 
 	if (CanValueBeMemory(context, dst) && src.valueType == IRVALUETYPE_IMMEDIATE_INTEGER)
@@ -652,19 +568,20 @@ void X64CopyMemory(Context *context, SourceLocation loc, IRValue dst, IRValue sr
 					IRValueDereference(srcIdx, TYPETABLEIDX_U8, copiedBytes));
 			++copiedBytes;
 		}
-		return;
 	}
-
-	X64Mov(context, loc, RCX, dst);
-	X64Mov(context, loc, RDX, src);
-	X64Mov(context, loc, R8,  size);
-	X64Instruction result = { loc, X64_CALL };
-	result.procedureIdx = copyMemoryProcIdx;
-	ArrayInit(&result.parameterValues, 3);
-	*ArrayAdd(&result.parameterValues) = RCX.value.valueIdx;
-	*ArrayAdd(&result.parameterValues) = RDX.value.valueIdx;
-	*ArrayAdd(&result.parameterValues) = R8.value.valueIdx;
-	*BucketArrayAdd(&jobData->beInstructions) = result;
+	else {
+		ASSERT(g_copyMemoryProcIdx != U32_MAX);
+		X64Mov(context, loc, RDI, dst);
+		X64Mov(context, loc, RSI, src);
+		X64Mov(context, loc, RDX,  size);
+		X64Instruction result = { loc, X64_CALL };
+		result.procedureIdx = g_copyMemoryProcIdx;
+		ArrayInit(&result.parameterValues, 3);
+		*ArrayAdd(&result.parameterValues) = RDI.value.valueIdx;
+		*ArrayAdd(&result.parameterValues) = RSI.value.valueIdx;
+		*ArrayAdd(&result.parameterValues) = RDX.value.valueIdx;
+		*BucketArrayAdd(&jobData->beInstructions) = result;
+	}
 }
 
 bool X64WinABIShouldPassByCopy(Context *context, u32 typeTableIdx)
@@ -912,25 +829,24 @@ Array<u32, ThreadAllocator> X64ReadyLinuxParameters(Context *context, SourceLoca
 				sizeLeft -= 8;
 			}
 		}
-		else
-		{
+		else {
 			IRValue slot;
-			if (isCaller)
-			{
+			if (isCaller) {
 				slot = X64PushRegisterParameter(param.typeTableIdx, &numberOfGPR, &numberOfXMM);
 				if (slot.valueType == IRVALUETYPE_INVALID)
 					slot = IRValueDereference(jobData->x64SpilledParametersWrite[numberOfSpilled++],
 							TYPETABLEIDX_S64);
 
+				slot.typeTableIdx = param.typeTableIdx;
 				X64Mov(context, loc, slot, param);
 			}
-			else
-			{
+			else {
 				slot = X64PushRegisterParameter(param.typeTableIdx, &numberOfGPR, &numberOfXMM);
 				if (slot.valueType == IRVALUETYPE_INVALID)
 					slot = IRValueDereference(jobData->x64SpilledParametersRead[numberOfSpilled++],
 							TYPETABLEIDX_S64);
 
+				slot.typeTableIdx = param.typeTableIdx;
 				X64Mov(context, loc, param, slot);
 			}
 
@@ -968,7 +884,8 @@ void X64ConvertInstruction(Context *context, IRInstruction inst)
 		else if (inst.type >= IRINSTRUCTIONTYPE_CompareJumpBegin &&
 				 inst.type <= IRINSTRUCTIONTYPE_CompareJumpEnd)
 			typeTableIdx = inst.conditionalJump2.left.typeTableIdx;
-		else if (inst.type == IRINSTRUCTIONTYPE_ASSIGNMENT)
+		else if (inst.type >= IRINSTRUCTIONTYPE_AssignmentBegin &&
+				 inst.type <= IRINSTRUCTIONTYPE_AssignmentEnd)
 			typeTableIdx = inst.assignment.dst.typeTableIdx;
 
 		typeTableIdx = StripAllAliases(context, typeTableIdx);
@@ -988,6 +905,155 @@ void X64ConvertInstruction(Context *context, IRInstruction inst)
 	case IRINSTRUCTIONTYPE_ASSIGNMENT:
 	{
 		X64Mov(context, inst.loc, inst.assignment.dst, inst.assignment.src);
+		return;
+	}
+	case IRINSTRUCTIONTYPE_CONVERT_INT_TO_FLOAT:
+	{
+		IRValue dst = inst.assignment.dst;
+		IRValue src = inst.assignment.src;
+		TypeInfo dstType = GetTypeInfo(context, StripAllAliases(context, dst.typeTableIdx));
+		TypeInfo srcType = GetTypeInfo(context, StripAllAliases(context, src.typeTableIdx));
+		ASSERT(dstType.typeCategory == TYPECATEGORY_FLOATING);
+		ASSERT(srcType.typeCategory != TYPECATEGORY_FLOATING);
+		// Immediates should be converted to float in previous stages.
+		ASSERT(src.valueType != IRVALUETYPE_IMMEDIATE_INTEGER);
+
+		// Extend to 32 bit if smaller
+		if (srcType.size < 4) {
+			bool isSrcSigned = srcType.typeCategory == TYPECATEGORY_INTEGER &&
+				srcType.integerInfo.isSigned;
+			IRValue newValue = IRValueNewValue(context, "_cvt_tmp"_s, TYPETABLEIDX_U32,
+					VALUEFLAGS_FORCE_REGISTER);
+			X64InstructionType extendType = isSrcSigned ? X64_MOVSX : X64_MOVZX;
+			X64AddInstruction2(context, inst.loc, extendType, newValue, src);
+			src = newValue;
+		}
+
+		if (dstType.size == 4)
+			X64AddInstruction2(context, inst.loc, X64_CVTSI2SS, dst, src);
+		else {
+			ASSERT(dstType.size == 8);
+			X64AddInstruction2(context, inst.loc, X64_CVTSI2SD, dst, src);
+		}
+		return;
+	}
+	case IRINSTRUCTIONTYPE_CONVERT_FLOAT_TO_INT:
+	{
+		IRValue dst = inst.assignment.dst;
+		IRValue src = inst.assignment.src;
+		TypeInfo dstType = GetTypeInfo(context, StripAllAliases(context, dst.typeTableIdx));
+		TypeInfo srcType = GetTypeInfo(context, StripAllAliases(context, src.typeTableIdx));
+		ASSERT(dstType.typeCategory != TYPECATEGORY_FLOATING);
+		ASSERT(srcType.typeCategory == TYPECATEGORY_FLOATING);
+		// X64_CVTTSD2SI and CVTTSD2SI are R-RM
+		ASSERT(dst.valueType == IRVALUETYPE_VALUE ||
+			   dst.valueType == IRVALUETYPE_VALUE_DEREFERENCE);
+		IRValue newValue = IRValueNewValue(context, "_cvttsd2si_tmp"_s, dst.typeTableIdx,
+				VALUEFLAGS_FORCE_REGISTER | VALUEFLAGS_TRY_IMMITATE, dst.value.valueIdx);
+
+		X64InstructionType type;
+		if (srcType.size == 4)
+			type = X64_CVTTSS2SI;
+		else {
+			ASSERT(srcType.size == 8);
+			type = X64_CVTTSD2SI;
+		}
+		X64AddInstruction2(context, inst.loc, type, newValue, src);
+		X64AddInstruction2(context, inst.loc, X64_MOV, dst, newValue);
+		return;
+	}
+	case IRINSTRUCTIONTYPE_CONVERT_PRECISION:
+	{
+		IRValue dst = inst.assignment.dst;
+		IRValue src = inst.assignment.src;
+		TypeInfo dstType = GetTypeInfo(context, StripAllAliases(context, dst.typeTableIdx));
+		TypeInfo srcType = GetTypeInfo(context, StripAllAliases(context, src.typeTableIdx));
+		ASSERT(dstType.typeCategory == TYPECATEGORY_FLOATING);
+		ASSERT(srcType.typeCategory == TYPECATEGORY_FLOATING);
+
+		// X64_CVTSD2SS and X64_CVTSS2SD are R-RM
+		ASSERT(dst.valueType == IRVALUETYPE_VALUE ||
+			   dst.valueType == IRVALUETYPE_VALUE_DEREFERENCE);
+		IRValue newValue = IRValueNewValue(context, "_cvtsd2ss_tmp"_s, dst.typeTableIdx,
+				VALUEFLAGS_FORCE_REGISTER | VALUEFLAGS_TRY_IMMITATE, dst.value.valueIdx);
+
+		if (dstType.size == 4) {
+			ASSERT(srcType.size == 8);
+			X64AddInstruction2(context, inst.loc, X64_CVTSD2SS, newValue, src);
+		}
+		else {
+			ASSERT(dstType.size == 8);
+			ASSERT(srcType.size == 4);
+			X64AddInstruction2(context, inst.loc, X64_CVTSS2SD, newValue, src);
+		}
+		X64AddInstruction2(context, inst.loc, X64_MOVSS, dst, newValue);
+		return;
+	}
+	case IRINSTRUCTIONTYPE_SIGN_EXTEND:
+	{
+		IRValue dst = inst.assignment.dst;
+		IRValue src = inst.assignment.src;
+		TypeInfo dstType = GetTypeInfo(context, StripAllAliases(context, dst.typeTableIdx));
+		TypeInfo srcType = GetTypeInfo(context, StripAllAliases(context, src.typeTableIdx));
+		ASSERT(dstType.typeCategory != TYPECATEGORY_FLOATING);
+		ASSERT(srcType.typeCategory != TYPECATEGORY_FLOATING);
+		ASSERT(dstType.size > srcType.size);
+
+		// MOVSXD and MOVSX are R-RM
+		IRValue tmp = IRValueNewValue(context, "_movsxd_tmp"_s, dst.typeTableIdx,
+				VALUEFLAGS_FORCE_REGISTER);
+
+		X64InstructionType type;
+		if (srcType.size == 4)
+			type = X64_MOVSXD;
+		else
+			type = X64_MOVSX;
+		X64AddInstruction2(context, inst.loc, type, tmp, src);
+		X64AddInstruction2(context, inst.loc, X64_MOV, dst, tmp);
+		return;
+	}
+	case IRINSTRUCTIONTYPE_ZERO_EXTEND:
+	{
+		IRValue dst = inst.assignment.dst;
+		IRValue src = inst.assignment.src;
+		TypeInfo dstType = GetTypeInfo(context, StripAllAliases(context, dst.typeTableIdx));
+		TypeInfo srcType = GetTypeInfo(context, StripAllAliases(context, src.typeTableIdx));
+		ASSERT(dstType.typeCategory != TYPECATEGORY_FLOATING);
+		ASSERT(srcType.typeCategory != TYPECATEGORY_FLOATING);
+		ASSERT(dstType.size > srcType.size);
+
+		if (srcType.size == 4) {
+			// x86-64 automatically zero-extends 32 to 64 bits
+			// Since either operand could be memory, we first store the value in a 32-bit register
+			// then copy its 64-bit counterpart to dst.
+			IRValue tmp = IRValueNewValue(context, "_zero_ext_tmp"_s, dst.typeTableIdx,
+					VALUEFLAGS_FORCE_REGISTER);
+			tmp.typeTableIdx = src.typeTableIdx;
+			X64AddInstruction2(context, inst.loc, X64_MOV, tmp, src);
+			tmp.typeTableIdx = dst.typeTableIdx;
+			X64AddInstruction2(context, inst.loc, X64_MOV, dst, tmp);
+		}
+		else {
+			// MOVZXD is R-RM
+			IRValue tmp = IRValueNewValue(context, "_movzx_tmp"_s, dst.typeTableIdx,
+					VALUEFLAGS_FORCE_REGISTER);
+			X64AddInstruction2(context, inst.loc, X64_MOVZX, tmp, src);
+			X64AddInstruction2(context, inst.loc, X64_MOV, dst, tmp);
+		}
+		return;
+	}
+	case IRINSTRUCTIONTYPE_TRUNCATE:
+	{
+		IRValue dst = inst.assignment.dst;
+		IRValue src = inst.assignment.src;
+		TypeInfo dstType = GetTypeInfo(context, StripAllAliases(context, dst.typeTableIdx));
+		TypeInfo srcType = GetTypeInfo(context, StripAllAliases(context, src.typeTableIdx));
+		ASSERT(dstType.typeCategory != TYPECATEGORY_FLOATING);
+		ASSERT(srcType.typeCategory != TYPECATEGORY_FLOATING);
+		ASSERT(dstType.size < srcType.size);
+
+		src.typeTableIdx = dst.typeTableIdx;
+		X64AddInstruction2(context, inst.loc, X64_MOV, dst, src);
 		return;
 	}
 	case IRINSTRUCTIONTYPE_LOAD_EFFECTIVE_ADDRESS:
@@ -1107,23 +1173,21 @@ void X64ConvertInstruction(Context *context, IRInstruction inst)
 				X64Mov(context, inst.loc, out, tmp);
 				return;
 			}
-			else
-			{
-				if (isSigned)
-				{
+			else {
+				if (isSigned) {
 					result.type = X64_IMUL;
 					goto doRM_RMI;
 				}
-				else
-				{
-					X64Mov(context, inst.loc, RAX, left);
+				else {
+					IRValue typedRax = RAX;
+					typedRax.typeTableIdx = left.typeTableIdx;
+					X64Mov(context, inst.loc, typedRax, left);
 
-					X64AddInstruction2(context, inst.loc, X64_XOR, RDX, RDX);
+					X64AddInstruction2(context, inst.loc, X64_XOR, EDX, EDX);
 
 					IRValue multiplier = right;
 					u8 accepted = x64InstructionInfos[X64_MUL].operandTypesLeft;
-					if (!FitsInOperand(context, accepted, multiplier))
-					{
+					if (!FitsInOperand(context, accepted, multiplier)) {
 						ASSERT(accepted & OPERANDTYPE_REGISTER);
 						IRValue newValue = IRValueNewValue(context, multiplier.typeTableIdx,
 								VALUEFLAGS_FORCE_REGISTER);
@@ -1134,7 +1198,7 @@ void X64ConvertInstruction(Context *context, IRInstruction inst)
 					result.dst = multiplier;
 					*BucketArrayAdd(&jobData->beInstructions) = result;
 
-					X64Mov(context, inst.loc, out, RAX);
+					X64Mov(context, inst.loc, out, typedRax);
 					return;
 				}
 			}
@@ -1174,7 +1238,7 @@ void X64ConvertInstruction(Context *context, IRInstruction inst)
 				if (isSigned)
 					X64AddInstruction0(context, inst.loc, X64_CQO);
 				else
-					X64AddInstruction2(context, inst.loc, X64_XOR, RDX, RDX);
+					X64AddInstruction2(context, inst.loc, X64_XOR, EDX, EDX);
 
 				IRValue divisor = right;
 				u8 accepted = x64InstructionInfos[X64_DIV].operandTypesLeft;
@@ -1222,7 +1286,7 @@ void X64ConvertInstruction(Context *context, IRInstruction inst)
 			if (isSigned)
 				X64AddInstruction0(context, inst.loc, X64_CQO);
 			else
-				X64AddInstruction2(context, inst.loc, X64_XOR, RDX, RDX);
+				X64AddInstruction2(context, inst.loc, X64_XOR, EDX, EDX);
 
 			IRValue divisor = right;
 			u8 accepted = x64InstructionInfos[X64_DIV].operandTypesLeft;
@@ -1445,30 +1509,27 @@ void X64ConvertInstruction(Context *context, IRInstruction inst)
 		*BucketArrayAdd(&jobData->beInstructions) = result;
 
 		u64 returnValueCount = inst.procedureCall.returnValues.size;
-		if (returnValueCount)
-		{
-			if (callingConvention == CC_DEFAULT)
-			{
+		if (returnValueCount) {
+			if (callingConvention == CC_DEFAULT) {
 				static IRValue integerReturnRegisters[]  = { RAX, RDI, RSI, RDX, RCX, R8, R9 };
 				static IRValue floatingReturnRegisters[] = {
 					XMM0, XMM1, XMM2, XMM3, XMM4, XMM5, XMM6, XMM7, XMM8 };
 
 				int integerIdx = 0;
 				int floatingIdx = 0;
-				for (int i = 0; i < returnValueCount; ++i)
-				{
+				for (int i = 0; i < returnValueCount; ++i) {
 					IRValue slot;
 					IRValue out = inst.procedureCall.returnValues[i];
 					u32 returnTypeIdx = out.typeTableIdx;
 					TypeInfo returnTypeInfo = GetTypeInfo(context, returnTypeIdx);
-					if (returnTypeInfo.typeCategory == TYPECATEGORY_FLOATING)
-					{
+					if (returnTypeInfo.typeCategory == TYPECATEGORY_FLOATING) {
 						slot = floatingReturnRegisters[floatingIdx++];
+						slot.typeTableIdx = out.typeTableIdx;
 						X64Mov(context, inst.loc, out, slot);
 					}
-					else
-					{
+					else {
 						slot = integerReturnRegisters[integerIdx++];
+						slot.typeTableIdx = out.typeTableIdx;
 
 						if (IRShouldPassByCopy(context, returnTypeIdx) &&
 								out.valueType != IRVALUETYPE_IMMEDIATE_INTEGER)
@@ -1486,19 +1547,20 @@ void X64ConvertInstruction(Context *context, IRInstruction inst)
 					}
 				}
 			}
-			else
-			{
+			else {
 				ASSERT(returnValueCount == 1);
 				IRValue out = inst.procedureCall.returnValues[0];
 				u32 returnTypeIdx = out.typeTableIdx;
-				if (GetTypeInfo(context, returnTypeIdx).typeCategory == TYPECATEGORY_FLOATING)
-				{
+				if (GetTypeInfo(context, returnTypeIdx).typeCategory == TYPECATEGORY_FLOATING) {
 					IRValue typedXmm0 = XMM0;
 					typedXmm0.typeTableIdx = returnTypeIdx;
 					X64Mov(context, inst.loc, out, typedXmm0);
 				}
-				else
-					X64Mov(context, inst.loc, out, RAX);
+				else {
+					IRValue typedRax = RAX;
+					typedRax.typeTableIdx = returnTypeIdx;
+					X64Mov(context, inst.loc, out, typedRax);
+				}
 			}
 		}
 		return;
@@ -1540,54 +1602,51 @@ void X64ConvertInstruction(Context *context, IRInstruction inst)
 			s64 size = inst.zeroMemory.size.immediate;
 
 			s64 copiedBytes = 0;
-			if (size - copiedBytes >= 16)
-			{
+			if (size - copiedBytes >= 16) {
 				IRValue zeroXmmReg = IRValueNewValue(context, "_zeroxmm"_s, TYPETABLEIDX_128,
 						VALUEFLAGS_FORCE_REGISTER);
 				X64AddInstruction2(context, inst.loc, X64_XORPS, zeroXmmReg, zeroXmmReg);
-				while (size - copiedBytes >= 16)
-				{
+				while (size - copiedBytes >= 16) {
 					X64Mov(context, inst.loc,
 							IRValueDereference(dstIdx, TYPETABLEIDX_128, copiedBytes), zeroXmmReg);
 					copiedBytes += 16;
 				}
 			}
-			if (size - copiedBytes >= 1)
-			{
-				IRValue zeroReg = IRValueNewValue(context, "_zeroreg"_s, TYPETABLEIDX_S64,
+			if (size - copiedBytes >= 1) {
+				IRValue zeroReg = IRValueNewValue(context, "_zeroreg"_s, TYPETABLEIDX_U32,
 						VALUEFLAGS_FORCE_REGISTER);
 				X64AddInstruction2(context, inst.loc, X64_XOR, zeroReg, zeroReg);
-				while (size - copiedBytes >= 8)
-				{
+				zeroReg.typeTableIdx = TYPETABLEIDX_U64;
+				while (size - copiedBytes >= 8) {
 					X64Mov(context, inst.loc,
-							IRValueDereference(dstIdx, TYPETABLEIDX_S64, copiedBytes), zeroReg);
+							IRValueDereference(dstIdx, TYPETABLEIDX_U64, copiedBytes), zeroReg);
 					copiedBytes += 8;
 				}
-				while (size - copiedBytes >= 4)
-				{
+				zeroReg.typeTableIdx = TYPETABLEIDX_U32;
+				while (size - copiedBytes >= 4) {
 					X64Mov(context, inst.loc,
-							IRValueDereference(dstIdx, TYPETABLEIDX_S32, copiedBytes), zeroReg);
+							IRValueDereference(dstIdx, TYPETABLEIDX_U32, copiedBytes), zeroReg);
 					copiedBytes += 4;
 				}
-				while (size - copiedBytes >= 1)
-				{
+				zeroReg.typeTableIdx = TYPETABLEIDX_U8;
+				while (size - copiedBytes >= 1) {
 					X64Mov(context, inst.loc,
-							IRValueDereference(dstIdx, TYPETABLEIDX_S8, copiedBytes), zeroReg);
+							IRValueDereference(dstIdx, TYPETABLEIDX_U8, copiedBytes), zeroReg);
 					++copiedBytes;
 				}
 			}
-			return;
 		}
-
-		X64Mov(context, inst.loc, RCX, inst.zeroMemory.dst);
-		X64Mov(context, inst.loc, RDX,  inst.zeroMemory.size);
-		result.type = X64_CALL;
-		result.procedureIdx = zeroMemoryProcIdx;
-		ArrayInit(&result.parameterValues, 2);
-		*ArrayAdd(&result.parameterValues) = RCX.value.valueIdx;
-		*ArrayAdd(&result.parameterValues) = RDX.value.valueIdx;
-		*BucketArrayAdd(&jobData->beInstructions) = result;
-		return;
+		else {
+			ASSERT(g_zeroMemoryProcIdx != U32_MAX);
+			X64Mov(context, inst.loc, RCX, inst.zeroMemory.dst);
+			X64Mov(context, inst.loc, RDX,  inst.zeroMemory.size);
+			result.type = X64_CALL;
+			result.procedureIdx = g_zeroMemoryProcIdx;
+			ArrayInit(&result.parameterValues, 2);
+			*ArrayAdd(&result.parameterValues) = RCX.value.valueIdx;
+			*ArrayAdd(&result.parameterValues) = RDX.value.valueIdx;
+			*BucketArrayAdd(&jobData->beInstructions) = result;
+		}
 	}
 	case IRINSTRUCTIONTYPE_PUSH_SCOPE:
 		result.type = X64_Push_Scope;
@@ -1711,9 +1770,10 @@ doShift:
 
 		if (right.valueType == IRVALUETYPE_IMMEDIATE_INTEGER)
 			right.typeTableIdx = TYPETABLEIDX_U8;
-		else
-		{
-			X64Mov(context, inst.loc, RCX, right);
+		else {
+			IRValue typedRcx = RCX;
+			typedRcx.typeTableIdx = right.typeTableIdx;
+			X64Mov(context, inst.loc, typedRcx, right);
 			right = CL;
 		}
 
@@ -2020,8 +2080,12 @@ xed_encoder_operand_t X64IRValueToXEDOperand(Context *context, SourceLocation lo
 	}
 	else if (!isXMM) {
 		if (v.allocatedRegister >= XMM0_idx)
+#if DEBUG_BUILD
 			LogCompilerError(context, loc, TPrintF("Value \"%S\" not allocated to GP register!",
 						v.name));
+#else
+			LogCompilerError(context, loc, "Value not allocated to GP register!"_s);
+#endif
 		xed_reg_enum_t reg;
 		switch (size) {
 		case 8:
@@ -2039,8 +2103,13 @@ xed_encoder_operand_t X64IRValueToXEDOperand(Context *context, SourceLocation lo
 		result = xed_reg(reg);
 	}
 	else {
+#if DEBUG_BUILD
 		ASSERTF(v.allocatedRegister >= XMM0_idx && v.allocatedRegister <= XMM15_idx,
 				"Value \"%S\" not allocated to XMM register!", v.name);
+#else
+		ASSERTF(v.allocatedRegister >= XMM0_idx && v.allocatedRegister <= XMM15_idx,
+				"Value not allocated to XMM register!"_s);
+#endif
 		result = xed_reg(x64RegisterToXED[v.allocatedRegister]);
 	}
 
@@ -2371,32 +2440,6 @@ void BackendMain(Context *context)
 	{
 		auto finalProcs = context->beFinalProcedureData.GetForWrite();
 		DynamicArrayInit(&finalProcs, 256);
-	}
-
-	// Hard coded CopyMemory and ZeroMemory external procedures
-	{
-		u32 voidPtrIdx = GetTypeInfoPointerOf(context, TYPETABLEIDX_VOID);
-
-		TypeInfo t = { TYPECATEGORY_PROCEDURE };
-		ArrayInit(&t.procedureInfo.parameters, 3);
-		t.procedureInfo.parameters.size = 3;
-		t.procedureInfo.parameters[0] = { voidPtrIdx, {} };
-		t.procedureInfo.parameters[1] = { voidPtrIdx, {} };
-		t.procedureInfo.parameters[2] = { TYPETABLEIDX_S64, {} };
-		u32 typeTableIdx = FindOrAddTypeTableIdx(context, t);
-
-		auto externalProcedures = context->externalProcedures.GetForWrite();
-		copyMemoryProcIdx = (u32)externalProcedures->count | PROCEDURE_EXTERNAL_BIT;
-		Procedure *copyMemory = BucketArrayAdd(&externalProcedures);
-		*copyMemory = {};
-		copyMemory->name = "CopyMemory"_s;
-		copyMemory->typeTableIdx = typeTableIdx;
-
-		zeroMemoryProcIdx = (u32)externalProcedures->count | PROCEDURE_EXTERNAL_BIT;
-		Procedure *zeroMemory = BucketArrayAdd(&externalProcedures);
-		*zeroMemory = {};
-		zeroMemory->name = "ZeroMemory"_s;
-		zeroMemory->typeTableIdx = typeTableIdx;
 	}
 
 	x64InstructionInfos[X64_INT] =       { "int"_s,       OPERANDTYPE_IMMEDIATE, OPERANDACCESS_READ };
@@ -2730,14 +2773,6 @@ void BackendGenerateOutputFile(Context *context)
 	OutputBufferReset(context);
 
 #if IS_WINDOWS
-	String memoryUtilFullpath = SYSExpandPathCompilerRelative("core\\memory_masm.asm"_s);
-	OutputBufferPrint(context, "include <%S>\n\n", memoryUtilFullpath);
-#else
-	String memoryUtilFullpath = SYSExpandPathCompilerRelative("core/memory_nasm.asm"_s);
-	OutputBufferPrint(context, "%%include \"%S\"\n\n", memoryUtilFullpath);
-#endif
-
-#if IS_WINDOWS
 	OutputBufferPrint(context, "_DATA SEGMENT\n");
 #else
 	OutputBufferPrint(context, "section .data\n");
@@ -2845,10 +2880,11 @@ void BackendGenerateOutputFile(Context *context)
 				case 8: type = "QWORD"_s; break;
 				default: type = "QWORD"_s;
 			}
+			String name = StringExpand(v.externalSymbolName);
 #if IS_WINDOWS
-			OutputBufferPrint(context, "EXTRN %S:%S\n", v.name, type);
+			OutputBufferPrint(context, "EXTRN %S:%S\n", name, type);
 #else
-			OutputBufferPrint(context, "EXTERN %S:%S\n", v.name, type);
+			OutputBufferPrint(context, "EXTERN %S:%S\n", name, type);
 #endif
 		}
 	}
@@ -2859,11 +2895,6 @@ void BackendGenerateOutputFile(Context *context)
 		auto externalProcedures = context->externalProcedures.GetForRead();
 		u64 externalProcedureCount = externalProcedures->count;
 		for (u32 procedureIdx = 1; procedureIdx < externalProcedureCount; ++procedureIdx) {
-			// Don't declare hard-coded procedures that are already included in the asm file.
-			u32 externalProcIdx = procedureIdx | PROCEDURE_EXTERNAL_BIT;
-			if (externalProcIdx == copyMemoryProcIdx || externalProcIdx == zeroMemoryProcIdx)
-				continue;
-
 			String procName = externalProcedures[procedureIdx].name;
 #if IS_WINDOWS
 			OutputBufferPrint(context, "EXTRN %S:proc\n", procName);
@@ -2957,6 +2988,7 @@ void BackendGenerateOutputFile(Context *context)
 
 void BackendGenerateWindowsObj(Context *context)
 {
+	ProfilerBegin("Generating output image");
 	const int dataSectionIdx = 0;
 	const int codeSectionIdx = 1;
 
@@ -3174,7 +3206,8 @@ void BackendGenerateWindowsObj(Context *context)
 			u64 sectionOffset = relocation.destOffset - codeSectionOffset;
 			ASSERT(sectionOffset <= U32_MAX);
 			imageRelocation.VirtualAddress = (u32)sectionOffset;
-			imageRelocation.SymbolTableIndex = 2 + relocation.procedureIdx;
+			// +2 for section symbols, -1 because procedure index is 1-based.
+			imageRelocation.SymbolTableIndex = 1 + relocation.procedureIdx;
 			OutputBufferPut(context, sizeof(imageRelocation), &imageRelocation);
 			++codeRelocationCount;
 		} break;
@@ -3243,6 +3276,8 @@ void BackendGenerateWindowsObj(Context *context)
 	SYSCreateDirectory(outputPath);
 
 	OutputBufferWriteToFile(context, "output/out.obj"_s);
+
+	TimerSplit("Generating output image"_s);
 
 	// Call linker
 	bool makeLibrary = false;
@@ -3337,11 +3372,28 @@ void BackendJobProc(Context *context, u32 procedureIdx)
 		"_param31"_s,
 	};
 
+	// We need these builtin procedures to be declared
+	{
+		TCScopeName name = FindGlobalName(context, "CopyMemory"_s);
+		ASSERT(name.type == NAMETYPE_STATIC_DEFINITION);
+		StaticDefinition staticDef = GetStaticDefinition(context, name.staticDefinitionIdx);
+		ASSERT(staticDef.definitionType == STATICDEFINITIONTYPE_PROCEDURE);
+		g_copyMemoryProcIdx = staticDef.procedureIdx;
+
+		name = FindGlobalName(context, "ZeroMemory"_s);
+		ASSERT(name.type == NAMETYPE_STATIC_DEFINITION);
+		staticDef = GetStaticDefinition(context, name.staticDefinitionIdx);
+		ASSERT(staticDef.definitionType == STATICDEFINITIONTYPE_PROCEDURE);
+		g_zeroMemoryProcIdx = staticDef.procedureIdx;
+	}
+
 	// Initialize generic parameter values
 	for (int paramIdx = 0; paramIdx < 32; ++paramIdx)
 	{
 		Value newValue = {};
+#if DEBUG_BUILD
 		newValue.name = paramNames[paramIdx];
+#endif
 		newValue.typeTableIdx = TYPETABLEIDX_S64;
 		newValue.flags = VALUEFLAGS_IS_ALLOCATED | VALUEFLAGS_IS_MEMORY | VALUEFLAGS_BASE_RELATIVE;
 		newValue.stackOffset = 16 + paramIdx * 8; // Add 16, 8 for return address, and 8 because we push RBP
@@ -3352,7 +3404,9 @@ void BackendJobProc(Context *context, u32 procedureIdx)
 	for (int paramIdx = 0; paramIdx < 32; ++paramIdx)
 	{
 		Value newValue = {};
+#if DEBUG_BUILD
 		newValue.name = paramNames[paramIdx];
+#endif
 		newValue.typeTableIdx = TYPETABLEIDX_S64;
 		newValue.flags = VALUEFLAGS_IS_ALLOCATED | VALUEFLAGS_IS_MEMORY;
 		newValue.stackOffset = paramIdx * 8; // Add 16, 8 for return address, and 8 because we push RBP
@@ -3439,19 +3493,17 @@ void BackendJobProc(Context *context, u32 procedureIdx)
 
 			int integerIdx = 0;
 			int floatingIdx = 0;
-			for (int i = 0; i < returnValueCount; ++i)
-			{
+			for (int i = 0; i < returnValueCount; ++i) {
 				IRValue slot;
 				u32 returnTypeIdx = procTypeInfo.returnTypeIndices[i];
 				IRValue out = IRValueValue(proc.returnValueIndices[i], returnTypeIdx, 0);
 				TypeInfo returnTypeInfo = GetTypeInfo(context, returnTypeIdx);
-				if (returnTypeInfo.typeCategory == TYPECATEGORY_FLOATING)
-				{
+				if (returnTypeInfo.typeCategory == TYPECATEGORY_FLOATING) {
 					slot = floatingReturnRegisters[floatingIdx++];
+					slot.typeTableIdx = out.typeTableIdx;
 					X64Mov(context, {}, slot, out);
 				}
-				else
-				{
+				else {
 					slot = integerReturnRegisters[integerIdx++];
 
 					if (IRShouldPassByCopy(context, returnTypeIdx)) {
@@ -3459,8 +3511,10 @@ void BackendJobProc(Context *context, u32 procedureIdx)
 						outButS64.typeTableIdx = TYPETABLEIDX_S64;
 						X64AddInstruction2(context, {}, X64_LEA, slot, outButS64);
 					}
-					else
+					else {
+						slot.typeTableIdx = out.typeTableIdx;
 						X64Mov(context, {}, slot, out);
+					}
 				}
 			}
 		}
@@ -3471,16 +3525,17 @@ void BackendJobProc(Context *context, u32 procedureIdx)
 			bool returnByCopy = IRShouldPassByCopy(context, returnTypeIdx);
 			if (returnByCopy && procTypeInfo.callingConvention != CC_DEFAULT)
 				X64AddInstruction2(context, {}, X64_LEA, RAX, returnValue);
-			else if (!returnByCopy)
-			{
-				if (GetTypeInfo(context, returnTypeIdx).typeCategory == TYPECATEGORY_FLOATING)
-				{
+			else if (!returnByCopy) {
+				if (GetTypeInfo(context, returnTypeIdx).typeCategory == TYPECATEGORY_FLOATING) {
 					IRValue typedXmm0 = XMM0;
 					typedXmm0.typeTableIdx = returnTypeIdx;
 					X64Mov(context, {}, typedXmm0, returnValue);
 				}
-				else
-					X64Mov(context, {}, RAX, returnValue);
+				else {
+					IRValue typedRax = RAX;
+					typedRax.typeTableIdx = returnTypeIdx;
+					X64Mov(context, {}, typedRax, returnValue);
+				}
 			}
 		}
 	}
@@ -3574,8 +3629,7 @@ unalignedMovups:;
 		}
 
 		// Zero idioms
-		if (inst->type == X64_MOVSS || inst->type == X64_MOVSD)
-		{
+		if (inst->type == X64_MOVSS || inst->type == X64_MOVSD) {
 			if (inst->src.valueType == IRVALUETYPE_IMMEDIATE_INTEGER &&
 				inst->src.immediate == 0)
 			{
@@ -3586,8 +3640,7 @@ unalignedMovups:;
 						inst->dst, inst->dst };
 			}
 		}
-		else if (inst->type == X64_MOV)
-		{
+		else if (inst->type == X64_MOV) {
 			if (inst->src.valueType == IRVALUETYPE_IMMEDIATE_INTEGER &&
 				inst->src.immediate == 0)
 			{
@@ -3605,8 +3658,7 @@ unalignedMovups:;
 		}
 
 		// Replace CMP 0 with TEST
-		if (nextInst2 && nextInst2->type == X64_CMP)
-		{
+		if (nextInst2 && nextInst2->type == X64_CMP) {
 			if (nextInst2->src.valueType == IRVALUETYPE_IMMEDIATE_INTEGER &&
 				nextInst2->src.immediate == 0 && !IsValueInMemory(context, nextInst2->dst))
 			{

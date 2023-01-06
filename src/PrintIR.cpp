@@ -32,10 +32,21 @@ inline Value PIRGetValue(Context *context, u32 procedureIdx, u32 valueIdx) {
 inline String PIRValueToStr(Context *context, u32 procedureIdx, u32 valueIdx)
 {
 	Value v = PIRGetValue(context, procedureIdx, valueIdx);
-	if (v.name)
-		return TPrintF("$v%u\"%S\"", valueIdx, v.name);
+#if DEBUG_BUILD
+	if (v.name) {
+		if (valueIdx & VALUE_GLOBAL_BIT)
+			return TPrintF("$gv%u\"%S\"", valueIdx & VALUE_GLOBAL_MASK, v.name);
+		else
+			return TPrintF("$v%u\"%S\"", valueIdx, v.name);
+	}
 	else
-		return TPrintF("$v%u", valueIdx);
+#endif
+	{
+		if (valueIdx & VALUE_GLOBAL_BIT)
+			return TPrintF("$gv%u", valueIdx & VALUE_GLOBAL_MASK);
+		else
+			return TPrintF("$v%u", valueIdx);
+	}
 }
 
 void PrintIRValue(Context *context, u32 procedureIdx, IRValue value)
@@ -267,7 +278,27 @@ void PrintIRInstruction(Context *context, u32 procedureIdx, IRInstruction inst)
 		PIRPrintOut(context, "return\n");
 	} break;
 	case IRINSTRUCTIONTYPE_ASSIGNMENT:
+	case IRINSTRUCTIONTYPE_CONVERT_INT_TO_FLOAT:
+	case IRINSTRUCTIONTYPE_CONVERT_FLOAT_TO_INT:
+	case IRINSTRUCTIONTYPE_CONVERT_PRECISION:
+	case IRINSTRUCTIONTYPE_SIGN_EXTEND:
+	case IRINSTRUCTIONTYPE_ZERO_EXTEND:
+	case IRINSTRUCTIONTYPE_TRUNCATE:
 	{
+		switch (inst.type) {
+		case IRINSTRUCTIONTYPE_CONVERT_INT_TO_FLOAT:
+			PIRPrintOut(context, "int to float "); break;
+		case IRINSTRUCTIONTYPE_CONVERT_FLOAT_TO_INT:
+			PIRPrintOut(context, "float to int "); break;
+		case IRINSTRUCTIONTYPE_CONVERT_PRECISION:
+			PIRPrintOut(context, "change precision "); break;
+		case IRINSTRUCTIONTYPE_SIGN_EXTEND:
+			PIRPrintOut(context, "sign extend "); break;
+		case IRINSTRUCTIONTYPE_ZERO_EXTEND:
+			PIRPrintOut(context, "zero extend "); break;
+		case IRINSTRUCTIONTYPE_TRUNCATE:
+			PIRPrintOut(context, "truncate "); break;
+		}
 		PrintIRValue(context, procedureIdx, inst.assignment.dst);
 		PIRPrintOut(context, " = ");
 		PrintIRValue(context, procedureIdx, inst.assignment.src);
@@ -327,9 +358,9 @@ void PrintJobIRInstructions(Context *context)
 		u32 paramValueIdx = proc.parameterValues[paramIdx];
 		Value paramValue = IRGetValue(context, paramValueIdx);
 		String typeStr = TypeInfoToString(context, paramValue.typeTableIdx);
-		PIRPrintOut(context, "%S", paramValue.name);
+		PIRPrintOut(context, "%S", PIRValueToStr(context, jobData->procedureIdx, paramValueIdx));
 #if PRINTIR_PRINT_TYPES
-		PIRPrintOut(context, " : %S", paramValue.name, typeStr);
+		PIRPrintOut(context, " : %S", typeStr);
 #endif
 	}
 	PIRPrintOut(context, ")");
@@ -344,10 +375,22 @@ void PrintJobIRInstructions(Context *context)
 	}
 	PIRPrintOut(context, "\n");
 
+	u32 lastFileIdx = U32_MAX;
+	u32 lastLine = U32_MAX;
+
 	const auto &instructions = proc.irInstructions;
 	const u64 instructionCount = instructions.count;
 	for (int instructionIdx = 0; instructionIdx < instructionCount; ++instructionIdx) {
 		IRInstruction inst = instructions[instructionIdx];
+
+		if (inst.loc.fileIdx != 0) {
+			FatSourceLocation fatLoc = ExpandSourceLocation(context, inst.loc);
+			if (inst.loc.fileIdx != lastFileIdx || fatLoc.line != lastLine)
+				PIRPrintOut(context, "On: %S\n", String{ fatLoc.lineSize, fatLoc.beginingOfLine });
+
+			lastFileIdx = inst.loc.fileIdx;
+			lastLine = fatLoc.line;
+		}
 
 		if (inst.type == IRINSTRUCTIONTYPE_LABEL) {
 			PIRPrintOut(context, "%S: ", inst.label->name);

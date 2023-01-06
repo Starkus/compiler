@@ -7,7 +7,9 @@ u32 IRNewValue(Context *context, u32 typeTableIdx, u32 flags, u32 immitateValueI
 
 	u64 idx = jobData->localValues->count;
 	Value *result = BucketArrayAdd(jobData->localValues);
+#if DEBUG_BUILD
 	result->name = {};
+#endif
 	result->typeTableIdx = typeTableIdx;
 	result->flags = flags;
 	result->tryImmitateValueIdx = immitateValueIdx;
@@ -26,7 +28,9 @@ u32 IRNewValue(Context *context, String name, u32 typeTableIdx, u32 flags, u32 i
 
 	u64 idx = jobData->localValues->count;
 	Value *result = BucketArrayAdd(jobData->localValues);
+#if DEBUG_BUILD
 	result->name = name;
+#endif
 	result->typeTableIdx = typeTableIdx;
 	result->flags = flags;
 	result->tryImmitateValueIdx = immitateValueIdx;
@@ -380,50 +384,38 @@ inline IRValue IRValueTypeOf(Context *context, u32 typeTableIdx)
 
 IRValue IRGenFromExpression(Context *context, const ASTExpression *expression);
 
-IRValue IRDereferenceValue(Context *context, IRValue in)
+IRValue IRDereferenceValue(Context *context, SourceLocation loc, IRValue in)
 {
 	TypeInfo pointerTypeInfo = GetTypeInfo(context, in.typeTableIdx);
 	ASSERT(pointerTypeInfo.typeCategory == TYPECATEGORY_POINTER);
 	u32 pointedTypeIdx = pointerTypeInfo.pointerInfo.pointedTypeTableIdx;
 
-	if (in.valueType == IRVALUETYPE_VALUE || in.valueType == IRVALUETYPE_VALUE_DEREFERENCE)
-	{
-		// Copy first to a register always. Since this is a very short lived value, we should always
-		// be able to allocate it in a machine register.
+	ASSERTF(in.valueType == IRVALUETYPE_VALUE || in.valueType == IRVALUETYPE_VALUE_DEREFERENCE,
+			"Dereferenced value must be either VALUE or VALUE_DEREFERENCE");
 
-		// It's important that the value is in a register before dereferencing, because values in
-		// memory are already dereferenced. If the value is in memory, first we dereference the
-		// memory to get the pointer itself:
-		//     mov rax, [rsp+123]
-		// then we can dereference that pointer once it's on a register:
-		//     mov out, [rax]
-
-		String srcName = IRGetValue(context, in.value.valueIdx).name;
-
-		String name = SStringConcat("_deref_forcereg_"_s, srcName);
-		u32 tempValueIdx = IRNewValue(context, name, in.typeTableIdx, VALUEFLAGS_TRY_IMMITATE |
-				VALUEFLAGS_FORCE_REGISTER, in.value.valueIdx);
-		IRValue tmpValue = IRValueValue(tempValueIdx, in.typeTableIdx);
-
-		IRInstruction inst = { IRINSTRUCTIONTYPE_ASSIGNMENT };
-		inst.assignment.dst = tmpValue;
-		inst.assignment.src = in;
-		*AddInstruction(context) = inst;
-
-		name = SStringConcat("_deref_"_s, srcName);
-		u32 newValueIdx = IRNewValue(context, name, in.typeTableIdx, VALUEFLAGS_TRY_IMMITATE,
+	if (in.valueType == IRVALUETYPE_VALUE) {
+		return IRValueDereference(in.value.valueIdx, pointedTypeIdx);
+	}
+	else if (in.valueType == IRVALUETYPE_VALUE_DEREFERENCE) {
+		u32 newValueIdx = IRNewValue(context, in.typeTableIdx, VALUEFLAGS_TRY_IMMITATE,
 				in.value.valueIdx);
 		IRValue value = IRValueValue(newValueIdx, in.typeTableIdx);
+#if DEBUG_BUILD
+		String name = SStringConcat("_deref_"_s, IRGetValue(context, in.value.valueIdx).name);
+		IRGetLocalValue(context, newValueIdx)->name = name;
+#endif
 
-		inst.assignment.dst = value;
-		inst.assignment.src = tmpValue;
-		*AddInstruction(context) = inst;
+		*AddInstruction(context) = {
+			.type = IRINSTRUCTIONTYPE_ASSIGNMENT,
+			.loc = loc,
+			.assignment = { .src = in, .dst = value }
+		};
 
 		IRValue result = IRValueDereference(newValueIdx, pointedTypeIdx);
 		return result;
 	}
-	ASSERT(!"Dereferenced value must be either VALUE or VALUE_DEREFERENCE");
-	return {};
+	else
+		ASSERT(false);
 }
 
 IRValue IRPointerToValue(Context *context, SourceLocation loc, IRValue in)
@@ -431,7 +423,11 @@ IRValue IRPointerToValue(Context *context, SourceLocation loc, IRValue in)
 	ASSERT(in.valueType == IRVALUETYPE_VALUE || in.valueType == IRVALUETYPE_VALUE_DEREFERENCE);
 	u32 pointerTypeIdx = GetTypeInfoPointerOf(context, in.typeTableIdx);
 
-	IRValue result = IRValueNewValue(context, "_pointerof"_s, pointerTypeIdx, 0);
+	IRValue result = IRValueNewValue(context, pointerTypeIdx, 0);
+#if DEBUG_BUILD
+	String name = SStringConcat("_pointerof_"_s, IRGetValue(context, in.value.valueIdx).name);
+	IRGetLocalValue(context, result.value.valueIdx)->name = name;
+#endif
 
 	IRInstruction addressInst = {};
 	addressInst.type = IRINSTRUCTIONTYPE_LOAD_EFFECTIVE_ADDRESS;
@@ -475,7 +471,7 @@ IRValue IRDoArrayAccess(Context *context, SourceLocation loc, u32 arrayPtrValueI
 
 	u32 elementTypeIdx;
 	if (arrayTypeIdx == TYPETABLEIDX_STRING_STRUCT)
-		elementTypeIdx = GetTypeInfoPointerOf(context, TYPETABLEIDX_U8);
+		elementTypeIdx = TYPETABLEIDX_U8;
 	else
 		elementTypeIdx = arrayTypeInfo.arrayInfo.elementTypeTableIdx;
 	u32 pointerToElementTypeIdx = GetTypeInfoPointerOf(context, elementTypeIdx);
@@ -489,7 +485,7 @@ IRValue IRDoArrayAccess(Context *context, SourceLocation loc, u32 arrayPtrValueI
 		StructMember dataMember = arrayStructTypeInfo.structInfo.members[1];
 
 		IRValue dataValue = IRDoMemberAccess(context, loc, arrayPtrValueIdx, dataMember);
-		dataValue = IRDereferenceValue(context, dataValue);
+		dataValue = IRDereferenceValue(context, loc, dataValue);
 		arrayPtrValueIdx = dataValue.value.valueIdx;
 	}
 
@@ -520,8 +516,7 @@ IRValue IRDoArrayAccess(Context *context, SourceLocation loc, u32 arrayPtrValueI
 	if (elementSize == 1)
 		IRDoAssignment(context, loc, offsetValue, indexValue);
 	else
-	{
-		IRInstruction multiplyInst = {
+		*AddInstruction(context) = {
 			.type = IRINSTRUCTIONTYPE_MULTIPLY,
 			.loc = loc,
 			.binaryOperation = {
@@ -530,8 +525,6 @@ IRValue IRDoArrayAccess(Context *context, SourceLocation loc, u32 arrayPtrValueI
 				.out   = offsetValue
 			}
 		};
-		*AddInstruction(context) = multiplyInst;
-	}
 
 	IRValue pointerToElementValue = IRValueNewValue(context, "_array_element"_s,
 			pointerToElementTypeIdx, 0);
@@ -556,34 +549,28 @@ inline void IRPushValueIntoStack(Context *context, SourceLocation loc, u32 value
 	};
 }
 
-u32 IRAddTempValue(Context *context, SourceLocation loc, String name, u32 typeTableIdx, u8 flags)
+inline u32 IRAddTempValue(Context *context, SourceLocation loc, u32 typeTableIdx, u8 flags)
 {
-	u32 valueIdx = IRNewValue(context, name, typeTableIdx, flags);
+	u32 valueIdx = IRNewValue(context, typeTableIdx, flags);
 	IRPushValueIntoStack(context, loc, valueIdx);
 	return valueIdx;
 }
 
-void IRDoAssignment(Context *context, SourceLocation loc, IRValue dstValue, IRValue srcValue)
+IRValue IRDoCast(Context *context, SourceLocation loc, IRValue srcValue, u32 typeTableIdx)
 {
-	ASSERT(dstValue.valueType != IRVALUETYPE_IMMEDIATE_INTEGER);
-	ASSERT(dstValue.valueType != IRVALUETYPE_IMMEDIATE_FLOAT);
-	ASSERT(dstValue.valueType != IRVALUETYPE_IMMEDIATE_STRING);
-
-	// Tuples
-	if (dstValue.valueType == IRVALUETYPE_TUPLE)
-	{
-		// Tuples of different sizes should be caught on type checking
-		ASSERT(srcValue.valueType == IRVALUETYPE_TUPLE);
-		ASSERT(srcValue.tuple.size == dstValue.tuple.size);
-
-		for (int i = 0; i < dstValue.tuple.size; ++i)
-			IRDoAssignment(context, loc, dstValue.tuple[i], srcValue.tuple[i]);
-		return;
-	}
-
-	// String literals
+	ASSERT(srcValue.valueType != IRVALUETYPE_TUPLE);
+	// Cast string literal to string struct
 	if (srcValue.valueType == IRVALUETYPE_IMMEDIATE_STRING) {
-		ASSERT(dstValue.typeTableIdx == TYPETABLEIDX_STRING_STRUCT);
+		u32 tempValueIdx = IRAddTempValue(context, loc, typeTableIdx, 0);
+#if DEBUG_BUILD
+		if (srcValue.valueType == IRVALUETYPE_VALUE) {
+			String name = SStringConcat("_cast_"_s, IRGetValue(context, srcValue.value.valueIdx).name);
+			IRGetLocalValue(context, tempValueIdx)->name = name;
+		}
+		else
+			IRGetLocalValue(context, tempValueIdx)->name = "_cast"_s;
+#endif
+		IRValue result = IRValueValue(tempValueIdx, typeTableIdx, 0);
 
 		StringLiteral literal;
 		{
@@ -592,7 +579,7 @@ void IRDoAssignment(Context *context, SourceLocation loc, IRValue dstValue, IRVa
 		}
 
 		TypeInfo stringTypeInfo = GetTypeInfo(context, TYPETABLEIDX_STRING_STRUCT);
-		IRValue dstPtr = IRPointerToValue(context, loc, dstValue);
+		IRValue dstPtr = IRPointerToValue(context, loc, result);
 		IRValue sizeMember = IRDoMemberAccess(context, loc, dstPtr.value.valueIdx,
 				stringTypeInfo.structInfo.members[0]);
 
@@ -621,19 +608,29 @@ void IRDoAssignment(Context *context, SourceLocation loc, IRValue dstValue, IRVa
 		};
 		*AddInstruction(context) = dataSetInst;
 
-		return;
+		return result;
 	}
-
 	// Cast to Any
-	if (dstValue.typeTableIdx == TYPETABLEIDX_ANY_STRUCT &&
+	else if (typeTableIdx == TYPETABLEIDX_ANY_STRUCT &&
 		srcValue.typeTableIdx != TYPETABLEIDX_ANY_STRUCT)
 	{
 		IRAddComment(context, loc, "Wrapping in Any"_s);
 		TypeInfo anyTypeInfo = GetTypeInfo(context, TYPETABLEIDX_ANY_STRUCT);
 
+		u32 tempValueIdx = IRAddTempValue(context, loc, typeTableIdx, 0);
+#if DEBUG_BUILD
+		if (srcValue.valueType == IRVALUETYPE_VALUE) {
+			String name = SStringConcat("_any_"_s, IRGetValue(context, srcValue.value.valueIdx).name);
+			IRGetLocalValue(context, tempValueIdx)->name = name;
+		}
+		else
+			IRGetLocalValue(context, tempValueIdx)->name = "_any"_s;
+#endif
+		IRValue result = IRValueValue(tempValueIdx, typeTableIdx, 0);
+
 		// Access typeInfo member
-		IRValue dstPtr = IRPointerToValue(context, loc, dstValue);
-		IRValue typeInfoMember = IRDoMemberAccess(context, loc, dstPtr.value.valueIdx,
+		IRValue resultPtr = IRPointerToValue(context, loc, result);
+		IRValue typeInfoMember = IRDoMemberAccess(context, loc, resultPtr.value.valueIdx,
 				anyTypeInfo.structInfo.members[0]);
 
 		// Write pointer to typeInfo to it
@@ -649,7 +646,7 @@ void IRDoAssignment(Context *context, SourceLocation loc, IRValue dstValue, IRVa
 
 		// Access data member
 		static u32 voidPtrTypeIdx = GetTypeInfoPointerOf(context, TYPETABLEIDX_VOID);
-		IRValue dataMember = IRDoMemberAccess(context, loc, dstPtr.value.valueIdx,
+		IRValue dataMember = IRDoMemberAccess(context, loc, resultPtr.value.valueIdx,
 				anyTypeInfo.structInfo.members[1]);
 		dataMember.typeTableIdx = voidPtrTypeIdx;
 
@@ -662,13 +659,14 @@ void IRDoAssignment(Context *context, SourceLocation loc, IRValue dstValue, IRVa
 			dataTypeInfo.typeCategory != TYPECATEGORY_ARRAY)
 		{
 			if (IRShouldPassByCopy(context, dataValue.typeTableIdx)) {
-				static u64 tempVarForAnyUniqueID = 0;
-				String tempVarName = SNPrintF(20, "_tempVarForAny%llu", tempVarForAnyUniqueID++);
-				u32 tempValue = IRAddTempValue(context, loc, tempVarName, srcValue.typeTableIdx,
+				u32 anyContentValueIdx = IRAddTempValue(context, loc, srcValue.typeTableIdx,
 						VALUEFLAGS_FORCE_MEMORY);
-				IRValue tempVarIRValue = IRValueValue(tempValue, srcValue.typeTableIdx);
+#if DEBUG_BUILD
+				IRGetLocalValue(context, anyContentValueIdx)->name = "_tempVarForAny"_s;
+#endif
+				IRValue tempVarIRValue = IRValueValue(anyContentValueIdx, srcValue.typeTableIdx);
 
-				IRInstruction dataCopyInst = {
+				*AddInstruction(context) = {
 					.type = IRINSTRUCTIONTYPE_ASSIGNMENT,
 					.loc = loc,
 					.assignment = {
@@ -676,11 +674,10 @@ void IRDoAssignment(Context *context, SourceLocation loc, IRValue dstValue, IRVa
 						.dst = tempVarIRValue
 					}
 				};
-				*AddInstruction(context) = dataCopyInst;
 
 				dataValue = tempVarIRValue;
 
-				IRInstruction dataAssignInst = {
+				*AddInstruction(context) = {
 					.type = IRINSTRUCTIONTYPE_ASSIGNMENT,
 					.loc = loc,
 					.assignment = {
@@ -688,13 +685,12 @@ void IRDoAssignment(Context *context, SourceLocation loc, IRValue dstValue, IRVa
 						.dst = dataMember
 					}
 				};
-				*AddInstruction(context) = dataAssignInst;
 			}
 			// Small primitives are stored directly on the Any struct.
 			else {
 				dataMember.typeTableIdx = dataValue.typeTableIdx;
 
-				IRInstruction dataAssignInst = {
+				*AddInstruction(context) = {
 					.type = IRINSTRUCTIONTYPE_ASSIGNMENT,
 					.loc = loc,
 					.assignment = {
@@ -702,12 +698,11 @@ void IRDoAssignment(Context *context, SourceLocation loc, IRValue dstValue, IRVa
 						.dst = dataMember
 					}
 				};
-				*AddInstruction(context) = dataAssignInst;
 			}
 		}
 		// These are already in memory, just save a pointer
 		else {
-			IRInstruction dataAssignInst = {
+			*AddInstruction(context) = {
 				.type = IRINSTRUCTIONTYPE_ASSIGNMENT,
 				.loc = loc,
 				.assignment = {
@@ -715,11 +710,102 @@ void IRDoAssignment(Context *context, SourceLocation loc, IRValue dstValue, IRVa
 					.dst = dataMember
 				}
 			};
-			*AddInstruction(context) = dataAssignInst;
 		}
 
+		return result;
+	}
+	else {
+		TypeInfo fromTypeInfo = GetTypeInfo(context, srcValue.typeTableIdx);
+		TypeInfo toTypeInfo = GetTypeInfo(context, typeTableIdx);
+
+		bool isSrcFloat = fromTypeInfo.typeCategory == TYPECATEGORY_FLOATING;
+		bool isDstFloat =   toTypeInfo.typeCategory == TYPECATEGORY_FLOATING;
+
+		if (fromTypeInfo.size == toTypeInfo.size && isSrcFloat == isDstFloat) {
+			// No cast needed
+			srcValue.typeTableIdx = typeTableIdx;
+			return srcValue;
+		}
+
+		u32 tempValueIdx = IRAddTempValue(context, loc, typeTableIdx, 0);
+#if DEBUG_BUILD
+		if (srcValue.valueType == IRVALUETYPE_VALUE) {
+			String name = SStringConcat("_cast_"_s, IRGetValue(context, srcValue.value.valueIdx).name);
+			IRGetLocalValue(context, tempValueIdx)->name = name;
+		}
+		else
+			IRGetLocalValue(context, tempValueIdx)->name = "_cast"_s;
+#endif
+		IRValue result = IRValueValue(tempValueIdx, typeTableIdx, 0);
+
+		if (isSrcFloat && !isDstFloat) {
+			*AddInstruction(context) = {
+				.type = IRINSTRUCTIONTYPE_CONVERT_FLOAT_TO_INT,
+				.loc = loc,
+				.assignment = { .src = srcValue, .dst = result }
+			};
+		}
+		else if (!isSrcFloat && isDstFloat) {
+			*AddInstruction(context) = {
+				.type = IRINSTRUCTIONTYPE_CONVERT_INT_TO_FLOAT,
+				.loc = loc,
+				.assignment = { .src = srcValue, .dst = result }
+			};
+		}
+		else if (isSrcFloat) {
+			*AddInstruction(context) = {
+				.type = IRINSTRUCTIONTYPE_CONVERT_PRECISION,
+				.loc = loc,
+				.assignment = { .src = srcValue, .dst = result }
+			};
+		}
+		else if (fromTypeInfo.size < toTypeInfo.size) {
+			if (toTypeInfo.typeCategory == TYPECATEGORY_INTEGER && toTypeInfo.integerInfo.isSigned)
+				*AddInstruction(context) = {
+					.type = IRINSTRUCTIONTYPE_SIGN_EXTEND,
+					.loc = loc,
+					.assignment = { .src = srcValue, .dst = result }
+				};
+			else
+				*AddInstruction(context) = {
+					.type = IRINSTRUCTIONTYPE_ZERO_EXTEND,
+					.loc = loc,
+					.assignment = { .src = srcValue, .dst = result }
+				};
+		}
+		else if (fromTypeInfo.size > toTypeInfo.size) {
+			*AddInstruction(context) = {
+				.type = IRINSTRUCTIONTYPE_TRUNCATE,
+				.loc = loc,
+				.assignment = { .src = srcValue, .dst = result }
+			};
+		}
+		else
+			ASSERT(false);
+
+		return result;
+	}
+}
+
+void IRDoAssignment(Context *context, SourceLocation loc, IRValue dstValue, IRValue srcValue)
+{
+	ASSERT(dstValue.valueType != IRVALUETYPE_IMMEDIATE_INTEGER);
+	ASSERT(dstValue.valueType != IRVALUETYPE_IMMEDIATE_FLOAT);
+	ASSERT(dstValue.valueType != IRVALUETYPE_IMMEDIATE_STRING);
+
+	// Tuples
+	if (dstValue.valueType == IRVALUETYPE_TUPLE)
+	{
+		// Tuples of different sizes should be caught on type checking
+		ASSERT(srcValue.valueType == IRVALUETYPE_TUPLE);
+		ASSERT(srcValue.tuple.size == dstValue.tuple.size);
+
+		for (int i = 0; i < dstValue.tuple.size; ++i)
+			IRDoAssignment(context, loc, dstValue.tuple[i], srcValue.tuple[i]);
 		return;
 	}
+
+	srcValue = IRDoCast(context, loc, srcValue, dstValue.typeTableIdx);
 
 	dstValue.typeTableIdx = StripAllAliases(context, dstValue.typeTableIdx);
 	srcValue.typeTableIdx = StripAllAliases(context, srcValue.typeTableIdx);
@@ -785,7 +871,7 @@ void IRDoAssignment(Context *context, SourceLocation loc, IRValue dstValue, IRVa
 			.type = IRINSTRUCTIONTYPE_ASSIGNMENT,
 			.loc = loc,
 			.assignment = {
-				.src = IRValueImmediateF64(context, (f64)srcValue.immediate),
+				.src = IRValueImmediateFloat(context, (f64)srcValue.immediate, dstValue.typeTableIdx),
 				.dst = dstValue
 			}
 		};
@@ -822,14 +908,6 @@ inline void IRInsertLabelInstruction(Context *context, SourceLocation loc, IRLab
 	};
 }
 
-IRValue IRDoCast(Context *context, SourceLocation loc, IRValue value, u32 typeTableIdx)
-{
-	u32 tempValueIdx = IRAddTempValue(context, loc, "_cast"_s, typeTableIdx, 0);
-	IRValue result = IRValueValue(tempValueIdx, typeTableIdx, 0);
-	IRDoAssignment(context, loc, result, value);
-	return result;
-}
-
 IRValue IRInstructionFromBinaryOperation(Context *context, const ASTExpression *expression,
 		IRValue outValue)
 {
@@ -847,12 +925,16 @@ IRValue IRInstructionFromBinaryOperation(Context *context, const ASTExpression *
 		TypeInfo structTypeInfo = GetTypeInfo(context, irValue.typeTableIdx);
 		if (structTypeInfo.typeCategory == TYPECATEGORY_POINTER) {
 			// Dereference the pointer to the struct
+			u32 newValueIdx = IRNewValue(context, irValue.typeTableIdx,
+					VALUEFLAGS_FORCE_REGISTER);
+			IRValue newValue = IRValueValue(newValueIdx, irValue.typeTableIdx);
+
+#if DEBUG_BUILD
 			String valueName = IRGetValue(context, irValue.value.valueIdx).name; 
 			IRAddComment(context, loc, SNPrintF(64, "Dereference struct pointer \"%S\"", valueName));
 			String name = SStringConcat("_derefstrctptr_"_s, valueName);
-			u32 newValueIdx = IRNewValue(context, name, irValue.typeTableIdx,
-					VALUEFLAGS_FORCE_REGISTER);
-			IRValue newValue = IRValueValue(newValueIdx, irValue.typeTableIdx);
+			IRGetLocalValue(context, newValueIdx)->name = name;
+#endif
 
 			IRInstruction inst = {};
 			inst.type = IRINSTRUCTIONTYPE_ASSIGNMENT;
@@ -879,12 +961,14 @@ IRValue IRInstructionFromBinaryOperation(Context *context, const ASTExpression *
 
 		if (GetTypeInfo(context, arrayValue.typeTableIdx).typeCategory == TYPECATEGORY_POINTER) {
 			// Dereference the pointer to the array
-			arrayValue = IRDereferenceValue(context, arrayValue);
+			arrayValue = IRDereferenceValue(context, loc, arrayValue);
 		}
+
+		IRValue ptrToArray = IRPointerToValue(context, loc, arrayValue);
 
 		ASSERT(arrayValue.valueType == IRVALUETYPE_VALUE ||
 				arrayValue.valueType == IRVALUETYPE_VALUE_DEREFERENCE);
-		result = IRDoArrayAccess(context, loc, arrayValue.value.valueIdx, arrayValue.typeTableIdx,
+		result = IRDoArrayAccess(context, loc, ptrToArray.value.valueIdx, arrayValue.typeTableIdx,
 				indexValue);
 	}
 	else if (expression->binaryOperation.op == TOKEN_OP_AND) {
@@ -1143,18 +1227,31 @@ IRValue IRInstructionFromBinaryOperation(Context *context, const ASTExpression *
 		} break;
 		}
 
+		IRValue out = outValue;
+		bool castOutput = out.typeTableIdx != expression->typeTableIdx;
+		if (castOutput) {
+			u32 tempValueIdx = IRAddTempValue(context, loc, expression->typeTableIdx, 0);
+#if DEBUG_BUILD
+			IRGetLocalValue(context, tempValueIdx)->name = "_binaryop_cast"_s;
+#endif
+			out = IRValueValue(tempValueIdx, expression->typeTableIdx);
+		}
+
 		// Hint for register allocation to try and allocate left and out in the same register
-		if (outValue.valueType == IRVALUETYPE_VALUE &&
+		if (out.valueType == IRVALUETYPE_VALUE &&
 			left.valueType == IRVALUETYPE_VALUE)
 		{
 			Value v = IRGetValue(context, left.value.valueIdx);
 			v.flags |= VALUEFLAGS_TRY_IMMITATE;
-			v.tryImmitateValueIdx = outValue.value.valueIdx;
+			v.tryImmitateValueIdx = out.value.valueIdx;
 			IRUpdateValue(context, left.value.valueIdx, &v);
 		}
 
-		inst.binaryOperation.out = outValue;
+		inst.binaryOperation.out = out;
 		*AddInstruction(context) = inst;
+
+		if (castOutput)
+			IRDoAssignment(context, loc, outValue, out);
 
 		if (expression->binaryOperation.op >= TOKEN_OP_ASSIGNMENT_Begin &&
 			expression->binaryOperation.op <= TOKEN_OP_ASSIGNMENT_End)
@@ -1232,6 +1329,9 @@ void IRConditionalJumpFromExpression(Context *context, ASTExpression *conditionE
 		IRValue rightResult = IRGenFromExpression(context,
 				conditionExp->binaryOperation.rightHand);
 
+		if (leftResult.typeTableIdx != rightResult.typeTableIdx)
+			rightResult = IRDoCast(context, conditionExp->any.loc, rightResult, leftResult.typeTableIdx);
+
 		if (leftResult.valueType == IRVALUETYPE_IMMEDIATE_INTEGER &&
 			rightResult.valueType == IRVALUETYPE_IMMEDIATE_INTEGER)
 		{
@@ -1286,6 +1386,7 @@ defaultConditionEvaluation:
 
 		IRInstruction *jump = AddInstruction(context);
 		jump->type = jumpIfTrue ? IRINSTRUCTIONTYPE_JUMP_IF_NOT_ZERO : IRINSTRUCTIONTYPE_JUMP_IF_ZERO;
+		jump->loc = conditionExp->any.loc;
 		jump->conditionalJump.label = label;
 		jump->conditionalJump.condition = conditionResult;
 		return;
@@ -1412,9 +1513,12 @@ IRValue IRDoInlineProcedureCall(Context *context, ASTProcedureCall astProcCall)
 		if (varargsCount > 0)
 		{
 			// Allocate stack space for buffer
-			u32 bufferValueIdx = IRAddTempValue(context, loc, "_varargsBuffer"_s,
+			u32 bufferValueIdx = IRAddTempValue(context, loc,
 					GetTypeInfoArrayOf(context, TYPETABLEIDX_ANY_STRUCT, varargsCount),
 					VALUEFLAGS_FORCE_MEMORY);
+#if DEBUG_BUILD
+			IRGetLocalValue(context, bufferValueIdx)->name = "_varargsBuffer"_s;
+#endif
 			IRValue bufferIRValue = IRValueValue(context, bufferValueIdx);
 			pointerToBuffer = IRPointerToValue(context, loc, bufferIRValue);
 
@@ -1439,8 +1543,11 @@ IRValue IRDoInlineProcedureCall(Context *context, ASTProcedureCall astProcCall)
 		// Now we put it into a dynamic array struct.
 
 		// Allocate stack space for array
-		u32 arrayValueIdx = IRAddTempValue(context, loc, "_varargsArray"_s, arrayOfAnyTypeIdx,
+		u32 arrayValueIdx = IRAddTempValue(context, loc, arrayOfAnyTypeIdx,
 				VALUEFLAGS_FORCE_MEMORY);
+#if DEBUG_BUILD
+		IRGetLocalValue(context, arrayValueIdx)->name = "_varargsArray"_s;
+#endif
 		IRValue arrayIRValue = IRValueValue(context, arrayValueIdx);
 		IRValue arrayPtr = IRPointerToValue(context, loc, arrayIRValue);
 
@@ -1651,11 +1758,8 @@ void IRAssignmentFromExpression(Context *context, IRValue dstValue,
 	// Second, if right hand is a group literal, fill left hand directly with it's values.
 	else if (srcExpression->nodeType == ASTNODETYPE_LITERAL &&
 			 srcExpression->literal.type == LITERALTYPE_GROUP)
-	{
 		IRFillValueWithGroupLiteral(context, dstValue, srcExpression->literal);
-	}
-	else
-	{
+	else {
 		IRValue srcValue = IRGenFromExpression(context, srcExpression);
 		IRDoAssignment(context, srcExpression->any.loc, dstValue, srcValue);
 	}
@@ -1769,6 +1873,7 @@ IRValue IRGenFromExpression(Context *context, const ASTExpression *expression)
 
 				IRInstruction jumpIfShouldntReturnInst;
 				jumpIfShouldntReturnInst.type = IRINSTRUCTIONTYPE_JUMP_IF_ZERO;
+				jumpIfShouldntReturnInst.loc = expression->any.loc;
 				jumpIfShouldntReturnInst.conditionalJump.label = skipLabel;
 				jumpIfShouldntReturnInst.conditionalJump.condition = shouldReturnRegister;
 				*AddInstruction(context) = jumpIfShouldntReturnInst;
@@ -1878,6 +1983,11 @@ IRValue IRGenFromExpression(Context *context, const ASTExpression *expression)
 						inst.zeroMemory.size = sizeValue;
 
 						*AddInstruction(context) = inst;
+					}
+					else if (dstTypeInfo.typeCategory == TYPECATEGORY_FLOATING) {
+						IRValue dstValue = IRValueValue(context, valueIdx);
+						IRValue srcValue = IRValueImmediateFloat(context, 0, typeIdx);
+						IRDoAssignment(context, varDecl.loc, dstValue, srcValue);
 					}
 					else {
 						IRValue dstValue = IRValueValue(context, valueIdx);
@@ -1998,7 +2108,10 @@ IRValue IRGenFromExpression(Context *context, const ASTExpression *expression)
 				ArrayInit(&result.tuple, returnValueCount);
 				for (int i = 0; i < returnValueCount; ++i) {
 					u32 returnTypeIdx = procTypeInfo.returnTypeIndices[i];
-					u32 returnValueIdx = IRAddTempValue(context, {}, "_return"_s, returnTypeIdx, 0);
+					u32 returnValueIdx = IRAddTempValue(context, {}, returnTypeIdx, 0);
+#if DEBUG_BUILD
+					IRGetLocalValue(context, returnValueIdx)->name = "_return"_s;
+#endif
 					IRValue value = IRValueValue(returnValueIdx, returnTypeIdx);
 					*DynamicArrayAdd(&procCallInst.procedureCall.returnValues) = value;
 					*ArrayAdd(&result.tuple) = value;
@@ -2006,7 +2119,10 @@ IRValue IRGenFromExpression(Context *context, const ASTExpression *expression)
 			}
 			else {
 				u32 returnTypeIdx = procTypeInfo.returnTypeIndices[0];
-				u32 returnValueIdx = IRAddTempValue(context, {}, "_return"_s, returnTypeIdx, 0);
+				u32 returnValueIdx = IRAddTempValue(context, {}, returnTypeIdx, 0);
+#if DEBUG_BUILD
+				IRGetLocalValue(context, returnValueIdx)->name = "_return"_s;
+#endif
 				IRValue value = IRValueValue(returnValueIdx, returnTypeIdx);
 				*DynamicArrayAdd(&procCallInst.procedureCall.returnValues) = value;
 				result = value;
@@ -2074,9 +2190,12 @@ IRValue IRGenFromExpression(Context *context, const ASTExpression *expression)
 			if (varargsCount > 0)
 			{
 				// Allocate stack space for buffer
-				u32 bufferValueIdx = IRAddTempValue(context, {}, "_varargsBuffer"_s,
+				u32 bufferValueIdx = IRAddTempValue(context, {},
 						GetTypeInfoArrayOf(context, TYPETABLEIDX_ANY_STRUCT, varargsCount),
 						VALUEFLAGS_FORCE_MEMORY);
+#if DEBUG_BUILD
+				IRGetLocalValue(context, bufferValueIdx)->name = "_varargsBuffer"_s;
+#endif
 				IRValue bufferIRValue = IRValueValue(context, bufferValueIdx);
 				IRValue ptrToBuffer = IRPointerToValue(context, astProcCall->loc, bufferIRValue);
 
@@ -2104,8 +2223,11 @@ IRValue IRGenFromExpression(Context *context, const ASTExpression *expression)
 			// Now we put it into a dynamic array struct.
 
 			// Allocate stack space for array
-			u32 arrayValueIdx = IRAddTempValue(context, {}, "_varargsArray%llu"_s,
-					arrayOfAnyTypeIdx, VALUEFLAGS_FORCE_MEMORY);
+			u32 arrayValueIdx = IRAddTempValue(context, {}, arrayOfAnyTypeIdx,
+					VALUEFLAGS_FORCE_MEMORY);
+#if DEBUG_BUILD
+			IRGetLocalValue(context, arrayValueIdx)->name = "_varargsArray"_s;
+#endif
 			IRValue arrayIRValue = IRValueValue(context, arrayValueIdx);
 			IRValue arrayPtr = IRPointerToValue(context, astProcCall->loc, arrayIRValue);
 
@@ -2167,7 +2289,7 @@ skipGeneratingVarargsArray:
 		else if (expression->unaryOperation.op == TOKEN_OP_DEREFERENCE)
 		{
 			result = IRGenFromExpression(context, expression->unaryOperation.expression);
-			result = IRDereferenceValue(context, result);
+			result = IRDereferenceValue(context, expression->any.loc, result);
 		}
 		else
 		{
@@ -2207,23 +2329,20 @@ skipGeneratingVarargsArray:
 		ASTExpression *rightHand = expression->binaryOperation.rightHand;
 		ASTExpression *leftHand  = expression->binaryOperation.leftHand;
 
-		if (expression->binaryOperation.op == TOKEN_OP_ASSIGNMENT)
-		{
+		if (expression->binaryOperation.op == TOKEN_OP_ASSIGNMENT) {
 			IRValue srcValue = IRGenFromExpression(context, rightHand);
 			IRValue dstValue = IRGenFromExpression(context, leftHand);
 			IRDoAssignment(context, expression->any.loc, dstValue, srcValue);
 			result = dstValue;
 		}
-		else
-		{
+		else {
 			IRValue outValue = IRValueNewValue(context, "_binaryop_result"_s, expression->typeTableIdx, 0);
 			result = IRInstructionFromBinaryOperation(context, expression, outValue);
 		}
 	} break;
 	case ASTNODETYPE_LITERAL:
 	{
-		switch (expression->literal.type)
-		{
+		switch (expression->literal.type) {
 		case LITERALTYPE_INTEGER:
 		{
 			u32 typeTableIdx = StripAllAliases(context, expression->typeTableIdx);
@@ -2357,7 +2476,7 @@ skipGeneratingVarargsArray:
 
 			TypeInfo rangeTypeInfo = GetTypeInfo(context, arrayValue.typeTableIdx);
 			if (rangeTypeInfo.typeCategory == TYPECATEGORY_POINTER) {
-				arrayValue = IRDereferenceValue(context, arrayValue);
+				arrayValue = IRDereferenceValue(context, astFor->loc, arrayValue);
 				rangeTypeInfo = GetTypeInfo(context, arrayValue.typeTableIdx);
 			}
 
@@ -2416,6 +2535,7 @@ skipGeneratingVarargsArray:
 
 		IRInstruction *breakJump = AddInstruction(context);
 		breakJump->type = IRINSTRUCTIONTYPE_JUMP_IF_GREATER_THAN_OR_EQUALS;
+		breakJump->loc = astFor->loc;
 		breakJump->conditionalJump2.label = breakLabel;
 		breakJump->conditionalJump2.left  = indexValue;
 		breakJump->conditionalJump2.right = to;
@@ -2483,8 +2603,7 @@ skipGeneratingVarargsArray:
 
 		TypeInfo arrayType = GetTypeInfo(context, arrayValue.typeTableIdx);
 		if (arrayType.typeCategory == TYPECATEGORY_POINTER) {
-			arrayValue = IRDereferenceValue(context, arrayValue);
-			//arrayType = GetTypeInfo(context, arrayType.pointerInfo.pointedTypeTableIdx);
+			arrayValue = IRDereferenceValue(context, loc, arrayValue);
 			arrayType = GetTypeInfo(context, arrayValue.typeTableIdx);
 		}
 		IRValue ptrToArray = IRPointerToValue(context, loc, arrayValue);

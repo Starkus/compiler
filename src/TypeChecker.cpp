@@ -7,7 +7,9 @@ u32 TCNewValue(Context *context, u32 typeTableIdx, u32 flags, u32 immitateValueI
 
 	u64 idx = jobData->localValues.count;
 	Value *result = BucketArrayAdd(&jobData->localValues);
+#if DEBUG_BUILD
 	result->name = {};
+#endif
 	result->typeTableIdx = typeTableIdx;
 	result->flags = flags;
 	result->tryImmitateValueIdx = immitateValueIdx;
@@ -25,7 +27,9 @@ u32 TCNewValue(Context *context, String name, u32 typeTableIdx, u32 flags, u32 i
 
 	u64 idx = jobData->localValues.count;
 	Value *result = BucketArrayAdd(&jobData->localValues);
+#if DEBUG_BUILD
 	result->name = name;
+#endif
 	result->typeTableIdx = typeTableIdx;
 	result->flags = flags;
 	result->tryImmitateValueIdx = immitateValueIdx;
@@ -65,10 +69,13 @@ u32 NewGlobalValue(Context *context, u32 typeTableIdx, u32 flags, u32 immitateVa
 
 	u64 idx = globalValues->count;
 	Value *result = BucketArrayAdd(&globalValues);
+#if DEBUG_BUILD
 	result->name = {};
+#endif
 	result->typeTableIdx = typeTableIdx;
 	result->flags = flags;
 	result->tryImmitateValueIdx = immitateValueIdx;
+	result->externalSymbolName = {};
 
 	ASSERT(idx < U32_MAX);
 	idx |= VALUE_GLOBAL_BIT;
@@ -84,10 +91,13 @@ u32 NewGlobalValue(Context *context, String name, u32 typeTableIdx, u32 flags,
 
 	u64 idx = globalValues->count;
 	Value *result = BucketArrayAdd(&globalValues);
+#if DEBUG_BUILD
 	result->name = name;
+#endif
 	result->typeTableIdx = typeTableIdx;
 	result->flags = flags;
 	result->tryImmitateValueIdx = immitateValueIdx;
+	result->externalSymbolName = StringMinify(name);
 
 	ASSERT(idx < U32_MAX);
 	idx |= VALUE_GLOBAL_BIT;
@@ -397,25 +407,9 @@ inline void TCPopScope(Context *context)
 	--jobData->scopeStack.size;
 }
 
-TCScopeName TCFindScopeName(Context *context, String name)
+TCScopeName FindGlobalName(Context *context, String name)
 {
-	TCJobData *jobData = (TCJobData *)SYSGetFiberData(context->flsIndex);
-
-	// Current stack
-	ArrayView<TCScope> scopeStack = jobData->scopeStack;
-	for (s64 stackIdx = scopeStack.size - 1; stackIdx >= 0; --stackIdx)
-	{
-		const TCScope *currentScope = &scopeStack[stackIdx];
-		for (int i = 0; i < currentScope->names.size; ++i)
-		{
-			const TCScopeName *currentName = &currentScope->names[i];
-			if (StringEquals(name, currentName->name))
-				return *currentName;
-		}
-	}
-	// Global scope
-	while (true)
-	{
+	while (true) {
 		// Lock this, if we need to switch fibers, we don't unlock until we added this fiber to a
 		// waiting list.
 		SYSLockForRead(&context->tcGlobalNames.rwLock);
@@ -438,6 +432,26 @@ TCScopeName TCFindScopeName(Context *context, String name)
 		// the waiting list, so we don't miss waking it up when adding the identifier.
 		SwitchJob(context, TCYIELDREASON_UNKNOWN_IDENTIFIER, { .identifier = name });
 	}
+}
+
+TCScopeName TCFindScopeName(Context *context, String name)
+{
+	TCJobData *jobData = (TCJobData *)SYSGetFiberData(context->flsIndex);
+
+	// Current stack
+	ArrayView<TCScope> scopeStack = jobData->scopeStack;
+	for (s64 stackIdx = scopeStack.size - 1; stackIdx >= 0; --stackIdx)
+	{
+		const TCScope *currentScope = &scopeStack[stackIdx];
+		for (int i = 0; i < currentScope->names.size; ++i)
+		{
+			const TCScopeName *currentName = &currentScope->names[i];
+			if (StringEquals(name, currentName->name))
+				return *currentName;
+		}
+	}
+	// Global scope
+	return FindGlobalName(context, name);
 }
 
 inline u32 TCNewStaticDefinition(Context *context, StaticDefinition *value)
@@ -854,7 +868,8 @@ void InferTypesInExpression(Context *context, ASTExpression *expression, u32 typ
 {
 	TypeInfo typeInfo = GetTypeInfo(context, typeTableIdx);
 	if (expression->typeTableIdx == TYPETABLEIDX_INTEGER &&
-			typeInfo.typeCategory == TYPECATEGORY_INTEGER)
+			(typeInfo.typeCategory == TYPECATEGORY_INTEGER ||
+			 typeInfo.typeCategory == TYPECATEGORY_FLOATING))
 		expression->typeTableIdx = typeTableIdx;
 	else if (expression->typeTableIdx == TYPETABLEIDX_FLOATING &&
 			typeInfo.typeCategory == TYPECATEGORY_FLOATING)
@@ -867,7 +882,6 @@ void InferTypesInExpression(Context *context, ASTExpression *expression, u32 typ
 		break;
 	case ASTNODETYPE_BINARY_OPERATION:
 		InferTypesInExpression(context, expression->binaryOperation.leftHand, typeTableIdx);
-		InferTypesInExpression(context, expression->binaryOperation.rightHand, typeTableIdx);
 		InferTypesInExpression(context, expression->binaryOperation.rightHand, typeTableIdx);
 		break;
 	}
@@ -1469,7 +1483,9 @@ inline u32 AddType(Context *context, TypeInfo typeInfo)
 
 	{
 		Value value = GetGlobalValue(context, typeInfo.valueIdx);
+#if DEBUG_BUILD
 		value.name = SNPrintF(16, "_typeInfo%lld", typeTableIdx);
+#endif
 		UpdateGlobalValue(context, typeInfo.valueIdx, &value);
 	}
 
@@ -2286,7 +2302,7 @@ void TypeCheckVariableDeclaration(Context *context, ASTVariableDeclaration *varD
 						varDecl->specifiedTypeIdx, astInitialValue->typeTableIdx);
 			}
 
-			astInitialValue->typeTableIdx = typeCheckResult.leftTypeIdx;
+			astInitialValue->typeTableIdx = typeCheckResult.rightTypeIdx;
 
 			if (typeCheckResult.leftTypeIdx != varDecl->specifiedTypeIdx) {
 				varDecl->specifiedTypeIdx = typeCheckResult.leftTypeIdx;
@@ -4179,8 +4195,8 @@ void TypeCheckExpression(Context *context, ASTExpression *expression)
 						leftHand->typeTableIdx, rightHand->typeTableIdx)) {
 				TypeCheckResult typeCheckResult = CheckTypesMatchAndSpecialize(context,
 						leftHand->typeTableIdx, rightHand);
-				leftHand->typeTableIdx  = typeCheckResult.leftTypeIdx;
-				rightHand->typeTableIdx = typeCheckResult.rightTypeIdx;
+				if (leftHand->typeTableIdx != typeCheckResult.leftTypeIdx)
+					InferTypesInExpression(context, leftHand, typeCheckResult.leftTypeIdx);
 
 				switch (expression->binaryOperation.op) {
 				case TOKEN_OP_SHIFT_LEFT:
@@ -4426,11 +4442,19 @@ void TypeCheckExpression(Context *context, ASTExpression *expression)
 	{
 		ASTFor *astFor = &expression->forNode;
 
-		TypeCheckExpression(context, astFor->range);
+		ASTExpression *rangeExp = astFor->range;
+		bool isExplicitRange = rangeExp->nodeType == ASTNODETYPE_BINARY_OPERATION &&
+			rangeExp->binaryOperation.op == TOKEN_OP_RANGE;
+
+		TypeCheckExpression(context, rangeExp);
 
 		TCPushScope(context);
 
-		u32 indexValueIdx = TCNewValue(context, astFor->indexVariableName, TYPETABLEIDX_S64, 0);
+		u32 indexTypeIdx = TYPETABLEIDX_S64;
+		if (isExplicitRange)
+			indexTypeIdx = rangeExp->typeTableIdx;
+
+		u32 indexValueIdx = TCNewValue(context, astFor->indexVariableName, indexTypeIdx, 0);
 		astFor->indexValueIdx = indexValueIdx;
 
 		FixedArray<TCScopeName, 2> scopeNamesToAdd = {};
@@ -4439,13 +4463,9 @@ void TypeCheckExpression(Context *context, ASTExpression *expression)
 		newScopeName.type = NAMETYPE_VARIABLE;
 		newScopeName.name = astFor->indexVariableName;
 		newScopeName.variableInfo.valueIdx = indexValueIdx;
-		newScopeName.variableInfo.typeTableIdx = TYPETABLEIDX_S64;
+		newScopeName.variableInfo.typeTableIdx = indexTypeIdx;
 		newScopeName.loc = expression->any.loc;
 		*FixedArrayAdd(&scopeNamesToAdd) = newScopeName;
-
-		ASTExpression *rangeExp = astFor->range;
-		bool isExplicitRange = rangeExp->nodeType == ASTNODETYPE_BINARY_OPERATION &&
-			rangeExp->binaryOperation.op == TOKEN_OP_RANGE;
 
 		if (!isExplicitRange) {
 			u32 elementTypeTableIdx = TYPETABLEIDX_U8;
