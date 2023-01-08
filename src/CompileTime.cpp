@@ -71,19 +71,23 @@ CTRegister CTGetIRValueContentRead(CTContext *ctContext, IRValue irValue);
 
 CTRegister *CTRegisterFromIRValue(CTContext *ctContext, IRValue irValue, bool dereference)
 {
-	CTRegister *reg = CTGetValueContent(ctContext, irValue.value.valueIdx);
+	ASSERT(irValue.valueType == IRVALUETYPE_VALUE || irValue.valueType == IRVALUETYPE_MEMORY);
+	CTRegister *reg = CTGetValueContent(ctContext, irValue.valueIdx);
 	if (dereference)
 		reg = reg->asPtr;
-	u8 *ptr = ((u8 *)reg + irValue.value.offset);
-	if (irValue.value.elementSize) {
-		u32 indexTypeIdx = CTGetValue(ctContext, irValue.value.indexValueIdx).typeTableIdx;
-		IRValue indexIRValue = {
-			.valueType = IRVALUETYPE_VALUE,
-			.value = { .valueIdx = irValue.value.indexValueIdx },
-			.typeTableIdx = indexTypeIdx
-		};
-		CTRegister index = CTGetIRValueContentRead(ctContext, indexIRValue);
-		ptr += index.asS64;
+	u8 *ptr = (u8 *)reg;
+	if (irValue.valueType == IRVALUETYPE_MEMORY) {
+		ptr += irValue.mem.offset;
+		if (irValue.mem.elementSize) {
+			u32 indexTypeIdx = CTGetValue(ctContext, irValue.mem.indexValueIdx).typeTableIdx;
+			IRValue indexIRValue = {
+				.valueType = IRVALUETYPE_VALUE,
+				.valueIdx = irValue.mem.indexValueIdx,
+				.typeTableIdx = indexTypeIdx
+			};
+			CTRegister index = CTGetIRValueContentRead(ctContext, indexIRValue);
+			ptr += index.asS64;
+		}
 	}
 	reg = (CTRegister *)ptr;
 	return reg;
@@ -96,7 +100,7 @@ CTRegister CTGetIRValueContentRead(CTContext *ctContext, IRValue irValue)
 	case IRVALUETYPE_VALUE:
 		result = *CTRegisterFromIRValue(ctContext, irValue, false);
 		break;
-	case IRVALUETYPE_VALUE_DEREFERENCE:
+	case IRVALUETYPE_MEMORY:
 		result = *CTRegisterFromIRValue(ctContext, irValue, true);
 		break;
 	case IRVALUETYPE_IMMEDIATE_INTEGER:
@@ -155,7 +159,7 @@ CTRegister *CTGetIRValueContentWrite(CTContext *ctContext, IRValue irValue)
 	case IRVALUETYPE_VALUE:
 		result = CTRegisterFromIRValue(ctContext, irValue, false);
 		break;
-	case IRVALUETYPE_VALUE_DEREFERENCE:
+	case IRVALUETYPE_MEMORY:
 		result = CTRegisterFromIRValue(ctContext, irValue, true);
 		break;
 	case IRVALUETYPE_IMMEDIATE_INTEGER:
@@ -176,7 +180,7 @@ void CTCopyIRValue(CTContext *ctContext, CTRegister *dst, IRValue irValue)
 		CTStore(ctContext, dst, CTRegisterFromIRValue(ctContext, irValue, false),
 				irValue.typeTableIdx);
 	} break;
-	case IRVALUETYPE_VALUE_DEREFERENCE:
+	case IRVALUETYPE_MEMORY:
 	{
 		CTStore(ctContext, dst, CTRegisterFromIRValue(ctContext, irValue, true),
 				irValue.typeTableIdx);
@@ -818,7 +822,7 @@ ArrayView<const CTRegister *> CTInternalRunInstructions(CTContext *ctContext,
 			CTRegister *dstContent = nullptr;
 			switch (dst.valueType) {
 			case IRVALUETYPE_VALUE:
-			case IRVALUETYPE_VALUE_DEREFERENCE:
+			case IRVALUETYPE_MEMORY:
 				dstContent = CTRegisterFromIRValue(ctContext, dst, true);
 				break;
 			default:
@@ -828,7 +832,7 @@ ArrayView<const CTRegister *> CTInternalRunInstructions(CTContext *ctContext,
 			CTRegister *srcContent = nullptr;
 			switch (src.valueType) {
 			case IRVALUETYPE_VALUE:
-			case IRVALUETYPE_VALUE_DEREFERENCE:
+			case IRVALUETYPE_MEMORY:
 				srcContent = CTRegisterFromIRValue(ctContext, src, true);
 				break;
 			default:
@@ -847,7 +851,7 @@ ArrayView<const CTRegister *> CTInternalRunInstructions(CTContext *ctContext,
 			CTRegister *dstContent = nullptr;
 			switch (dst.valueType) {
 			case IRVALUETYPE_VALUE:
-			case IRVALUETYPE_VALUE_DEREFERENCE:
+			case IRVALUETYPE_MEMORY:
 				dstContent = CTRegisterFromIRValue(ctContext, dst, true);
 				break;
 			default:
@@ -870,7 +874,7 @@ ArrayView<const CTRegister *> CTInternalRunInstructions(CTContext *ctContext,
 			case IRVALUETYPE_VALUE:
 				srcContent = CTRegisterFromIRValue(ctContext, src, false);
 				break;
-			case IRVALUETYPE_VALUE_DEREFERENCE:
+			case IRVALUETYPE_MEMORY:
 				srcContent = CTRegisterFromIRValue(ctContext, src, true);
 				break;
 			case IRVALUETYPE_IMMEDIATE_STRING:

@@ -2,7 +2,7 @@ enum IRValueType
 {
 	IRVALUETYPE_INVALID = -1,
 	IRVALUETYPE_VALUE,
-	IRVALUETYPE_VALUE_DEREFERENCE,
+	IRVALUETYPE_MEMORY,
 	IRVALUETYPE_PROCEDURE,
 	IRVALUETYPE_TUPLE,
 	IRVALUETYPE_IMMEDIATE_INTEGER,
@@ -14,6 +14,7 @@ struct IRValue
 	IRValueType valueType;
 	union
 	{
+		u32 valueIdx;
 		s64 immediate;
 		f64 immediateFloat;
 		u32 immediateStringIdx;
@@ -25,14 +26,15 @@ struct IRValue
 			// been assigned (i.e. with IRINSTRUCTIONTYPE_LOAD_EFFECTIVE_ADDRESS), offset is an
 			// immediate added to the pointer, and if elementSize is not 0, the value of
 			// indexValueIdx * elementSize is also added. The resulting pointer is dereferenced.
-			u32 valueIdx;
+			u32 baseValueIdx;
 			u32 indexValueIdx;
 			u64 elementSize;
 			s64 offset;
-		} value;
+		} mem;
 	};
 	u32 typeTableIdx;
 };
+static_assert(offsetof(IRValue, valueIdx) == offsetof(IRValue, mem.baseValueIdx));
 
 struct IRLabel
 {

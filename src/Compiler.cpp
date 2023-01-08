@@ -80,7 +80,9 @@ THREADLOCAL void *t_threadMem, *t_threadMemPtr;
 THREADLOCAL u64 t_threadMemSize;
 
 String TPrintF(const char *format, ...);
+struct Context;
 
+Context *g_context;
 Memory *g_memory;
 FileHandle g_hStdin;
 FileHandle g_hStdout;
@@ -191,6 +193,7 @@ u64 CycleCountEnd(u64 begin)
 
 struct Config
 {
+	bool silent;
 	bool dontPromoteMemoryToRegisters;
 	bool dontCallAssembler;
 	bool logAST;
@@ -511,6 +514,7 @@ int main(int argc, char **argv)
 #endif
 
 	Context context = {};
+	g_context = &context;
 	context.tlsIndex = SYSAllocThreadData();
 	context.flsIndex = SYSAllocFiberData();
 	context.consoleMutex = SYSCreateMutex();
@@ -554,7 +558,9 @@ int main(int argc, char **argv)
 	for (int argIdx = 1; argIdx < argc; ++argIdx) {
 		char *arg = argv[argIdx];
 		if (arg[0] == '-') {
-			if (strcmp("-noPromote", arg) == 0)
+			if (strcmp("-silent", arg) == 0)
+				context.config.silent = true;
+			else if (strcmp("-noPromote", arg) == 0)
 				context.config.dontPromoteMemoryToRegisters = true;
 			else if (strcmp("-noBuildExecutable", arg) == 0)
 				context.config.dontCallAssembler = true;
@@ -572,7 +578,8 @@ int main(int argc, char **argv)
 	}
 	ASSERT(inputFiles.size > 2);
 
-	TimerSplit("Initialization"_s);
+	if (!context.config.silent)
+		TimerSplit("Initialization"_s);
 
 	OutputBufferInit(&context);
 
@@ -584,7 +591,8 @@ int main(int argc, char **argv)
 	for (int i = 0; i < inputFiles.size; ++i)
 		CompilerAddSourceFile(&context, inputFiles[i], {});
 
-	TimerSplit("Create starting jobs"_s);
+	if (!context.config.silent)
+		TimerSplit("Create starting jobs"_s);
 
 	SYSTEM_INFO win32SystemInfo;
 	GetSystemInfo(&win32SystemInfo);
@@ -606,7 +614,8 @@ int main(int argc, char **argv)
 
 	SYSWaitForThreads(threadCount, threads.data);
 
-	TimerSplit("Multithreaded parse/analyze/codegen phase"_s);
+	if (!context.config.silent)
+		TimerSplit("Multithreaded parse/analyze/codegen phase"_s);
 
 	s32 failedJobsCount = context.failedJobsCount;
 	if (failedJobsCount > 0) {
@@ -624,8 +633,10 @@ int main(int argc, char **argv)
 	BackendGenerateWindowsObj(&context);
 #endif
 
-	TimerSplit("Done"_s);
-	Print("Compilation success\n");
+	if (!context.config.silent) {
+		TimerSplit("Done"_s);
+		Print("Compilation success\n");
+	}
 
 	return 0;
 }

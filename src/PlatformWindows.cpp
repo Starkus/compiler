@@ -349,7 +349,7 @@ nextTuple:
 	}
 }
 
-void SYSRunAssembler(String outputPath, String outputFilename, String extraArguments)
+void SYSRunAssembler(String outputPath, String outputFilename, String extraArguments, bool silent)
 {
 	if (!msvcPath.size)
 		Win32FindVSAndWindowsSDK();
@@ -383,7 +383,7 @@ void SYSRunAssembler(String outputPath, String outputFilename, String extraArgum
 			NULL,
 			NULL,
 			false,
-			0,
+			silent ? CREATE_NO_WINDOW : 0,
 			NULL,
 			outputPath.data,
 			&startupInfo,
@@ -407,7 +407,7 @@ void SYSRunAssembler(String outputPath, String outputFilename, String extraArgum
 }
 
 void SYSRunLinker(String outputPath, String outputFilename, bool makeLibrary,
-		ArrayView<String> exportedSymbols, String extraArguments)
+		ArrayView<String> exportedSymbols, String extraArguments, bool silent)
 {
 	if (!msvcPath.size)
 		Win32FindVSAndWindowsSDK();
@@ -481,7 +481,7 @@ void SYSRunLinker(String outputPath, String outputFilename, bool makeLibrary,
 			NULL,
 			NULL,
 			false,
-			0,
+			silent ? CREATE_NO_WINDOW : 0,
 			NULL,
 			outputPath.data,
 			&startupInfo,
@@ -529,7 +529,7 @@ void SYSRunLinker(String outputPath, String outputFilename, bool makeLibrary,
 				NULL,
 				NULL,
 				false,
-				0,
+				silent ? CREATE_NO_WINDOW : 0,
 				NULL,
 				outputPath.data,
 				&startupInfo,

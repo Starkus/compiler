@@ -91,15 +91,14 @@ inline bool AddValue(Context *context, u32 valueIdx, DynamicArray<u32, ThreadAll
 // @Speed: delete? this will most likely get inlined anyways
 inline bool AddIfValue(Context *context, IRValue irValue, DynamicArray<u32, ThreadAllocator> *array)
 {
-	if (irValue.valueType != IRVALUETYPE_VALUE &&
-			irValue.valueType != IRVALUETYPE_VALUE_DEREFERENCE)
+	if (irValue.valueType != IRVALUETYPE_VALUE && irValue.valueType != IRVALUETYPE_MEMORY)
 		return false;
 
-	bool mainValueAdded = AddValue(context, irValue.value.valueIdx, array);
+	bool mainValueAdded = AddValue(context, irValue.valueIdx, array);
 	bool indexValueAdded = false;
 
-	if (irValue.value.elementSize > 0)
-		indexValueAdded = AddValue(context, irValue.value.indexValueIdx, array);
+	if (irValue.valueType == IRVALUETYPE_MEMORY && irValue.mem.elementSize > 0)
+		indexValueAdded = AddValue(context, irValue.mem.indexValueIdx, array);
 
 	return mainValueAdded || indexValueAdded;
 }
@@ -111,27 +110,27 @@ inline void RemoveIfValue(Context *context, IRValue irValue,
 	{
 		for (int i = 0; i < array->size; ++i)
 		{
-			if ((*array)[i] == irValue.value.valueIdx)
+			if ((*array)[i] == irValue.valueIdx)
 			{
 				(*array)[i] = (*array)[--array->size];
 				break;
 			}
 		}
 	}
-	else if (irValue.valueType == IRVALUETYPE_VALUE_DEREFERENCE)
+	else if (irValue.valueType == IRVALUETYPE_MEMORY)
 	{
 		// The value is actually _used_ here, and not written to. Add instead.
-		AddValue(context, irValue.value.valueIdx, array);
-		if (irValue.value.elementSize > 0)
-			AddValue(context, irValue.value.indexValueIdx, array);
+		AddValue(context, irValue.valueIdx, array);
+		if (irValue.valueType == IRVALUETYPE_MEMORY && irValue.mem.elementSize > 0)
+			AddValue(context, irValue.mem.indexValueIdx, array);
 	}
 }
 
 inline bool IsXMMFast(IRJobData *jobData, u32 valueIdx)
 {
-	if (valueIdx >= RAX.value.valueIdx && valueIdx <= R15.value.valueIdx)
+	if (valueIdx >= RAX.valueIdx && valueIdx <= R15.valueIdx)
 		return false;
-	if (valueIdx >= XMM0.value.valueIdx && valueIdx <= XMM15.value.valueIdx)
+	if (valueIdx >= XMM0.valueIdx && valueIdx <= XMM15.valueIdx)
 		return true;
 	return BitfieldGetBit(jobData->valueIsXmmBits, valueIdx);
 }
@@ -193,8 +192,8 @@ void DoLivenessAnalisisOnInstruction(Context *context, BasicBlock *basicBlock, X
 	case X64_IDIV:
 	case X64_MUL:
 	{
-		AddValue(context, RAX.value.valueIdx, liveValues);
-		AddValue(context, RDX.value.valueIdx, liveValues);
+		AddValue(context, RAX.valueIdx, liveValues);
+		AddValue(context, RDX.valueIdx, liveValues);
 		AddIfValue(context, inst->dst, liveValues);
 	} break;
 	case X64_CQO:
@@ -202,7 +201,7 @@ void DoLivenessAnalisisOnInstruction(Context *context, BasicBlock *basicBlock, X
 		// CQO writes to both RAX and RDX
 		for (int i = 0; i < liveValues->size; ++i)
 		{
-			if ((*liveValues)[i] == RAX.value.valueIdx || (*liveValues)[i] == RDX.value.valueIdx)
+			if ((*liveValues)[i] == RAX.valueIdx || (*liveValues)[i] == RDX.valueIdx)
 				(*liveValues)[i--] = (*liveValues)[--liveValues->size];
 		}
 	} break;
@@ -211,11 +210,9 @@ void DoLivenessAnalisisOnInstruction(Context *context, BasicBlock *basicBlock, X
 	case X64_XORPD:
 	{
 		// Detect xors of same thing (zero-ing)
-		if (inst->src.valueType != IRVALUETYPE_IMMEDIATE_INTEGER &&
-			memcmp(&inst->dst.value, &inst->src.value, sizeof(inst->src.value)) == 0)
+		if (inst->src.valueType == IRVALUETYPE_VALUE && inst->dst.valueIdx == inst->src.valueIdx)
 			RemoveIfValue(context, inst->dst, liveValues);
-		else
-		{
+		else {
 			AddIfValue(context, inst->dst, liveValues);
 			AddIfValue(context, inst->src, liveValues);
 		}
@@ -304,10 +301,9 @@ void DoLivenessAnalisisOnInstruction(Context *context, BasicBlock *basicBlock, X
 		// No live values that cross a procedure call can be stored in RAX/XMM0.
 		// Note that this doesn't make RAX and XMM0 _live_ but just flag them as co-existing with
 		// all the currently live values.
-		if (inst->type == X64_CALL || inst->type == X64_CALL_Indirect)
-		{
-			HashSetAdd(edges, RAX.value.valueIdx);
-			HashSetAdd(edges, XMM0.value.valueIdx);
+		if (inst->type == X64_CALL || inst->type == X64_CALL_Indirect) {
+			HashSetAdd(edges, RAX.valueIdx);
+			HashSetAdd(edges, XMM0.valueIdx);
 		}
 	}
 }
@@ -545,12 +541,10 @@ next:
 
 inline u64 BitIfRegister(Context *context, IRValue irValue)
 {
-	if (irValue.valueType == IRVALUETYPE_VALUE || irValue.valueType == IRVALUETYPE_VALUE_DEREFERENCE)
-	{
-		Value value = IRGetValue(context, irValue.value.valueIdx);
+	if (irValue.valueType == IRVALUETYPE_VALUE || irValue.valueType == IRVALUETYPE_MEMORY) {
+		Value value = IRGetValue(context, irValue.valueIdx);
 		if ((value.flags & (VALUEFLAGS_IS_USED | VALUEFLAGS_IS_ALLOCATED | VALUEFLAGS_IS_MEMORY)) ==
-				(VALUEFLAGS_IS_USED | VALUEFLAGS_IS_ALLOCATED))
-		{
+				(VALUEFLAGS_IS_USED | VALUEFLAGS_IS_ALLOCATED)) {
 			ASSERT(value.allocatedRegister < 64);
 			return 1ull << value.allocatedRegister;
 		}
@@ -737,7 +731,7 @@ void X64AllocateRegisters(Context *context)
 
 			u32 valueIdx = interferenceGraph.valueIndices[nodeIdx];
 			// Skip physical register values
-			if (valueIdx >= RAX.value.valueIdx && valueIdx <= XMM15.value.valueIdx)
+			if (valueIdx >= RAX.valueIdx && valueIdx <= XMM15.valueIdx)
 				continue;
 			u32 vFlags = IRGetLocalValue(context, valueIdx)->flags;
 			if (vFlags & VALUEFLAGS_FORCE_REGISTER)
@@ -796,7 +790,7 @@ gotNodeToRemove:
 		u32 valueIdx = interferenceGraph.valueIndices[currentNodeIdx];
 
 		// Skip physical register values
-		if (valueIdx >= RAX.value.valueIdx && valueIdx <= XMM15.value.valueIdx)
+		if (valueIdx >= RAX.valueIdx && valueIdx <= XMM15.valueIdx)
 			continue;
 
 		Value *v = IRGetLocalValue(context, valueIdx);

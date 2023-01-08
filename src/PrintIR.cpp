@@ -50,27 +50,18 @@ inline String PIRValueToStr(Context *context, BucketArrayView<Value> localValues
 
 void PrintIRValue(Context *context, BucketArrayView<Value> localValues, IRValue value)
 {
-	if (value.valueType == IRVALUETYPE_VALUE_DEREFERENCE)
-	{
-		PIRPrintOut(context, "[%S", PIRValueToStr(context, localValues, value.value.valueIdx));
-		if (value.value.offset)
-			PIRPrintOut(context, "+0x%llx", value.value.offset);
-		if (value.value.elementSize) {
-			String indexValueStr = PIRValueToStr(context, localValues, value.value.indexValueIdx);
-			PIRPrintOut(context, "+%S*%lld", indexValueStr, value.value.elementSize);
+	if (value.valueType == IRVALUETYPE_MEMORY) {
+		PIRPrintOut(context, "[%S", PIRValueToStr(context, localValues, value.mem.baseValueIdx));
+		if (value.mem.offset)
+			PIRPrintOut(context, "+0x%llx", value.mem.offset);
+		if (value.mem.elementSize) {
+			String indexValueStr = PIRValueToStr(context, localValues, value.mem.indexValueIdx);
+			PIRPrintOut(context, "+%S*%lld", indexValueStr, value.mem.elementSize);
 		}
 		PIRPrintOut(context, "]");
 	}
 	else if (value.valueType == IRVALUETYPE_VALUE)
-	{
-		PIRPrintOut(context, "%S", PIRValueToStr(context, localValues, value.value.valueIdx));
-		if (value.value.offset)
-			PIRPrintOut(context, "+0x%llx", value.value.offset);
-		if (value.value.elementSize) {
-			String indexValueStr = PIRValueToStr(context, localValues, value.value.indexValueIdx);
-			PIRPrintOut(context, "+%S*%lld", indexValueStr, value.value.elementSize);
-		}
-	}
+		PIRPrintOut(context, "%S", PIRValueToStr(context, localValues, value.valueIdx));
 	else if (value.valueType == IRVALUETYPE_IMMEDIATE_INTEGER)
 		PIRPrintOut(context, "0x%llx", value.immediate);
 	else if (value.valueType == IRVALUETYPE_IMMEDIATE_FLOAT)

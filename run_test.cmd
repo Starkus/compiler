@@ -5,7 +5,7 @@ set start=%time%
 
 for %%f in (tests/*) do (
 	echo | set /p=Running %%f...
-	bin\Compiler.exe tests/%%f >NUL 2>NUL
+	bin\Compiler.exe tests/%%f -silent
 	IF !ERRORLEVEL! NEQ 0 echo [36GCompilation [31mfailed![0m
 	IF !ERRORLEVEL! EQU 0 (
 		echo | set /p=[36GCompilation [32msuccess[0m...
