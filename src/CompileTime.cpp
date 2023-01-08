@@ -192,7 +192,7 @@ void CTCopyIRValue(CTContext *ctContext, CTRegister *dst, IRValue irValue)
 	}
 }
 
-void PrintIRInstruction(Context *context, u32 procedureIdx, IRInstruction inst);
+void PrintIRInstruction(Context *context, BucketArrayView<Value> localValues, IRInstruction inst);
 
 ArrayView<const CTRegister *> CTInternalRunInstructions(CTContext *ctContext,
 		BucketArrayView<IRInstruction> irInstructions)
@@ -217,15 +217,12 @@ ArrayView<const CTRegister *> CTInternalRunInstructions(CTContext *ctContext,
 			continue;
 
 #if CT_ENABLE_VERBOSE_LOGGING
-		// @Todo: change PIR procedures to receive list of local values instead of proc idx.
-		if (ctContext->procedureIdx != 0) {
-			PrintIRInstruction(context, ctContext->procedureIdx, inst);
-			String instructionStr = {
-				.size = context->outputBufferSize,
-				.data = (const char *)context->outputBufferMem };
-			CTVerboseLog(context, inst.loc, TPrintF("Running IR instruction: %S", instructionStr));
-			OutputBufferReset(context);
-		}
+		PrintIRInstruction(context, ctContext->localValues, inst);
+		String instructionStr = {
+			.size = context->outputBufferSize,
+			.data = (const char *)context->outputBufferMem };
+		CTVerboseLog(context, inst.loc, TPrintF("Running IR instruction: %S", instructionStr));
+		OutputBufferReset(context);
 #endif
 
 		if (inst.type >= IRINSTRUCTIONTYPE_BinaryBegin && inst.type <= IRINSTRUCTIONTYPE_BinaryEnd) {
