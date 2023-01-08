@@ -1,4 +1,5 @@
 compiler_output_type :: COMPILER_OUTPUT_LIBRARY;
+compiler_output_name :: "output/lib";
 
 LibAddTwoNumbers :: #export (a : s64, b : s64) -> s64
 {

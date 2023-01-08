@@ -891,7 +891,7 @@ skipImmitate:
 			if (!(usedRegisters & registerBit))
 			{
 #if DEBUG_BUILD
-				TypeInfo t = GetTypeInfo(context, v->typeTableIdx);
+				TypeInfo t = GetTypeInfo(context, StripAllAliases(context, v->typeTableIdx));
 				if (t.typeCategory == TYPECATEGORY_FLOATING || t.size > 8)
 					ASSERT(candidate >= XMM0_idx);
 				else

@@ -36,16 +36,6 @@ String CStrToString(const char *cstr)
 	return { strlen(cstr), cstr };
 }
 
-inline void ChangeExtension(char *buffer, const char *newExtension)
-{
-	char *lastDot = 0;
-	for (char *scan = buffer; *scan; ++scan)
-		if (*scan == '.')
-			lastDot = scan;
-	ASSERT(lastDot);
-	strcpy(lastDot + 1, newExtension);
-}
-
 inline bool StringEquals(String a, String b)
 {
 	bool result = a.size == b.size;
@@ -401,4 +391,26 @@ inline String StringExpand(SmallString smallString) {
 		.size = smallString.qword >> 48,
 		.data = (const char *)(smallString.qword & 0x0000FFFFFFFFFFFF)
 	};
+}
+
+// newExtension should start with . for the case where filename doesn't have one
+String ChangeFilenameExtension(String filename, String newExtension)
+{
+	for (int i = 0; i < filename.size; ++i) {
+		if (filename.data[i] == '.') {
+			filename.size = i;
+			break;
+		}
+	}
+	return SStringConcat(filename, newExtension);
+}
+
+void ChangeFilenameExtensionInPlace(char *buffer, const char *newExtension)
+{
+	char *lastDot = 0;
+	for (char *scan = buffer; *scan; ++scan)
+		if (*scan == '.')
+			lastDot = scan;
+	ASSERT(lastDot);
+	strcpy(lastDot + 1, newExtension);
 }

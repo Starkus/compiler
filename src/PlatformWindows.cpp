@@ -349,15 +349,18 @@ nextTuple:
 	}
 }
 
-void SYSRunAssembler(String outputPath, String extraArguments)
+void SYSRunAssembler(String outputPath, String outputFilename, String extraArguments)
 {
 	if (!msvcPath.size)
 		Win32FindVSAndWindowsSDK();
 
+	String outputFullName = SYSExpandPathWorkingDirectoryRelative(outputFilename);
+
 	// Run MASM
-	String commandLine = TPrintF(
+	String ml64CommandLine = TPrintF(
 			"%S\\bin\\Hostx64\\x64\\ml64.exe " // msvcPath
-			"out.asm "
+			"%S " // input filename
+			"/Fo %S " // output filename
 			"/nologo /c "
 			"/Zd "
 			"/Zi "
@@ -365,6 +368,8 @@ void SYSRunAssembler(String outputPath, String extraArguments)
 			"%S " // extraArguments
 			"%c",
 			msvcPath,
+			ChangeFilenameExtension(outputFullName, ".asm"_s),
+			ChangeFilenameExtension(outputFullName, ".obj"_s),
 			extraArguments,
 			0
 			);
@@ -374,7 +379,7 @@ void SYSRunAssembler(String outputPath, String extraArguments)
 	startupInfo.cb = sizeof(STARTUPINFO);
 	if (!CreateProcessA(
 			NULL,
-			(LPSTR)commandLine.data,
+			(LPSTR)ml64CommandLine.data,
 			NULL,
 			NULL,
 			false,
@@ -401,7 +406,8 @@ void SYSRunAssembler(String outputPath, String extraArguments)
 	CloseHandle(processInformation.hThread);
 }
 
-void SYSRunLinker(String outputPath, bool makeLibrary, String extraArguments)
+void SYSRunLinker(String outputPath, String outputFilename, bool makeLibrary,
+		ArrayView<String> exportedSymbols, String extraArguments)
 {
 	if (!msvcPath.size)
 		Win32FindVSAndWindowsSDK();
@@ -411,90 +417,115 @@ void SYSRunLinker(String outputPath, bool makeLibrary, String extraArguments)
 	String workingPath = SYSExpandPathWorkingDirectoryRelative({});
 	ASSERT(workingPath.data[workingPath.size] == 0);
 
-	if (!makeLibrary) {
-		String commandLine = TPrintF(
-				"%S\\bin\\Hostx64\\x64\\link.exe " // msvcPath
-				"out.obj "
-				"/nologo "
-				"/ignore:4216 " // Warning about exporting entry point
-				"bin\\basic.lib "
-				"kernel32.lib "
-				"user32.lib "
-				"gdi32.lib "
-				"winmm.lib "
-				"/debug:full "
-				"/entry:__WindowsMain "
-				"/opt:ref "
-				"/incremental:no "
-				"/nodefaultlib "
-				"/map "
-#if !FINAL_BUILD
-				"/dynamicbase:no "
-#endif
-				"%S " // extraArguments
-				"/libpath:\"%S\" " // workingPath
-				"/libpath:\"%S\\lib\\x64\" " // msvcPath
-				"/libpath:\"%S\\lib\\%S\\ucrt\\x64\" " // windowsSDKPath, windowsSDKVersion
-				"/libpath:\"%S\\lib\\%S\\um\\x64\" " // windowsSDKPath, windowsSDKVersion
-				"/out:out.exe%c",
-				msvcPath,
-				extraArguments,
-				workingPath,
-				msvcPath,
-				windowsSDKPath, windowsSDKVersion,
-				windowsSDKPath, windowsSDKVersion,
-				0
-				);
+	String outputFullName = SYSExpandPathWorkingDirectoryRelative(outputFilename);
 
-		STARTUPINFO startupInfo = {};
-		startupInfo.cb = sizeof(STARTUPINFO);
-		if (!CreateProcessA(
-				NULL,
-				(LPSTR)commandLine.data,
-				NULL,
-				NULL,
-				false,
-				0,
-				NULL,
-				outputPath.data,
-				&startupInfo,
-				&processInformation
-				)) {
-			Print("Failed to call link.exe (%d)\n", GetLastError());
-			PANIC;
-		}
-		DWORD exitCode;
-		GetExitCodeProcess(processInformation.hProcess, &exitCode);
-		if (exitCode != 0 && exitCode != ERROR_NO_MORE_ITEMS) { // ??? wtf this error
-			Print("link.exe returned an error (%d)\n", exitCode);
-			exit(exitCode);
-		}
+	String exports = {};
+	char *exportsBuffer = (char *)t_threadMemPtr;
+	char *scan = exportsBuffer;
+	for (int i = 0; i < exportedSymbols.size; ++i) {
+		memcpy(scan, " /EXPORT:", 9);
+		scan += 9;
+		String symbol = exportedSymbols[i];
+		memcpy(scan, symbol.data, symbol.size);
+		scan += symbol.size;
 	}
-	else {
-		String commandLine = TPrintF(
+	exports = { .size = (u64)(scan - exportsBuffer), .data = exportsBuffer };
+	t_threadMemPtr = scan;
+
+	String linkCommandLine = TPrintF(
+			"%S\\bin\\Hostx64\\x64\\link.exe " // msvcPath
+			"%S " // obj name
+			"/nologo "
+			"/ignore:4216 " // Warning about exporting entry point
+			"bin\\basic.lib "
+			"kernel32.lib "
+			"user32.lib "
+			"gdi32.lib "
+			"winmm.lib "
+			"%S " // exports
+			"/debug:full "
+			"/entry:__WindowsMain "
+			"/opt:ref "
+			"/incremental:no "
+			"/nodefaultlib "
+			"/map "
+#if !FINAL_BUILD
+			"/dynamicbase:no "
+#endif
+			"%S " // extraArguments
+			"/libpath:\"%S\" " // workingPath
+			"/libpath:\"%S\\lib\\x64\" " // msvcPath
+			"/libpath:\"%S\\lib\\%S\\ucrt\\x64\" " // windowsSDKPath, windowsSDKVersion
+			"/libpath:\"%S\\lib\\%S\\um\\x64\" " // windowsSDKPath, windowsSDKVersion
+			"%S " // /DLL /NOENTRY if should make a dll
+			"/out:%S" // executable/DLL name
+			"%c", // \0
+			msvcPath,
+			ChangeFilenameExtension(outputFullName, ".obj"_s),
+			exports,
+			extraArguments,
+			workingPath,
+			msvcPath,
+			windowsSDKPath, windowsSDKVersion,
+			windowsSDKPath, windowsSDKVersion,
+			makeLibrary ? "/DLL /NOENTRY"_s : ""_s,
+			ChangeFilenameExtension(outputFullName, makeLibrary ? ".dll"_s : ".exe"_s),
+			0
+			);
+
+	STARTUPINFO startupInfo = {};
+	startupInfo.cb = sizeof(STARTUPINFO);
+	if (!CreateProcessA(
+			NULL,
+			(LPSTR)linkCommandLine.data,
+			NULL,
+			NULL,
+			false,
+			0,
+			NULL,
+			outputPath.data,
+			&startupInfo,
+			&processInformation
+			)) {
+		Print("Failed to call link.exe (%d)\n", GetLastError());
+		PANIC;
+	}
+	DWORD exitCode;
+	GetExitCodeProcess(processInformation.hProcess, &exitCode);
+	if (exitCode != 0 && exitCode != ERROR_NO_MORE_ITEMS) { // ??? wtf this error
+		Print("link.exe returned an error (%d)\n", exitCode);
+		exit(exitCode);
+	}
+
+	// Make .lib
+	if (makeLibrary) {
+		String libCommandLine = TPrintF(
 				"%S\\bin\\Hostx64\\x64\\lib.exe " // msvcPath
-				"out.obj "
+				"%S " // obj name
 				"/nologo "
 				"%S " // extraArguments
 				"/libpath:\"%S\" " // workingPath
 				"/libpath:\"%S\\lib\\x64\" " // msvcPath
 				"/libpath:\"%S\\lib\\%S\\ucrt\\x64\" " // windowsSDKPath, windowsSDKVersion
 				"/libpath:\"%S\\lib\\%S\\um\\x64\" " // windowsSDKPath, windowsSDKVersion
-				"/out:out.a%c",
+				"/out:%S" // lib name
+				"%c", // \0
 				msvcPath,
+				ChangeFilenameExtension(outputFullName, ".obj"_s),
 				extraArguments,
 				workingPath,
 				msvcPath,
 				windowsSDKPath, windowsSDKVersion,
 				windowsSDKPath, windowsSDKVersion,
+				ChangeFilenameExtension(outputFullName, ".lib"_s),
 				0
 				);
 
-		STARTUPINFO startupInfo = {};
+		startupInfo = {};
 		startupInfo.cb = sizeof(STARTUPINFO);
 		if (!CreateProcessA(
 				NULL,
-				(LPSTR)commandLine.data,
+				(LPSTR)libCommandLine.data,
 				NULL,
 				NULL,
 				false,
@@ -507,7 +538,6 @@ void SYSRunLinker(String outputPath, bool makeLibrary, String extraArguments)
 			Print("Failed to call lib.exe (%d)\n", GetLastError());
 			PANIC;
 		}
-		DWORD exitCode;
 		GetExitCodeProcess(processInformation.hProcess, &exitCode);
 		if (exitCode != 0 && exitCode != ERROR_NO_MORE_ITEMS) { // ??? wtf this error
 			Print("lib.exe returned an error (%d)\n", exitCode);
@@ -689,3 +719,23 @@ inline s64 AtomicCompareExchange64(volatile s64 *destination, s64 exchange, s64 
 }
 
 extern "C" u64 SYSCallProcedureDynamically(void *start, u64 argCount, void *argValues);
+
+void *SYSLoadDynamicLibrary(String filename)
+{
+	const char *cstr = StringToCStr(filename, ThreadAllocator::Alloc);
+	HMODULE result = LoadLibraryA(cstr);
+	if (result) return result;
+
+	// Look in working path
+	String workingPathRelative = SYSExpandPathWorkingDirectoryRelative(filename);
+	// this string is null terminated
+	result = LoadLibraryA(workingPathRelative.data);
+	if (result) return result;
+
+	// Look in compiler path
+	String compilerPathRelative = SYSExpandPathCompilerRelative(filename);
+	// this string is null terminated
+	result = LoadLibraryA(compilerPathRelative.data);
+	if (result) return result;
+	return result;
+}

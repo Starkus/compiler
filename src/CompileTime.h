@@ -13,6 +13,13 @@ union CTRegister
 	CTRegister *asPtr;
 };
 
+struct CTLibrary
+{
+	String name;
+	SourceLocation loc;
+	void *address;
+};
+
 struct CTContext
 {
 	Context *globalContext;

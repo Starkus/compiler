@@ -218,6 +218,11 @@ inline f32 Sqrt(f32 n)
 	return sqrtf(n);
 }
 
+inline f64 Sqrt64(f64 n)
+{
+	return sqrt(n);
+}
+
 #if IS_MSVC
 // Retarded compiler
 inline constexpr u32 CountOnesConstexpr(u32 n)

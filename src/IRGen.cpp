@@ -529,13 +529,15 @@ IRValue IRDoArrayAccess(Context *context, SourceLocation loc, u32 arrayPtrValueI
 	IRValue pointerToElementValue = IRValueNewValue(context, "_array_element"_s,
 			pointerToElementTypeIdx, 0);
 	IRValue pointerToArray = IRValueValue(arrayPtrValueIdx, pointerToElementTypeIdx);
-	IRInstruction addOffsetInst = {};
-	addOffsetInst.type = IRINSTRUCTIONTYPE_ADD;
-	addOffsetInst.loc = loc;
-	addOffsetInst.binaryOperation.left = pointerToArray;
-	addOffsetInst.binaryOperation.right = offsetValue;
-	addOffsetInst.binaryOperation.out = pointerToElementValue;
-	*AddInstruction(context) = addOffsetInst;
+	*AddInstruction(context) = {
+		.type = IRINSTRUCTIONTYPE_ADD,
+		.loc = loc,
+		.binaryOperation = {
+			.left = pointerToArray,
+			.right = offsetValue,
+			.out = pointerToElementValue
+		}
+	};
 
 	return IRValueDereference(pointerToElementValue.value.valueIdx, elementTypeIdx);
 }
@@ -715,13 +717,13 @@ IRValue IRDoCast(Context *context, SourceLocation loc, IRValue srcValue, u32 typ
 		return result;
 	}
 	else {
-		TypeInfo fromTypeInfo = GetTypeInfo(context, srcValue.typeTableIdx);
-		TypeInfo toTypeInfo = GetTypeInfo(context, typeTableIdx);
+		TypeInfo dstTypeInfo = GetTypeInfo(context, StripAllAliases(context, typeTableIdx));
+		TypeInfo srcTypeInfo = GetTypeInfo(context, StripAllAliases(context, srcValue.typeTableIdx));
 
-		bool isSrcFloat = fromTypeInfo.typeCategory == TYPECATEGORY_FLOATING;
-		bool isDstFloat =   toTypeInfo.typeCategory == TYPECATEGORY_FLOATING;
+		bool isSrcFloat = srcTypeInfo.typeCategory == TYPECATEGORY_FLOATING;
+		bool isDstFloat =   dstTypeInfo.typeCategory == TYPECATEGORY_FLOATING;
 
-		if (fromTypeInfo.size == toTypeInfo.size && isSrcFloat == isDstFloat) {
+		if (srcTypeInfo.size == dstTypeInfo.size && isSrcFloat == isDstFloat) {
 			// No cast needed
 			srcValue.typeTableIdx = typeTableIdx;
 			return srcValue;
@@ -738,7 +740,29 @@ IRValue IRDoCast(Context *context, SourceLocation loc, IRValue srcValue, u32 typ
 #endif
 		IRValue result = IRValueValue(tempValueIdx, typeTableIdx, 0);
 
-		if (isSrcFloat && !isDstFloat) {
+		// Cast static array to dynamic array
+		if (dstTypeInfo.typeCategory  == TYPECATEGORY_ARRAY &&
+			srcTypeInfo.typeCategory == TYPECATEGORY_ARRAY &&
+			dstTypeInfo.arrayInfo.count  == 0 &&
+			srcTypeInfo.arrayInfo.count != 0)
+		{
+			TypeInfo dynamicArrayTypeInfo = GetTypeInfo(context, TYPETABLEIDX_ARRAY_STRUCT);
+
+			IRValue resultPtr = IRPointerToValue(context, loc, result);
+
+			// Size
+			StructMember sizeStructMember = dynamicArrayTypeInfo.structInfo.members[0];
+			IRValue sizeMember = IRDoMemberAccess(context, loc, resultPtr.value.valueIdx, sizeStructMember);
+			IRValue sizeValue = IRValueImmediate(srcTypeInfo.arrayInfo.count);
+			IRDoAssignment(context, loc, sizeMember, sizeValue);
+
+			// Data
+			StructMember dataStructMember = dynamicArrayTypeInfo.structInfo.members[1];
+			IRValue dataMember = IRDoMemberAccess(context, loc, resultPtr.value.valueIdx, dataStructMember);
+			IRValue dataValue = IRPointerToValue(context, loc, srcValue);
+			IRDoAssignment(context, loc, dataMember, dataValue);
+		}
+		else if (isSrcFloat && !isDstFloat) {
 			*AddInstruction(context) = {
 				.type = IRINSTRUCTIONTYPE_CONVERT_FLOAT_TO_INT,
 				.loc = loc,
@@ -759,8 +783,8 @@ IRValue IRDoCast(Context *context, SourceLocation loc, IRValue srcValue, u32 typ
 				.assignment = { .src = srcValue, .dst = result }
 			};
 		}
-		else if (fromTypeInfo.size < toTypeInfo.size) {
-			if (toTypeInfo.typeCategory == TYPECATEGORY_INTEGER && toTypeInfo.integerInfo.isSigned)
+		else if (srcTypeInfo.size < dstTypeInfo.size) {
+			if (dstTypeInfo.typeCategory == TYPECATEGORY_INTEGER && dstTypeInfo.integerInfo.isSigned)
 				*AddInstruction(context) = {
 					.type = IRINSTRUCTIONTYPE_SIGN_EXTEND,
 					.loc = loc,
@@ -773,7 +797,7 @@ IRValue IRDoCast(Context *context, SourceLocation loc, IRValue srcValue, u32 typ
 					.assignment = { .src = srcValue, .dst = result }
 				};
 		}
-		else if (fromTypeInfo.size > toTypeInfo.size) {
+		else if (srcTypeInfo.size > dstTypeInfo.size) {
 			*AddInstruction(context) = {
 				.type = IRINSTRUCTIONTYPE_TRUNCATE,
 				.loc = loc,
@@ -810,32 +834,8 @@ void IRDoAssignment(Context *context, SourceLocation loc, IRValue dstValue, IRVa
 	dstValue.typeTableIdx = StripAllAliases(context, dstValue.typeTableIdx);
 	srcValue.typeTableIdx = StripAllAliases(context, srcValue.typeTableIdx);
 
-	// Cast static array to dynamic array
 	TypeInfo dstTypeInfo = GetTypeInfo(context, dstValue.typeTableIdx);
 	TypeInfo srcTypeInfo = GetTypeInfo(context, srcValue.typeTableIdx);
-	if (dstTypeInfo.typeCategory  == TYPECATEGORY_ARRAY &&
-		srcTypeInfo.typeCategory == TYPECATEGORY_ARRAY &&
-		dstTypeInfo.arrayInfo.count  == 0 &&
-		srcTypeInfo.arrayInfo.count != 0)
-	{
-		TypeInfo dynamicArrayTypeInfo = GetTypeInfo(context, TYPETABLEIDX_ARRAY_STRUCT);
-
-		IRValue dstPtr = IRPointerToValue(context, loc, dstValue);
-
-		// Size
-		StructMember sizeStructMember = dynamicArrayTypeInfo.structInfo.members[0];
-		IRValue sizeMember = IRDoMemberAccess(context, loc, dstPtr.value.valueIdx, sizeStructMember);
-		IRValue sizeValue = IRValueImmediate(srcTypeInfo.arrayInfo.count);
-		IRDoAssignment(context, loc, sizeMember, sizeValue);
-
-		// Data
-		StructMember dataStructMember = dynamicArrayTypeInfo.structInfo.members[1];
-		IRValue dataMember = IRDoMemberAccess(context, loc, dstPtr.value.valueIdx, dataStructMember);
-		IRValue dataValue = IRPointerToValue(context, loc, srcValue);
-		IRDoAssignment(context, loc, dataMember, dataValue);
-
-		return;
-	}
 
 	// Copy structs/arrays
 	if (srcTypeInfo.typeCategory == TYPECATEGORY_STRUCT ||
@@ -2095,7 +2095,7 @@ IRValue IRGenFromExpression(Context *context, const ASTExpression *expression)
 		// Support both varargs and default parameters here
 		s32 procParamCount = (s32)procTypeInfo.parameters.size;
 		s32 callParamCount = (s32)astProcCall->arguments.size;
-		s32 paramCount = Max(procParamCount, callParamCount) + /*isReturnByCopy +*/ isVarargs;
+		s32 paramCount = Max(procParamCount, callParamCount) + isVarargs;
 		if (paramCount)
 			DynamicArrayInit(&procCallInst.procedureCall.parameters, paramCount);
 
@@ -2216,8 +2216,10 @@ IRValue IRGenFromExpression(Context *context, const ASTExpression *expression)
 
 				pointerToBuffer = IRPointerToValue(context, astProcCall->loc, bufferIRValue);
 			}
-			else
+			else {
+				varargsCount = 0; // Can be negative
 				pointerToBuffer = IRValueImmediate(0, anyPointerTypeIdx);
+			}
 
 			// By now we should have the buffer with all the varargs as Any structs.
 			// Now we put it into a dynamic array struct.

@@ -33,6 +33,7 @@ enum ConstantType
 	CONSTANTTYPE_INTEGER,
 	CONSTANTTYPE_FLOATING,
 	CONSTANTTYPE_GROUP,
+	CONSTANTTYPE_STRING
 };
 struct Constant
 {
@@ -42,6 +43,7 @@ struct Constant
 		s64 valueAsInt;
 		f64 valueAsFloat;
 		Array<Constant, LinearAllocator> valueAsGroup;
+		String valueAsString;
 	};
 	u32 typeTableIdx;
 };

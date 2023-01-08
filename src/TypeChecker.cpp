@@ -1363,11 +1363,17 @@ void WriteUserFacingTypeInfoToStaticData(Context *context, TypeInfo typeInfo)
 		outEnum->typeInfo = ufti;
 
 		u64 memberCount = typeInfo.enumInfo.names.size;
-
 		outEnum->nameCount = memberCount;
-		outEnum->names = (String *)AllocateStaticData(context, U32_MAX, memberCount * sizeof(String), 8);
 		outEnum->valueCount = memberCount;
-		outEnum->values = (s64 *)AllocateStaticData(context, U32_MAX, memberCount * sizeof(s64), 8);
+
+		if (memberCount) {
+			outEnum->names = (String *)AllocateStaticData(context, U32_MAX, memberCount * sizeof(String), 8);
+			outEnum->values = (s64 *)AllocateStaticData(context, U32_MAX, memberCount * sizeof(s64), 8);
+		}
+		else {
+			outEnum->names = nullptr;
+			outEnum->values = nullptr;
+		}
 
 		for (int i = 0; i < memberCount; ++i) {
 			outEnum->names[i]  = CopyStringToStaticData(context, typeInfo.enumInfo.names[i]);
@@ -1769,6 +1775,11 @@ Constant TryEvaluateConstant(Context *context, ASTExpression *expression)
 			result.type = CONSTANTTYPE_GROUP;
 			result.valueAsGroup = constants;
 		} break;
+		case LITERALTYPE_STRING:
+		{
+			result.type = CONSTANTTYPE_STRING;
+			result.valueAsString = expression->literal.string;
+		} break;
 		default:
 			goto error;
 		}
@@ -2124,6 +2135,8 @@ u32 TypeCheckType(Context *context, String name, SourceLocation loc, ASTType *as
 			auto &typeTable = context->typeTable.unsafe;
 			t.valueIdx = typeTable[typeTableIdx].valueIdx;
 			(TypeInfo&)typeTable[typeTableIdx] = t;
+
+			WriteUserFacingTypeInfoToStaticData(context, t);
 		}
 
 		TCScope *stackTop = GetTopMostScope(context);
@@ -4451,8 +4464,11 @@ void TypeCheckExpression(Context *context, ASTExpression *expression)
 		TCPushScope(context);
 
 		u32 indexTypeIdx = TYPETABLEIDX_S64;
-		if (isExplicitRange)
+		if (isExplicitRange) {
+			// Infer if it's literal numbers
+			InferTypesInExpression(context, rangeExp, indexTypeIdx);
 			indexTypeIdx = rangeExp->typeTableIdx;
+		}
 
 		u32 indexValueIdx = TCNewValue(context, astFor->indexVariableName, indexTypeIdx, 0);
 		astFor->indexValueIdx = indexValueIdx;
@@ -4767,6 +4783,11 @@ void TypeCheckExpression(Context *context, ASTExpression *expression)
 	{
 		String filename = expression->linklib.filename;
 		*DynamicArrayAdd(&context->libsToLink) = filename;
+
+		CTLibrary ctLib = { .name = ChangeFilenameExtension(filename, ".dll"_s),
+			.loc = expression->any.loc };
+		auto ctLibs = context->ctExternalLibraries.Get();
+		*DynamicArrayAdd(&ctLibs) = ctLib;
 	} break;
 	case ASTNODETYPE_DEFINED:
 	{
@@ -5308,5 +5329,16 @@ void TypeCheckMain(Context *context)
 	{
 		auto inlineCalls = context->tcInlineCalls.GetForWrite();
 		DynamicArrayInit(&inlineCalls, 128);
+	}
+
+	{
+		auto ctLibraries = context->ctExternalLibraries.Get();
+		DynamicArrayInit(&ctLibraries, 32);
+		// @Todo: make this platform dependent, and make SYSRunLinker grab libraries from the same
+		// place as this
+		*DynamicArrayAdd(&ctLibraries) = { .name = "kernel32"_s };
+		*DynamicArrayAdd(&ctLibraries) = { .name = "user32"_s };
+		*DynamicArrayAdd(&ctLibraries) = { .name = "gdi32"_s };
+		*DynamicArrayAdd(&ctLibraries) = { .name = "winmm"_s };
 	}
 }

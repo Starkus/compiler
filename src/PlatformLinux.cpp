@@ -155,7 +155,8 @@ void SYSRunAssembler(String outputPath, String extraArguments)
 #endif
 }
 
-void SYSRunLinker(String outputPath, bool makeLibrary, String extraArguments) {
+void SYSRunLinker(String outputPath, bool makeLibrary, ArrayView<String> exportedSymbols,
+		String extraArguments) {
 #if 1
 	if (makeLibrary)
 	{

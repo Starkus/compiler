@@ -81,6 +81,14 @@ THREADLOCAL u64 t_threadMemSize;
 
 String TPrintF(const char *format, ...);
 
+Memory *g_memory;
+FileHandle g_hStdin;
+FileHandle g_hStdout;
+FileHandle g_hStderr;
+u32 g_numberOfThreads;
+u32 g_threadIdxCreateFibers;
+u32 g_threadIdxDeleteFibers;
+
 #if _MSC_VER
 #include "PlatformWindows.cpp"
 #else
@@ -88,13 +96,6 @@ String TPrintF(const char *format, ...);
 #endif
 
 #include "Multithreading.cpp"
-
-Memory *g_memory;
-FileHandle g_hStdout;
-FileHandle g_hStderr;
-u32 g_numberOfThreads;
-u32 g_threadIdxCreateFibers;
-u32 g_threadIdxDeleteFibers;
 
 s64 Print(const char *format, ...)
 {
@@ -261,6 +262,9 @@ struct Context
 	RWContainer<BucketArray<FloatLiteral,  HeapAllocator, 1024>> f32Literals;
 	RWContainer<BucketArray<FloatLiteral,  HeapAllocator, 1024>> f64Literals;
 	RWContainer<DynamicArray<u32, HeapAllocator>> irExternalVariables;
+
+	// Compile Time -----
+	MXContainer<DynamicArray<CTLibrary, HeapAllocator>> ctExternalLibraries;
 
 	// Backend -----
 	RWContainer<DynamicArray<BEFinalProcedure, HeapAllocator>> beFinalProcedureData;
@@ -497,9 +501,11 @@ int main(int argc, char **argv)
 	SetUpTimers();
 
 #if IS_WINDOWS
+	g_hStdin  = GetStdHandle(STD_INPUT_HANDLE);
 	g_hStdout = GetStdHandle(STD_OUTPUT_HANDLE);
 	g_hStderr = GetStdHandle(STD_ERROR_HANDLE);
 #else
+	g_hStdin  = fileno(stdin);
 	g_hStdout = fileno(stdout);
 	g_hStderr = fileno(stderr);
 #endif

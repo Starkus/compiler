@@ -35,6 +35,9 @@ struct X64InstructionInfo
 enum X64InstructionType
 {
 	X64_INT,
+	X64_INT1,
+	X64_INT3,
+	X64_INTO,
 
 	X64_MOV,
 	X64_MOVZX,

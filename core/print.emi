@@ -176,7 +176,9 @@ PrintF :: (format : String, ..args)
 				}
 			}
 			// Default to printing the number
+			Print("?(");
 			PrintArgument(num);
+			Print(")");
 		}
 		else if typeInfo.typeKind == TypeKind_Array
 		{
@@ -255,20 +257,20 @@ PrintF :: (format : String, ..args)
 			Print("<Unknown type>");
 	}
 
+	str : String = { 0, format.data };
 	argIdx := 0;
-	for (0..format.size)
-	{
+	for (0..format.size) {
 		char : u8 = format[i];
-		if char == '%'
-		{
+		if char == '%' {
+			Print(str);
 			PrintArgument(args[argIdx]);
 			argIdx += 1;
+			str.size = 0;
+			str.data = ^format[i+1];
 		}
-		else
-		{
-			// @Improve: call only one print between every pair of '%' (and at each end)
-			str : String = { 1, ^char };
-			Print(str);
+		else {
+			str.size += 1;
 		}
 	}
+	Print(str);
 }

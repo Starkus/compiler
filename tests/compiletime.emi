@@ -1,3 +1,5 @@
+#linklib "tests/testdll/testdll";
+
 CONSTANT :: #run RunThisOnCompileTime(10);
 
 g_aGlobal :s s32 = 5;
@@ -8,8 +10,12 @@ TwoNumbers :: struct
 	b: s32;
 };
 
+TestProc :: #external #convention(win64) (a: s64, b: s64, c: s64, d: s64, e: s64, f: s64, g: s64, h: s64);
+
 RunThisOnCompileTime :: (arg: s64) -> s64
 {
+	TestProc(1, 2, 3, 4, 5, 6, 7, 8);
+
 	foo := 6 + arg;
 
 	// Pointers and dereferencing

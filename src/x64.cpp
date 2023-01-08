@@ -1006,8 +1006,10 @@ void X64ConvertInstruction(Context *context, IRInstruction inst)
 		X64InstructionType type;
 		if (srcType.size == 4)
 			type = X64_MOVSXD;
-		else
+		else {
+			ASSERT(srcType.size < 4);
 			type = X64_MOVSX;
+		}
 		X64AddInstruction2(context, inst.loc, type, tmp, src);
 		X64AddInstruction2(context, inst.loc, X64_MOV, dst, tmp);
 		return;
@@ -1034,6 +1036,7 @@ void X64ConvertInstruction(Context *context, IRInstruction inst)
 			X64AddInstruction2(context, inst.loc, X64_MOV, dst, tmp);
 		}
 		else {
+			ASSERT(srcType.size < 4);
 			// MOVZXD is R-RM
 			IRValue tmp = IRValueNewValue(context, "_movzx_tmp"_s, dst.typeTableIdx,
 					VALUEFLAGS_FORCE_REGISTER);
@@ -1051,6 +1054,8 @@ void X64ConvertInstruction(Context *context, IRInstruction inst)
 		ASSERT(dstType.typeCategory != TYPECATEGORY_FLOATING);
 		ASSERT(srcType.typeCategory != TYPECATEGORY_FLOATING);
 		ASSERT(dstType.size < srcType.size);
+		ASSERT(dstType.size <= 8);
+		ASSERT(srcType.size <= 8);
 
 		src.typeTableIdx = dst.typeTableIdx;
 		X64AddInstruction2(context, inst.loc, X64_MOV, dst, src);
@@ -1069,15 +1074,12 @@ void X64ConvertInstruction(Context *context, IRInstruction inst)
 		else if (IsValueInMemory(context, dst)) {
 			IRValue tmp = IRValueNewValue(context, "_lea_mm_tmp"_s, dst.typeTableIdx,
 					VALUEFLAGS_FORCE_REGISTER);
-			//ASSERT(src.valueType == IRVALUETYPE_VALUE_DEREFERENCE);
 			X64AddInstruction2(context, inst.loc, X64_LEA, tmp, src);
 			X64Mov(context, inst.loc, dst, tmp);
 			src = tmp;
 		}
-		else {
-			//ASSERT(src.valueType == IRVALUETYPE_VALUE_DEREFERENCE);
+		else
 			X64AddInstruction2(context, inst.loc, X64_LEA, dst, src);
-		}
 		return;
 	}
 	case IRINSTRUCTIONTYPE_ADD:
@@ -1569,8 +1571,7 @@ void X64ConvertInstruction(Context *context, IRInstruction inst)
 	{
 		switch (inst.intrinsic.type) {
 		case INTRINSIC_BREAKPOINT:
-			X64AddInstruction1(context, inst.loc, X64_INT,
-				IRValueImmediate(3, TYPETABLEIDX_U8));
+			X64AddInstruction0(context, inst.loc, X64_INT3);
 			return;
 		case INTRINSIC_SQRT32:
 			result.type = X64_SQRTSS;
@@ -1870,13 +1871,7 @@ doConditionalSet:
 		cmpInst.dst = inst.binaryOperation.left;
 		cmpInst.src = inst.binaryOperation.right;
 
-		if (cmpInst.src.valueType == IRVALUETYPE_IMMEDIATE_INTEGER &&
-			(cmpInst.src.immediate & 0xFFFFFFFF00000000))
-		{
-			IRValue tmp = IRValueNewValue(context, cmpInst.src.typeTableIdx, 0);
-			X64Mov(context, inst.loc, tmp, cmpInst.src);
-			cmpInst.src = tmp;
-		}
+		X64ReduceRM64BitImmediate(context, inst.loc, cmpInst.dst.typeTableIdx, &cmpInst.src);
 
 		u8 accepted = x64InstructionInfos[cmpInst.type].operandTypesLeft;
 		if (!FitsInOperand(context, accepted, cmpInst.dst) ||
@@ -2108,7 +2103,7 @@ xed_encoder_operand_t X64IRValueToXEDOperand(Context *context, SourceLocation lo
 				"Value \"%S\" not allocated to XMM register!", v.name);
 #else
 		ASSERTF(v.allocatedRegister >= XMM0_idx && v.allocatedRegister <= XMM15_idx,
-				"Value not allocated to XMM register!"_s);
+				"Value not allocated to XMM register!");
 #endif
 		result = xed_reg(x64RegisterToXED[v.allocatedRegister]);
 	}
@@ -2222,6 +2217,11 @@ int X64InstructionToBytes(Context *context, X64Instruction x64Inst,
 	case X64_Pop_Scope:
 	case X64_Push_Value:
 		return 0;
+	case X64_LEAVE:
+	case X64_RET:
+		// inst0 with 64 bit width
+		xed_inst0(&inst, dstate64, xedIClass, 64);
+		goto encode;
 	default:
 	{
 		X64InstructionInfo instInfo = x64InstructionInfos[x64Inst.type];
@@ -2242,7 +2242,7 @@ int X64InstructionToBytes(Context *context, X64Instruction x64Inst,
 
 inst0:
 	{
-		int bitWidth = 64;
+		int bitWidth = 0;
 		xed_inst0(&inst, dstate64, xedIClass, bitWidth);
 		goto encode;
 	}
@@ -2443,6 +2443,9 @@ void BackendMain(Context *context)
 	}
 
 	x64InstructionInfos[X64_INT] =       { "int"_s,       OPERANDTYPE_IMMEDIATE, OPERANDACCESS_READ };
+	x64InstructionInfos[X64_INT1] =      { "int1"_s };
+	x64InstructionInfos[X64_INT3] =      { "int3"_s };
+	x64InstructionInfos[X64_INTO] =      { "into"_s };
 	x64InstructionInfos[X64_MOV] =       { "mov"_s,       OPERANDTYPE_REGMEM,    OPERANDACCESS_WRITE, OPERANDTYPE_ALL,    OPERANDACCESS_READ };
 	x64InstructionInfos[X64_MOVZX] =     { "movzx"_s,     OPERANDTYPE_REGMEM,    OPERANDACCESS_WRITE, OPERANDTYPE_REGMEM, OPERANDACCESS_READ };
 	x64InstructionInfos[X64_MOVSX] =     { "movsx"_s,     OPERANDTYPE_REGMEM,    OPERANDACCESS_WRITE, OPERANDTYPE_REGMEM, OPERANDACCESS_READ };
@@ -2522,6 +2525,9 @@ void BackendMain(Context *context)
 	x64InstructionInfos[X64_MOVAPS] =    { "movaps"_s,    OPERANDTYPE_REGMEM,    OPERANDACCESS_WRITE,     OPERANDTYPE_REGMEM, OPERANDACCESS_READ };
 
 	x64InstructionInfos[X64_INT].xedIClass =        XED_ICLASS_INT;
+	x64InstructionInfos[X64_INT1].xedIClass =       XED_ICLASS_INT1;
+	x64InstructionInfos[X64_INT3].xedIClass =       XED_ICLASS_INT3;
+	x64InstructionInfos[X64_INTO].xedIClass =       XED_ICLASS_INTO;
 	x64InstructionInfos[X64_MOV].xedIClass =        XED_ICLASS_MOV;
 	x64InstructionInfos[X64_MOVZX].xedIClass =      XED_ICLASS_MOVZX;
 	x64InstructionInfos[X64_MOVSX].xedIClass =      XED_ICLASS_MOVSX;
@@ -2918,12 +2924,10 @@ void BackendGenerateOutputFile(Context *context)
 	OutputBufferPrint(context, "END\n");
 #endif
 
+	String outputFilename = "output/out"_s;
+
 	String outputPath = SYSExpandPathWorkingDirectoryRelative("output"_s);
 	SYSCreateDirectory(outputPath);
-
-	OutputBufferWriteToFile(context, "output/out.asm"_s);
-
-	TimerSplit("X64 output file write"_s);
 
 	bool makeLibrary = false;
 	{
@@ -2932,6 +2936,12 @@ void BackendGenerateOutputFile(Context *context)
 		for (u64 i = 0; i < staticDefinitionCount; ++i)
 		{
 			const StaticDefinition *currentDef = &staticDefinitions[i];
+			if (StringEquals("compiler_output_name"_s, currentDef->name))
+			{
+				ASSERT(currentDef->definitionType == STATICDEFINITIONTYPE_CONSTANT);
+				ASSERT(currentDef->constant.type == CONSTANTTYPE_STRING);
+				outputFilename = currentDef->constant.valueAsString;
+			}
 			if (StringEquals("compiler_output_type"_s, currentDef->name))
 			{
 				ASSERT(currentDef->definitionType == STATICDEFINITIONTYPE_CONSTANT);
@@ -2940,6 +2950,21 @@ void BackendGenerateOutputFile(Context *context)
 			}
 		}
 	}
+
+	DynamicArray<String, ThreadAllocator> exportedSymbols;
+	if (makeLibrary) {
+		DynamicArrayInit(&exportedSymbols, 8);
+		auto externalProcedures = context->procedures.GetForRead();
+		for (int i = 0; i < externalProcedures->count; ++i) {
+			Procedure proc = externalProcedures[i];
+			if (proc.isExported)
+				*DynamicArrayAdd(&exportedSymbols) = proc.name;
+		}
+	}
+
+	OutputBufferWriteToFile(context, ChangeFilenameExtension(outputFilename, ".asm"_s));
+
+	TimerSplit("X64 output file write"_s);
 
 	String extraLinkerArguments = {};
 	for (int i = 0; i < context->libsToLink.size; ++i)
@@ -2975,12 +3000,13 @@ void BackendGenerateOutputFile(Context *context)
 	if (!context->config.dontCallAssembler)
 	{
 		ProfilerBegin("Calling assembler");
-		SYSRunAssembler(outputPath, ""_s);
+		SYSRunAssembler(outputPath, outputFilename, ""_s);
 		TimerSplit("Calling assembler"_s);
 		ProfilerEnd();
 
 		ProfilerBegin("Calling linker");
-		SYSRunLinker(outputPath, makeLibrary, extraLinkerArguments);
+		SYSRunLinker(outputPath, outputFilename, makeLibrary, exportedSymbols,
+				extraLinkerArguments);
 		TimerSplit("Calling linker"_s);
 		ProfilerEnd();
 	}
@@ -3074,19 +3100,34 @@ void BackendGenerateWindowsObj(Context *context)
 	}
 
 	// Remap pointers
-	u64 ptrCount = context->staticDataPointersToRelocate.size;
-	for (int ptrIdx = 0; ptrIdx < ptrCount; ++ptrIdx) {
+	qsort(context->staticDataPointersToRelocate.data,
+			context->staticDataPointersToRelocate.size,
+			sizeof(void *), ComparePointers);
+
+	u64 staticDataPtrCount = context->staticDataPointersToRelocate.size;
+	u64 uniqueStaticDataPtrCount = 0;
+	void *lastPtr = nullptr;
+	for (int ptrIdx = 0; ptrIdx < staticDataPtrCount; ++ptrIdx) {
 		void *ptr = context->staticDataPointersToRelocate.data[ptrIdx];
+		// Skip duplicates (this is important cause the linker WILL reallocate these twice
+		// additively)
+		if (ptr == lastPtr)
+			continue;
+		lastPtr = ptr;
+
+		++uniqueStaticDataPtrCount;
+
 		u64 fileOffset = (u64)ptr - (u64)STATIC_DATA_VIRTUAL_ADDRESS + dataSectionOffset;
 
 		u64 dataPtr = *(u64 *)ptr;
-		ASSERT(dataPtr == 0 || (
-				dataPtr >= (u64)STATIC_DATA_VIRTUAL_ADDRESS &&
-				dataPtr < (u64)STATIC_DATA_VIRTUAL_ADDRESS_END));
-		u64 remappedPtr = dataPtr - (u64)STATIC_DATA_VIRTUAL_ADDRESS;
+		if (dataPtr != 0) {
+			ASSERT(dataPtr >= (u64)STATIC_DATA_VIRTUAL_ADDRESS &&
+				   dataPtr < (u64)STATIC_DATA_VIRTUAL_ADDRESS_END);
+			u64 remappedPtr = dataPtr - (u64)STATIC_DATA_VIRTUAL_ADDRESS;
 
-		OutputBufferSeek(context, fileOffset);
-		OutputBufferPut(context, 8, &remappedPtr);
+			OutputBufferSeek(context, fileOffset);
+			OutputBufferPut(context, 8, &remappedPtr);
+		}
 	}
 
 	// code section
@@ -3180,8 +3221,13 @@ void BackendGenerateWindowsObj(Context *context)
 	IMAGE_RELOCATION imageRelocation;
 	imageRelocation.Type = IMAGE_REL_AMD64_ADDR64;
 	imageRelocation.SymbolTableIndex = startOfStaticDataSymbolIdx;
-	for (int ptrIdx = 0; ptrIdx < ptrCount; ++ptrIdx) {
+	lastPtr = nullptr;
+	for (int ptrIdx = 0; ptrIdx < staticDataPtrCount; ++ptrIdx) {
 		void *ptr = context->staticDataPointersToRelocate.data[ptrIdx];
+		if (ptr == lastPtr)
+			continue;
+		lastPtr = ptr;
+
 		u64 sectionOffset = (u64)ptr - (u64)STATIC_DATA_VIRTUAL_ADDRESS;
 		ASSERT(sectionOffset <= U32_MAX);
 		imageRelocation.VirtualAddress = (u32)sectionOffset;
@@ -3254,8 +3300,8 @@ void BackendGenerateWindowsObj(Context *context)
 	dataSectionHeader.PointerToRawData = (u32)dataSectionOffset;
 	ASSERT(dataRelocationTableOffset <= U32_MAX);
 	dataSectionHeader.PointerToRelocations = (u32)dataRelocationTableOffset;
-	ASSERT(ptrCount <= U16_MAX);
-	dataSectionHeader.NumberOfRelocations = (u16)ptrCount;
+	ASSERT(uniqueStaticDataPtrCount <= U16_MAX);
+	dataSectionHeader.NumberOfRelocations = (u16)uniqueStaticDataPtrCount;
 
 	ASSERT(context->staticDataSize <= U32_MAX);
 	codeSectionHeader.SizeOfRawData = (u32)codeSectionSize;
@@ -3272,14 +3318,11 @@ void BackendGenerateWindowsObj(Context *context)
 	OutputBufferPut(context, sizeof(dataSectionHeader), &dataSectionHeader);
 	OutputBufferPut(context, sizeof(codeSectionHeader), &codeSectionHeader);
 
+	String outputFilename = "output/out"_s;
+
 	String outputPath = SYSExpandPathWorkingDirectoryRelative("output"_s);
 	SYSCreateDirectory(outputPath);
 
-	OutputBufferWriteToFile(context, "output/out.obj"_s);
-
-	TimerSplit("Generating output image"_s);
-
-	// Call linker
 	bool makeLibrary = false;
 	{
 		auto staticDefinitions = context->staticDefinitions.GetForRead();
@@ -3287,6 +3330,12 @@ void BackendGenerateWindowsObj(Context *context)
 		for (u64 i = 0; i < staticDefinitionCount; ++i)
 		{
 			const StaticDefinition *currentDef = &staticDefinitions[i];
+			if (StringEquals("compiler_output_name"_s, currentDef->name))
+			{
+				ASSERT(currentDef->definitionType == STATICDEFINITIONTYPE_CONSTANT);
+				ASSERT(currentDef->constant.type == CONSTANTTYPE_STRING);
+				outputFilename = currentDef->constant.valueAsString;
+			}
 			if (StringEquals("compiler_output_type"_s, currentDef->name))
 			{
 				ASSERT(currentDef->definitionType == STATICDEFINITIONTYPE_CONSTANT);
@@ -3296,6 +3345,22 @@ void BackendGenerateWindowsObj(Context *context)
 		}
 	}
 
+	DynamicArray<String, ThreadAllocator> exportedSymbols = {};
+	if (makeLibrary) {
+		DynamicArrayInit(&exportedSymbols, 8);
+		auto externalProcedures = context->procedures.GetForRead();
+		for (int i = 0; i < externalProcedures->count; ++i) {
+			Procedure proc = externalProcedures[i];
+			if (proc.isExported)
+				*DynamicArrayAdd(&exportedSymbols) = proc.name;
+		}
+	}
+
+	OutputBufferWriteToFile(context, ChangeFilenameExtension(outputFilename, ".obj"_s));
+
+	TimerSplit("Generating output image"_s);
+
+	// Call linker
 	String extraLinkerArguments = {};
 	for (int i = 0; i < context->libsToLink.size; ++i)
 		extraLinkerArguments = TPrintF("%S %S", extraLinkerArguments,
@@ -3328,7 +3393,7 @@ void BackendGenerateWindowsObj(Context *context)
 #endif
 
 	ProfilerBegin("Calling linker");
-	SYSRunLinker(outputPath, makeLibrary, extraLinkerArguments);
+	SYSRunLinker(outputPath, outputFilename, makeLibrary, exportedSymbols, extraLinkerArguments);
 	TimerSplit("Calling linker"_s);
 	ProfilerEnd();
 }
@@ -3547,10 +3612,24 @@ void BackendJobProc(Context *context, u32 procedureIdx)
 	X64Instruction *inst = X64InstructionStreamAdvance(&stream);
 	X64Instruction *nextInst  = X64InstructionStreamAdvance(&stream);
 	X64Instruction *nextInst2 = X64InstructionStreamAdvance(&stream);
-	while (inst)
-	{
-		switch (inst->type)
-		{
+	while (inst) {
+		// Replace LEAs with a register as a source with a MOV.
+		if (inst->type == X64_LEA) {
+			if ((inst->src.valueType == IRVALUETYPE_VALUE ||
+				inst->src.valueType == IRVALUETYPE_VALUE_DEREFERENCE) &&
+				(inst->dst.valueType == IRVALUETYPE_VALUE ||
+				inst->dst.valueType == IRVALUETYPE_VALUE_DEREFERENCE) &&
+				inst->src.value.offset == 0 && inst->src.value.elementSize == 0)
+			{
+				Value v = IRGetValue(context, inst->src.value.valueIdx);
+				if ((v.flags & VALUEFLAGS_IS_ALLOCATED) && !(v.flags & VALUEFLAGS_IS_MEMORY)) {
+					inst->type = X64_MOV;
+					inst->src.valueType = IRVALUETYPE_VALUE;
+				}
+			}
+		}
+
+		switch (inst->type) {
 		// dst write, src read
 		case X64_MOVUPS:
 		{
@@ -3562,8 +3641,7 @@ void BackendJobProc(Context *context, u32 procedureIdx)
 
 			Value dst = IRGetValue(context, inst->dst.value.valueIdx);
 			Value src = IRGetValue(context, inst->src.value.valueIdx);
-			if (dst.flags & VALUEFLAGS_IS_ALLOCATED && src.flags & VALUEFLAGS_IS_ALLOCATED)
-			{
+			if (dst.flags & VALUEFLAGS_IS_ALLOCATED && src.flags & VALUEFLAGS_IS_ALLOCATED) {
 				if (!(dst.flags & VALUEFLAGS_IS_MEMORY) ||
 					(dst.stackOffset & 15))
 					goto unalignedMovups;
@@ -3586,11 +3664,9 @@ unalignedMovups:;
 			{
 				Value dst = IRGetValue(context, inst->dst.value.valueIdx);
 				Value src = IRGetValue(context, inst->src.value.valueIdx);
-				if (dst.flags & VALUEFLAGS_IS_ALLOCATED && src.flags & VALUEFLAGS_IS_ALLOCATED)
-				{
+				if (dst.flags & VALUEFLAGS_IS_ALLOCATED && src.flags & VALUEFLAGS_IS_ALLOCATED) {
 					// Value::stackOffset is alias of Value::allocatedRegister
-					if (dst.allocatedRegister == src.allocatedRegister)
-					{
+					if (dst.allocatedRegister == src.allocatedRegister) {
 						inst->type = X64_Ignore;
 						break;
 					}
