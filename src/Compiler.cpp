@@ -34,42 +34,6 @@ PerformanceAPI_Functions performanceAPI;
 // To properly turn this off, we'd need to make sure we don't leak locks anywhere we call LogError.
 #define EXIT_ON_FIRST_ERROR 1
 
-enum TCYieldReason : u32
-{
-	// Reasons without an associated list of waiting jobs are negative
-	TCYIELDREASON_DONE	 = (u32)-3,
-	TCYIELDREASON_FAILED = (u32)-2,
-	TCYIELDREASON_READY	 = (u32)-1,
-
-	TCYIELDREASON_UNKNOWN_IDENTIFIER = 0,
-	TCYIELDREASON_UNKNOWN_OVERLOAD,
-	TCYIELDREASON_STATIC_DEF_NOT_READY,
-	TCYIELDREASON_PROC_BODY_NOT_READY,
-	TCYIELDREASON_PROC_IR_NOT_READY,
-	TCYIELDREASON_TYPE_NOT_READY,
-	TCYIELDREASON_GLOBAL_VALUE_NOT_READY,
-	// WAITING_FOR_STOP jobs want to wait until no jobs are running to make a decision.
-	// As of time of write, only #defined does this to determine if something isn't defined anywhere
-	// before continuing.
-	TCYIELDREASON_WAITING_FOR_STOP,
-
-	TCYIELDREASON_Count
-};
-
-union TCYieldContext
-{
-	String identifier;
-	u32 index;
-};
-
-struct TCJob
-{
-	Fiber fiber;
-
-	// Some data about why the job yielded execution.
-	TCYieldContext context;
-};
-
 #include "Config.h"
 #include "Maths.h"
 #include "Multithreading.h"
@@ -183,6 +147,7 @@ u64 CycleCountEnd(u64 begin)
 
 #include "MemoryAlloc.cpp"
 #include "Strings.cpp"
+#include "Scheduler.h"
 #include "Parser.h"
 #include "AST.h"
 #include "TypeChecker.h"
@@ -219,8 +184,9 @@ struct Context
 
 	MTQueue<Fiber> readyJobs;
 
-	volatile s32 threadsDoingWork;
+	bool done;
 	volatile s32 failedJobsCount;
+	Array<ThreadState, HeapAllocator> threadStates;
 
 	volatile u32 staticDataLock;
 	u64 staticDataSize;
@@ -238,7 +204,7 @@ struct Context
 	u64 outputBufferCapacity;
 
 	// Type check -----
-	FixedArray<MXContainer<DynamicArray<TCJob, HeapAllocator>>, TCYIELDREASON_Count>
+	FixedArray<MXContainer<DynamicArray<Job, HeapAllocator>>, YIELDREASON_Count>
 		waitingJobsByReason;
 
 	MTQueue<JobRequest> jobsToCreate;
@@ -356,7 +322,7 @@ void __Log(Context *context, SourceLocation loc, String str,
 		Print("\n");
 	}
 	else {
-		Print("[unknown source location] %S\n", str);
+		Print("%S\n", str);
 	}
 
 #if DEBUG_BUILD
@@ -401,7 +367,7 @@ void __LogRange(Context *context, SourceLocation locBegin, SourceLocation locEnd
 #endif
 }
 
-NOINLINE void SwitchJob(Context *context, TCYieldReason yieldReason, TCYieldContext yieldContext);
+NOINLINE void SwitchJob(Context *context, YieldReason yieldReason, YieldContext yieldContext);
 
 #define Log(context, loc, str) \
 	do { __Log(context, loc, str, __FILE__, __func__, __LINE__); } while (0)
@@ -434,12 +400,12 @@ NOINLINE void SwitchJob(Context *context, TCYieldReason yieldReason, TCYieldCont
 #define LogError(context, loc, str) \
 	do { LogErrorNoCrash(context, loc, str); PANIC; } while(0)
 #define Log2Error(context, locBegin, locEnd, str) \
-	do { Log2ErrorNoCrash(context, locBegin, locEnd, str); SwitchJob(context, TCYIELDREASON_FAILED, {}); } while(0)
+	do { Log2ErrorNoCrash(context, locBegin, locEnd, str); SwitchJob(context, YIELDREASON_FAILED, {}); } while(0)
 #else
 #define LogError(context, loc, str) \
 	do { LogErrorNoCrash(context, loc, str); PANIC; } while(0)
 #define Log2Error(context, locBegin, locEnd, str) \
-	do { Log2ErrorNoCrash(context, locBegin, locEnd, str); SwitchJob(context, TCYIELDREASON_FAILED, {}); } while(0)
+	do { Log2ErrorNoCrash(context, locBegin, locEnd, str); SwitchJob(context, YIELDREASON_FAILED, {}); } while(0)
 #endif
 
 void EnqueueReadyJob(Context *context, Fiber fiber);
@@ -605,9 +571,12 @@ int main(int argc, char **argv)
 	Array<ThreadArgs,   LinearAllocator> threadArgs;
 	ArrayInit(&threads,    threadCount);
 	ArrayInit(&threadArgs, threadCount);
+	ArrayInit(&context.threadStates, threadCount);
 	threads.size    = threadCount;
 	threadArgs.size = threadCount;
+	context.threadStates.size = threadCount;
 	for (int i = 0; i < threadCount; ++i) {
+		context.threadStates[i] = THREADSTATE_WORKING;
 		threadArgs[i] = { &context, (u32)i };
 		threads[i] = SYSCreateThread(WorkerThreadProc, &threadArgs[i]);
 	}
@@ -626,8 +595,44 @@ int main(int argc, char **argv)
 		return 1;
 	}
 
-	ASSERT(!TCIsAnyOtherJobRunning(&context));
-#if 0
+	// Report errors
+	bool errorsFound = false;
+	{
+		auto jobs = context.waitingJobsByReason[YIELDREASON_UNKNOWN_IDENTIFIER].Get();
+		for (int jobIdx = 0; jobIdx < jobs->size; ++jobIdx) {
+			YieldContext yieldContext = jobs[jobIdx].context;
+			LogErrorNoCrash(&context, yieldContext.loc, TPrintF("Identifier \"%S\" never found",
+						yieldContext.identifier));
+			errorsFound = true;
+		}
+		jobs->size = 0;
+	}
+	{
+		auto jobs = context.waitingJobsByReason[YIELDREASON_UNKNOWN_OVERLOAD].Get();
+		for (int jobIdx = 0; jobIdx < jobs->size; ++jobIdx) {
+			YieldContext yieldContext = jobs[jobIdx].context;
+			if (yieldContext.overload.rightTypeIdx != U32_MAX)
+				LogErrorNoCrash(&context, yieldContext.loc, TPrintF("Operator '%S' not found for "
+							"types \"%S\" and \"%S\"",
+							OperatorToString(yieldContext.overload.op),
+							TypeInfoToString(&context, yieldContext.overload.leftTypeIdx),
+							TypeInfoToString(&context, yieldContext.overload.rightTypeIdx)));
+			else
+				LogErrorNoCrash(&context, yieldContext.loc, TPrintF("Operator '%S' not found for "
+							"type \"%S\"",
+							OperatorToString(yieldContext.overload.op),
+							TypeInfoToString(&context, yieldContext.overload.leftTypeIdx)));
+			errorsFound = true;
+		}
+		jobs->size = 0;
+	}
+	if (errorsFound)
+		LogError(&context, {}, "Errors were found. Aborting"_s);
+
+	if (!TCAreAllJobFinished(&context))
+		LogCompilerError(&context, {}, "Some jobs could not finish"_s);
+
+#if 1
 	BackendGenerateOutputFile(&context);
 #else
 	BackendGenerateWindowsObj(&context);

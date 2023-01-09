@@ -1,9 +1,17 @@
-Foo :: struct {
+Foo :: struct
+{
 	one: s32;
 	two: s32;
 };
 
-Main :: () -> s64 {
+Unary :: ()
+{
+	a : Foo;
+	!a;
+}
+
+Main :: (args : [] String) -> s64
+{
 	a : Foo;
 	b : Foo;
 	a + b;

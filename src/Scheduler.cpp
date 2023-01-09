@@ -1,7 +1,7 @@
 THREADLOCAL Fiber t_schedulerFiber;
 THREADLOCAL Fiber t_previousFiber = SYS_INVALID_FIBER_HANDLE;
-THREADLOCAL TCYieldReason t_previousYieldReason;
-THREADLOCAL TCYieldContext t_previousYieldContext;
+THREADLOCAL YieldReason t_previousYieldReason;
+THREADLOCAL YieldContext t_previousYieldContext;
 
 #define DEFER_FIBER_CREATION 1
 #define DEFER_FIBER_DELETION 1
@@ -33,11 +33,11 @@ inline void RequestNewJob(Context *context, void (*proc)(void *), void *args)
 #endif
 }
 
-void WakeUpAllByIndex(Context *context, TCYieldReason reason, u32 index)
+void WakeUpAllByIndex(Context *context, YieldReason reason, u32 index)
 {
 	auto jobsWaiting = context->waitingJobsByReason[reason].Get();
 	for (int i = 0; i < jobsWaiting->size; ) {
-		TCJob *job = &jobsWaiting[i];
+		Job *job = &jobsWaiting[i];
 		if (job->context.index == index) {
 			EnqueueReadyJob(context, job->fiber);
 			// Remove
@@ -48,11 +48,11 @@ void WakeUpAllByIndex(Context *context, TCYieldReason reason, u32 index)
 	}
 }
 
-void WakeUpAllByName(Context *context, TCYieldReason reason, String name)
+void WakeUpAllByName(Context *context, YieldReason reason, String name)
 {
 	auto jobsWaiting = context->waitingJobsByReason[reason].Get();
 	for (int i = 0; i < jobsWaiting->size; ) {
-		TCJob *job = &jobsWaiting[i];
+		Job *job = &jobsWaiting[i];
 		if (StringEquals(job->context.identifier, name)) {
 			EnqueueReadyJob(context, job->fiber);
 			// Remove
@@ -67,7 +67,7 @@ void WakeUpAllByName(Context *context, TCYieldReason reason, String name)
 // We leave the information in thread local storage for the scheduler fiber.
 // Call this when a job finishes too, the scheduler will delete the fiber and free resources.
 // @Check: why does inlining this procedure lead to fibers running on multiple threads???
-NOINLINE void SwitchJob(Context *context, TCYieldReason yieldReason, TCYieldContext yieldContext)
+NOINLINE void SwitchJob(Context *context, YieldReason yieldReason, YieldContext yieldContext)
 {
 	t_previousFiber = GetCurrentFiber();
 	t_previousYieldReason = yieldReason;
@@ -86,16 +86,16 @@ void SchedulerProc(Context *context)
 		ASSERT(t_previousFiber != (Fiber)0xDEADBEEFDEADBEEF);
 		ASSERT(t_previousFiber != t_schedulerFiber);
 		if (t_previousFiber != SYS_INVALID_FIBER_HANDLE) {
-			TCJob job;
+			Job job;
 			job.fiber = t_previousFiber;
 			job.context = t_previousYieldContext;
 			switch (t_previousYieldReason) {
-			case TCYIELDREASON_FAILED:
+			case YIELDREASON_FAILED:
 			{
 				_InterlockedIncrement((LONG volatile *)&context->failedJobsCount); \
 				// Fall through
 			}
-			case TCYIELDREASON_DONE:
+			case YIELDREASON_DONE:
 			{
 #if DEFER_FIBER_DELETION
 				// Try to schedule this fiber for deletion. If queue is full for some reason, just
@@ -106,35 +106,47 @@ void SchedulerProc(Context *context)
 				SYSDeleteFiber(t_previousFiber);
 #endif
 			} break;
-			case TCYIELDREASON_WAITING_FOR_STOP:
-			case TCYIELDREASON_UNKNOWN_OVERLOAD:
-			case TCYIELDREASON_PROC_BODY_NOT_READY:
-			case TCYIELDREASON_PROC_IR_NOT_READY:
-			case TCYIELDREASON_GLOBAL_VALUE_NOT_READY:
+			case YIELDREASON_WAITING_FOR_STOP:
+			case YIELDREASON_GLOBAL_VALUE_NOT_READY:
 			{
 				auto jobs = context->waitingJobsByReason[t_previousYieldReason].Get();
 				*DynamicArrayAdd(&jobs) = job;
 			} break;
-			case TCYIELDREASON_UNKNOWN_IDENTIFIER:
+			case YIELDREASON_PROC_BODY_NOT_READY:
+			case YIELDREASON_PROC_IR_NOT_READY:
+			{
+				// IMPORTANT! procedures should be locked before calling SwitchJob!
+				auto jobs = context->waitingJobsByReason[t_previousYieldReason].Get();
+				*DynamicArrayAdd(&jobs) = job;
+				SYSUnlockForRead(&context->procedures.rwLock);
+			} break;
+			case YIELDREASON_UNKNOWN_OVERLOAD:
+			{
+				// IMPORTANT! operatorOverloads should be locked before calling SwitchJob!
+				auto jobs = context->waitingJobsByReason[YIELDREASON_UNKNOWN_OVERLOAD].Get();
+				*DynamicArrayAdd(&jobs) = job;
+				SYSUnlockForRead(&context->operatorOverloads.rwLock);
+			} break;
+			case YIELDREASON_UNKNOWN_IDENTIFIER:
 			{
 				// IMPORTANT! tcGlobalNames should be locked before calling SwitchJob!
-				auto jobs = context->waitingJobsByReason[TCYIELDREASON_UNKNOWN_IDENTIFIER].Get();
+				auto jobs = context->waitingJobsByReason[YIELDREASON_UNKNOWN_IDENTIFIER].Get();
 				*DynamicArrayAdd(&jobs) = job;
 				SYSUnlockForRead(&context->tcGlobalNames.rwLock);
 			} break;
-			case TCYIELDREASON_STATIC_DEF_NOT_READY:
+			case YIELDREASON_STATIC_DEF_NOT_READY:
 			{
 				// IMPORTANT! staticDefinitions should be locked before calling SwitchJob!
-				auto jobs = context->waitingJobsByReason[TCYIELDREASON_STATIC_DEF_NOT_READY].Get();
+				auto jobs = context->waitingJobsByReason[YIELDREASON_STATIC_DEF_NOT_READY].Get();
 				*DynamicArrayAdd(&jobs) = job;
 				SYSUnlockForRead(&context->staticDefinitions.rwLock);
 			} break;
-			case TCYIELDREASON_TYPE_NOT_READY:
+			case YIELDREASON_TYPE_NOT_READY:
 			{
-				// IMPORTANT! waitingJobsByReason[TCYIELDREASON_TYPE_NOT_READY] should be locked
+				// IMPORTANT! waitingJobsByReason[YIELDREASON_TYPE_NOT_READY] should be locked
 				// before calling SwitchJob!
-				*DynamicArrayAdd(&context->waitingJobsByReason[TCYIELDREASON_TYPE_NOT_READY].unsafe) = job;
-				SYSMutexUnlock(context->waitingJobsByReason[TCYIELDREASON_TYPE_NOT_READY].lock);
+				*DynamicArrayAdd(&context->waitingJobsByReason[YIELDREASON_TYPE_NOT_READY].unsafe) = job;
+				SYSMutexUnlock(context->waitingJobsByReason[YIELDREASON_TYPE_NOT_READY].lock);
 			} break;
 			default:
 				ASSERTF(false, "Previous fiber is %llx, reason is %d", t_previousFiber,
@@ -142,6 +154,8 @@ void SchedulerProc(Context *context)
 			}
 		}
 		t_previousFiber = (Fiber)0xDEADBEEFDEADBEEF;
+
+		context->threadStates[t_threadIndex] = THREADSTATE_LOOKING_FOR_JOBS;
 
 #if DEFER_FIBER_DELETION
 		// Task one of the threads on deleting fibers
@@ -154,7 +168,7 @@ void SchedulerProc(Context *context)
 
 		// Try to get next fiber to run
 		Fiber nextFiber = SYS_INVALID_FIBER_HANDLE;
-		while (true) {
+		while (!context->done) {
 #if DEFER_FIBER_CREATION
 			if (t_threadIndex == g_threadIdxCreateFibers) {
 				JobRequest jobToCreate;
@@ -172,41 +186,79 @@ void SchedulerProc(Context *context)
 				break;
 			}
 			else {
-				s32 threadsDoingWork = _InterlockedDecrement((LONG volatile *)&context->threadsDoingWork);
-				if (threadsDoingWork == 0) {
-					// Try waking up some random job
-					for (int yieldReason = 0; yieldReason < TCYIELDREASON_Count; ++yieldReason) {
-						auto jobsWaiting = context->waitingJobsByReason[yieldReason].Get();
+				bool triggerStop = true;
+				// We make threads give up in order
+				for (int threadIdx = 0; threadIdx < (int)t_threadIndex; ++threadIdx) {
+					ThreadState state = context->threadStates[threadIdx];
+					if (state != THREADSTATE_GIVING_UP) {
+						triggerStop = false;
+						break;
+					}
+				}
+				for (int threadIdx = t_threadIndex; threadIdx < context->threadStates.size; ++threadIdx) {
+					ThreadState state = context->threadStates[threadIdx];
+					if (state != THREADSTATE_LOOKING_FOR_JOBS) {
+						triggerStop = false;
+						break;
+					}
+				}
+				if (triggerStop) {
+					// Wake up a job waiting for dead stop
+					{
+						auto jobsWaiting = context->waitingJobsByReason[YIELDREASON_WAITING_FOR_STOP].Get();
 						if (jobsWaiting->size) {
-							_InterlockedIncrement((LONG volatile *)&context->threadsDoingWork);
-							TCJob *job = &jobsWaiting[0];
+							Job *job = &jobsWaiting[0];
 							nextFiber = job->fiber;
 							DynamicArrayRemoveOrdered(&jobsWaiting, 0);
-							break;
+							goto switchFiber;
 						}
 					}
+
+					// Lets try to make it work without this
+#if 0
+					// Try waking up some random job
+					for (int yieldReason = 0; yieldReason < YIELDREASON_Count; ++yieldReason) {
+						if (yieldReason == YIELDREASON_WAITING_FOR_STOP) continue;
+						auto jobsWaiting = context->waitingJobsByReason[yieldReason].Get();
+						if (jobsWaiting->size) {
+							Job *job = &jobsWaiting[0];
+							nextFiber = job->fiber;
+							DynamicArrayRemoveOrdered(&jobsWaiting, 0);
+							goto switchFiber;
+						}
+					}
+#endif
 
 #if DEFER_FIBER_CREATION
 					// Fallback, create the fiber on whatever thread and keep going
 					JobRequest jobToCreate;
 					if (MTQueueDequeue(&context->jobsToCreate, &jobToCreate)) {
-						_InterlockedIncrement((LONG volatile *)&context->threadsDoingWork);
 						nextFiber = SYSCreateFiber(jobToCreate.proc, jobToCreate.args);
-						break;
+						goto switchFiber;
 					}
 #endif
 
+					context->threadStates[t_threadIndex] = THREADSTATE_GIVING_UP;
+
+					// Check if every thread gave up, if so, we are done.
+					for (int threadIdx = 0; threadIdx < context->threadStates.size; ++threadIdx) {
+						if (context->threadStates[threadIdx] != THREADSTATE_GIVING_UP)
+							goto stillBelieve;
+					}
 					// Give up!
-					break;
+					context->done = true;
 				}
+stillBelieve:
 				// @Improve: This is silly but shouldn't happen too often...
 				Sleep(0);
-				_InterlockedIncrement((LONG volatile *)&context->threadsDoingWork);
 			}
 		}
 
-		if (nextFiber != SYS_INVALID_FIBER_HANDLE)
+switchFiber:
+		if (nextFiber != SYS_INVALID_FIBER_HANDLE) {
+			context->threadStates[t_threadIndex] = THREADSTATE_WORKING;
 			SYSSwitchToFiber(nextFiber);
+		}
 		else return;
 	}
 }
@@ -219,14 +271,16 @@ int WorkerThreadProc(void *args)
 
 	t_threadIndex = threadArgs->threadIndex;
 
-	MemoryInitThread(512 * 1024 * 1024);
+	SYSSetThreadDescription(SYSGetCurrentThread(), SNPrintF(16, "Worker #%d", threadArgs->threadIndex));
 
-	_InterlockedIncrement((LONG volatile *)&context->threadsDoingWork);
+	MemoryInitThread(512 * 1024 * 1024);
 
 	t_schedulerFiber = SYSConvertThreadToFiber();
 	//Print("Scheduler fiber for thread %d is %llX\n", t_threadIndex, t_schedulerFiber);
 
 	SchedulerProc(context);
+
+	context->threadStates[t_threadIndex] = THREADSTATE_TERMINATED;
 
 	SYSPrepareFiberForExit();
 

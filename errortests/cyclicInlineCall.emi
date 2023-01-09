@@ -1,10 +1,13 @@
-CyclicA :: #inline (i : s32) {
+CyclicA :: #inline (i : s32)
+{
 	if i > 0 CyclicB(i - 1);
 }
-CyclicB :: #inline (i : s32) {
+CyclicB :: #inline (i : s32)
+{
 	if i > 0 CyclicA(i - 1);
 }
 
-Main :: () -> s64 {
+Main :: (args : [] String) -> s64
+{
 	return 0;
 }

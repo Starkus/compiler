@@ -1763,7 +1763,7 @@ void ParseJobProc(void *args)
 	{
 		auto jobs = context->jobs.Get();
 		ASSERT((*jobs)[jobIdx].isRunning);
-		(*jobs)[jobIdx].state = TCYIELDREASON_READY;
+		(*jobs)[jobIdx].state = YIELDREASON_READY;
 
 #if !FINAL_BUILD
 		(*jobs)[jobIdx].title = SStringConcat("P:"_s, context->sourceFiles[fileIdx].name);
@@ -1786,7 +1786,7 @@ void ParseJobProc(void *args)
 	if (context->config.logAST)
 		PrintAST(context);
 
-	SwitchJob(context, TCYIELDREASON_DONE, {});
+	SwitchJob(context, YIELDREASON_DONE, {});
 }
 
 void ParserMain(Context *context)
@@ -1795,7 +1795,7 @@ void ParserMain(Context *context)
 
 	MTQueueInit<HeapAllocator>(&context->readyJobs, 2048);
 
-	for (int i = 0; i < TCYIELDREASON_Count; ++i)
+	for (int i = 0; i < YIELDREASON_Count; ++i)
 		DynamicArrayInit(&context->waitingJobsByReason[i].unsafe, 64);
 
 	MTQueueInit<HeapAllocator>(&context->jobsToCreate, 512);

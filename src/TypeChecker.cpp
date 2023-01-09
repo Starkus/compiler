@@ -194,8 +194,15 @@ TCScope *GetTopMostScope(Context *context) {
 
 inline bool TCIsAnyOtherJobRunning(Context *context)
 {
-	if (context->threadsDoingWork > 1)
-		return true;
+	int threadsDoingWork = 0;
+	for (int threadIdx = 0; threadIdx < context->threadStates.size; ++threadIdx) {
+		ThreadState state = context->threadStates[threadIdx];
+		if (state == THREADSTATE_WORKING) {
+			++threadsDoingWork;
+			if (threadsDoingWork > 1)
+				return true;
+		}
+	}
 	if (!MTQueueIsEmpty(&context->readyJobs))
 		return true;
 	if (!MTQueueIsEmpty(&context->jobsToCreate))
@@ -206,13 +213,20 @@ inline bool TCIsAnyOtherJobRunning(Context *context)
 
 inline bool TCIsAnyOtherJobRunningOrWaiting(Context *context)
 {
-	if (context->threadsDoingWork > 1)
-		return true;
+	int threadsDoingWork = 0;
+	for (int threadIdx = 0; threadIdx < context->threadStates.size; ++threadIdx) {
+		ThreadState state = context->threadStates[threadIdx];
+		if (state != THREADSTATE_GIVING_UP && state != THREADSTATE_TERMINATED) {
+			++threadsDoingWork;
+			if (threadsDoingWork > 1)
+				return true;
+		}
+	}
 	if (!MTQueueIsEmpty(&context->readyJobs))
 		return true;
 	if (!MTQueueIsEmpty(&context->jobsToCreate))
 		return true;
-	if (context->waitingJobsByReason[TCYIELDREASON_WAITING_FOR_STOP].unsafe.size)
+	if (context->waitingJobsByReason[YIELDREASON_WAITING_FOR_STOP].unsafe.size)
 		return true;
 
 	return false;
@@ -220,13 +234,16 @@ inline bool TCIsAnyOtherJobRunningOrWaiting(Context *context)
 
 inline bool TCAreAllJobFinished(Context *context)
 {
-	if (context->threadsDoingWork > 0)
-		return false;
+	for (int threadIdx = 0; threadIdx < context->threadStates.size; ++threadIdx) {
+		ThreadState state = context->threadStates[threadIdx];
+		if (state != THREADSTATE_GIVING_UP && state != THREADSTATE_TERMINATED)
+			return false;
+	}
 	if (!MTQueueIsEmpty(&context->readyJobs))
 		return false;
 	if (!MTQueueIsEmpty(&context->jobsToCreate))
 		return false;
-	for (int yieldReason = 0; yieldReason < TCYIELDREASON_Count; ++yieldReason)
+	for (int yieldReason = 0; yieldReason < YIELDREASON_Count; ++yieldReason)
 		if (context->waitingJobsByReason[yieldReason].unsafe.size)
 			return false;
 
@@ -258,20 +275,20 @@ inline TypeInfo TCGetTypeInfo(Context *context, u32 typeTableIdx)
 	// waiting list.
 	// We lock the list of jobs here instead of the type table because no one locks the type table
 	// to read it.
-	SYSMutexLock(context->waitingJobsByReason[TCYIELDREASON_TYPE_NOT_READY].lock);
+	SYSMutexLock(context->waitingJobsByReason[YIELDREASON_TYPE_NOT_READY].lock);
 	result = typeTable[typeTableIdx];
 
 	while (result.typeCategory == TYPECATEGORY_NOT_READY) {
 		// IMPORTANT! The scheduler will unlock jobsWaitingForType once it adds this job to the
 		// waiting list, so we don't miss waking it up when updating the type.
-		SwitchJob(context, TCYIELDREASON_TYPE_NOT_READY, { .index = typeTableIdx });
+		SwitchJob(context, YIELDREASON_TYPE_NOT_READY, { .index = typeTableIdx });
 		// Lock again!
-		SYSMutexLock(context->waitingJobsByReason[TCYIELDREASON_TYPE_NOT_READY].lock);
+		SYSMutexLock(context->waitingJobsByReason[YIELDREASON_TYPE_NOT_READY].lock);
 
 		result = typeTable[typeTableIdx];
 	}
 
-	SYSMutexUnlock(context->waitingJobsByReason[TCYIELDREASON_TYPE_NOT_READY].lock);
+	SYSMutexUnlock(context->waitingJobsByReason[YIELDREASON_TYPE_NOT_READY].lock);
 	return result;
 }
 
@@ -407,7 +424,7 @@ inline void TCPopScope(Context *context)
 	--jobData->scopeStack.size;
 }
 
-TCScopeName FindGlobalName(Context *context, String name)
+TCScopeName FindGlobalName(Context *context, SourceLocation loc, String name)
 {
 	while (true) {
 		// Lock this, if we need to switch fibers, we don't unlock until we added this fiber to a
@@ -430,28 +447,26 @@ TCScopeName FindGlobalName(Context *context, String name)
 
 		// IMPORTANT! The scheduler will unlock tcGlobalNames once it adds this job to
 		// the waiting list, so we don't miss waking it up when adding the identifier.
-		SwitchJob(context, TCYIELDREASON_UNKNOWN_IDENTIFIER, { .identifier = name });
+		SwitchJob(context, YIELDREASON_UNKNOWN_IDENTIFIER, { .loc = loc, .identifier = name });
 	}
 }
 
-TCScopeName TCFindScopeName(Context *context, String name)
+TCScopeName TCFindScopeName(Context *context, SourceLocation loc, String name)
 {
 	TCJobData *jobData = (TCJobData *)SYSGetFiberData(context->flsIndex);
 
 	// Current stack
 	ArrayView<TCScope> scopeStack = jobData->scopeStack;
-	for (s64 stackIdx = scopeStack.size - 1; stackIdx >= 0; --stackIdx)
-	{
+	for (s64 stackIdx = scopeStack.size - 1; stackIdx >= 0; --stackIdx) {
 		const TCScope *currentScope = &scopeStack[stackIdx];
-		for (int i = 0; i < currentScope->names.size; ++i)
-		{
+		for (int i = 0; i < currentScope->names.size; ++i) {
 			const TCScopeName *currentName = &currentScope->names[i];
 			if (StringEquals(name, currentName->name))
 				return *currentName;
 		}
 	}
 	// Global scope
-	return FindGlobalName(context, name);
+	return FindGlobalName(context, loc, name);
 }
 
 inline u32 TCNewStaticDefinition(Context *context, StaticDefinition *value)
@@ -498,7 +513,7 @@ inline StaticDefinition TCGetStaticDefinition(Context *context, u32 staticDefini
 
 		// IMPORTANT! The scheduler will unlock staticDefinitions once it adds this job to the
 		// waiting list, so we don't miss waking it up when adding the identifier.
-		SwitchJob(context, TCYIELDREASON_STATIC_DEF_NOT_READY, { .index = staticDefinitionIdx });
+		SwitchJob(context, YIELDREASON_STATIC_DEF_NOT_READY, { .index = staticDefinitionIdx });
 
 		// Need to lock these again!
 		SYSLockForRead(&context->staticDefinitions.rwLock);
@@ -524,17 +539,15 @@ inline void TCUpdateStaticDefinition(Context *context, u32 staticDefinitionIdx,
 	if (value->definitionType != STATICDEFINITIONTYPE_NOT_READY &&
 		value->typeTableIdx != TYPETABLEIDX_Unset)
 		// Wake up any job waiting for this static def to be ready.
-		WakeUpAllByIndex(context, TCYIELDREASON_STATIC_DEF_NOT_READY, staticDefinitionIdx);
+		WakeUpAllByIndex(context, YIELDREASON_STATIC_DEF_NOT_READY, staticDefinitionIdx);
 }
 
 u32 FindTypeInStackByName(Context *context, SourceLocation loc, String name)
 {
 	u32 typeTableIdx = TYPETABLEIDX_Unset;
 
-	TCScopeName scopeName = TCFindScopeName(context, name);
-
-	if (scopeName.type == NAMETYPE_INVALID)
-		LogError(context, loc, TPrintF("Identifier \"%S\" not found!", name));
+	TCScopeName scopeName = TCFindScopeName(context, loc, name);
+	ASSERT(scopeName.type != NAMETYPE_INVALID);
 
 	if (scopeName.type == NAMETYPE_PRIMITIVE)
 		return scopeName.primitiveTypeTableIdx;
@@ -1619,9 +1632,9 @@ void TCAddScopeNames(Context *context, ArrayView<TCScopeName> scopeNames)
 		}
 
 		// Wake up any jobs that were waiting for this name
-		auto jobsWaiting = context->waitingJobsByReason[TCYIELDREASON_UNKNOWN_IDENTIFIER].Get();
+		auto jobsWaiting = context->waitingJobsByReason[YIELDREASON_UNKNOWN_IDENTIFIER].Get();
 		for (int i = 0; i < jobsWaiting->size; ) {
-			TCJob *job = &jobsWaiting[i];
+			Job *job = &jobsWaiting[i];
 			for (int j = 0; j < scopeNames.size; ++j) {
 				if (StringEquals(job->context.identifier, scopeNames[j].name)) {
 					EnqueueReadyJob(context, job->fiber);
@@ -2706,7 +2719,7 @@ ASTExpression InlineProcedureCopyTreeBranch(Context *context, const ASTExpressio
 	{
 		ASTIdentifier astIdentifier = expression->identifier;
 
-		TCScopeName scopeName = TCFindScopeName(context, astIdentifier.string);
+		TCScopeName scopeName = TCFindScopeName(context, expression->any.loc, astIdentifier.string);
 
 		astIdentifier.type = scopeName.type;
 		switch (scopeName.type)
@@ -3271,8 +3284,7 @@ bool LookForOperatorOverload(Context *context, ASTExpression *expression)
 	int paramCount;
 	ASTExpression *leftHand = nullptr;
 	ASTExpression *rightHand = nullptr;
-	if (expression->nodeType == ASTNODETYPE_UNARY_OPERATION)
-	{
+	if (expression->nodeType == ASTNODETYPE_UNARY_OPERATION) {
 		op = expression->unaryOperation.op;
 		paramCount = 1;
 		leftHand = expression->unaryOperation.expression;
@@ -3280,8 +3292,7 @@ bool LookForOperatorOverload(Context *context, ASTExpression *expression)
 		if (TCIsPrimitiveOperation(context, op, leftHand->typeTableIdx))
 			return false;
 	}
-	else
-	{
+	else {
 		op = expression->binaryOperation.op;
 		paramCount = 2;
 		leftHand = expression->binaryOperation.leftHand;
@@ -3291,12 +3302,10 @@ bool LookForOperatorOverload(Context *context, ASTExpression *expression)
 			return false;
 	}
 
-	while (true)
-	{
+	while (true) {
 		{
 			auto operatorOverloads = context->operatorOverloads.GetForRead();
-			for (int overloadIdx = 0; overloadIdx < operatorOverloads->size; ++overloadIdx)
-			{
+			for (int overloadIdx = 0; overloadIdx < operatorOverloads->size; ++overloadIdx) {
 				OperatorOverload currentOverload = operatorOverloads[overloadIdx];
 
 				if (op != currentOverload.op)
@@ -3306,8 +3315,7 @@ bool LookForOperatorOverload(Context *context, ASTExpression *expression)
 				TypeInfo procType = TCGetTypeInfo(context, procedure.typeTableIdx);
 				ASSERT(procType.typeCategory == TYPECATEGORY_PROCEDURE);
 
-				if (paramCount == 1)
-				{
+				if (paramCount == 1) {
 					if (procType.procedureInfo.parameters.size != 1)
 						continue;
 
@@ -3326,8 +3334,7 @@ bool LookForOperatorOverload(Context *context, ASTExpression *expression)
 					overload = currentOverload;
 					foundOverload = true;
 				}
-				else
-				{
+				else {
 					if (procType.procedureInfo.parameters.size != 2)
 						continue;
 
@@ -3352,48 +3359,62 @@ bool LookForOperatorOverload(Context *context, ASTExpression *expression)
 					foundOverload = true;
 				}
 			}
+			if (!foundOverload) {
+				if (!TCIsAnyOtherJobRunningOrWaiting(context))
+					// No one can save us
+					return false;
+
+				SwitchJob(context, YIELDREASON_UNKNOWN_OVERLOAD, {
+						.loc = expression->any.loc,
+						.overload = {
+							.op = (u32)op,
+							.leftTypeIdx  = leftHand->typeTableIdx,
+							.rightTypeIdx = rightHand ? rightHand->typeTableIdx : U32_MAX
+						}});
+				// Lock again!
+				SYSLockForRead(&context->operatorOverloads.rwLock);
+				continue;
+			}
 		}
 
-		if (foundOverload)
-		{
-			Procedure proc = GetProcedureRead(context, overload.procedureIdx);
+		ASSERT(foundOverload);
+		Procedure proc = GetProcedureRead(context, overload.procedureIdx);
 
-			TypeInfo procTypeInfo = TCGetTypeInfo(context, proc.typeTableIdx);
-			ASSERT(procTypeInfo.typeCategory == TYPECATEGORY_PROCEDURE);
+		TypeInfo procTypeInfo = TCGetTypeInfo(context, proc.typeTableIdx);
+		ASSERT(procTypeInfo.typeCategory == TYPECATEGORY_PROCEDURE);
 
-			if (proc.isInline) while (!proc.isBodyTypeChecked) {
+		if (proc.isInline && !proc.isBodyTypeChecked) {
+			auto procedures = context->procedures.GetForRead();
+			proc = procedures[overload.procedureIdx];
+			while (!proc.isBodyTypeChecked) {
 				if (!TCIsAnyOtherJobRunningOrWaiting(context))
 					LogError(context, expression->any.loc, TPrintF("COMPILER ERROR! Body of inline "
 							"procedure \"%S\" for operator overload never type checked", proc.name));
-				SwitchJob(context, TCYIELDREASON_PROC_BODY_NOT_READY, { .index = overload.procedureIdx });
-				proc = GetProcedureRead(context, overload.procedureIdx);
+				SwitchJob(context, YIELDREASON_PROC_BODY_NOT_READY, { .index = overload.procedureIdx });
+				// Lock again!
+				SYSLockForRead(&context->procedures.rwLock);
+				proc = procedures[overload.procedureIdx];
 			}
-
-			ASTProcedureCall astProcCall = {};
-			astProcCall.callType = CALLTYPE_STATIC;
-			astProcCall.procedureIdx = overload.procedureIdx;
-			astProcCall.procedureTypeIdx = proc.typeTableIdx;
-			DynamicArrayInit(&astProcCall.arguments, paramCount);
-			*DynamicArrayAdd(&astProcCall.arguments) = leftHand;
-			if (paramCount > 1)
-				*DynamicArrayAdd(&astProcCall.arguments) = rightHand;
-
-			expression->nodeType = ASTNODETYPE_PROCEDURE_CALL;
-			expression->procedureCall = astProcCall;
-
-			if (procTypeInfo.procedureInfo.returnTypeIndices.size == 1)
-				expression->typeTableIdx = procTypeInfo.procedureInfo.returnTypeIndices[0];
-
-			TCPushParametersAndInlineProcedureCall(context, &expression->procedureCall);
-
-			break;
 		}
 
-		SwitchJob(context, TCYIELDREASON_UNKNOWN_OVERLOAD, { .index = (u32)op });
-		if (!TCIsAnyOtherJobRunningOrWaiting(context))
-			break;
+		ASTProcedureCall astProcCall = {};
+		astProcCall.callType = CALLTYPE_STATIC;
+		astProcCall.procedureIdx = overload.procedureIdx;
+		astProcCall.procedureTypeIdx = proc.typeTableIdx;
+		DynamicArrayInit(&astProcCall.arguments, paramCount);
+		*DynamicArrayAdd(&astProcCall.arguments) = leftHand;
+		if (paramCount > 1)
+			*DynamicArrayAdd(&astProcCall.arguments) = rightHand;
+
+		expression->nodeType = ASTNODETYPE_PROCEDURE_CALL;
+		expression->procedureCall = astProcCall;
+
+		if (procTypeInfo.procedureInfo.returnTypeIndices.size == 1)
+			expression->typeTableIdx = procTypeInfo.procedureInfo.returnTypeIndices[0];
+
+		TCPushParametersAndInlineProcedureCall(context, &expression->procedureCall);
+		return true;
 	}
-	return foundOverload;
 }
 
 void GenerateTypeCheckJobs(Context *context, ASTExpression *expression);
@@ -3565,7 +3586,7 @@ void TypeCheckExpression(Context *context, ASTExpression *expression)
 			UpdateProcedure(context, procedureIdx, &procedure);
 
 			// Wake up any jobs that were waiting for this procedure body
-			WakeUpAllByIndex(context, TCYIELDREASON_PROC_BODY_NOT_READY, procedureIdx);
+			WakeUpAllByIndex(context, YIELDREASON_PROC_BODY_NOT_READY, procedureIdx);
 
 			expression->typeTableIdx = procedure.typeTableIdx;
 			TCPopScope(context);
@@ -3762,11 +3783,8 @@ void TypeCheckExpression(Context *context, ASTExpression *expression)
 	{
 		String string = expression->identifier.string;
 
-		TCScopeName scopeName = TCFindScopeName(context, string);
-
-		if (scopeName.type == NAMETYPE_INVALID)
-			LogError(context, expression->any.loc, TPrintF("Identifier \"%S\" not found!",
-					string));
+		TCScopeName scopeName = TCFindScopeName(context, expression->any.loc, string);
+		ASSERT(scopeName.type != NAMETYPE_INVALID);
 
 		expression->identifier.type = scopeName.type;
 		switch (scopeName.type)
@@ -3842,7 +3860,7 @@ void TypeCheckExpression(Context *context, ASTExpression *expression)
 
 		if (astProcExp->nodeType == ASTNODETYPE_IDENTIFIER) {
 			String procName = astProcExp->identifier.string;
-			TCScopeName scopeName = TCFindScopeName(context, procName);
+			TCScopeName scopeName = TCFindScopeName(context, astProcCall->loc, procName);
 			if (scopeName.type == NAMETYPE_STATIC_DEFINITION) {
 				callType = CALLTYPE_STATIC;
 				StaticDefinition staticDefinition = TCGetStaticDefinition(context,
@@ -3879,13 +3897,19 @@ void TypeCheckExpression(Context *context, ASTExpression *expression)
 					}
 
 					// We need the whole body type checked
-					while (!proc.isBodyTypeChecked) {
-						if (!TCIsAnyOtherJobRunningOrWaiting(context)) {
-							LogError(context, astProcExp->any.loc, TPrintF("COMPILER ERROR! Body of "
-										"inline procedure \"%S\" never type checked", proc.name));
+					if (!proc.isBodyTypeChecked) {
+						auto procedures = context->procedures.GetForRead();
+						proc = procedures[procedureIdx];
+						while (!proc.isBodyTypeChecked) {
+							if (!TCIsAnyOtherJobRunningOrWaiting(context)) {
+								LogError(context, astProcExp->any.loc, TPrintF("COMPILER ERROR! Body of "
+											"inline procedure \"%S\" never type checked", proc.name));
+							}
+							SwitchJob(context, YIELDREASON_PROC_BODY_NOT_READY, { .index = procedureIdx });
+							// Lock again!
+							SYSLockForRead(&context->procedures.rwLock);
+							proc = procedures[procedureIdx];
 						}
-						SwitchJob(context, TCYIELDREASON_PROC_BODY_NOT_READY, { .index = procedureIdx });
-						proc = GetProcedureRead(context, procedureIdx);
 					}
 				}
 				procedureTypeIdx = proc.typeTableIdx;
@@ -4023,9 +4047,9 @@ void TypeCheckExpression(Context *context, ASTExpression *expression)
 			}
 			};
 		}
-		else if (!LookForOperatorOverload(context, expression)) {
-			LogError(context, expression->any.loc, TPrintF("Operator not defined for type \"%S\"",
-						TypeInfoToString(context, input->typeTableIdx)));
+		else {
+			bool found = LookForOperatorOverload(context, expression);
+			ASSERT(found);
 		}
 	} break;
 	case ASTNODETYPE_BINARY_OPERATION:
@@ -4347,12 +4371,9 @@ void TypeCheckExpression(Context *context, ASTExpression *expression)
 					break;
 				};
 			}
-			else if (!LookForOperatorOverload(context, expression)) {
-				LogError(context, expression->any.loc, TPrintF("Operator '%S' not defined for "
-							"types \"%S\", \"%S\"",
-							OperatorToString(expression->binaryOperation.op),
-							TypeInfoToString(context, leftHand->typeTableIdx),
-							TypeInfoToString(context, rightHand->typeTableIdx)));
+			else {
+				bool found = LookForOperatorOverload(context, expression);
+				ASSERT(found);
 			}
 		}
 	} break;
@@ -4723,7 +4744,9 @@ void TypeCheckExpression(Context *context, ASTExpression *expression)
 		}
 
 		// Wake up any job waiting for this overload.
-		WakeUpAllByIndex(context, TCYIELDREASON_UNKNOWN_OVERLOAD, astOverload->op);
+		WakeUpAllByIndex(context, YIELDREASON_UNKNOWN_OVERLOAD, astOverload->op);
+		static_assert(offsetof(YieldContext, index) == offsetof(YieldContext, overload.op));
+		static_assert(  sizeof(YieldContext::index) ==   sizeof(YieldContext::overload.op));
 
 		for (int i = 0; i < paramCount; ++i)
 		{
@@ -4751,15 +4774,16 @@ void TypeCheckExpression(Context *context, ASTExpression *expression)
 		}
 		procedure.isBodyTypeChecked = true;
 
-		expression->typeTableIdx = procedure.typeTableIdx;
-
 		UpdateProcedure(context, astOverload->procedureIdx, &procedure);
+		// Wake up any jobs that were waiting for this procedure body
+		WakeUpAllByIndex(context, YIELDREASON_PROC_BODY_NOT_READY, astOverload->procedureIdx);
+
+		expression->typeTableIdx = procedure.typeTableIdx;
 
 		TCPopScope(context);
 
 		// Check all paths return
-		if (astOverload->astBody && t.procedureInfo.returnTypeIndices.size)
-		{
+		if (astOverload->astBody && t.procedureInfo.returnTypeIndices.size) {
 			ReturnCheckResult result = CheckIfReturnsValue(context, astOverload->astBody);
 			if (result == RETURNCHECKRESULT_SOMETIMES)
 				LogError(context, expression->any.loc, "Procedure doesn't always return a value"_s);
@@ -4822,7 +4846,7 @@ void TypeCheckExpression(Context *context, ASTExpression *expression)
 			}
 			if (!TCIsAnyOtherJobRunning(context))
 				goto done;
-			SwitchJob(context, TCYIELDREASON_WAITING_FOR_STOP, {});
+			SwitchJob(context, YIELDREASON_WAITING_FOR_STOP, {});
 		}
 
 done:
@@ -4935,7 +4959,7 @@ void TCJobProc(void *args)
 
 	TypeCheckExpression(context, expression);
 
-	SwitchJob(context, TCYIELDREASON_DONE, {});
+	SwitchJob(context, YIELDREASON_DONE, {});
 }
 
 int GetTypeAlignment(Context *context, u32 typeTableIdx)
@@ -5048,9 +5072,9 @@ void TCStructJobProc(void *args)
 	}
 
 	// Wake up any jobs that were waiting for this type
-	WakeUpAllByIndex(context, TCYIELDREASON_TYPE_NOT_READY, typeTableIdx);
+	WakeUpAllByIndex(context, YIELDREASON_TYPE_NOT_READY, typeTableIdx);
 
-	SwitchJob(context, TCYIELDREASON_DONE, {});
+	SwitchJob(context, YIELDREASON_DONE, {});
 }
 
 void GenerateTypeCheckJobs(Context *context, ASTExpression *expression) {

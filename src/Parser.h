@@ -122,12 +122,6 @@ enum TokenType : u8
 	TOKEN_END_OF_FILE		= 255,
 };
 
-struct SourceLocation
-{
-	u32 fileIdx;
-	u32 character;
-};
-
 struct FatSourceLocation
 {
 	const char *beginingOfLine;

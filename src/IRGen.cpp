@@ -2851,7 +2851,7 @@ void IRJobProcedure(void *args)
 		jobs[jobIdx].title = SStringConcat("IR:"_s, GetProcedureRead(context, procedureIdx).name);
 #endif
 
-		ASSERT(context->jobs.unsafe[jobIdx].state == TCYIELDREASON_READY);
+		ASSERT(context->jobs.unsafe[jobIdx].state == YIELDREASON_READY);
 		ASSERT(context->jobs.unsafe[jobIdx].isRunning);
 		threadData->lastJobIdx = U32_MAX;
 	}
@@ -2870,14 +2870,14 @@ void IRJobProcedure(void *args)
 		UpdateProcedure(context, procedureIdx, &proc);
 	}
 	// Wake up any jobs that were waiting for this procedure's IR
-	WakeUpAllByIndex(context, TCYIELDREASON_PROC_IR_NOT_READY, procedureIdx);
+	WakeUpAllByIndex(context, YIELDREASON_PROC_IR_NOT_READY, procedureIdx);
 
 	if (context->config.logIR)
 		PrintJobIRInstructions(context);
 
 	BackendJobProc(context, procedureIdx);
 
-	SwitchJob(context, TCYIELDREASON_DONE, {});
+	SwitchJob(context, YIELDREASON_DONE, {});
 }
 
 void IRJobExpression(void *args)
@@ -2890,7 +2890,7 @@ void IRJobExpression(void *args)
 
 #if 0
 	{
-		ASSERT(context->jobs.unsafe[jobIdx].state == TCYIELDREASON_READY);
+		ASSERT(context->jobs.unsafe[jobIdx].state == YIELDREASON_READY);
 		ASSERT(context->jobs.unsafe[jobIdx].isRunning);
 
 #if !FINAL_BUILD
@@ -2902,5 +2902,5 @@ void IRJobExpression(void *args)
 
 	IRGenFromExpression(context, argsStruct->expression);
 
-	SwitchJob(context, TCYIELDREASON_DONE, {});
+	SwitchJob(context, YIELDREASON_DONE, {});
 }

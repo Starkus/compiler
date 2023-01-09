@@ -2440,8 +2440,8 @@ void BackendMain(Context *context)
 	}
 
 	x64InstructionInfos[X64_INT] =       { "int"_s,       OPERANDTYPE_IMMEDIATE, OPERANDACCESS_READ };
-	x64InstructionInfos[X64_INT1] =      { "int1"_s };
-	x64InstructionInfos[X64_INT3] =      { "int3"_s };
+	x64InstructionInfos[X64_INT1] =      { "int 1"_s };
+	x64InstructionInfos[X64_INT3] =      { "int 3"_s };
 	x64InstructionInfos[X64_INTO] =      { "into"_s };
 	x64InstructionInfos[X64_MOV] =       { "mov"_s,       OPERANDTYPE_REGMEM,    OPERANDACCESS_WRITE, OPERANDTYPE_ALL,    OPERANDACCESS_READ };
 	x64InstructionInfos[X64_MOVZX] =     { "movzx"_s,     OPERANDTYPE_REGMEM,    OPERANDACCESS_WRITE, OPERANDTYPE_REGMEM, OPERANDACCESS_READ };
@@ -3442,13 +3442,13 @@ void BackendJobProc(Context *context, u32 procedureIdx)
 
 	// We need these builtin procedures to be declared
 	{
-		TCScopeName name = FindGlobalName(context, "CopyMemory"_s);
+		TCScopeName name = FindGlobalName(context, {}, "CopyMemory"_s);
 		ASSERT(name.type == NAMETYPE_STATIC_DEFINITION);
 		StaticDefinition staticDef = GetStaticDefinition(context, name.staticDefinitionIdx);
 		ASSERT(staticDef.definitionType == STATICDEFINITIONTYPE_PROCEDURE);
 		g_copyMemoryProcIdx = staticDef.procedureIdx;
 
-		name = FindGlobalName(context, "ZeroMemory"_s);
+		name = FindGlobalName(context, {}, "ZeroMemory"_s);
 		ASSERT(name.type == NAMETYPE_STATIC_DEFINITION);
 		staticDef = GetStaticDefinition(context, name.staticDefinitionIdx);
 		ASSERT(staticDef.definitionType == STATICDEFINITIONTYPE_PROCEDURE);

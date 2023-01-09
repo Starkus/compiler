@@ -1,4 +1,4 @@
-Main :: () -> s64
+Main :: (args : [] String) -> s64
 {
 	// Redefine primitive types
 	s64 :: 4;

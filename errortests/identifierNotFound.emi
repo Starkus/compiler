@@ -1,4 +1,5 @@
-Main :: () -> s64 {
+Main :: (args : [] String) -> s64
+{
 	bar := foo;
 	return 0;
 }

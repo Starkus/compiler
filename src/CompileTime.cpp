@@ -44,7 +44,7 @@ CTRegister *CTGetValueContent(CTContext *ctContext, u32 valueIdx)
 #endif
 			}
 			SpinlockUnlock(&ctContext->globalContext->globalValuesLock);
-			SwitchJob(ctContext->globalContext, TCYIELDREASON_GLOBAL_VALUE_NOT_READY,
+			SwitchJob(ctContext->globalContext, YIELDREASON_GLOBAL_VALUE_NOT_READY,
 					{ .index = valueIdx });
 			SpinlockLock(&ctContext->globalContext->globalValuesLock);
 			ptr = HashMapGet(globalValues, valueIdx & VALUE_GLOBAL_MASK);
@@ -305,7 +305,7 @@ ArrayView<const CTRegister *> CTInternalRunInstructions(CTContext *ctContext,
 					result.asS64 = left.asS64 <= right.asS64;
 					break;
 				default:
-					LogError(context, inst.loc, "Binary operation not " "implemented"_s);
+					LogError(context, inst.loc, "Binary operation not implemented"_s);
 				}
 				CTVerboseLog(context, inst.loc, TPrintF("Lhs: 0x%llX, "
 							"Rhs: 0x%llX, Out: 0x%llX\n", left.asS64, right.asS64, result.asS64));
@@ -416,6 +416,106 @@ ArrayView<const CTRegister *> CTInternalRunInstructions(CTContext *ctContext,
 			} break;
 			default:
 				LogError(context, inst.loc, "Invalid types on binary operation"_s);
+			};
+
+			CTRegister *outContent = CTGetIRValueContentWrite(ctContext, out);
+			CTStore(ctContext, outContent, &result, out.typeTableIdx);
+		}
+		else if (inst.type >= IRINSTRUCTIONTYPE_UnaryBegin &&
+				 inst.type <= IRINSTRUCTIONTYPE_UnaryEnd &&
+				 inst.type != IRINSTRUCTIONTYPE_LOAD_EFFECTIVE_ADDRESS) {
+			IRValue in  = inst.unaryOperation.in;
+			IRValue out = inst.unaryOperation.out;
+
+			CTRegister inValue  = CTGetIRValueContentRead(ctContext, in);
+
+			CTRegister result;
+
+			u32 typeTableIdx = in.typeTableIdx;
+			TypeInfo typeInfo = GetTypeInfo(context, typeTableIdx);
+			switch (typeInfo.typeCategory) {
+			case TYPECATEGORY_POINTER:
+				typeTableIdx = TYPETABLEIDX_U64; break;
+			case TYPECATEGORY_ENUM:
+				typeTableIdx = typeInfo.enumInfo.typeTableIdx; break;
+			}
+
+			switch (typeTableIdx) {
+			case TYPETABLEIDX_S8:
+			case TYPETABLEIDX_S16:
+			case TYPETABLEIDX_S32:
+			case TYPETABLEIDX_S64:
+			{
+				switch (inst.type) {
+				case IRINSTRUCTIONTYPE_NOT:
+					result.asS64 = !inValue.asS64;
+					break;
+				case IRINSTRUCTIONTYPE_BITWISE_NOT:
+					result.asS64 = ~inValue.asS64;
+					break;
+				case IRINSTRUCTIONTYPE_SUBTRACT_UNARY:
+					result.asS64 = -inValue.asS64;
+					break;
+				default:
+					LogError(context, inst.loc, "Unary operation not implemented"_s);
+				}
+				CTVerboseLog(context, inst.loc, TPrintF("In: 0x%llX, Out: 0x%llX\n", in.asS64,
+							result.asS64));
+			} break;
+			case TYPETABLEIDX_U8:
+			case TYPETABLEIDX_U16:
+			case TYPETABLEIDX_U32:
+			case TYPETABLEIDX_U64:
+			case TYPETABLEIDX_BOOL:
+			{
+				switch (inst.type) {
+				case IRINSTRUCTIONTYPE_NOT:
+					result.asU64 = !inValue.asU64;
+					break;
+				case IRINSTRUCTIONTYPE_BITWISE_NOT:
+					result.asU64 = ~inValue.asU64;
+					break;
+				case IRINSTRUCTIONTYPE_SUBTRACT_UNARY:
+					result.asS64 = -inValue.asS64;
+					break;
+				default:
+					LogError(context, inst.loc, "Unary operation not implemented"_s);
+				}
+				CTVerboseLog(context, inst.loc, TPrintF("In: 0x%llX, Out: 0x%llX\n", in.asU64,
+							result.asU64));
+			} break;
+			case TYPETABLEIDX_F32:
+			{
+				switch (inst.type) {
+				case IRINSTRUCTIONTYPE_NOT:
+					result.asF32 = !inValue.asF32;
+					break;
+				case IRINSTRUCTIONTYPE_SUBTRACT_UNARY:
+					result.asF32 = -inValue.asF32;
+					break;
+				default:
+					LogError(context, inst.loc, "Unary operation not implemented"_s);
+				}
+				CTVerboseLog(context, inst.loc, TPrintF("In: 0x%llf, Out: 0x%llf\n", (f64)in.asF32,
+							(f64)result.asF32));
+			} break;
+			case TYPETABLEIDX_F64:
+			{
+				switch (inst.type) {
+				case IRINSTRUCTIONTYPE_NOT:
+					result.asF64 = !inValue.asF64;
+					break;
+				case IRINSTRUCTIONTYPE_SUBTRACT_UNARY:
+					result.asF64 = -inValue.asF64;
+					break;
+				default:
+					LogError(context, inst.loc, "Unary operation not implemented"_s);
+				}
+				CTVerboseLog(context, inst.loc, TPrintF("In: 0x%llf, Out: 0x%llf\n", in.asF64,
+							result.asF64));
+			} break;
+			default:
+				LogError(context, inst.loc, "Invalid types on unary operation"_s);
 			};
 
 			CTRegister *outContent = CTGetIRValueContentWrite(ctContext, out);
@@ -1024,12 +1124,18 @@ ArrayView<const CTRegister *> CTRunProcedure(Context *context, u32 procedureIdx,
 {
 	ASSERT(!(procedureIdx & PROCEDURE_EXTERNAL_BIT));
 	Procedure proc = GetProcedureRead(context, procedureIdx);
-	while (!proc.isIRReady) {
-		if (!TCIsAnyOtherJobRunningOrWaiting(context))
-			LogError(context, {}, TPrintF("COMPILER ERROR! IR of procedure "
-					"\"%S\" never generated", proc.name));
-		SwitchJob(context, TCYIELDREASON_PROC_IR_NOT_READY, { .index = procedureIdx });
-		proc = GetProcedureRead(context, procedureIdx);
+	if (!proc.isIRReady) {
+		auto procedures = context->procedures.GetForRead();
+		proc = procedures[procedureIdx];
+		while (!proc.isIRReady) {
+			if (!TCIsAnyOtherJobRunningOrWaiting(context))
+				LogError(context, {}, TPrintF("COMPILER ERROR! IR of procedure "
+						"\"%S\" never generated", proc.name));
+			SwitchJob(context, YIELDREASON_PROC_IR_NOT_READY, { .index = procedureIdx });
+			// Lock again!
+			SYSLockForRead(&context->procedures.rwLock);
+			proc = procedures[procedureIdx];
+		}
 	}
 
 	CTContext ctContext = {
