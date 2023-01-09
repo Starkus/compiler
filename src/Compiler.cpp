@@ -632,7 +632,7 @@ int main(int argc, char **argv)
 	if (!TCAreAllJobFinished(&context))
 		LogCompilerError(&context, {}, "Some jobs could not finish"_s);
 
-#if 1
+#if 0
 	BackendGenerateOutputFile(&context);
 #else
 	BackendGenerateWindowsObj(&context);

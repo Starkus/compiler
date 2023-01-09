@@ -1640,8 +1640,7 @@ void IRFillValueWithGroupLiteral(Context *context, IRValue value, ASTLiteral ast
 		{
 			// Save the number of non-named members, and build an array with named ones
 			int i = 0;
-			for (; i < astLiteral.members.size; ++i)
-			{
+			for (; i < astLiteral.members.size; ++i) {
 				ASTExpression *literalMemberExp = astLiteral.members[i];
 				if (literalMemberExp->nodeType == ASTNODETYPE_BINARY_OPERATION &&
 					literalMemberExp->binaryOperation.op == TOKEN_OP_ASSIGNMENT)
@@ -1650,8 +1649,7 @@ void IRFillValueWithGroupLiteral(Context *context, IRValue value, ASTLiteral ast
 					break;
 				}
 			}
-			for (; i < astLiteral.members.size; ++i)
-			{
+			for (; i < astLiteral.members.size; ++i) {
 				ASTExpression *literalMemberExp = astLiteral.members[i];
 				ASSERT(literalMemberExp->nodeType == ASTNODETYPE_BINARY_OPERATION &&
 					   literalMemberExp->binaryOperation.op == TOKEN_OP_ASSIGNMENT);

@@ -800,9 +800,13 @@ Array<u32, ThreadAllocator> X64ReadyLinuxParameters(Context *context, SourceLoca
 		}
 
 		if (paramTypeInfo.size > 8) {
+			u64 origOffset = 0;
+			if (param.valueType == IRVALUETYPE_MEMORY)
+				origOffset = param.mem.offset;
+			IRValue paramPtr = IRValueMemory(param.valueIdx, param.typeTableIdx, origOffset);
+
 			int sizeLeft = (int)paramTypeInfo.size;
-			while (sizeLeft > 0)
-			{
+			while (sizeLeft > 0) {
 				u32 typeTableIdx = TYPETABLEIDX_S8;
 				if (sizeLeft > 4)
 					typeTableIdx = TYPETABLEIDX_S64;
@@ -810,19 +814,19 @@ Array<u32, ThreadAllocator> X64ReadyLinuxParameters(Context *context, SourceLoca
 					typeTableIdx = TYPETABLEIDX_S32;
 				else if (sizeLeft > 1)
 					typeTableIdx = TYPETABLEIDX_S16;
-				param.typeTableIdx = typeTableIdx;
+				paramPtr.typeTableIdx = typeTableIdx;
 
 				if (isCaller) {
 					IRValue slot = IRValueMemory(jobData->x64SpilledParametersWrite[numberOfSpilled++],
 							typeTableIdx);
-					X64Mov(context, loc, slot, param);
+					X64Mov(context, loc, slot, paramPtr);
 				}
 				else {
 					IRValue slot = IRValueMemory(jobData->x64SpilledParametersRead[numberOfSpilled++],
 							typeTableIdx);
-					X64Mov(context, loc, param, slot);
+					X64Mov(context, loc, paramPtr, slot);
 				}
-				param.mem.offset += 8;
+				paramPtr.mem.offset += 8;
 				sizeLeft -= 8;
 			}
 		}
@@ -2960,7 +2964,7 @@ void BackendGenerateOutputFile(Context *context)
 		}
 	}
 
-	DynamicArray<String, ThreadAllocator> exportedSymbols;
+	DynamicArray<String, ThreadAllocator> exportedSymbols = {};
 	if (makeLibrary) {
 		DynamicArrayInit(&exportedSymbols, 8);
 		auto externalProcedures = context->procedures.GetForRead();

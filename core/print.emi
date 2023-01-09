@@ -137,6 +137,7 @@ PrintF :: (format : String, ..args)
 			for structInfo.members
 			{
 				memberPtr : ^void = arg.data + it.offset;
+
 				member : Any = { it.typeInfo, memberPtr };
 				if it.typeInfo.typeKind == TypeKind_Integer ||
 				   it.typeInfo.typeKind == TypeKind_Floating ||
@@ -273,4 +274,23 @@ PrintF :: (format : String, ..args)
 		}
 	}
 	Print(str);
+}
+
+ToHex :: (num : u64, buffer : ^u8) -> String
+{
+	letterOffset :: 'A' - 10;
+	result : String;
+	cursor := buffer + 15;
+	count : u64 = 0;
+	for 0..16 {
+		digit : u8 = cast(u8)(num & 0xF); // num % 16
+		if digit > 9
+			@cursor = letterOffset + digit;
+		else
+			@cursor = '0' + digit;
+		num >>= 4; // num /= 16
+		cursor -= 1;
+		count += 1;
+	}
+	return { count, cursor };
 }

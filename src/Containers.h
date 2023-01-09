@@ -254,7 +254,6 @@ template <typename T, typename A>
 void DynamicArrayRemoveOrdered(DynamicArray<T, A> *array, u64 idx)
 {
 	ASSERT(array->size > 0);
-	if (array->size <= 0) __debugbreak();
 	ASSERT(idx >= 0 && (u64)idx < array->capacity);
 	memmove(&array->data[idx], &array->data[idx + 1], (array->size - idx - 1) * sizeof(T));
 	--array->size;
