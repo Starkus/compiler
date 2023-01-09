@@ -1417,6 +1417,7 @@ void X64ConvertInstruction(Context *context, IRInstruction inst)
 		// care.
 		if (inst.type == IRINSTRUCTIONTYPE_PROCEDURE_CALL)
 		{
+			ASSERT(inst.procedureCall.procedureIdx != 0);
 			result.type = X64_CALL;
 			result.procedureIdx = inst.procedureCall.procedureIdx;
 
@@ -1533,7 +1534,7 @@ void X64ConvertInstruction(Context *context, IRInstruction inst)
 						if (IRShouldPassByCopy(context, returnTypeIdx) &&
 								out.valueType != IRVALUETYPE_IMMEDIATE_INTEGER)
 						{
-							IRValue ptr = IRValueNewValue(context, "paramptr"_s, TYPETABLEIDX_S64, 0);
+							IRValue ptr = IRValueNewValue(context, "retptr"_s, TYPETABLEIDX_S64, 0);
 							IRValue outButS64 = out;
 							outButS64.typeTableIdx = TYPETABLEIDX_S64;
 							X64AddInstruction2(context, inst.loc, X64_LEA, ptr, outButS64);
@@ -1550,7 +1551,18 @@ void X64ConvertInstruction(Context *context, IRInstruction inst)
 				ASSERT(returnValueCount == 1);
 				IRValue out = inst.procedureCall.returnValues[0];
 				u32 returnTypeIdx = out.typeTableIdx;
-				if (GetTypeInfo(context, returnTypeIdx).typeCategory == TYPECATEGORY_FLOATING) {
+				if (IRShouldPassByCopy(context, returnTypeIdx) &&
+						out.valueType != IRVALUETYPE_IMMEDIATE_INTEGER) {
+					IRValue ptr = IRValueNewValue(context, "retptr"_s, TYPETABLEIDX_S64, 0);
+					IRValue outButS64 = out;
+					outButS64.typeTableIdx = TYPETABLEIDX_S64;
+					X64AddInstruction2(context, inst.loc, X64_LEA, ptr, outButS64);
+
+					TypeInfo returnTypeInfo = GetTypeInfo(context, returnTypeIdx);
+					X64CopyMemory(context, inst.loc, ptr, RAX,
+							IRValueImmediate(returnTypeInfo.size));
+				}
+				else if (GetTypeInfo(context, returnTypeIdx).typeCategory == TYPECATEGORY_FLOATING) {
 					IRValue typedXmm0 = XMM0;
 					typedXmm0.typeTableIdx = returnTypeIdx;
 					X64Mov(context, inst.loc, out, typedXmm0);
