@@ -2842,17 +2842,8 @@ void IRJobProcedure(void *args)
 	jobData.shouldReturnValueIdx = U32_MAX;
 	SYSSetFiberData(context->flsIndex, &jobData);
 
-#if 0
-	{
-#if !FINAL_BUILD
-		auto jobs = context->jobs.Get();
-		jobs[jobIdx].title = SStringConcat("IR:"_s, GetProcedureRead(context, procedureIdx).name);
-#endif
-
-		ASSERT(context->jobs.unsafe[jobIdx].state == YIELDREASON_READY);
-		ASSERT(context->jobs.unsafe[jobIdx].isRunning);
-		threadData->lastJobIdx = U32_MAX;
-	}
+#if DEBUG_BUILD
+	t_runningJob.description = SStringConcat("IR:"_s, GetProcedureRead(context, procedureIdx).name);
 #endif
 
 	ASSERT(GetProcedureRead(context, procedureIdx).astBody != nullptr);
@@ -2886,16 +2877,8 @@ void IRJobExpression(void *args)
 	IRJobData jobData = {};
 	SYSSetFiberData(context->flsIndex, &jobData);
 
-#if 0
-	{
-		ASSERT(context->jobs.unsafe[jobIdx].state == YIELDREASON_READY);
-		ASSERT(context->jobs.unsafe[jobIdx].isRunning);
-
-#if !FINAL_BUILD
-		auto jobs = context->jobs.Get();
-		jobs[jobIdx].title = "IR:Expression"_s;
-#endif
-	}
+#if DEBUG_BUILD
+	t_runningJob.description = "IR:Expression"_s;
 #endif
 
 	IRGenFromExpression(context, argsStruct->expression);

@@ -1270,10 +1270,30 @@ inline String CopyStringToStaticData(Context *context, String string, bool nullT
 	return { string.size, nameCopy };
 }
 
+UserFacingTypeInfo *GetUserFacingTypeInfoPointer(Context *context, u32 typeTableIdx)
+{
+	UserFacingTypeInfo *result;
+
+	// @Unsafe
+	auto &typeTable = context->typeTable.unsafe;
+	u32 typeInfoValueIdx = typeTable[typeTableIdx].valueIdx;
+
+	SpinlockLock(&context->globalValuesLock);
+	void **mapValue = HashMapGet(context->globalValueContents, typeInfoValueIdx & VALUE_GLOBAL_MASK);
+	while (!mapValue) {
+		SpinlockUnlock(&context->globalValuesLock);
+		SwitchJob(context, YIELDREASON_GLOBAL_VALUE_NOT_READY, { .index = typeInfoValueIdx });
+		SpinlockLock(&context->globalValuesLock);
+		mapValue = HashMapGet(context->globalValueContents, typeInfoValueIdx & VALUE_GLOBAL_MASK);
+	}
+	SpinlockUnlock(&context->globalValuesLock);
+
+	result = (UserFacingTypeInfo *)*mapValue;
+	return result;
+}
+
 void WriteUserFacingTypeInfoToStaticData(Context *context, TypeInfo typeInfo)
 {
-	auto &typeTable = context->typeTable.unsafe;
-
 	u64 size;
 	switch (typeInfo.typeCategory) {
 		case TYPECATEGORY_NOT_READY:
@@ -1335,13 +1355,8 @@ void WriteUserFacingTypeInfoToStaticData(Context *context, TypeInfo typeInfo)
 				sizeof(UserFacingStructMember), 8);
 		for (int i = 0; i < memberCount; ++i) {
 			StructMember *origMember = &typeInfo.structInfo.members[i];
-			u32 memberTypeInfoValueIdx = typeTable[origMember->typeTableIdx].valueIdx;
-			UserFacingTypeInfo *memberUfti;
-			{
-				ScopedLockSpin lock(&context->globalValuesLock);
-				memberUfti = (UserFacingTypeInfo *)*HashMapGet(context->globalValueContents,
-						memberTypeInfoValueIdx & VALUE_GLOBAL_MASK);
-			}
+			UserFacingTypeInfo *memberUfti = GetUserFacingTypeInfoPointer(context,
+					origMember->typeTableIdx);
 			UserFacingStructMember member = {
 				.name = CopyStringToStaticData(context, origMember->name),
 				.typeInfo = memberUfti,
@@ -1366,13 +1381,8 @@ void WriteUserFacingTypeInfoToStaticData(Context *context, TypeInfo typeInfo)
 		out->typeCategory = USERFACINGTYPECATEGORY_ENUM;
 		UserFacingTypeInfoEnum *outEnum = (UserFacingTypeInfoEnum *)out;
 		outEnum->name = typeInfo.enumInfo.name;
-		u32 enumTypeInfoValueIdx = typeTable[typeInfo.enumInfo.typeTableIdx].valueIdx;
-		UserFacingTypeInfo *ufti;
-		{
-			ScopedLockSpin lock(&context->globalValuesLock);
-			ufti = (UserFacingTypeInfo *)*HashMapGet(context->globalValueContents,
-					enumTypeInfoValueIdx & VALUE_GLOBAL_MASK);
-		}
+		UserFacingTypeInfo *ufti = GetUserFacingTypeInfoPointer(context,
+				typeInfo.enumInfo.typeTableIdx);
 		outEnum->typeInfo = ufti;
 
 		u64 memberCount = typeInfo.enumInfo.names.size;
@@ -1407,13 +1417,7 @@ void WriteUserFacingTypeInfoToStaticData(Context *context, TypeInfo typeInfo)
 		if (pointedTypeIdx == TYPETABLEIDX_VOID)
 			outPointer->typeInfo = nullptr;
 		else {
-			u32 typeInfoValueIdx = typeTable[pointedTypeIdx].valueIdx;
-			UserFacingTypeInfo *ufti;
-			{
-				ScopedLockSpin lock(&context->globalValuesLock);
-				ufti = (UserFacingTypeInfo *)*HashMapGet(context->globalValueContents,
-						typeInfoValueIdx & VALUE_GLOBAL_MASK);
-			}
+			UserFacingTypeInfo *ufti = GetUserFacingTypeInfoPointer(context, pointedTypeIdx);
 			outPointer->typeInfo = ufti;
 		}
 
@@ -1424,14 +1428,8 @@ void WriteUserFacingTypeInfoToStaticData(Context *context, TypeInfo typeInfo)
 		out->typeCategory = USERFACINGTYPECATEGORY_ARRAY;
 		UserFacingTypeInfoArray *outArray = (UserFacingTypeInfoArray *)out;
 		outArray->count = typeInfo.arrayInfo.count;
-		u32 elementTypeInfoValueIdx =
-			typeTable[typeInfo.arrayInfo.elementTypeTableIdx].valueIdx;
-		UserFacingTypeInfo *ufti;
-		{
-			ScopedLockSpin lock(&context->globalValuesLock);
-			ufti = (UserFacingTypeInfo *)*HashMapGet(context->globalValueContents,
-					elementTypeInfoValueIdx & VALUE_GLOBAL_MASK);
-		}
+		UserFacingTypeInfo *ufti = GetUserFacingTypeInfoPointer(context,
+				typeInfo.arrayInfo.elementTypeTableIdx);
 		outArray->elementTypeInfo = ufti;
 
 		AddStaticDataPointerToRelocate(context, &outArray->elementTypeInfo);
@@ -1447,13 +1445,8 @@ void WriteUserFacingTypeInfoToStaticData(Context *context, TypeInfo typeInfo)
 				sizeof(UserFacingTypeInfo *), 8);
 		for (int i = 0; i < paramCount; ++i) {
 			ProcedureParameter *origParam = &typeInfo.procedureInfo.parameters[i];
-			u32 paramTypeInfoValueIdx = typeTable[origParam->typeTableIdx].valueIdx;
-			UserFacingTypeInfo *paramUfti;
-			{
-				ScopedLockSpin lock(&context->globalValuesLock);
-				paramUfti = (UserFacingTypeInfo *)*HashMapGet(context->globalValueContents,
-						paramTypeInfoValueIdx & VALUE_GLOBAL_MASK);
-			}
+			UserFacingTypeInfo *paramUfti = GetUserFacingTypeInfoPointer(context,
+					origParam->typeTableIdx);
 			parameters[i] = paramUfti;
 
 			AddStaticDataPointerToRelocate(context, &parameters[i]);
@@ -1468,13 +1461,8 @@ void WriteUserFacingTypeInfoToStaticData(Context *context, TypeInfo typeInfo)
 	{
 		out->typeCategory = USERFACINGTYPECATEGORY_ALIAS;
 		UserFacingTypeInfoAlias *outAlias = (UserFacingTypeInfoAlias *)out;
-		u32 typeInfoValueIdx = typeTable[typeInfo.aliasInfo.aliasedTypeIdx].valueIdx;
-		UserFacingTypeInfo *ufti;
-		{
-			ScopedLockSpin lock(&context->globalValuesLock);
-			ufti = (UserFacingTypeInfo *)*HashMapGet(context->globalValueContents,
-					typeInfoValueIdx & VALUE_GLOBAL_MASK);
-		}
+		UserFacingTypeInfo *ufti = GetUserFacingTypeInfoPointer(context,
+				typeInfo.aliasInfo.aliasedTypeIdx);
 		outAlias->typeInfo = ufti;
 
 		AddStaticDataPointerToRelocate(context, &outAlias->typeInfo);
@@ -1633,16 +1621,16 @@ void TCAddScopeNames(Context *context, ArrayView<TCScopeName> scopeNames)
 
 		// Wake up any jobs that were waiting for this name
 		auto jobsWaiting = context->waitingJobsByReason[YIELDREASON_UNKNOWN_IDENTIFIER].Get();
-		for (int i = 0; i < jobsWaiting->size; ) {
-			Job *job = &jobsWaiting[i];
-			for (int j = 0; j < scopeNames.size; ++j) {
-				if (StringEquals(job->context.identifier, scopeNames[j].name)) {
-					EnqueueReadyJob(context, job->fiber);
+		for (int jobIdx = 0; jobIdx < jobsWaiting->size; ) {
+			Job *job = &jobsWaiting[jobIdx];
+			for (int nameIdx = 0; nameIdx < scopeNames.size; ++nameIdx) {
+				if (StringEquals(job->context.identifier, scopeNames[nameIdx].name)) {
+					EnqueueReadyJob(context, *job);
 					// Remove
 					*job = jobsWaiting[--jobsWaiting->size];
 				}
 				else
-					++i;
+					++jobIdx;
 			}
 		}
 	}
@@ -4903,10 +4891,9 @@ void TCJobProc(void *args)
 	jobData.currentReturnTypes = {};
 	SYSSetFiberData(context->flsIndex, &jobData);
 
-#if 0
+#if DEBUG_BUILD
 	{
-#if !FINAL_BUILD
-		auto jobs = context->jobs.Get();
+		t_runningJob.loc = expression->any.loc;
 
 		String threadName = "TC:???"_s;
 		switch (expression->nodeType) {
@@ -4935,8 +4922,7 @@ void TCJobProc(void *args)
 			threadName = "TC:Static if"_s;
 			break;
 		}
-		jobs[jobIdx].title = threadName;
-#endif
+		t_runningJob.description = threadName;
 	}
 #endif
 

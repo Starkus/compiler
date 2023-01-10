@@ -52,6 +52,11 @@ struct Job
 {
 	Fiber fiber;
 
+#if DEBUG_BUILD
+	SourceLocation loc;
+	String description;
+#endif
+
 	// Some data about why the job yielded execution.
 	YieldContext context;
 };

@@ -182,10 +182,12 @@ struct Context
 	DynamicArray<SourceFile, HeapAllocator> sourceFiles;
 	DynamicArray<String, HeapAllocator> libsToLink;
 
-	MTQueue<Fiber> readyJobs;
+	MTQueue<Job> readyJobs;
 
 	bool done;
 	volatile s32 failedJobsCount;
+
+	volatile u32 threadStatesLock;
 	Array<ThreadState, HeapAllocator> threadStates;
 
 	volatile u32 staticDataLock;
@@ -408,7 +410,7 @@ NOINLINE void SwitchJob(Context *context, YieldReason yieldReason, YieldContext 
 	do { Log2ErrorNoCrash(context, locBegin, locEnd, str); SwitchJob(context, YIELDREASON_FAILED, {}); } while(0)
 #endif
 
-void EnqueueReadyJob(Context *context, Fiber fiber);
+void EnqueueReadyJob(Context *context, Job job);
 bool CompilerAddSourceFile(Context *context, String filename, SourceLocation loc) {
 	FileHandle file = SYSOpenFileRead(filename);
 	if (file == SYS_INVALID_FILE_HANDLE)
@@ -441,9 +443,10 @@ bool CompilerAddSourceFile(Context *context, String filename, SourceLocation loc
 	*args = {
 		.context = context,
 		.fileIdx = fileIdx };
-	Fiber fiber = SYSCreateFiber(ParseJobProc, (void *)args);
+	Job job = {};
+	job.fiber = SYSCreateFiber(ParseJobProc, (void *)args);
 
-	EnqueueReadyJob(context, fiber);
+	EnqueueReadyJob(context, job);
 
 	return true;
 }
@@ -479,17 +482,18 @@ int main(int argc, char **argv)
 	g_hStderr = fileno(stderr);
 #endif
 
-	Context context = {};
-	g_context = &context;
-	context.tlsIndex = SYSAllocThreadData();
-	context.flsIndex = SYSAllocFiberData();
-	context.consoleMutex = SYSCreateMutex();
+	Context *context = ALLOC(HeapAllocator, Context);
+	*context = {};
+	g_context = context;
+	context->tlsIndex = SYSAllocThreadData();
+	context->flsIndex = SYSAllocFiberData();
+	context->consoleMutex = SYSCreateMutex();
 
 	// Allocate memory
 	Memory memory;
 	g_memory = &memory;
-	memory.tlsIndex = context.tlsIndex;
-	memory.flsIndex = context.flsIndex;
+	memory.tlsIndex = context->tlsIndex;
+	memory.flsIndex = context->flsIndex;
 	memory.linearMem = SYSAlloc(Memory::linearMemSize);
 	MemoryInit(&memory);
 
@@ -508,9 +512,9 @@ int main(int argc, char **argv)
 	}
 #endif
 
-	DynamicArrayInit(&context.sourceFiles, 16);
-	++context.sourceFiles.size; // 0 is invalid file
-	DynamicArrayInit(&context.libsToLink, 8);
+	DynamicArrayInit(&context->sourceFiles, 16);
+	++context->sourceFiles.size; // 0 is invalid file
+	DynamicArrayInit(&context->libsToLink, 8);
 
 	DynamicArray<String, LinearAllocator> inputFiles;
 	DynamicArrayInit(&inputFiles, 16);
@@ -525,17 +529,17 @@ int main(int argc, char **argv)
 		char *arg = argv[argIdx];
 		if (arg[0] == '-') {
 			if (strcmp("-silent", arg) == 0)
-				context.config.silent = true;
+				context->config.silent = true;
 			else if (strcmp("-noPromote", arg) == 0)
-				context.config.dontPromoteMemoryToRegisters = true;
+				context->config.dontPromoteMemoryToRegisters = true;
 			else if (strcmp("-noBuildExecutable", arg) == 0)
-				context.config.dontCallAssembler = true;
+				context->config.dontCallAssembler = true;
 			else if (strcmp("-logAST", arg) == 0)
-				context.config.logAST = true;
+				context->config.logAST = true;
 			else if (strcmp("-logIR", arg) == 0)
-				context.config.logIR = true;
+				context->config.logIR = true;
 			else if (strcmp("-logAllocationInfo", arg) == 0)
-				context.config.logAllocationInfo = true;
+				context->config.logAllocationInfo = true;
 			else
 				Print("Unknown option \"%s\"\n", arg);
 		}
@@ -544,20 +548,20 @@ int main(int argc, char **argv)
 	}
 	ASSERT(inputFiles.size > 2);
 
-	if (!context.config.silent)
+	if (!context->config.silent)
 		TimerSplit("Initialization"_s);
 
-	OutputBufferInit(&context);
+	OutputBufferInit(context);
 
-	ParserMain(&context);
-	TypeCheckMain(&context);
-	IRGenMain(&context);
-	BackendMain(&context);
+	ParserMain(context);
+	TypeCheckMain(context);
+	IRGenMain(context);
+	BackendMain(context);
 
 	for (int i = 0; i < inputFiles.size; ++i)
-		CompilerAddSourceFile(&context, inputFiles[i], {});
+		CompilerAddSourceFile(context, inputFiles[i], {});
 
-	if (!context.config.silent)
+	if (!context->config.silent)
 		TimerSplit("Create starting jobs"_s);
 
 	SYSTEM_INFO win32SystemInfo;
@@ -571,22 +575,22 @@ int main(int argc, char **argv)
 	Array<ThreadArgs,   LinearAllocator> threadArgs;
 	ArrayInit(&threads,    threadCount);
 	ArrayInit(&threadArgs, threadCount);
-	ArrayInit(&context.threadStates, threadCount);
+	ArrayInit(&context->threadStates, threadCount);
 	threads.size    = threadCount;
 	threadArgs.size = threadCount;
-	context.threadStates.size = threadCount;
+	context->threadStates.size = threadCount;
 	for (int i = 0; i < threadCount; ++i) {
-		context.threadStates[i] = THREADSTATE_WORKING;
-		threadArgs[i] = { &context, (u32)i };
+		context->threadStates[i] = THREADSTATE_WORKING;
+		threadArgs[i] = { context, (u32)i };
 		threads[i] = SYSCreateThread(WorkerThreadProc, &threadArgs[i]);
 	}
 
 	SYSWaitForThreads(threadCount, threads.data);
 
-	if (!context.config.silent)
+	if (!context->config.silent)
 		TimerSplit("Multithreaded parse/analyze/codegen phase"_s);
 
-	s32 failedJobsCount = context.failedJobsCount;
+	s32 failedJobsCount = context->failedJobsCount;
 	if (failedJobsCount > 0) {
 		if (failedJobsCount == 1)
 			Print("A job failed. Aborting.\n");
@@ -598,47 +602,64 @@ int main(int argc, char **argv)
 	// Report errors
 	bool errorsFound = false;
 	{
-		auto jobs = context.waitingJobsByReason[YIELDREASON_UNKNOWN_IDENTIFIER].Get();
+		auto jobs = context->waitingJobsByReason[YIELDREASON_UNKNOWN_IDENTIFIER].Get();
 		for (int jobIdx = 0; jobIdx < jobs->size; ++jobIdx) {
 			YieldContext yieldContext = jobs[jobIdx].context;
-			LogErrorNoCrash(&context, yieldContext.loc, TPrintF("Identifier \"%S\" never found",
+			LogErrorNoCrash(context, yieldContext.loc, TPrintF("Identifier \"%S\" never found",
 						yieldContext.identifier));
+#if DEBUG_BUILD
+			LogNote(context, jobs[jobIdx].loc, TPrintF("On job: \"%S\"", jobs[jobIdx].description));
+			auto &globalNames = context->tcGlobalNames.unsafe;
+			for (int i = 0; i < globalNames.size; ++i) {
+				const TCScopeName *currentName = &globalNames[i];
+				if (StringEquals(yieldContext.identifier, currentName->name))
+					LogCompilerError(context, currentName->loc, "Identifier is there!"_s);
+			}
+#endif
 			errorsFound = true;
 		}
 		jobs->size = 0;
 	}
 	{
-		auto jobs = context.waitingJobsByReason[YIELDREASON_UNKNOWN_OVERLOAD].Get();
+		auto jobs = context->waitingJobsByReason[YIELDREASON_UNKNOWN_OVERLOAD].Get();
 		for (int jobIdx = 0; jobIdx < jobs->size; ++jobIdx) {
 			YieldContext yieldContext = jobs[jobIdx].context;
-			if (yieldContext.overload.rightTypeIdx != U32_MAX)
-				LogErrorNoCrash(&context, yieldContext.loc, TPrintF("Operator '%S' not found for "
+			if (yieldContext.overload.rightTypeIdx != U32_MAX) {
+				LogErrorNoCrash(context, yieldContext.loc, TPrintF("Operator '%S' not found for "
 							"types \"%S\" and \"%S\"",
 							OperatorToString(yieldContext.overload.op),
-							TypeInfoToString(&context, yieldContext.overload.leftTypeIdx),
-							TypeInfoToString(&context, yieldContext.overload.rightTypeIdx)));
-			else
-				LogErrorNoCrash(&context, yieldContext.loc, TPrintF("Operator '%S' not found for "
+							TypeInfoToString(context, yieldContext.overload.leftTypeIdx),
+							TypeInfoToString(context, yieldContext.overload.rightTypeIdx)));
+#if DEBUG_BUILD
+				LogNote(context, jobs[jobIdx].loc, TPrintF("On job: \"%S\"", jobs[jobIdx].description));
+#endif
+			}
+			else {
+				LogErrorNoCrash(context, yieldContext.loc, TPrintF("Operator '%S' not found for "
 							"type \"%S\"",
 							OperatorToString(yieldContext.overload.op),
-							TypeInfoToString(&context, yieldContext.overload.leftTypeIdx)));
+							TypeInfoToString(context, yieldContext.overload.leftTypeIdx)));
+#if DEBUG_BUILD
+				LogNote(context, jobs[jobIdx].loc, TPrintF("On job: \"%S\"", jobs[jobIdx].description));
+#endif
+			}
 			errorsFound = true;
 		}
 		jobs->size = 0;
 	}
 	if (errorsFound)
-		LogError(&context, {}, "Errors were found. Aborting"_s);
+		LogError(context, {}, "Errors were found. Aborting"_s);
 
-	if (!TCAreAllJobFinished(&context))
-		LogCompilerError(&context, {}, "Some jobs could not finish"_s);
+	if (!TCAreAllJobFinished(context))
+		LogCompilerError(context, {}, "Some jobs could not finish"_s);
 
 #if 0
-	BackendGenerateOutputFile(&context);
+	BackendGenerateOutputFile(context);
 #else
-	BackendGenerateWindowsObj(&context);
+	BackendGenerateWindowsObj(context);
 #endif
 
-	if (!context.config.silent) {
+	if (!context->config.silent) {
 		TimerSplit("Done"_s);
 		Print("Compilation success\n");
 	}

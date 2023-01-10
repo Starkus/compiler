@@ -1,0 +1,71 @@
+SYNCHRONIZATION OF PRODUCERS AND CONSUMERS
++----------------------------------------+
+
+The following is explained using identifiers as an example, but also holds to other kinds of
+symbols/information like operator overloads or types.
+
+A job that is suspended because it is waiting for an identifier to be added will not be resumed
+implicitly. Thus, upon adding any identifier, we need to be certain to resume every job that was
+waiting for it, without missing any.
+
+We use the container's lock as critical section to enforce this. The producer simply locks the
+container to add the identifier. The consumer locks the container to look up the identifier and, if
+not found, does not release it until the job is registered as waiting. This makes the producer wait
+for registrations before obtaining the list of jobs to resume.
+
+Following are diagrams showing both situations, first the producer writes a new identifier right
+before a consumer looks for it, then the opposite.
+
++---------------------------+-------------------------------+
+|	PRODUCER				|	CONSUMER					|
++---------------------------+-------------------------------+
+| Locks container for write	|								|
+| to add identifier.		| Want to lock container for	|
+|							| read to look up identifier	|
+| Adds identifier.			|///////////////////////////////|
+|							|///////////////////////////////|
+| Releases container		|///////////////////////////////|
+|				------------->								|
+| Signals all jobs waiting	| Look up identifier.			|
+| for the added identifier.	|								|
+|							| Identifier is found.			|
++---------------------------+-------------------------------+
+
++---------------------------+-------------------------------+
+|	PRODUCER				|	CONSUMER					|
++---------------------------+-------------------------------+
+|							| Lock container for read to	|
+| Want to lock container	| look up identifier.			|
+| for write to add			|								|
+| identifier.				| Identifier is not found.		|
+|///////////////////////////|								|
+|///////////////////////////| Job is registered as waiting	|
+|///////////////////////////| for identifier then			|
+|///////////////////////////| suspended.					|
+|///////////////////////////|								|
+|///////////////////////////| Release container.			|
+|						   <-------------					|
+| Adds identifier.			| Fiber is switched out.		|
+|							|...............................|
+| Releases container.		|...............................|
+|							|...............................|
+| Signals all jobs waiting	|...............................|
+| for the added identifier,	|...............................|
+| including the one on the	|...............................|
+| right.					|...............................|
+|				------------->								|
+|							| Lock container for read to	|
+|							| look up identifier.			|
+|							|								|
+|							| Look up identifier.			|
+|							|								|
+|							| Identifier is found.			|
++---------------------------+-------------------------------+
+
+Note that we cannot post the consumer job on the waiting list while still running its fiber, or we
+risk trying to run a fiber in two threads at once (and debugging this kind of thing is not fun). The
+way we solve this, is to intentionally leak the lock into the fiber switch, and set some information
+on thread local storage. We switch to the scheduler fiber, which can now post the job and free the
+lock according to the data on TLS. This is not the only solution and maybe not the best (twice as
+many context switches as needed), but it has proven pretty consistent and helps avoid very ugly to
+debug bugs.
