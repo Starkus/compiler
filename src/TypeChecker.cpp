@@ -2234,6 +2234,41 @@ bool IsExpressionAType(Context *context, ASTExpression *expression)
 	}
 }
 
+void GetSourceLocRangeForExpression(ASTExpression *expression,
+		SourceLocation *begin, SourceLocation *end)
+{
+	SourceLocation aBegin, aEnd, bBegin, bEnd;
+	switch (expression->nodeType) {
+	case ASTNODETYPE_BINARY_OPERATION:
+		GetSourceLocRangeForExpression(expression->binaryOperation.leftHand,  &aBegin, &aEnd);
+		GetSourceLocRangeForExpression(expression->binaryOperation.rightHand, &bBegin, &bEnd);
+		break;
+	case ASTNODETYPE_PROCEDURE_CALL:
+		GetSourceLocRangeForExpression(expression->procedureCall.procedureExpression, &aBegin, &aEnd);
+		GetSourceLocRangeForExpression(*DynamicArrayBack(&expression->procedureCall.arguments), &bBegin, &bEnd);
+		break;
+	case ASTNODETYPE_MULTIPLE_EXPRESSIONS:
+		GetSourceLocRangeForExpression(expression->multipleExpressions.array[0], &aBegin, &aEnd);
+		GetSourceLocRangeForExpression(*DynamicArrayBack(&expression->multipleExpressions.array),
+				&bBegin, &bEnd);
+		break;
+	default:
+		*begin = *end = expression->any.loc;
+		return;
+	}
+	ASSERT(aBegin.fileIdx == bBegin.fileIdx);
+	ASSERT(aBegin.fileIdx == aEnd.fileIdx);
+	ASSERT(aBegin.fileIdx == bEnd.fileIdx);
+	if (aBegin.character < bBegin.character)
+		*begin = aBegin;
+	else
+		*begin = bBegin;
+	if (aEnd.character > bEnd.character)
+		*end = aEnd;
+	else
+		*end = bEnd;
+}
+
 void TypeCheckVariableDeclaration(Context *context, ASTVariableDeclaration *varDecl)
 {
 	TCJobData *jobData = (TCJobData *)SYSGetFiberData(context->flsIndex);
@@ -2323,13 +2358,13 @@ void TypeCheckVariableDeclaration(Context *context, ASTVariableDeclaration *varD
 				// We shouldn't have 1-value multiple expression nodes
 				ASSERT(givenValuesCount > 1);
 				if (varCount != givenValuesCount) {
-					SourceLocation endLoc =
-						(*DynamicArrayBack(&astInitialValue->multipleExpressions.array))->any.loc;
+					SourceLocation beg, end;
+					GetSourceLocRangeForExpression(astInitialValue, &beg, &end);
 					if (varCount == 1)
-						Log2Error(context, varDecl->loc, endLoc,
+						Log2Error(context, varDecl->loc, end,
 								"Trying to initialize a variable to multiple values"_s);
 					else
-						Log2Error(context, varDecl->loc, endLoc,
+						Log2Error(context, varDecl->loc, end,
 								TPrintF("Trying to initialize %d variables to %d values",
 									varCount, givenValuesCount));
 				}
@@ -2343,9 +2378,12 @@ void TypeCheckVariableDeclaration(Context *context, ASTVariableDeclaration *varD
 				}
 			}
 			else {
-				if (varCount > 1)
-					Log2Error(context, varDecl->loc, astInitialValue->any.loc,
+				if (varCount > 1) {
+					SourceLocation beg, end;
+					GetSourceLocRangeForExpression(astInitialValue, &beg, &end);
+					Log2Error(context, varDecl->loc, end,
 							"Trying to initialize multiple variables to a single value"_s);
+				}
 				u32 valueTypeIdx = InferType(astInitialValue->typeTableIdx);
 				astInitialValue->typeTableIdx = valueTypeIdx;
 				ASSERT(valueTypeIdx != TYPETABLEIDX_Unset);
@@ -3020,6 +3058,13 @@ u32 NewProcedure(Context *context, Procedure p, bool isExternal)
 		auto procedures = context->procedures.GetForWrite();
 		procedureIdx = (u32)procedures->count;
 		*BucketArrayAdd(&procedures) = p;
+
+		{
+			auto inlineCalls = context->tcInlineCalls.Get();
+			if (inlineCalls->size <= procedureIdx)
+				DynamicArrayAddMany(&inlineCalls, procedureIdx - inlineCalls->size);
+			inlineCalls[procedureIdx] = {};
+		}
 	}
 	else
 	{
@@ -3232,6 +3277,30 @@ bool TCIsPrimitiveOperation(Context *context, enum TokenType op, u32 inputTypeId
 	}
 }
 
+void TCCheckForCyclicInlineCalls(Context *context, SourceLocation loc, u32 callerProcIdx,
+		u32 calleeProcIdx)
+{
+	auto inlineCalls = context->tcInlineCalls.Get();
+	// Register inline call
+	if (!inlineCalls[callerProcIdx].capacity)
+		DynamicArrayInit(&inlineCalls[callerProcIdx], 4);
+	*DynamicArrayAdd(&inlineCalls[callerProcIdx]) = { calleeProcIdx, loc };
+
+	// Check for cyclic dependencies
+	ArrayView<const InlineCall> inlinedCalls = inlineCalls[calleeProcIdx];
+	for (int i = 0; i < inlinedCalls.size; ++i) {
+		if (inlinedCalls[i].procedureIdx == callerProcIdx) {
+			// @Incomplete: improve error message
+			LogErrorNoCrash(context, loc, TPrintF("Procedures "
+					"\"%S\" and \"%S\" are trying to inline each other.",
+					GetProcedureRead(context, callerProcIdx).name,
+					GetProcedureRead(context, calleeProcIdx).name));
+			LogNote(context, inlinedCalls[i].loc, "See other call"_s);
+			PANIC;
+		}
+	}
+}
+
 String OperatorToString(s32 op);
 bool LookForOperatorOverload(Context *context, ASTExpression *expression)
 {
@@ -3344,6 +3413,10 @@ tryAgain:
 	ASSERT(procTypeInfo.typeCategory == TYPECATEGORY_PROCEDURE);
 
 	if (proc.isInline && !proc.isBodyTypeChecked) {
+		TCJobData *jobData = (TCJobData *)SYSGetFiberData(context->flsIndex);
+		TCCheckForCyclicInlineCalls(context, expression->any.loc, jobData->currentProcedureIdx,
+				overload.procedureIdx);
+
 		auto procedures = context->procedures.GetForRead();
 		proc = procedures[overload.procedureIdx];
 		if (!proc.isBodyTypeChecked) {
@@ -3491,16 +3564,6 @@ void TypeCheckExpression(Context *context, ASTExpression *expression)
 
 			if (procedure.astBody)
 			{
-				{
-					DynamicArray<u32, LinearAllocator> array;
-					DynamicArrayInit(&array, 4);
-
-					auto inlineCalls = context->tcInlineCalls.GetForWrite();
-					if (inlineCalls->size <= procedureIdx)
-						DynamicArrayAddMany(&inlineCalls, procedureIdx - inlineCalls->size);
-					inlineCalls[procedureIdx] = array;
-				}
-
 				// Parameters
 				ArrayView<ASTProcedureParameter> astParameters = astPrototype->astParameters;
 				for (int i = 0; i < astParameters.size; ++i)
@@ -3831,28 +3894,9 @@ void TypeCheckExpression(Context *context, ASTExpression *expression)
 				Procedure proc = GetProcedureRead(context, procedureIdx);
 				if ((proc.isInline || astProcCall->inlineType == CALLINLINETYPE_ALWAYS_INLINE) &&
 						astProcCall->inlineType != CALLINLINETYPE_NEVER_INLINE) {
-					// Register inline call
-					u32 callingProcIdx = jobData->currentProcedureIdx;
-					{
-						auto inlineCalls = context->tcInlineCalls.GetForWrite();
-						*DynamicArrayAdd(&inlineCalls[callingProcIdx]) = procedureIdx;
-					}
 
-					// Check for cyclic dependencies
-					{
-						auto inlineCalls = context->tcInlineCalls.GetForRead();
-						if (inlineCalls->size > procedureIdx) {
-							ArrayView<const u32> inlinedCalls = inlineCalls[procedureIdx];
-							for (int i = 0; i < inlinedCalls.size; ++i) {
-								if (inlinedCalls[i] == callingProcIdx)
-									// @Incomplete: improve error message
-									LogError(context, astProcExp->any.loc, TPrintF("Procedures "
-											"\"%S\" and \"%S\" are trying to inline each other.",
-											GetProcedureRead(context, callingProcIdx).name,
-											GetProcedureRead(context, procedureIdx).name));
-							}
-						}
-					}
+					TCCheckForCyclicInlineCalls(context, astProcExp->any.loc,
+							jobData->currentProcedureIdx, procedureIdx);
 
 					// We need the whole body type checked
 					if (!proc.isBodyTypeChecked) {
@@ -5322,7 +5366,7 @@ void TypeCheckMain(Context *context)
 	}
 
 	{
-		auto inlineCalls = context->tcInlineCalls.GetForWrite();
+		auto inlineCalls = context->tcInlineCalls.Get();
 		DynamicArrayInit(&inlineCalls, 128);
 	}
 

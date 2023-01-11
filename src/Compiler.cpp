@@ -51,6 +51,7 @@ Memory *g_memory;
 FileHandle g_hStdin;
 FileHandle g_hStdout;
 FileHandle g_hStderr;
+FileHandle g_logFileHandle;
 u32 g_numberOfThreads;
 u32 g_threadIdxCreateFibers;
 u32 g_threadIdxDeleteFibers;
@@ -63,26 +64,34 @@ u32 g_threadIdxDeleteFibers;
 
 #include "Multithreading.cpp"
 
+s64 PrintString(String str)
+{
+#if IS_WINDOWS
+	char *buffer = (char *)alloca(str.size + 1);
+	memcpy(buffer, str.data, str.size);
+	buffer[str.size] = 0;
+	OutputDebugStringA(buffer);
+#endif
+
+	// Stdout
+	SYSWriteFile(g_hStdout,     (void *)str.data, str.size);
+
+	// Log file
+	SYSWriteFile(g_logFileHandle, (void *)str.data, str.size);
+
+	return str.size;
+}
+
 s64 Print(const char *format, ...)
 {
-	// Log file
-	static FileHandle logFileHandle = SYSOpenFileWrite("output/log.txt"_s);
-
 	char *buffer = (char *)t_threadMemPtr;
 
 	va_list args;
 	va_start(args, format);
 
-	s64 size = stbsp_vsprintf(buffer, format, args);
-#if IS_WINDOWS
-	OutputDebugStringA(buffer);
-#endif
+	u64 size = stbsp_vsprintf(buffer, format, args);
 
-	// Stdout
-	SYSWriteFile(g_hStdout, buffer, strlen(buffer));
-
-	// Log file
-	SYSWriteFile(logFileHandle, buffer, strlen(buffer));
+	PrintString({ size, buffer });
 
 #if DEBUG_BUILD
 	memset(t_threadMemPtr, 0x00, size + 1);
@@ -159,6 +168,7 @@ u64 CycleCountEnd(u64 begin)
 struct Config
 {
 	bool silent;
+	bool useEscapeSequences;
 	bool dontPromoteMemoryToRegisters;
 	bool dontCallAssembler;
 	bool logAST;
@@ -224,7 +234,7 @@ struct Context
 
 	RWContainer<DynamicArray<TCScopeName, LinearAllocator>> tcGlobalNames;
 	RWContainer<DynamicArray<u32, LinearAllocator>> tcGlobalTypeIndices;
-	RWContainer<DynamicArray<DynamicArray<u32, LinearAllocator>, LinearAllocator>> tcInlineCalls;
+	MXContainer<DynamicArray<DynamicArray<InlineCall, LinearAllocator>, LinearAllocator>> tcInlineCalls;
 
 	// IR -----
 	RWContainer<BucketArray<StringLiteral, HeapAllocator, 1024>> stringLiterals;
@@ -238,6 +248,12 @@ struct Context
 
 	// Backend -----
 	RWContainer<DynamicArray<BEFinalProcedure, HeapAllocator>> beFinalProcedureData;
+};
+
+struct ThreadArgs
+{
+	Context *context;
+	u32 threadIndex;
 };
 
 struct ParseJobData
@@ -294,118 +310,7 @@ struct IRJobData
 	u32 x64SpilledParametersWrite[32];
 };
 
-FatSourceLocation ExpandSourceLocation(Context *context, SourceLocation loc);
-void __Log(Context *context, SourceLocation loc, String str,
-			const char *inFile, const char *inFunc, int inLine)
-{
-	if (loc.fileIdx != 0) {
-		FatSourceLocation fatLoc = ExpandSourceLocation(context, loc);
-		String filename = context->sourceFiles[loc.fileIdx].name;
-
-		ScopedLockMutex lock(context->consoleMutex);
-
-		// Info
-		Print("%S %d:%d %S\n", filename, fatLoc.line, fatLoc.character, str);
-
-		// Source line
-		Print("... %.*s\n... ", fatLoc.lineSize, fatLoc.beginingOfLine);
-
-		// Token underline
-		for (u32 i = 0; i < fatLoc.character - 1; ++i)
-		{
-			if (fatLoc.beginingOfLine[i] == '\t')
-				Print("\t");
-			else
-				Print(" ");
-		}
-		for (u32 i = 0; i < fatLoc.size; ++i)
-			Print("^");
-		Print("\n");
-	}
-	else {
-		Print("%S\n", str);
-	}
-
-#if DEBUG_BUILD
-	Print("~~~ In %s - %s:%d\n", inFunc, inFile, inLine);
-#endif
-}
-
-void __LogRange(Context *context, SourceLocation locBegin, SourceLocation locEnd, String str,
-			const char *inFile, const char *inFunc, int inLine)
-{
-	FatSourceLocation fatLocBegin = ExpandSourceLocation(context, locBegin);
-	FatSourceLocation fatLocEnd   = ExpandSourceLocation(context, locEnd);
-	String filename = context->sourceFiles[locBegin.fileIdx].name;
-
-	ScopedLockMutex lock(context->consoleMutex);
-
-	// Info
-	Print("%S %d:%d %S\n", filename, fatLocBegin.line, fatLocBegin.character, str);
-
-	// Source line
-	Print("... %.*s\n... ", fatLocBegin.lineSize, fatLocBegin.beginingOfLine);
-
-	// Token underline
-	u32 underlineCount = fatLocEnd.character - fatLocBegin.character + fatLocEnd.size;
-	for (u32 i = 0; i < fatLocBegin.character - 1; ++i)
-	{
-		if (fatLocBegin.beginingOfLine[i] == '\t')
-			Print("\t");
-		else
-			Print(" ");
-	}
-	for (u32 i = 0; i < underlineCount; ++i) {
-		char c = fatLocBegin.beginingOfLine[fatLocBegin.character + i];
-		if (c == '\n' || c == '\r')
-			break;
-		Print("^");
-	}
-	Print("\n");
-
-#if DEBUG_BUILD
-	Print("~~~ In %s - %s:%d\n", inFunc, inFile, inLine);
-#endif
-}
-
-#define Log(context, loc, str) \
-	do { __Log(context, loc, str, __FILE__, __func__, __LINE__); } while (0)
-
-#define LogErrorNoCrash(context, loc, str) \
-	do { __Log(context, loc, TStringConcat("ERROR: "_s, str), __FILE__, __func__, __LINE__); } while (0)
-
-#define LogWarning(context, loc, str) \
-	do { __Log(context, loc, TStringConcat("WARNING: "_s, str), __FILE__, __func__, __LINE__); } while (0)
-
-#define LogNote(context, loc, str) \
-	do { __Log(context, loc, TStringConcat("NOTE: "_s, str), __FILE__, __func__, __LINE__); } while (0)
-
-#define LogCompilerError(context, loc, str) \
-	do { __Log(context, loc, TStringConcat("COMPILER ERROR: "_s, str), __FILE__, __func__, __LINE__); PANIC; } while (0)
-
-#define Log2(context, locBegin, locEnd, str) \
-	do { __LogRange(context, locBegin, locEnd, str, __FILE__, __func__, __LINE__); } while (0)
-
-#define Log2ErrorNoCrash(context, locBegin, locEnd, str) \
-	do { __LogRange(context, locBegin, locEnd, TStringConcat("ERROR: "_s, str), __FILE__, __func__, __LINE__); } while (0)
-
-#define Log2Warning(context, locBegin, locEnd, str) \
-	do { __LogRange(context, locBegin, locEnd, TStringConcat("WARNING: "_s, str), __FILE__, __func__, __LINE__); } while (0)
-
-#define Log2Note(context, locBegin, locEnd, str) \
-	do { __LogRange(context, locBegin, locEnd, TStringConcat("NOTE: "_s, str), __FILE__, __func__, __LINE__); } while (0)
-
-#if EXIT_ON_FIRST_ERROR
-#define LogError(context, loc, str) \
-	do { LogErrorNoCrash(context, loc, str); PANIC; } while(0)
-#define Log2Error(context, locBegin, locEnd, str) \
-	do { Log2ErrorNoCrash(context, locBegin, locEnd, str); SwitchJob(context, YIELDREASON_FAILED, {}); } while(0)
-#else
-#define LogError(context, loc, str) \
-	do { LogErrorNoCrash(context, loc, str); PANIC; } while(0)
-#define Log2Error(context, locBegin, locEnd, str) \
-	do { Log2ErrorNoCrash(context, locBegin, locEnd, str); SwitchJob(context, YIELDREASON_FAILED, {}); } while(0)
-#endif
+#include "Log.cpp"
 
 bool CompilerAddSourceFile(Context *context, String filename, SourceLocation loc)
 {
@@ -445,12 +350,6 @@ bool CompilerAddSourceFile(Context *context, String filename, SourceLocation loc
 	return true;
 }
 
-struct ThreadArgs
-{
-	Context *context;
-	u32 threadIndex;
-};
-
 #include "OutputBuffer.cpp"
 #include "Scheduler.cpp"
 #include "Tokenizer.cpp"
@@ -470,6 +369,10 @@ int main(int argc, char **argv)
 	g_hStdin  = GetStdHandle(STD_INPUT_HANDLE);
 	g_hStdout = GetStdHandle(STD_OUTPUT_HANDLE);
 	g_hStderr = GetStdHandle(STD_ERROR_HANDLE);
+
+	DWORD initialConsoleMode;
+	GetConsoleMode(g_hStdout, &initialConsoleMode);
+	SetConsoleMode(g_hStdout, initialConsoleMode | ENABLE_VIRTUAL_TERMINAL_PROCESSING);
 #else
 	g_hStdin  = fileno(stdin);
 	g_hStdout = fileno(stdout);
@@ -492,6 +395,8 @@ int main(int argc, char **argv)
 	MemoryInit(&memory);
 
 	MemoryInitThread(128 * 1024 * 1024);
+
+	g_logFileHandle = SYSOpenFileWrite("output/log.txt"_s);
 
 	if (argc < 2) {
 		Print("Usage: compiler [options] <source file>\n");
@@ -521,11 +426,14 @@ int main(int argc, char **argv)
 #else
 	*DynamicArrayAdd(&inputFiles) = "core/basic_linux.emi"_s;
 #endif
+	context->config.useEscapeSequences = true;
 	for (int argIdx = 1; argIdx < argc; ++argIdx) {
 		char *arg = argv[argIdx];
 		if (arg[0] == '-') {
 			if (strcmp("-silent", arg) == 0)
 				context->config.silent = true;
+			else if (strcmp("-noEscapeSequences", arg) == 0)
+				context->config.useEscapeSequences = false;
 			else if (strcmp("-noPromote", arg) == 0)
 				context->config.dontPromoteMemoryToRegisters = true;
 			else if (strcmp("-noBuildExecutable", arg) == 0)
@@ -757,8 +665,14 @@ int main(int argc, char **argv)
 
 	if (!context->config.silent) {
 		TimerSplit("Done"_s);
+		ConsoleSetColor(CONSOLE_GREEN_TXT);
 		Print("Compilation success\n");
+		ConsoleSetColor(CONSOLE_RESET_COLOR);
 	}
+
+#if IS_WINDOWS
+	SetConsoleMode(g_hStdout, initialConsoleMode);
+#endif
 
 	return 0;
 }

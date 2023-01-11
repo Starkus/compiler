@@ -275,6 +275,12 @@ struct Procedure
 	BucketArray<IRInstruction, LinearAllocator, 256> irInstructions;
 };
 
+struct InlineCall
+{
+	u32 procedureIdx;
+	SourceLocation loc;
+};
+
 struct TCJobArgs
 {
 	Context *context;

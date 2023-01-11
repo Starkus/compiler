@@ -656,22 +656,19 @@ FatSourceLocation ExpandSourceLocation(Context *context, SourceLocation loc)
 	result.beginingOfLine = (const char *)sourceFile.buffer;
 	result.lineSize = 0;
 	result.line = 1;
-	result.character = 1;
+	result.column = 1;
 
 	ASSERT(loc.character < sourceFile.size);
 
 	const char *scan = (const char *)sourceFile.buffer;
-	for (u32 charIdx = 0; charIdx < loc.character; ++charIdx)
-	{
-		if (*scan == '\n')
-		{
+	for (u32 charIdx = 0; charIdx < loc.character; ++charIdx) {
+		if (*scan == '\n') {
 			++result.line;
-			result.character = 1;
+			result.column = 1;
 			result.beginingOfLine = ++scan;
 		}
-		else
-		{
-			++result.character;
+		else {
+			++result.column;
 			++scan;
 		}
 	}

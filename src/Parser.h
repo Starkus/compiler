@@ -129,7 +129,7 @@ struct FatSourceLocation
 	u32 lineSize;
 	u32 size;
 	u32 line;
-	u32 character;
+	u32 column;
 };
 
 struct SourceFile
