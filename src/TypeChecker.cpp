@@ -204,64 +204,6 @@ TCScope *GetTopMostScope(Context *context) {
 		return nullptr;
 }
 
-inline bool TCIsAnyOtherJobRunning(Context *context)
-{
-	int threadsDoingWork = 0;
-	for (int threadIdx = 0; threadIdx < context->threadStates.size; ++threadIdx) {
-		ThreadState state = context->threadStates[threadIdx];
-		if (state == THREADSTATE_WORKING) {
-			++threadsDoingWork;
-			if (threadsDoingWork > 1)
-				return true;
-		}
-	}
-	if (!MTQueueIsEmpty(&context->readyJobs))
-		return true;
-	if (!MTQueueIsEmpty(&context->jobsToCreate))
-		return true;
-
-	return false;
-}
-
-inline bool TCIsAnyOtherJobRunningOrWaiting(Context *context)
-{
-	int threadsDoingWork = 0;
-	for (int threadIdx = 0; threadIdx < context->threadStates.size; ++threadIdx) {
-		ThreadState state = context->threadStates[threadIdx];
-		if (state != THREADSTATE_GIVING_UP && state != THREADSTATE_TERMINATED) {
-			++threadsDoingWork;
-			if (threadsDoingWork > 1)
-				return true;
-		}
-	}
-	if (!MTQueueIsEmpty(&context->readyJobs))
-		return true;
-	if (!MTQueueIsEmpty(&context->jobsToCreate))
-		return true;
-	if (context->waitingJobsByReason[YIELDREASON_WAITING_FOR_STOP].unsafe.size)
-		return true;
-
-	return false;
-}
-
-inline bool TCAreAllJobFinished(Context *context)
-{
-	for (int threadIdx = 0; threadIdx < context->threadStates.size; ++threadIdx) {
-		ThreadState state = context->threadStates[threadIdx];
-		if (state != THREADSTATE_GIVING_UP && state != THREADSTATE_TERMINATED)
-			return false;
-	}
-	if (!MTQueueIsEmpty(&context->readyJobs))
-		return false;
-	if (!MTQueueIsEmpty(&context->jobsToCreate))
-		return false;
-	for (int yieldReason = 0; yieldReason < YIELDREASON_Count; ++yieldReason)
-		if (context->waitingJobsByReason[yieldReason].unsafe.size)
-			return false;
-
-	return true;
-}
-
 inline TypeInfo GetTypeInfo(Context *context, u32 typeTableIdx)
 {
 	ASSERT(typeTableIdx > TYPETABLEIDX_Unset);

@@ -744,8 +744,6 @@ int main(int argc, char **argv)
 	if (errorsFound)
 		LogError(context, {}, "Errors were found. Aborting"_s);
 
-	ASSERT(TCAreAllJobFinished(context));
-
 	for (int i = 0; i < context->jobs.unsafe.count; ++i) {
 		Job job = context->jobs.unsafe[i];
 		ASSERT(job.state == JOBSTATE_FINISHED);

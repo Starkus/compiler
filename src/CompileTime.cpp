@@ -1120,14 +1120,13 @@ ArrayView<const CTRegister *> CTRunProcedure(Context *context, u32 procedureIdx,
 	if (!proc.isIRReady) {
 		auto procedures = context->procedures.GetForRead();
 		proc = procedures[procedureIdx];
-		while (!proc.isIRReady) {
-			if (!TCIsAnyOtherJobRunningOrWaiting(context))
-				LogError(context, {}, TPrintF("COMPILER ERROR! IR of procedure "
-						"\"%S\" never generated", proc.name));
+		if (!proc.isIRReady) {
 			SwitchJob(context, YIELDREASON_PROC_IR_NOT_READY, { .index = procedureIdx });
 			// Lock again!
 			SYSLockForRead(&context->procedures.rwLock);
 			proc = procedures[procedureIdx];
+			if (!proc.isIRReady)
+				LogCompilerError(context, {}, "Bad job resume"_s);
 		}
 	}
 
