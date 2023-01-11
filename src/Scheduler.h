@@ -25,7 +25,7 @@ enum YieldReason : u32
 	YIELDREASON_PROC_BODY_NOT_READY,
 	YIELDREASON_PROC_IR_NOT_READY,
 	YIELDREASON_TYPE_NOT_READY,
-	YIELDREASON_GLOBAL_VALUE_NOT_READY,
+	YIELDREASON_GLOBAL_VALUE_NOT_ALLOCATED,
 	// WAITING_FOR_STOP jobs want to wait until no jobs are running to make a decision.
 	// As of time of write, only #defined does this to determine if something isn't defined anywhere
 	// before continuing.
@@ -48,9 +48,25 @@ struct YieldContext
 	};
 };
 
+enum JobType
+{
+	JOBTYPE_INVALID = 0,
+	JOBTYPE_PARSE,
+	JOBTYPE_TYPE_CHECK,
+	JOBTYPE_CODEGEN
+};
+enum JobState
+{
+	JOBSTATE_INIT,
+	JOBSTATE_RUNNING,
+	JOBSTATE_SUSPENDED,
+	JOBSTATE_FINISHED
+};
 struct Job
 {
 	Fiber fiber;
+	JobType type;
+	JobState state;
 
 #if DEBUG_BUILD
 	SourceLocation loc;
@@ -60,3 +76,6 @@ struct Job
 	// Some data about why the job yielded execution.
 	YieldContext context;
 };
+
+void SwitchJob(Context *context, YieldReason yieldReason, YieldContext yieldContext);
+u32 RequestNewJob(Context *context, JobType type, void (*proc)(void *), void *args);

@@ -1759,8 +1759,10 @@ void ParseJobProc(void *args)
 
 	SYSSetFiberData(context->flsIndex, &jobData);
 
+	Job *runningJob = GetCurrentJob(context);
+	runningJob->state = JOBSTATE_RUNNING;
 #if DEBUG_BUILD
-	t_runningJob.description = SStringConcat("P:"_s, context->sourceFiles[fileIdx].name);
+	runningJob->description = SStringConcat("P:"_s, context->sourceFiles[fileIdx].name);
 #endif
 
 	TokenizeFile(context, fileIdx);

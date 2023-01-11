@@ -1,3 +1,15 @@
+inline String GetValueName(Value value)
+{
+#if DEBUG_BUILD
+	return value.name;
+#else
+	if (value.flags & VALUEFLAGS_IS_EXTERNAL)
+		return StringExpand(value.externalSymbolName);
+	else
+		return "???"_s;
+#endif
+}
+
 u32 TCNewValue(Context *context, u32 typeTableIdx, u32 flags, u32 immitateValueIdx = U32_MAX)
 {
 	TCJobData *jobData = (TCJobData *)SYSGetFiberData(context->flsIndex);
@@ -278,7 +290,7 @@ inline TypeInfo TCGetTypeInfo(Context *context, u32 typeTableIdx)
 	SYSMutexLock(context->waitingJobsByReason[YIELDREASON_TYPE_NOT_READY].lock);
 	result = typeTable[typeTableIdx];
 
-	while (result.typeCategory == TYPECATEGORY_NOT_READY) {
+	if (result.typeCategory == TYPECATEGORY_NOT_READY) {
 		// IMPORTANT! The scheduler will unlock jobsWaitingForType once it adds this job to the
 		// waiting list, so we don't miss waking it up when updating the type.
 		SwitchJob(context, YIELDREASON_TYPE_NOT_READY, { .index = typeTableIdx });
@@ -286,6 +298,8 @@ inline TypeInfo TCGetTypeInfo(Context *context, u32 typeTableIdx)
 		SYSMutexLock(context->waitingJobsByReason[YIELDREASON_TYPE_NOT_READY].lock);
 
 		result = typeTable[typeTableIdx];
+		if (result.typeCategory == TYPECATEGORY_NOT_READY)
+			LogCompilerError(context, {}, "Bad job resume"_s);
 	}
 
 	SYSMutexUnlock(context->waitingJobsByReason[YIELDREASON_TYPE_NOT_READY].lock);
@@ -426,29 +440,38 @@ inline void TCPopScope(Context *context)
 
 TCScopeName FindGlobalName(Context *context, SourceLocation loc, String name)
 {
-	while (true) {
-		// Lock this, if we need to switch fibers, we don't unlock until we added this fiber to a
-		// waiting list.
-		SYSLockForRead(&context->tcGlobalNames.rwLock);
-		{
-			auto &globalNames = context->tcGlobalNames.unsafe;
-			for (int i = 0; i < globalNames.size; ++i) {
-				const TCScopeName *currentName = &globalNames[i];
-				if (StringEquals(name, currentName->name)) {
-					SYSUnlockForRead(&context->tcGlobalNames.rwLock);
-					return *currentName;
-				}
-			}
-			if (!TCIsAnyOtherJobRunningOrWaiting(context)) {
+	// Lock this, if we need to switch fibers, we don't unlock until we added this fiber to a
+	// waiting list.
+	SYSLockForRead(&context->tcGlobalNames.rwLock);
+	{
+		auto &globalNames = context->tcGlobalNames.unsafe;
+		for (int i = 0; i < globalNames.size; ++i) {
+			const TCScopeName *currentName = &globalNames[i];
+			if (StringEquals(name, currentName->name)) {
 				SYSUnlockForRead(&context->tcGlobalNames.rwLock);
-				return { NAMETYPE_INVALID };
+				return *currentName;
 			}
 		}
-
-		// IMPORTANT! The scheduler will unlock tcGlobalNames once it adds this job to
-		// the waiting list, so we don't miss waking it up when adding the identifier.
-		SwitchJob(context, YIELDREASON_UNKNOWN_IDENTIFIER, { .loc = loc, .identifier = name });
 	}
+
+	// IMPORTANT! The scheduler will unlock tcGlobalNames once it adds this job to
+	// the waiting list, so we don't miss waking it up when adding the identifier.
+	SwitchJob(context, YIELDREASON_UNKNOWN_IDENTIFIER, { .loc = loc, .identifier = name });
+
+	// Lock again
+	SYSLockForRead(&context->tcGlobalNames.rwLock);
+	{
+		auto &globalNames = context->tcGlobalNames.unsafe;
+		for (int i = 0; i < globalNames.size; ++i) {
+			const TCScopeName *currentName = &globalNames[i];
+			if (StringEquals(name, currentName->name)) {
+				SYSUnlockForRead(&context->tcGlobalNames.rwLock);
+				return *currentName;
+			}
+		}
+	}
+	// Shouldn't have resumed this job if the identifier is still missing.
+	LogCompilerError(context, loc, "Bad job resume"_s);
 }
 
 TCScopeName TCFindScopeName(Context *context, SourceLocation loc, String name)
@@ -504,13 +527,8 @@ inline StaticDefinition TCGetStaticDefinition(Context *context, u32 staticDefini
 	SYSLockForRead(&context->staticDefinitions.rwLock);
 
 	staticDefinition = staticDefinitions[staticDefinitionIdx];
-	while (staticDefinition.definitionType == STATICDEFINITIONTYPE_NOT_READY ||
+	if (staticDefinition.definitionType == STATICDEFINITIONTYPE_NOT_READY ||
 			(ensureTypeChecked && staticDefinition.typeTableIdx == TYPETABLEIDX_Unset)) {
-		if (!TCIsAnyOtherJobRunningOrWaiting(context))
-			LogError(context, {},
-					TPrintF("COMPILER ERROR! Static definition \"%S\" never processed",
-					staticDefinition.name));
-
 		// IMPORTANT! The scheduler will unlock staticDefinitions once it adds this job to the
 		// waiting list, so we don't miss waking it up when adding the identifier.
 		SwitchJob(context, YIELDREASON_STATIC_DEF_NOT_READY, { .index = staticDefinitionIdx });
@@ -522,7 +540,7 @@ inline StaticDefinition TCGetStaticDefinition(Context *context, u32 staticDefini
 
 		if (staticDefinition.definitionType == STATICDEFINITIONTYPE_NOT_READY ||
 				(ensureTypeChecked && staticDefinition.typeTableIdx == TYPETABLEIDX_Unset))
-			Print("Bad resume of job waiting for static def!\n");
+			LogCompilerError(context, {}, "Bad job resume"_s);
 	}
 	SYSUnlockForRead(&context->staticDefinitions.rwLock);
 	ProfilerEnd();
@@ -1190,10 +1208,14 @@ void *AllocateStaticData(Context *context, u32 valueIdx, u64 size, int alignment
 	}
 
 	if (valueIdx != U32_MAX) {
-		// @Improve: same lock for both of these?
-		ScopedLockSpin lock(&context->globalValuesLock);
-		*HashMapGetOrAdd(&context->globalValueContents, valueIdx & VALUE_GLOBAL_MASK) =
-			(CTRegister *)result;
+		{
+			// @Improve: same lock for both of these?
+			ScopedLockSpin lock(&context->globalValuesLock);
+			*HashMapGetOrAdd(&context->globalValueContents, valueIdx & VALUE_GLOBAL_MASK) = result;
+		}
+
+		// Wake up any jobs that were waiting for this global value to be allocated
+		WakeUpAllByIndex(context, YIELDREASON_GLOBAL_VALUE_NOT_ALLOCATED, valueIdx);
 	}
 
 	return result;
@@ -1280,11 +1302,13 @@ UserFacingTypeInfo *GetUserFacingTypeInfoPointer(Context *context, u32 typeTable
 
 	SpinlockLock(&context->globalValuesLock);
 	void **mapValue = HashMapGet(context->globalValueContents, typeInfoValueIdx & VALUE_GLOBAL_MASK);
-	while (!mapValue) {
-		SpinlockUnlock(&context->globalValuesLock);
-		SwitchJob(context, YIELDREASON_GLOBAL_VALUE_NOT_READY, { .index = typeInfoValueIdx });
+	if (!mapValue) {
+		SwitchJob(context, YIELDREASON_GLOBAL_VALUE_NOT_ALLOCATED, { .index = typeInfoValueIdx });
+		// Lock again!
 		SpinlockLock(&context->globalValuesLock);
 		mapValue = HashMapGet(context->globalValueContents, typeInfoValueIdx & VALUE_GLOBAL_MASK);
+		if (!mapValue)
+			LogCompilerError(context, {}, "Bad job resume"_s);
 	}
 	SpinlockUnlock(&context->globalValuesLock);
 
@@ -1619,19 +1643,22 @@ void TCAddScopeNames(Context *context, ArrayView<TCScopeName> scopeNames)
 				newNames[i] = scopeNames[i];
 		}
 
-		// Wake up any jobs that were waiting for this name
+		// Wake up any jobs that were waiting for these names
 		auto jobsWaiting = context->waitingJobsByReason[YIELDREASON_UNKNOWN_IDENTIFIER].Get();
-		for (int jobIdx = 0; jobIdx < jobsWaiting->size; ) {
-			Job *job = &jobsWaiting[jobIdx];
+		for (int i = 0; i < jobsWaiting->size; ) {
+			u32 jobIdx = jobsWaiting[i];
+			const Job *job = &context->jobs.unsafe[jobIdx];
 			for (int nameIdx = 0; nameIdx < scopeNames.size; ++nameIdx) {
 				if (StringEquals(job->context.identifier, scopeNames[nameIdx].name)) {
-					EnqueueReadyJob(context, *job);
-					// Remove
-					*job = jobsWaiting[--jobsWaiting->size];
+					EnqueueReadyJob(context, jobIdx);
+					// Remove waiting job
+					DynamicArraySwapRemove(&jobsWaiting, i);
+					goto outerContinue;
 				}
-				else
-					++jobIdx;
 			}
+			++i; // Didn't remove waiting job
+outerContinue:
+			continue;
 		}
 	}
 }
@@ -1701,7 +1728,7 @@ u32 TypeCheckStructDeclaration(Context *context, String name, bool isUnion,
 		.name = name,
 		.isUnion = isUnion
 	};
-	RequestNewJob(context, TCStructJobProc, (void *)args);
+	RequestNewJob(context, JOBTYPE_TYPE_CHECK, TCStructJobProc, (void *)args);
 
 	return typeTableIdx;
 }
@@ -2118,6 +2145,7 @@ u32 TypeCheckType(Context *context, String name, SourceLocation loc, ASTType *as
 			newScopeName.name = astMember.name;
 			newScopeName.staticDefinitionIdx = newStaticDefIdx;
 			newScopeName.loc = astMember.loc;
+			// Add to the local scope we created above!
 			TCAddScopeNames(context, { &newScopeName, 1 });
 			*ArrayAdd(&scopeNamesToAdd) = newScopeName;
 
@@ -2127,7 +2155,7 @@ u32 TypeCheckType(Context *context, String name, SourceLocation loc, ASTType *as
 		}
 
 		TCPopScope(context);
-		// Add global names
+		// Add to outer scope
 		TCAddScopeNames(context, scopeNamesToAdd);
 
 		// Update type info
@@ -3290,119 +3318,119 @@ bool LookForOperatorOverload(Context *context, ASTExpression *expression)
 			return false;
 	}
 
-	while (true) {
-		{
-			auto operatorOverloads = context->operatorOverloads.GetForRead();
-			for (int overloadIdx = 0; overloadIdx < operatorOverloads->size; ++overloadIdx) {
-				OperatorOverload currentOverload = operatorOverloads[overloadIdx];
+	bool triedOnce = false;
+tryAgain:
+	{
+		auto operatorOverloads = context->operatorOverloads.GetForRead();
+		for (int overloadIdx = 0; overloadIdx < operatorOverloads->size; ++overloadIdx) {
+			OperatorOverload currentOverload = operatorOverloads[overloadIdx];
 
-				if (op != currentOverload.op)
+			if (op != currentOverload.op)
+				continue;
+
+			Procedure procedure = GetProcedureRead(context, currentOverload.procedureIdx);
+			TypeInfo procType = TCGetTypeInfo(context, procedure.typeTableIdx);
+			ASSERT(procType.typeCategory == TYPECATEGORY_PROCEDURE);
+
+			if (paramCount == 1) {
+				if (procType.procedureInfo.parameters.size != 1)
 					continue;
 
-				Procedure procedure = GetProcedureRead(context, currentOverload.procedureIdx);
-				TypeInfo procType = TCGetTypeInfo(context, procedure.typeTableIdx);
-				ASSERT(procType.typeCategory == TYPECATEGORY_PROCEDURE);
+				u32 leftHandTypeIdx  = procType.procedureInfo.parameters[0].typeTableIdx;
 
-				if (paramCount == 1) {
-					if (procType.procedureInfo.parameters.size != 1)
-						continue;
+				if (CheckTypesMatch(context, leftHand->typeTableIdx, leftHandTypeIdx) != TYPECHECK_COOL)
+					continue;
 
-					u32 leftHandTypeIdx  = procType.procedureInfo.parameters[0].typeTableIdx;
+				if (foundOverload)
+					LogError(context, expression->any.loc,
+							TPrintF("Multiple overloads found for operator %S with operand of "
+								"type %S",
+								OperatorToString(op),
+								TypeInfoToString(context, leftHand->typeTableIdx)));
 
-					if (CheckTypesMatch(context, leftHand->typeTableIdx, leftHandTypeIdx) != TYPECHECK_COOL)
-						continue;
-
-					if (foundOverload)
-						LogError(context, expression->any.loc,
-								TPrintF("Multiple overloads found for operator %S with operand of "
-									"type %S",
-									OperatorToString(op),
-									TypeInfoToString(context, leftHand->typeTableIdx)));
-
-					overload = currentOverload;
-					foundOverload = true;
-				}
-				else {
-					if (procType.procedureInfo.parameters.size != 2)
-						continue;
-
-					u32 leftHandTypeIdx  = procType.procedureInfo.parameters[0].typeTableIdx;
-					u32 rightHandTypeIdx = procType.procedureInfo.parameters[1].typeTableIdx;
-
-					if (CheckTypesMatch(context, leftHand->typeTableIdx, leftHandTypeIdx) !=
-							TYPECHECK_COOL ||
-						CheckTypesMatch(context, rightHand->typeTableIdx, rightHandTypeIdx) !=
-							TYPECHECK_COOL)
-						continue;
-
-					if (foundOverload)
-						LogError(context, expression->any.loc,
-								TPrintF("Multiple overloads found for operator %S with left hand "
-									"of type %S and right hand of type %S",
-									OperatorToString(op),
-									TypeInfoToString(context, leftHand->typeTableIdx),
-									TypeInfoToString(context, rightHand->typeTableIdx)));
-
-					overload = currentOverload;
-					foundOverload = true;
-				}
+				overload = currentOverload;
+				foundOverload = true;
 			}
-			if (!foundOverload) {
-				if (!TCIsAnyOtherJobRunningOrWaiting(context))
-					// No one can save us
-					return false;
+			else {
+				if (procType.procedureInfo.parameters.size != 2)
+					continue;
 
-				SwitchJob(context, YIELDREASON_UNKNOWN_OVERLOAD, {
-						.loc = expression->any.loc,
-						.overload = {
-							.op = (u32)op,
-							.leftTypeIdx  = leftHand->typeTableIdx,
-							.rightTypeIdx = rightHand ? rightHand->typeTableIdx : U32_MAX
-						}});
-				// Lock again!
-				SYSLockForRead(&context->operatorOverloads.rwLock);
-				continue;
+				u32 leftHandTypeIdx  = procType.procedureInfo.parameters[0].typeTableIdx;
+				u32 rightHandTypeIdx = procType.procedureInfo.parameters[1].typeTableIdx;
+
+				if (CheckTypesMatch(context, leftHand->typeTableIdx, leftHandTypeIdx) !=
+						TYPECHECK_COOL ||
+					CheckTypesMatch(context, rightHand->typeTableIdx, rightHandTypeIdx) !=
+						TYPECHECK_COOL)
+					continue;
+
+				if (foundOverload)
+					LogError(context, expression->any.loc,
+							TPrintF("Multiple overloads found for operator %S with left hand "
+								"of type %S and right hand of type %S",
+								OperatorToString(op),
+								TypeInfoToString(context, leftHand->typeTableIdx),
+								TypeInfoToString(context, rightHand->typeTableIdx)));
+
+				overload = currentOverload;
+				foundOverload = true;
 			}
 		}
+		if (!foundOverload) {
+			// Shouldn't have resumed this job if the overload still doesn't exist.
+			if (triedOnce)
+				LogCompilerError(context, expression->any.loc, "Bad job resume"_s);
+			triedOnce = true;
 
-		ASSERT(foundOverload);
-		Procedure proc = GetProcedureRead(context, overload.procedureIdx);
-
-		TypeInfo procTypeInfo = TCGetTypeInfo(context, proc.typeTableIdx);
-		ASSERT(procTypeInfo.typeCategory == TYPECATEGORY_PROCEDURE);
-
-		if (proc.isInline && !proc.isBodyTypeChecked) {
-			auto procedures = context->procedures.GetForRead();
-			proc = procedures[overload.procedureIdx];
-			while (!proc.isBodyTypeChecked) {
-				if (!TCIsAnyOtherJobRunningOrWaiting(context))
-					LogError(context, expression->any.loc, TPrintF("COMPILER ERROR! Body of inline "
-							"procedure \"%S\" for operator overload never type checked", proc.name));
-				SwitchJob(context, YIELDREASON_PROC_BODY_NOT_READY, { .index = overload.procedureIdx });
-				// Lock again!
-				SYSLockForRead(&context->procedures.rwLock);
-				proc = procedures[overload.procedureIdx];
-			}
+			SwitchJob(context, YIELDREASON_UNKNOWN_OVERLOAD, {
+					.loc = expression->any.loc,
+					.overload = {
+						.op = (u32)op,
+						.leftTypeIdx  = leftHand->typeTableIdx,
+						.rightTypeIdx = rightHand ? rightHand->typeTableIdx : U32_MAX
+					}});
+			// Lock again!
+			SYSLockForRead(&context->operatorOverloads.rwLock);
+			goto tryAgain;
 		}
-
-		ASTProcedureCall astProcCall = {};
-		astProcCall.callType = CALLTYPE_STATIC;
-		astProcCall.procedureIdx = overload.procedureIdx;
-		astProcCall.procedureTypeIdx = proc.typeTableIdx;
-		DynamicArrayInit(&astProcCall.arguments, paramCount);
-		*DynamicArrayAdd(&astProcCall.arguments) = leftHand;
-		if (paramCount > 1)
-			*DynamicArrayAdd(&astProcCall.arguments) = rightHand;
-
-		expression->nodeType = ASTNODETYPE_PROCEDURE_CALL;
-		expression->procedureCall = astProcCall;
-
-		if (procTypeInfo.procedureInfo.returnTypeIndices.size == 1)
-			expression->typeTableIdx = procTypeInfo.procedureInfo.returnTypeIndices[0];
-
-		TCPushParametersAndInlineProcedureCall(context, &expression->procedureCall);
-		return true;
 	}
+
+	ASSERT(foundOverload);
+	Procedure proc = GetProcedureRead(context, overload.procedureIdx);
+
+	TypeInfo procTypeInfo = TCGetTypeInfo(context, proc.typeTableIdx);
+	ASSERT(procTypeInfo.typeCategory == TYPECATEGORY_PROCEDURE);
+
+	if (proc.isInline && !proc.isBodyTypeChecked) {
+		auto procedures = context->procedures.GetForRead();
+		proc = procedures[overload.procedureIdx];
+		if (!proc.isBodyTypeChecked) {
+			SwitchJob(context, YIELDREASON_PROC_BODY_NOT_READY, { .index = overload.procedureIdx });
+			// Lock again!
+			SYSLockForRead(&context->procedures.rwLock);
+			proc = procedures[overload.procedureIdx];
+			if (!proc.isBodyTypeChecked)
+				LogCompilerError(context, expression->any.loc, "Bad job resume"_s);
+		}
+	}
+
+	ASTProcedureCall astProcCall = {};
+	astProcCall.callType = CALLTYPE_STATIC;
+	astProcCall.procedureIdx = overload.procedureIdx;
+	astProcCall.procedureTypeIdx = proc.typeTableIdx;
+	DynamicArrayInit(&astProcCall.arguments, paramCount);
+	*DynamicArrayAdd(&astProcCall.arguments) = leftHand;
+	if (paramCount > 1)
+		*DynamicArrayAdd(&astProcCall.arguments) = rightHand;
+
+	expression->nodeType = ASTNODETYPE_PROCEDURE_CALL;
+	expression->procedureCall = astProcCall;
+
+	if (procTypeInfo.procedureInfo.returnTypeIndices.size == 1)
+		expression->typeTableIdx = procTypeInfo.procedureInfo.returnTypeIndices[0];
+
+	TCPushParametersAndInlineProcedureCall(context, &expression->procedureCall);
+	return true;
 }
 
 void GenerateTypeCheckJobs(Context *context, ASTExpression *expression);
@@ -3448,7 +3476,7 @@ void TypeCheckExpression(Context *context, ASTExpression *expression)
 				.localValues = {},
 				.expression = expression
 			};
-			RequestNewJob(context, IRJobExpression, (void *)args);
+			RequestNewJob(context, JOBTYPE_CODEGEN, IRJobExpression, (void *)args);
 		}
 	} break;
 	case ASTNODETYPE_STATIC_DEFINITION:
@@ -3601,7 +3629,7 @@ void TypeCheckExpression(Context *context, ASTExpression *expression)
 						.expression = nullptr
 					};
 					jobData->localValues = {}; // Safety clear
-					RequestNewJob(context, IRJobProcedure, (void *)args);
+					RequestNewJob(context, JOBTYPE_CODEGEN, IRJobProcedure, (void *)args);
 				}
 			}
 
@@ -3888,15 +3916,13 @@ void TypeCheckExpression(Context *context, ASTExpression *expression)
 					if (!proc.isBodyTypeChecked) {
 						auto procedures = context->procedures.GetForRead();
 						proc = procedures[procedureIdx];
-						while (!proc.isBodyTypeChecked) {
-							if (!TCIsAnyOtherJobRunningOrWaiting(context)) {
-								LogError(context, astProcExp->any.loc, TPrintF("COMPILER ERROR! Body of "
-											"inline procedure \"%S\" never type checked", proc.name));
-							}
+						if (!proc.isBodyTypeChecked) {
 							SwitchJob(context, YIELDREASON_PROC_BODY_NOT_READY, { .index = procedureIdx });
 							// Lock again!
 							SYSLockForRead(&context->procedures.rwLock);
 							proc = procedures[procedureIdx];
+							if (!proc.isBodyTypeChecked)
+								LogCompilerError(context, expression->any.loc, "Bad job resume"_s);
 						}
 					}
 				}
@@ -3905,9 +3931,8 @@ void TypeCheckExpression(Context *context, ASTExpression *expression)
 		}
 
 		if (procedureTypeIdx == TYPETABLEIDX_Unset)
-			LogError(context, astProcExp->any.loc, TPrintF("COMPILER ERROR! Procedure "
-							"\"%S\" not type checked",
-							GetProcedureRead(context, procedureIdx).name));
+			LogCompilerError(context, astProcExp->any.loc, TPrintF("Procedure \"%S\" not type "
+						"checked", GetProcedureRead(context, procedureIdx).name));
 		ASSERT(TCGetTypeInfo(context, procedureTypeIdx).typeCategory == TYPECATEGORY_PROCEDURE);
 
 		s64 givenArguments = astProcCall->arguments.size;
@@ -4821,22 +4846,32 @@ void TypeCheckExpression(Context *context, ASTExpression *expression)
 			}
 		}
 		// Global scope
-		while (true) {
-			{
-				auto globalNames = context->tcGlobalNames.GetForRead();
-				for (int i = 0; i < globalNames->size; ++i) {
-					const TCScopeName *currentName = &globalNames[i];
-					if (StringEquals(identifier, currentName->name)) {
-						isDefined = true;
-						goto done;
-					}
+		{
+			auto globalNames = context->tcGlobalNames.GetForRead();
+			for (int i = 0; i < globalNames->size; ++i) {
+				const TCScopeName *currentName = &globalNames[i];
+				if (StringEquals(identifier, currentName->name)) {
+					isDefined = true;
+					goto done;
 				}
 			}
-			if (!TCIsAnyOtherJobRunning(context))
-				goto done;
-			SwitchJob(context, YIELDREASON_WAITING_FOR_STOP, {});
 		}
-
+		SwitchJob(context, YIELDREASON_WAITING_FOR_STOP, {});
+		// Look one last time...
+		{
+			auto globalNames = context->tcGlobalNames.GetForRead();
+			// @Improve: resume loop at the last index we checked?
+			for (int i = 0; i < globalNames->size; ++i) {
+				const TCScopeName *currentName = &globalNames[i];
+				if (StringEquals(identifier, currentName->name)) {
+					isDefined = true;
+					goto done;
+				}
+			}
+		}
+		// Not defined!
+		// @Todo: keep track of stuff we assumed not to be defined. If at the end it is, report an
+		// error.
 done:
 		expression->definedNode.isDefined = isDefined;
 	} break;
@@ -4892,38 +4927,41 @@ void TCJobProc(void *args)
 	SYSSetFiberData(context->flsIndex, &jobData);
 
 #if DEBUG_BUILD
-	{
-		t_runningJob.loc = expression->any.loc;
+	Job *runningJob = GetCurrentJob(context);
+	runningJob->loc = expression->any.loc;
 
-		String threadName = "TC:???"_s;
-		switch (expression->nodeType) {
-		case ASTNODETYPE_STATIC_DEFINITION:
-			switch (expression->staticDefinition.expression->nodeType) {
-			case ASTNODETYPE_PROCEDURE_DECLARATION:
-				threadName = SNPrintF(96, "TC:%S - Procedure declaration",
-						expression->staticDefinition.name);
-				break;
-			case ASTNODETYPE_TYPE:
-			case ASTNODETYPE_ALIAS:
-				threadName = SNPrintF(96, "TC:%S - Type declaration",
-						expression->staticDefinition.name);
-				break;
-			case ASTNODETYPE_IDENTIFIER:
-				threadName = SNPrintF(96, "TC:%S - Constant declaration",
-						expression->staticDefinition.name);
-				break;
-			}
-			break;
-		case ASTNODETYPE_VARIABLE_DECLARATION:
-			threadName = SNPrintF(96, "TC:%S - Variable declaration",
+	String threadName = "TC:???"_s;
+	switch (expression->nodeType) {
+	case ASTNODETYPE_STATIC_DEFINITION:
+		switch (expression->staticDefinition.expression->nodeType) {
+		case ASTNODETYPE_PROCEDURE_DECLARATION:
+			threadName = SNPrintF(96, "TC:%S - Procedure declaration",
 					expression->staticDefinition.name);
 			break;
-		case ASTNODETYPE_IF_STATIC:
-			threadName = "TC:Static if"_s;
+		case ASTNODETYPE_TYPE:
+		case ASTNODETYPE_ALIAS:
+			threadName = SNPrintF(96, "TC:%S - Type declaration",
+					expression->staticDefinition.name);
+			break;
+		case ASTNODETYPE_IDENTIFIER:
+			threadName = SNPrintF(96, "TC:%S - Constant declaration",
+					expression->staticDefinition.name);
+			break;
+		default:
+			threadName = SNPrintF(96, "TC:%S - Static definition",
+					expression->staticDefinition.name);
 			break;
 		}
-		t_runningJob.description = threadName;
+		break;
+	case ASTNODETYPE_VARIABLE_DECLARATION:
+		threadName = SNPrintF(96, "TC:%S - Variable declaration",
+				expression->staticDefinition.name);
+		break;
+	case ASTNODETYPE_IF_STATIC:
+		threadName = "TC:Static if"_s;
+		break;
 	}
+	runningJob->description = threadName;
 #endif
 
 	switch (expression->nodeType) {
@@ -4976,6 +5014,11 @@ void TCStructJobProc(void *args)
 {
 	TCStructJobArgs *argsStruct = (TCStructJobArgs *)args;
 	Context *context = argsStruct->context;
+
+#if DEBUG_BUILD
+	Job *runningJob = GetCurrentJob(context);
+	runningJob->description = SNPrintF(96, "TC:Struct \"%S\"", argsStruct->name);
+#endif
 
 	TCJobData jobData = {};
 	jobData.onStaticContext = true;
@@ -5082,7 +5125,7 @@ void GenerateTypeCheckJobs(Context *context, ASTExpression *expression) {
 		*args = {
 			.context = context,
 			.expression = expression };
-		RequestNewJob(context, TCJobProc, (void *)args);
+		RequestNewJob(context, JOBTYPE_TYPE_CHECK, TCJobProc, (void *)args);
 	} break;
 	case ASTNODETYPE_GARBAGE:
 	case ASTNODETYPE_RETURN:
@@ -5103,13 +5146,13 @@ void GenerateTypeCheckJobs(Context *context, ASTExpression *expression) {
 	case ASTNODETYPE_CAST:
 	case ASTNODETYPE_INTRINSIC:
 	{
-		LogError(context, expression->any.loc, "COMPILER PANIC! Invalid expression type found "
-				"while generating type checking jobs"_s);
+		LogCompilerError(context, expression->any.loc, "Invalid expression type found while "
+				"generating type checking jobs"_s);
 	} break;
 	default:
 	{
-		LogError(context, expression->any.loc, "COMPILER PANIC! Unknown expression type found "
-				"while generating type checking jobs"_s);
+		LogCompilerError(context, expression->any.loc, "Unknown expression type found while "
+				"generating type checking jobs"_s);
 	}
 	}
 }

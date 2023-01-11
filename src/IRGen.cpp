@@ -2843,7 +2843,8 @@ void IRJobProcedure(void *args)
 	SYSSetFiberData(context->flsIndex, &jobData);
 
 #if DEBUG_BUILD
-	t_runningJob.description = SStringConcat("IR:"_s, GetProcedureRead(context, procedureIdx).name);
+	Job *runningJob = GetCurrentJob(context);
+	runningJob->description = SStringConcat("IR:"_s, GetProcedureRead(context, procedureIdx).name);
 #endif
 
 	ASSERT(GetProcedureRead(context, procedureIdx).astBody != nullptr);
@@ -2878,7 +2879,8 @@ void IRJobExpression(void *args)
 	SYSSetFiberData(context->flsIndex, &jobData);
 
 #if DEBUG_BUILD
-	t_runningJob.description = "IR:Expression"_s;
+	Job *runningJob = GetCurrentJob(context);
+	runningJob->description = "IR:Expression"_s;
 #endif
 
 	IRGenFromExpression(context, argsStruct->expression);

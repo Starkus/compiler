@@ -16,6 +16,7 @@ struct ParseJobArgs
 
 struct JobRequest
 {
+	u32 jobIdx;
 	void (*proc)(void *);
 	void *args;
 };

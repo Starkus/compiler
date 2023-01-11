@@ -21,7 +21,7 @@ CTRegister *CTGetValueContent(CTContext *ctContext, u32 valueIdx)
 {
 	Value v = CTGetValue(ctContext, valueIdx);
 	if (valueIdx & VALUE_GLOBAL_BIT) {
-		if (v.flags & VALUEFLAGS_IS_EXTERNAL)
+		if (v.flags & VALUEFLAGS_IS_EXTERNAL) {
 #if DEBUG_BUILD
 			LogError(ctContext->globalContext, ctContext->currentLoc, TPrintF("Can't access "
 					"external variable \"%S\" during compile time", v.name));
@@ -29,25 +29,18 @@ CTRegister *CTGetValueContent(CTContext *ctContext, u32 valueIdx)
 			LogError(ctContext->globalContext, ctContext->currentLoc, "Can't access "
 					"external variable during compile time"_s);
 #endif
+		}
 
 		SpinlockLock(&ctContext->globalContext->globalValuesLock);
 		auto globalValues = ctContext->globalContext->globalValueContents;
 		void **ptr = HashMapGet(globalValues, valueIdx & VALUE_GLOBAL_MASK);
-		while (!ptr) {
-			if (!TCIsAnyOtherJobRunningOrWaiting(ctContext->globalContext)) {
-#if DEBUG_BUILD
-				LogError(ctContext->globalContext, ctContext->currentLoc, TPrintF("Static "
-						"variable \"%S\" never set at compile time", v.name));
-#else
-				LogError(ctContext->globalContext, ctContext->currentLoc, "Static "
-						"variable never set at compile time"_s);
-#endif
-			}
-			SpinlockUnlock(&ctContext->globalContext->globalValuesLock);
-			SwitchJob(ctContext->globalContext, YIELDREASON_GLOBAL_VALUE_NOT_READY,
+		if  (!ptr) {
+			SwitchJob(ctContext->globalContext, YIELDREASON_GLOBAL_VALUE_NOT_ALLOCATED,
 					{ .index = valueIdx });
 			SpinlockLock(&ctContext->globalContext->globalValuesLock);
 			ptr = HashMapGet(globalValues, valueIdx & VALUE_GLOBAL_MASK);
+			if (!ptr)
+				LogCompilerError(ctContext->globalContext, {}, "Bad job resume"_s);
 		}
 		SpinlockUnlock(&ctContext->globalContext->globalValuesLock);
 		CTRegister *value = (CTRegister *)*ptr;
