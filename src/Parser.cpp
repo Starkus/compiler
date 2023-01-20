@@ -159,11 +159,10 @@ ASTType ParseType(Context *context)
 		Advance(context);
 		astType.nodeType = ASTTYPENODETYPE_ARRAY;
 
-		astType.arrayCount = 0;
-		if (jobData->token->type == TOKEN_LITERAL_NUMBER)
-		{
-			astType.arrayCount = ParseInt(context, TokenToString(context, *jobData->token));
-			Advance(context);
+		astType.arrayCountExp = nullptr;
+		if (jobData->token->type != ']') {
+			astType.arrayCountExp = PNewTreeNode(context);
+			*astType.arrayCountExp = ParseExpression(context, -1);
 		}
 		AssertToken(context, jobData->token, ']');
 		Advance(context);
@@ -708,10 +707,21 @@ ASTStructDeclaration ParseStructOrUnion(Context *context)
 	structDeclaration.loc = loc;
 	DynamicArrayInit(&structDeclaration.members, 16);
 
+	if (jobData->token->type == TOKEN_DIRECTIVE_ALIGN) {
+		Advance(context);
+		AssertToken(context, jobData->token, '(');
+		Advance(context);
+
+		structDeclaration.alignExp = PNewTreeNode(context);
+		*structDeclaration.alignExp = ParseExpression(context, -1);
+
+		AssertToken(context, jobData->token, ')');
+		Advance(context);
+	}
+
 	AssertToken(context, jobData->token, '{');
 	Advance(context);
-	while (jobData->token->type != '}')
-	{
+	while (jobData->token->type != '}') {
 		ASTStructMemberDeclaration member = ParseStructMemberDeclaration(context);
 		*DynamicArrayAdd(&structDeclaration.members) = member;
 
@@ -958,7 +968,7 @@ loop:
 	return astPrototype;
 }
 
-String EscapeString(String string)
+String EscapeString(Context *context, String string, SourceLocation loc)
 {
 	// Return same string if there's nothing to escape
 	int i;
@@ -978,12 +988,12 @@ escape:
 	memcpy(out, in, i);
 	out += i;
 	in  += i;
+	const void *end = string.data + string.size;
 
-	for (; i < string.size; ++i) {
+	while (in < end) {
 		if (*in == '\\') {
 			++in;
-			switch (*in)
-			{
+			switch (*in) {
 			case 'n':
 				*out++ = '\n';
 				break;
@@ -996,9 +1006,21 @@ escape:
 			case '\'':
 				*out++ = '\'';
 				break;
+			case '\\':
+				*out++ = '\\';
+				break;
+			case 'x':
+				if (in + 2 >= end)
+					LogError(context, loc, "Missing characters for hexadecimal number following \\x"_s);
+				ParseNumberResult result = IntFromStringHex({ 2, (const char *)in + 1 });
+				if (result.error != PARSENUMBERRROR_OK)
+					LogError(context, loc, "Could not parse hexadecimal number following \\x"_s);
+				*out++ = (char)result.number;
+				in += 2;
+				size -= 2;
+				break;
 			}
 			++in;
-			++i;
 			--size; // Don't count backslash for string size.
 		}
 		else {
@@ -1019,8 +1041,7 @@ ASTExpression ParseExpression(Context *context, s32 precedence)
 	result.typeTableIdx = TYPETABLEIDX_Unset;
 	result.any.loc = jobData->token->loc;
 
-	switch (jobData->token->type)
-	{
+	switch (jobData->token->type) {
 	// Parenthesis
 	case '(':
 	{
@@ -1123,7 +1144,7 @@ ASTExpression ParseExpression(Context *context, s32 precedence)
 	case TOKEN_LITERAL_STRING:
 	{
 		String str = TokenToString(context, *jobData->token);
-		str = EscapeString(str);
+		str = EscapeString(context, str, jobData->token->loc);
 		result.any.loc = jobData->token->loc;
 		result.nodeType = ASTNODETYPE_LITERAL;
 		result.literal.type = LITERALTYPE_STRING;
@@ -1135,10 +1156,13 @@ ASTExpression ParseExpression(Context *context, s32 precedence)
 		Advance(context);
 		AssertToken(context, jobData->token, TOKEN_LITERAL_STRING);
 
+		String str = TokenToString(context, *jobData->token);
+		str = EscapeString(context, str, jobData->token->loc);
+
 		result.any.loc = jobData->token->loc;
 		result.nodeType = ASTNODETYPE_LITERAL;
 		result.literal.type = LITERALTYPE_CSTR;
-		result.literal.string = TokenToString(context, *jobData->token);
+		result.literal.string = str;
 		Advance(context);
 	} break;
 	case TOKEN_KEYWORD_TYPEOF:

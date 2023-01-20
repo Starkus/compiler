@@ -207,16 +207,6 @@ TCScope *GetTopMostScope(Context *context) {
 inline TypeInfo GetTypeInfo(Context *context, u32 typeTableIdx)
 {
 	ASSERT(typeTableIdx > TYPETABLEIDX_Unset);
-	TypeInfo result;
-	auto &typeTable = context->typeTable.unsafe;
-	result = typeTable[typeTableIdx];
-	ASSERT(result.typeCategory >= TYPECATEGORY_ValidBegin);
-	return result;
-}
-
-inline TypeInfo TCGetTypeInfo(Context *context, u32 typeTableIdx)
-{
-	ASSERT(typeTableIdx > TYPETABLEIDX_Unset);
 
 	// Optimize common path: type IS ready! don't lock anything, just read.
 	auto &typeTable = context->typeTable.unsafe;
@@ -257,7 +247,7 @@ String TypeInfoToString(Context *context, u32 typeTableIdx)
 	if (typeTableIdx == TYPETABLEIDX_FLOATING)
 		return "<floating>"_s;
 
-	TypeInfo typeInfo = TCGetTypeInfo(context, typeTableIdx);
+	TypeInfo typeInfo = GetTypeInfo(context, typeTableIdx);
 	switch (typeInfo.typeCategory)
 	{
 	case TYPECATEGORY_STRUCT:
@@ -613,8 +603,8 @@ TypeCheckErrorCode CheckTypesMatch(Context *context, u32 leftTypeIdx, u32 rightT
 	if (leftTypeIdx == TYPETABLEIDX_ANY_STRUCT || rightTypeIdx == TYPETABLEIDX_ANY_STRUCT)
 		return TYPECHECK_COOL;
 
-	TypeInfo left  = TCGetTypeInfo(context, leftTypeIdx);
-	TypeInfo right = TCGetTypeInfo(context, rightTypeIdx);
+	TypeInfo left  = GetTypeInfo(context, leftTypeIdx);
+	TypeInfo right = GetTypeInfo(context, rightTypeIdx);
 
 	if (leftTypeIdx == TYPETABLEIDX_BOOL)
 	{
@@ -636,7 +626,7 @@ TypeCheckErrorCode CheckTypesMatch(Context *context, u32 leftTypeIdx, u32 rightT
 		{
 			u32 leftTypeIdxStripped = StripAllAliases(context, leftTypeIdx);
 			TypeCategory strippedTypeCategory =
-				TCGetTypeInfo(context, leftTypeIdxStripped).typeCategory;
+				GetTypeInfo(context, leftTypeIdxStripped).typeCategory;
 			if (strippedTypeCategory == TYPECATEGORY_INTEGER ||
 				strippedTypeCategory == TYPECATEGORY_FLOATING)
 				return TYPECHECK_COOL;
@@ -656,7 +646,7 @@ TypeCheckErrorCode CheckTypesMatch(Context *context, u32 leftTypeIdx, u32 rightT
 		{
 			u32 rightTypeIdxStripped = StripAllAliases(context, rightTypeIdx);
 			TypeCategory strippedTypeCategory =
-				TCGetTypeInfo(context, rightTypeIdxStripped).typeCategory;
+				GetTypeInfo(context, rightTypeIdxStripped).typeCategory;
 			if (strippedTypeCategory == TYPECATEGORY_INTEGER ||
 				strippedTypeCategory == TYPECATEGORY_FLOATING)
 				return TYPECHECK_COOL;
@@ -722,8 +712,8 @@ TypeCheckErrorCode CheckTypesMatch(Context *context, u32 leftTypeIdx, u32 rightT
 			return TYPECHECK_COOL;
 
 		// Allow implicit ^[T] -> ^T
-		TypeInfo pointedLeft  = TCGetTypeInfo(context, pointedTypeIdxLeft);
-		TypeInfo pointedRight = TCGetTypeInfo(context, pointedTypeIdxRight);
+		TypeInfo pointedLeft  = GetTypeInfo(context, pointedTypeIdxLeft);
+		TypeInfo pointedRight = GetTypeInfo(context, pointedTypeIdxRight);
 		if (pointedLeft.typeCategory == TYPECATEGORY_ARRAY &&
 			pointedRight.typeCategory != TYPECATEGORY_ARRAY)
 		{
@@ -756,10 +746,11 @@ TypeCheckErrorCode CheckTypesMatch(Context *context, u32 leftTypeIdx, u32 rightT
 	} break;
 	case TYPECATEGORY_INTEGER:
 	{
-		if (left.integerInfo.isSigned != right.integerInfo.isSigned)
-			return TYPECHECK_SIGN_MISMATCH;
 		if (left.size < right.size)
 			return TYPECHECK_SIZE_MISMATCH;
+		if (left.size == right.size && left.integerInfo.isSigned != right.integerInfo.isSigned)
+			// Only when converting to same size (or less, but that goes to the error above).
+			return TYPECHECK_SIGN_MISMATCH;
 		return TYPECHECK_COOL;
 	} break;
 	case TYPECATEGORY_FLOATING:
@@ -816,7 +807,7 @@ const StructMember *FindStructMemberByName(Context *context, TypeInfo structType
 		if (currentMember->isUsing || currentMember->name.size == 0)
 		{
 			// Anonymous structs/unions and using
-			TypeInfo memberTypeInfo = TCGetTypeInfo(context, currentMember->typeTableIdx);
+			TypeInfo memberTypeInfo = GetTypeInfo(context, currentMember->typeTableIdx);
 			ASSERT(memberTypeInfo.typeCategory == TYPECATEGORY_STRUCT ||
 				   memberTypeInfo.typeCategory == TYPECATEGORY_UNION);
 			const StructMember *found = FindStructMemberByName(context, memberTypeInfo, name);
@@ -886,7 +877,7 @@ TypeCheckResult CheckTypesMatchAndSpecialize(Context *context, u32 leftTypeIdx, 
 		ASSERT(rightHand->literal.type == LITERALTYPE_GROUP);
 
 		u32 structTypeIdx = leftTypeIdx;
-		TypeInfo structTypeInfo = TCGetTypeInfo(context, structTypeIdx);
+		TypeInfo structTypeInfo = GetTypeInfo(context, structTypeIdx);
 		if (structTypeInfo.typeCategory == TYPECATEGORY_STRUCT ||
 			structTypeInfo.typeCategory == TYPECATEGORY_UNION)
 		{
@@ -902,7 +893,7 @@ TypeCheckResult CheckTypesMatchAndSpecialize(Context *context, u32 leftTypeIdx, 
 			int memberIdx = 0;
 			while (memberIdx < rightHand->literal.members.size) {
 				StructStackFrame currentFrame = structStack[structStack.size - 1];
-				TypeInfo currentStructTypeInfo = TCGetTypeInfo(context, currentFrame.structTypeIdx);
+				TypeInfo currentStructTypeInfo = GetTypeInfo(context, currentFrame.structTypeIdx);
 
 				if (currentFrame.idx >= currentStructTypeInfo.structInfo.members.size) {
 					// Pop struct frame
@@ -914,7 +905,7 @@ TypeCheckResult CheckTypesMatchAndSpecialize(Context *context, u32 leftTypeIdx, 
 
 				u32 currentMemberTypeIdx =
 					currentStructTypeInfo.structInfo.members[currentFrame.idx].typeTableIdx;
-				TypeInfo currentMemberTypeInfo = TCGetTypeInfo(context, currentMemberTypeIdx);
+				TypeInfo currentMemberTypeInfo = GetTypeInfo(context, currentMemberTypeIdx);
 
 				if (currentMemberTypeInfo.typeCategory == TYPECATEGORY_STRUCT ||
 					currentMemberTypeInfo.typeCategory == TYPECATEGORY_UNION) {
@@ -1012,8 +1003,8 @@ TypeCheckResult CheckTypesMatchAndSpecialize(Context *context, u32 leftTypeIdx, 
 	else {
 		u32 strippedLeftTypeIdx  = StripAllAliases(context, leftTypeIdx);
 		u32 strippedRightTypeIdx = StripAllAliases(context, rightTypeIdx);
-		TypeCategory strippedLeftTypeCat  = TCGetTypeInfo(context, strippedLeftTypeIdx).typeCategory;
-		TypeCategory strippedRightTypeCat = TCGetTypeInfo(context, strippedRightTypeIdx).typeCategory;
+		TypeCategory strippedLeftTypeCat  = GetTypeInfo(context, strippedLeftTypeIdx).typeCategory;
+		TypeCategory strippedRightTypeCat = GetTypeInfo(context, strippedRightTypeIdx).typeCategory;
 
 		if (leftTypeIdx == TYPETABLEIDX_INTEGER && (strippedRightTypeCat == TYPECATEGORY_INTEGER ||
 			strippedRightTypeCat == TYPECATEGORY_POINTER || strippedRightTypeCat == TYPECATEGORY_FLOATING ||
@@ -1523,7 +1514,7 @@ u32 GetTypeInfoArrayOf(Context *context, u32 inType, s64 count)
 		resultTypeInfo.size = 8 + g_pointerSize;
 	else
 	{
-		s64 elementSize = TCGetTypeInfo(context, inType).size;
+		s64 elementSize = GetTypeInfo(context, inType).size;
 		resultTypeInfo.size = elementSize * count;
 	}
 	return FindOrAddTypeTableIdx(context, resultTypeInfo);
@@ -1605,10 +1596,26 @@ outerContinue:
 	}
 }
 
+void TypeCheckExpression(Context *context, ASTExpression *expression);
+Constant TryEvaluateConstant(Context *context, ASTExpression *expression);
 void TCStructJobProc(void *args);
 u32 TypeCheckStructDeclaration(Context *context, String name, bool isUnion,
 		ASTStructDeclaration astStructDecl)
 {
+	u8 alignment = 0;
+	if (astStructDecl.alignExp) {
+		TypeCheckExpression(context, astStructDecl.alignExp);
+		Constant constant = TryEvaluateConstant(context, astStructDecl.alignExp);
+		if (constant.type == CONSTANTTYPE_INVALID)
+			LogError(context, astStructDecl.alignExp->any.loc, "Could not evaluate alignment"_s);
+		if (constant.type != CONSTANTTYPE_INTEGER)
+			LogError(context, astStructDecl.alignExp->any.loc, "Alignment expression did not "
+					"evaluate to an integer"_s);
+		if (constant.valueAsInt > U8_MAX)
+			LogError(context, astStructDecl.alignExp->any.loc, "Alignment specified is too large"_s);
+		alignment = (u8)constant.valueAsInt;
+	}
+
 	u32 typeTableIdx;
 	if (StringEquals(name, "String"_s))
 		typeTableIdx = TYPETABLEIDX_STRING_STRUCT;
@@ -1640,6 +1647,7 @@ u32 TypeCheckStructDeclaration(Context *context, String name, bool isUnion,
 		ASSERT(context->typeTable.unsafe.count < U32_MAX);
 		TypeInfo t = {
 			.typeCategory = TYPECATEGORY_NOT_READY,
+			.alignment = alignment,
 			.structInfo = {
 				.name = name
 			}
@@ -1905,6 +1913,14 @@ Constant TryEvaluateConstant(Context *context, ASTExpression *expression)
 			else
 				result.valueAsInt = leftValue.valueAsInt == rightValue.valueAsInt;
 		} break;
+		case TOKEN_OP_NOT_EQUALS:
+		{
+			result.type = CONSTANTTYPE_INTEGER;
+			if (isFloat)
+				result.valueAsInt = leftValue.valueAsFloat != rightValue.valueAsFloat;
+			else
+				result.valueAsInt = leftValue.valueAsInt != rightValue.valueAsInt;
+		} break;
 		case TOKEN_OP_LESS_THAN:
 		{
 			result.type = CONSTANTTYPE_INTEGER;
@@ -1960,7 +1976,7 @@ Constant TryEvaluateConstant(Context *context, ASTExpression *expression)
 	{
 		Constant constant = TryEvaluateConstant(context, expression->castNode.expression);
 		bool isFloat = constant.type == CONSTANTTYPE_FLOATING;
-		bool castToFloat = TCGetTypeInfo(context, expression->typeTableIdx).typeCategory ==
+		bool castToFloat = GetTypeInfo(context, expression->typeTableIdx).typeCategory ==
 			TYPECATEGORY_FLOATING;
 		if (!isFloat && castToFloat)
 			result.valueAsFloat = (f64)constant.valueAsInt;
@@ -1983,7 +1999,6 @@ error:
 	return { CONSTANTTYPE_INVALID };
 }
 
-void TypeCheckExpression(Context *context, ASTExpression *expression);
 bool TypeCheckProcedurePrototype(Context *context, ASTProcedurePrototype *prototype);
 TypeInfo TypeInfoFromASTProcedurePrototype(Context *context, ASTProcedurePrototype *prototype);
 u32 TypeCheckType(Context *context, String name, SourceLocation loc, ASTType *astType)
@@ -1997,7 +2012,17 @@ u32 TypeCheckType(Context *context, String name, SourceLocation loc, ASTType *as
 	case ASTTYPENODETYPE_ARRAY:
 	{
 		u32 elementTypeIdx = TypeCheckType(context, {}, loc, astType->arrayType);
-		return GetTypeInfoArrayOf(context, elementTypeIdx, astType->arrayCount);
+		s64 arrayCount = 0;
+		if (astType->arrayCountExp) {
+			TypeCheckExpression(context, astType->arrayCountExp);
+			Constant constant = TryEvaluateConstant(context, astType->arrayCountExp);
+			if (constant.type == CONSTANTTYPE_INVALID)
+				LogError(context, loc, "Could not evaluate array count"_s);
+			if (constant.type != CONSTANTTYPE_INTEGER)
+				LogError(context, loc, "Array count did not evaluate to an integer"_s);
+			arrayCount = constant.valueAsInt;
+		}
+		return GetTypeInfoArrayOf(context, elementTypeIdx, arrayCount);
 	} break;
 	case ASTTYPENODETYPE_POINTER:
 	{
@@ -2031,7 +2056,7 @@ u32 TypeCheckType(Context *context, String name, SourceLocation loc, ASTType *as
 		t.typeCategory = TYPECATEGORY_ENUM;
 		t.enumInfo.name = name;
 		t.enumInfo.typeTableIdx = innerTypeIdx;
-		t.size = TCGetTypeInfo(context, innerTypeIdx).size;
+		t.size = GetTypeInfo(context, innerTypeIdx).size;
 		u32 typeTableIdx;
 		{
 			SpinlockLock(&context->typeTable.lock);
@@ -2165,7 +2190,7 @@ void AddStructMembersToScope(Context *context, SourceLocation loc, ASTExpression
 	// The way we do this is, we add a TCScopeName which has a member access AST node, left hand of
 	// which is an arbitrary AST tree branch that evaluates to a struct; and of which right hand is
 	// a simple struct member node.
-	TypeInfo typeInfo = TCGetTypeInfo(context, valueExpression->typeTableIdx);
+	TypeInfo typeInfo = GetTypeInfo(context, valueExpression->typeTableIdx);
 	ASSERT(typeInfo.typeCategory == TYPECATEGORY_STRUCT ||
 		   typeInfo.typeCategory == TYPECATEGORY_UNION);
 
@@ -2421,7 +2446,7 @@ void TypeCheckVariableDeclaration(Context *context, ASTVariableDeclaration *varD
 	TCAddScopeNames(context, scopeNamesToAdd);
 
 	if (varCount == 0) {
-		TypeCategory typeCat = TCGetTypeInfo(context, varDecl->specifiedTypeIdx).typeCategory;
+		TypeCategory typeCat = GetTypeInfo(context, varDecl->specifiedTypeIdx).typeCategory;
 		if (typeCat != TYPECATEGORY_STRUCT && typeCat != TYPECATEGORY_UNION)
 			LogError(context, varDecl->loc, "Anonymous variable has to be a struct/union!"_s);
 		if (isGlobal)
@@ -2918,27 +2943,24 @@ ASTExpression InlineProcedureCopyTreeBranch(Context *context, const ASTExpressio
 
 		FixedArray<TCScopeName, 2> scopeNamesToAdd = {};
 
-		u32 indexValueIdx = TCNewValue(context, astFor.indexVariableName, TYPETABLEIDX_S64, 0);
-		astFor.indexValueIdx = indexValueIdx;
-
-		TCScopeName newScopeName;
-		newScopeName.type = NAMETYPE_VARIABLE;
-		newScopeName.name = astFor.indexVariableName;
-		newScopeName.variableInfo.valueIdx = indexValueIdx;
-		newScopeName.variableInfo.typeTableIdx = TYPETABLEIDX_S64;
-		newScopeName.loc = expression->any.loc;
-		*FixedArrayAdd(&scopeNamesToAdd) = newScopeName;
+		// 'i' will be of type s64 when iterating over arrays/strings.
+		u32 indexTypeIdx = TYPETABLEIDX_S64;
 
 		ASTExpression *rangeExp = astFor.range;
 		bool isExplicitRange = rangeExp->nodeType == ASTNODETYPE_BINARY_OPERATION &&
 			rangeExp->binaryOperation.op == TOKEN_OP_RANGE;
-		if (!isExplicitRange)
-		{
+		if (isExplicitRange) {
+			indexTypeIdx = rangeExp->binaryOperation.leftHand->typeTableIdx;
+			ASSERT(CheckTypesMatch(context,
+						rangeExp->binaryOperation.leftHand->typeTableIdx,
+						rangeExp->binaryOperation.rightHand->typeTableIdx) == TYPECHECK_COOL);
+		}
+		else {
 			u32 elementTypeTableIdx = TYPETABLEIDX_U8;
 			if (rangeExp->typeTableIdx != TYPETABLEIDX_STRING_STRUCT) {
-				TypeInfo rangeTypeInfo = TCGetTypeInfo(context, rangeExp->typeTableIdx);
+				TypeInfo rangeTypeInfo = GetTypeInfo(context, rangeExp->typeTableIdx);
 				if (rangeTypeInfo.typeCategory == TYPECATEGORY_POINTER)
-					rangeTypeInfo = TCGetTypeInfo(context, rangeTypeInfo.pointerInfo.pointedTypeTableIdx);
+					rangeTypeInfo = GetTypeInfo(context, rangeTypeInfo.pointerInfo.pointedTypeTableIdx);
 				ASSERT(rangeTypeInfo.typeCategory == TYPECATEGORY_ARRAY);
 				elementTypeTableIdx = rangeTypeInfo.arrayInfo.elementTypeTableIdx;
 			}
@@ -2948,12 +2970,25 @@ ASTExpression InlineProcedureCopyTreeBranch(Context *context, const ASTExpressio
 					pointerToElementTypeTableIdx, 0);
 			astFor.elementValueIdx = elementValueIdx;
 
+			TCScopeName newScopeName;
 			newScopeName.name = astFor.itemVariableName;
 			newScopeName.variableInfo.valueIdx = elementValueIdx;
 			newScopeName.variableInfo.typeTableIdx = pointerToElementTypeTableIdx;
 			newScopeName.loc = expression->any.loc;
 			*FixedArrayAdd(&scopeNamesToAdd) = newScopeName;
 		}
+
+		u32 indexValueIdx = TCNewValue(context, astFor.indexVariableName, indexTypeIdx, 0);
+		astFor.indexValueIdx = indexValueIdx;
+
+		TCScopeName newScopeName;
+		newScopeName.type = NAMETYPE_VARIABLE;
+		newScopeName.name = astFor.indexVariableName;
+		newScopeName.variableInfo.valueIdx = indexValueIdx;
+		newScopeName.variableInfo.typeTableIdx = indexTypeIdx;
+		newScopeName.loc = expression->any.loc;
+		*FixedArrayAdd(&scopeNamesToAdd) = newScopeName;
+
 		TCAddScopeNames(context, scopeNamesToAdd);
 
 		e = TCNewTreeNode(context);
@@ -3087,8 +3122,8 @@ bool TCPushParametersAndInlineProcedureCall(Context *context, ASTProcedureCall *
 	if (!proc.isInline && astProcCall->inlineType != CALLINLINETYPE_ALWAYS_INLINE)
 		return false;
 
-	ASSERT(TCGetTypeInfo(context, proc.typeTableIdx).typeCategory == TYPECATEGORY_PROCEDURE);
-	TypeInfoProcedure procTypeInfo = TCGetTypeInfo(context, proc.typeTableIdx).procedureInfo;
+	ASSERT(GetTypeInfo(context, proc.typeTableIdx).typeCategory == TYPECATEGORY_PROCEDURE);
+	TypeInfoProcedure procTypeInfo = GetTypeInfo(context, proc.typeTableIdx).procedureInfo;
 
 	TCPushScope(context);
 
@@ -3130,12 +3165,12 @@ bool TCIsPrimitiveOperation(Context *context, enum TokenType op, u32 leftTypeIdx
 		return CheckTypesMatch(context, leftTypeIdx, rightTypeIdx) == TYPECHECK_COOL;
 	case TOKEN_OP_MEMBER_ACCESS:
 	{
-		TypeCategory leftCat  = TCGetTypeInfo(context, leftTypeIdx).typeCategory;
+		TypeCategory leftCat  = GetTypeInfo(context, leftTypeIdx).typeCategory;
 		return leftCat == TYPECATEGORY_STRUCT || leftCat == TYPECATEGORY_UNION;
 	} break;
 	case TOKEN_OP_ARRAY_ACCESS:
 	{
-		TypeCategory leftCat  = TCGetTypeInfo(context, leftTypeIdx).typeCategory;
+		TypeCategory leftCat  = GetTypeInfo(context, leftTypeIdx).typeCategory;
 		return leftCat == TYPECATEGORY_ARRAY;
 	} break;
 	case TOKEN_OP_PLUS:
@@ -3143,12 +3178,12 @@ bool TCIsPrimitiveOperation(Context *context, enum TokenType op, u32 leftTypeIdx
 	case TOKEN_OP_MINUS:
 	case TOKEN_OP_ASSIGNMENT_MINUS:
 	{
-		TypeCategory leftCat  = TCGetTypeInfo(context, leftTypeIdx).typeCategory;
+		TypeCategory leftCat  = GetTypeInfo(context, leftTypeIdx).typeCategory;
 		if (leftCat  != TYPECATEGORY_INTEGER && leftCat  != TYPECATEGORY_FLOATING &&
 			leftCat  != TYPECATEGORY_POINTER)
 			return false;
 
-		TypeCategory rightCat = TCGetTypeInfo(context, rightTypeIdx).typeCategory;
+		TypeCategory rightCat = GetTypeInfo(context, rightTypeIdx).typeCategory;
 		if (rightCat != TYPECATEGORY_INTEGER && rightCat != TYPECATEGORY_FLOATING &&
 			rightCat != TYPECATEGORY_POINTER)
 			return false;
@@ -3163,12 +3198,12 @@ bool TCIsPrimitiveOperation(Context *context, enum TokenType op, u32 leftTypeIdx
 	case TOKEN_OP_SHIFT_RIGHT:
 	case TOKEN_OP_ASSIGNMENT_SHIFT_RIGHT:
 	{
-		TypeCategory leftCat  = TCGetTypeInfo(context, leftTypeIdx).typeCategory;
+		TypeCategory leftCat  = GetTypeInfo(context, leftTypeIdx).typeCategory;
 		if (leftCat  != TYPECATEGORY_INTEGER && leftCat  != TYPECATEGORY_ENUM &&
 			leftCat  != TYPECATEGORY_POINTER)
 			return false;
 
-		TypeCategory rightCat = TCGetTypeInfo(context, rightTypeIdx).typeCategory;
+		TypeCategory rightCat = GetTypeInfo(context, rightTypeIdx).typeCategory;
 		if (rightCat != TYPECATEGORY_INTEGER && rightCat != TYPECATEGORY_ENUM &&
 			rightCat != TYPECATEGORY_POINTER)
 			return false;
@@ -3185,12 +3220,12 @@ bool TCIsPrimitiveOperation(Context *context, enum TokenType op, u32 leftTypeIdx
 	case TOKEN_OP_BITWISE_OR:
 	case TOKEN_OP_BITWISE_XOR:
 	{
-		TypeCategory leftCat  = TCGetTypeInfo(context, leftTypeIdx).typeCategory;
+		TypeCategory leftCat  = GetTypeInfo(context, leftTypeIdx).typeCategory;
 		if (leftCat  != TYPECATEGORY_INTEGER && leftCat  != TYPECATEGORY_POINTER &&
 			leftCat  != TYPECATEGORY_ENUM)
 			return false;
 
-		TypeCategory rightCat = TCGetTypeInfo(context, rightTypeIdx).typeCategory;
+		TypeCategory rightCat = GetTypeInfo(context, rightTypeIdx).typeCategory;
 		if (rightCat != TYPECATEGORY_INTEGER && rightCat != TYPECATEGORY_POINTER &&
 			rightCat != TYPECATEGORY_ENUM)
 			return false;
@@ -3207,12 +3242,12 @@ bool TCIsPrimitiveOperation(Context *context, enum TokenType op, u32 leftTypeIdx
 	case TOKEN_OP_GREATER_THAN:
 	case TOKEN_OP_GREATER_THAN_OR_EQUAL:
 	{
-		TypeCategory leftCat  = TCGetTypeInfo(context, leftTypeIdx).typeCategory;
+		TypeCategory leftCat  = GetTypeInfo(context, leftTypeIdx).typeCategory;
 		if (leftCat  != TYPECATEGORY_INTEGER && leftCat  != TYPECATEGORY_POINTER &&
 			leftCat  != TYPECATEGORY_ENUM    && leftCat  != TYPECATEGORY_FLOATING)
 			return false;
 
-		TypeCategory rightCat = TCGetTypeInfo(context, rightTypeIdx).typeCategory;
+		TypeCategory rightCat = GetTypeInfo(context, rightTypeIdx).typeCategory;
 		if (rightCat != TYPECATEGORY_INTEGER && rightCat != TYPECATEGORY_POINTER &&
 			rightCat != TYPECATEGORY_ENUM    && rightCat != TYPECATEGORY_FLOATING)
 			return false;
@@ -3228,11 +3263,11 @@ bool TCIsPrimitiveOperation(Context *context, enum TokenType op, u32 leftTypeIdx
 			   CheckTypesMatch(context, TYPETABLEIDX_BOOL, rightTypeIdx) == TYPECHECK_COOL;
 	default:
 	{
-		TypeCategory leftCat  = TCGetTypeInfo(context, leftTypeIdx).typeCategory;
+		TypeCategory leftCat  = GetTypeInfo(context, leftTypeIdx).typeCategory;
 		if (leftCat  != TYPECATEGORY_INTEGER && leftCat  != TYPECATEGORY_FLOATING)
 			return false;
 
-		TypeCategory rightCat = TCGetTypeInfo(context, rightTypeIdx).typeCategory;
+		TypeCategory rightCat = GetTypeInfo(context, rightTypeIdx).typeCategory;
 		if (rightCat != TYPECATEGORY_INTEGER && rightCat != TYPECATEGORY_FLOATING)
 			return false;
 
@@ -3250,19 +3285,19 @@ bool TCIsPrimitiveOperation(Context *context, enum TokenType op, u32 inputTypeId
 	{
 	case TOKEN_OP_MINUS:
 	{
-		TypeCategory leftCat  = TCGetTypeInfo(context, inputTypeIdx).typeCategory;
+		TypeCategory leftCat  = GetTypeInfo(context, inputTypeIdx).typeCategory;
 		return leftCat == TYPECATEGORY_INTEGER || leftCat == TYPECATEGORY_FLOATING;
 	} break;
 	case TOKEN_OP_BITWISE_NOT:
 	{
-		TypeCategory leftCat  = TCGetTypeInfo(context, inputTypeIdx).typeCategory;
+		TypeCategory leftCat  = GetTypeInfo(context, inputTypeIdx).typeCategory;
 		return leftCat == TYPECATEGORY_INTEGER || leftCat == TYPECATEGORY_POINTER;
 	} break;
 	case TOKEN_OP_NOT:
 		return CheckTypesMatch(context, TYPETABLEIDX_BOOL, inputTypeIdx) == TYPECHECK_COOL;
 	case TOKEN_OP_DEREFERENCE:
 	{
-		TypeCategory leftCat  = TCGetTypeInfo(context, inputTypeIdx).typeCategory;
+		TypeCategory leftCat  = GetTypeInfo(context, inputTypeIdx).typeCategory;
 		return leftCat == TYPECATEGORY_POINTER;
 	} break;
 	case TOKEN_OP_POINTER_TO:
@@ -3271,7 +3306,7 @@ bool TCIsPrimitiveOperation(Context *context, enum TokenType op, u32 inputTypeId
 	} break;
 	default:
 	{
-		TypeCategory inputCat = TCGetTypeInfo(context, inputTypeIdx).typeCategory;
+		TypeCategory inputCat = GetTypeInfo(context, inputTypeIdx).typeCategory;
 		return inputCat == TYPECATEGORY_INTEGER || inputCat == TYPECATEGORY_FLOATING;
 	} break;
 	}
@@ -3340,7 +3375,7 @@ tryAgain:
 				continue;
 
 			Procedure procedure = GetProcedureRead(context, currentOverload.procedureIdx);
-			TypeInfo procType = TCGetTypeInfo(context, procedure.typeTableIdx);
+			TypeInfo procType = GetTypeInfo(context, procedure.typeTableIdx);
 			ASSERT(procType.typeCategory == TYPECATEGORY_PROCEDURE);
 
 			if (paramCount == 1) {
@@ -3409,7 +3444,7 @@ tryAgain:
 	ASSERT(foundOverload);
 	Procedure proc = GetProcedureRead(context, overload.procedureIdx);
 
-	TypeInfo procTypeInfo = TCGetTypeInfo(context, proc.typeTableIdx);
+	TypeInfo procTypeInfo = GetTypeInfo(context, proc.typeTableIdx);
 	ASSERT(procTypeInfo.typeCategory == TYPECATEGORY_PROCEDURE);
 
 	if (proc.isInline && !proc.isBodyTypeChecked) {
@@ -3687,7 +3722,7 @@ void TypeCheckExpression(Context *context, ASTExpression *expression)
 			{
 				TypeInfo t;
 				t.typeCategory = TYPECATEGORY_ALIAS;
-				t.size = TCGetTypeInfo(context, result).size;
+				t.size = GetTypeInfo(context, result).size;
 				t.aliasInfo.name = *GetVariableName(astStaticDef, 0);
 				t.aliasInfo.aliasedTypeIdx = result;
 				t.aliasInfo.doesImplicitlyCast = astStaticDef->expression->nodeType ==
@@ -3919,7 +3954,7 @@ void TypeCheckExpression(Context *context, ASTExpression *expression)
 		if (procedureTypeIdx == TYPETABLEIDX_Unset)
 			LogCompilerError(context, astProcExp->any.loc, TPrintF("Procedure \"%S\" not type "
 						"checked", GetProcedureRead(context, procedureIdx).name));
-		ASSERT(TCGetTypeInfo(context, procedureTypeIdx).typeCategory == TYPECATEGORY_PROCEDURE);
+		ASSERT(GetTypeInfo(context, procedureTypeIdx).typeCategory == TYPECATEGORY_PROCEDURE);
 
 		s64 givenArguments = astProcCall->arguments.size;
 		for (int argIdx = 0; argIdx < givenArguments; ++argIdx) {
@@ -3931,8 +3966,8 @@ void TypeCheckExpression(Context *context, ASTExpression *expression)
 		astProcCall->procedureIdx = procedureIdx;
 		astProcCall->procedureTypeIdx = procedureTypeIdx;
 
-		ASSERT(TCGetTypeInfo(context, procedureTypeIdx).typeCategory == TYPECATEGORY_PROCEDURE);
-		TypeInfoProcedure procTypeInfo = TCGetTypeInfo(context, procedureTypeIdx).procedureInfo;
+		ASSERT(GetTypeInfo(context, procedureTypeIdx).typeCategory == TYPECATEGORY_PROCEDURE);
+		TypeInfoProcedure procTypeInfo = GetTypeInfo(context, procedureTypeIdx).procedureInfo;
 
 		if (procTypeInfo.returnTypeIndices.size == 0)
 			expression->typeTableIdx = TYPETABLEIDX_VOID;
@@ -4035,7 +4070,7 @@ void TypeCheckExpression(Context *context, ASTExpression *expression)
 			} break;
 			case TOKEN_OP_DEREFERENCE:
 			{
-				TypeInfo expressionTypeInfo = TCGetTypeInfo(context, expressionType);
+				TypeInfo expressionTypeInfo = GetTypeInfo(context, expressionType);
 				if (expressionTypeInfo.typeCategory != TYPECATEGORY_POINTER)
 					LogError(context, expression->any.loc, "Trying to dereference a non pointer"_s);
 				expression->typeTableIdx = expressionTypeInfo.pointerInfo.pointedTypeTableIdx;
@@ -4072,11 +4107,11 @@ void TypeCheckExpression(Context *context, ASTExpression *expression)
 			// Get rid of aliases
 			u32 structTypeIdx = StripImplicitlyCastAliases(context, leftHandTypeIdx);
 
-			TypeInfo structTypeInfo = TCGetTypeInfo(context, structTypeIdx);
+			TypeInfo structTypeInfo = GetTypeInfo(context, structTypeIdx);
 
 			if (structTypeInfo.typeCategory == TYPECATEGORY_POINTER) {
 				u32 pointedTypeIdx = structTypeInfo.pointerInfo.pointedTypeTableIdx;
-				structTypeInfo = TCGetTypeInfo(context, pointedTypeIdx);
+				structTypeInfo = GetTypeInfo(context, pointedTypeIdx);
 			}
 
 			if (structTypeInfo.typeCategory == TYPECATEGORY_ARRAY) {
@@ -4084,7 +4119,7 @@ void TypeCheckExpression(Context *context, ASTExpression *expression)
 				if (structTypeInfo.arrayInfo.count != 0)
 					LogError(context, expression->any.loc, "Array left of '.' has to be of dynamic size! ([])"_s);
 
-				structTypeInfo = TCGetTypeInfo(context, TYPETABLEIDX_ARRAY_STRUCT);
+				structTypeInfo = GetTypeInfo(context, TYPETABLEIDX_ARRAY_STRUCT);
 			}
 			else if (structTypeInfo.typeCategory != TYPECATEGORY_STRUCT &&
 					 structTypeInfo.typeCategory != TYPECATEGORY_UNION) {
@@ -4113,12 +4148,12 @@ void TypeCheckExpression(Context *context, ASTExpression *expression)
 				LogError(context, rightHand->any.loc, "Index of array access is a type"_s);
 
 			u32 arrayType = leftHand->typeTableIdx;
-			TypeInfo arrayTypeInfo = TCGetTypeInfo(context, arrayType);
+			TypeInfo arrayTypeInfo = GetTypeInfo(context, arrayType);
 			if (arrayTypeInfo.typeCategory == TYPECATEGORY_POINTER)
 			{
 				u32 pointedTypeIdx = arrayTypeInfo.pointerInfo.pointedTypeTableIdx;
 				arrayType = pointedTypeIdx;
-				arrayTypeInfo = TCGetTypeInfo(context, pointedTypeIdx);
+				arrayTypeInfo = GetTypeInfo(context, pointedTypeIdx);
 			}
 
 			if (arrayType == TYPETABLEIDX_STRING_STRUCT)
@@ -4150,7 +4185,7 @@ void TypeCheckExpression(Context *context, ASTExpression *expression)
 					// procedure.
 					u32 procTypeIdx = rightHand->procedureCall.procedureTypeIdx;
 					ArrayView<u32> returnTypeIndices =
-						TCGetTypeInfo(context, procTypeIdx).procedureInfo.returnTypeIndices;
+						GetTypeInfo(context, procTypeIdx).procedureInfo.returnTypeIndices;
 					if (leftHandCount != returnTypeIndices.size)
 						LogError(context, expression->any.loc, TPrintF("Left hand expression has %d "
 									"values, but right hand has %d", leftHandCount, returnTypeIndices.size));
@@ -4265,14 +4300,14 @@ void TypeCheckExpression(Context *context, ASTExpression *expression)
 					}
 
 					// Both operands have to be integers
-					TypeCategory leftCat = TCGetTypeInfo(context, StripAllAliases(context,
+					TypeCategory leftCat = GetTypeInfo(context, StripAllAliases(context,
 							leftHand->typeTableIdx)).typeCategory;
 					if (leftCat != TYPECATEGORY_INTEGER)
 						LogError(context, leftHand->any.loc, TPrintF("Left hand of .. operator "
 									"does not evaluate to an integer (%S)",
 									TypeInfoToString(context, leftHand->typeTableIdx)));
 
-					TypeCategory rightCat = TCGetTypeInfo(context, StripAllAliases(context,
+					TypeCategory rightCat = GetTypeInfo(context, StripAllAliases(context,
 							rightHand->typeTableIdx)).typeCategory;
 					if (rightCat != TYPECATEGORY_INTEGER)
 						LogError(context, rightHand->any.loc, TPrintF("Right hand of .. operator "
@@ -4319,7 +4354,7 @@ void TypeCheckExpression(Context *context, ASTExpression *expression)
 									leftStr, rightStr));
 					}
 
-					TypeCategory leftCat  = TCGetTypeInfo(context, StripAllAliases(context,
+					TypeCategory leftCat  = GetTypeInfo(context, StripAllAliases(context,
 							leftHand->typeTableIdx)).typeCategory;
 					if (leftCat != TYPECATEGORY_INTEGER &&
 						leftCat != TYPECATEGORY_FLOATING &&
@@ -4342,7 +4377,7 @@ void TypeCheckExpression(Context *context, ASTExpression *expression)
 									leftStr, rightStr));
 					}
 
-					TypeCategory leftCat  = TCGetTypeInfo(context, StripAllAliases(context,
+					TypeCategory leftCat  = GetTypeInfo(context, StripAllAliases(context,
 							leftHand->typeTableIdx)).typeCategory;
 					if (leftCat != TYPECATEGORY_INTEGER &&
 						leftCat != TYPECATEGORY_FLOATING)
@@ -4506,9 +4541,9 @@ void TypeCheckExpression(Context *context, ASTExpression *expression)
 		if (!isExplicitRange) {
 			u32 elementTypeTableIdx = TYPETABLEIDX_U8;
 			if (rangeExp->typeTableIdx != TYPETABLEIDX_STRING_STRUCT) {
-				TypeInfo rangeTypeInfo = TCGetTypeInfo(context, rangeExp->typeTableIdx);
+				TypeInfo rangeTypeInfo = GetTypeInfo(context, rangeExp->typeTableIdx);
 				if (rangeTypeInfo.typeCategory == TYPECATEGORY_POINTER)
-					rangeTypeInfo = TCGetTypeInfo(context, rangeTypeInfo.pointerInfo.pointedTypeTableIdx);
+					rangeTypeInfo = GetTypeInfo(context, rangeTypeInfo.pointerInfo.pointedTypeTableIdx);
 
 				if (rangeTypeInfo.typeCategory != TYPECATEGORY_ARRAY)
 					LogError(context, astFor->range->any.loc, "'for' range "
@@ -4546,7 +4581,7 @@ void TypeCheckExpression(Context *context, ASTExpression *expression)
 	} break;
 	case ASTNODETYPE_REMOVE:
 	{
-		TypeInfo forArrayType = TCGetTypeInfo(context, jobData->currentForLoopArrayType);
+		TypeInfo forArrayType = GetTypeInfo(context, jobData->currentForLoopArrayType);
 		if (forArrayType.typeCategory != TYPECATEGORY_ARRAY || forArrayType.arrayInfo.count != 0)
 			LogError(context, expression->any.loc, "'remove' found but there wasn't a for loop "
 					"with a dynamic sized array as range"_s);
@@ -4811,6 +4846,16 @@ void TypeCheckExpression(Context *context, ASTExpression *expression)
 			.loc = expression->any.loc };
 		auto ctLibs = context->ctExternalLibraries.Get();
 		*DynamicArrayAdd(&ctLibs) = ctLib;
+
+		// Wake up any jobs that are looking for dynamic libraries
+		{
+			auto jobsWaiting = context->waitingJobsByReason[YIELDREASON_NEED_DYNAMIC_LIBRARY].Get();
+			for (int i = 0; i < jobsWaiting->size; ++i) {
+				u32 jobIdx = jobsWaiting[i];
+				EnqueueReadyJob(context, jobIdx);
+			}
+			jobsWaiting->size = 0;
+		}
 	} break;
 	case ASTNODETYPE_DEFINED:
 	{
@@ -4975,7 +5020,14 @@ void TCJobProc(void *args)
 int GetTypeAlignment(Context *context, u32 typeTableIdx)
 {
 	int alignment = 0;
-	TypeInfo typeInfo = TCGetTypeInfo(context, typeTableIdx);
+	TypeInfo typeInfo = GetTypeInfo(context, typeTableIdx);
+
+	// Alignment may be specified by the programmer.
+	if (typeInfo.alignment) {
+		ASSERT(IsPowerOf2(typeInfo.alignment));
+		return typeInfo.alignment;
+	}
+
 	if (typeInfo.typeCategory == TYPECATEGORY_STRUCT ||
 		typeInfo.typeCategory == TYPECATEGORY_UNION)
 	{
@@ -4993,6 +5045,7 @@ int GetTypeAlignment(Context *context, u32 typeTableIdx)
 		if (typeInfo.size < 8)
 			alignment = NextPowerOf2((int)typeInfo.size);
 	}
+	ASSERT(IsPowerOf2(alignment));
 	return alignment;
 }
 
@@ -5011,7 +5064,13 @@ void TCStructJobProc(void *args)
 	jobData.currentReturnTypes = {};
 	SYSSetFiberData(context->flsIndex, &jobData);
 
-	TypeInfo t = {};
+	u32 typeTableIdx = argsStruct->typeTableIdx;
+	TypeInfo t;
+	{
+		auto &typeTable = context->typeTable.unsafe;
+		ASSERT(typeTable[typeTableIdx].typeCategory == TYPECATEGORY_NOT_READY);
+		t = typeTable[typeTableIdx];
+	}
 	t.typeCategory = argsStruct->isUnion ? TYPECATEGORY_UNION : TYPECATEGORY_STRUCT;
 	t.structInfo.name = argsStruct->name;
 
@@ -5037,14 +5096,14 @@ void TCStructJobProc(void *args)
 		member.isUsing = astMember->isUsing;
 		member.typeTableIdx = astMember->typeTableIdx;
 
-		TypeInfo memberTypeInfo = TCGetTypeInfo(context, member.typeTableIdx);
+		TypeInfo memberTypeInfo = GetTypeInfo(context, member.typeTableIdx);
 		if (astMember->isUsing && memberTypeInfo.typeCategory != TYPECATEGORY_STRUCT &&
 				memberTypeInfo.typeCategory != TYPECATEGORY_UNION)
 			LogError(context, astMember->loc, TPrintF("'using' keyword only supported for struct "
 					"or union members, but \"%S\" was %S", astMember->name,
 					TypeCategoryToString(memberTypeInfo.typeCategory)));
 
-		u64 memberSize = TCGetTypeInfo(context, member.typeTableIdx).size;
+		u64 memberSize = GetTypeInfo(context, member.typeTableIdx).size;
 		int alignment = GetTypeAlignment(context, member.typeTableIdx);
 
 		if (alignment > largestAlignment)
@@ -5075,7 +5134,6 @@ void TCStructJobProc(void *args)
 #endif
 
 	// Update stub type
-	u32 typeTableIdx = argsStruct->typeTableIdx;
 	{
 		// Unsafe!
 		auto &typeTable = context->typeTable.unsafe;
@@ -5195,7 +5253,7 @@ void TypeCheckMain(Context *context)
 
 		TypeInfo *typeTableFast = (TypeInfo *)typeTable.buckets[0];
 
-		TypeInfo t;
+		TypeInfo t = {};
 		t.typeCategory = TYPECATEGORY_INTEGER;
 		t.integerInfo.isSigned = true;
 
@@ -5373,11 +5431,5 @@ void TypeCheckMain(Context *context)
 	{
 		auto ctLibraries = context->ctExternalLibraries.Get();
 		DynamicArrayInit(&ctLibraries, 32);
-		// @Todo: make this platform dependent, and make SYSRunLinker grab libraries from the same
-		// place as this
-		*DynamicArrayAdd(&ctLibraries) = { .name = "kernel32"_s };
-		*DynamicArrayAdd(&ctLibraries) = { .name = "user32"_s };
-		*DynamicArrayAdd(&ctLibraries) = { .name = "gdi32"_s };
-		*DynamicArrayAdd(&ctLibraries) = { .name = "winmm"_s };
 	}
 }

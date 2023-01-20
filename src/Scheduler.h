@@ -26,6 +26,7 @@ enum YieldReason : u32
 	YIELDREASON_PROC_IR_NOT_READY,
 	YIELDREASON_TYPE_NOT_READY,
 	YIELDREASON_GLOBAL_VALUE_NOT_ALLOCATED,
+	YIELDREASON_NEED_DYNAMIC_LIBRARY,
 	// WAITING_FOR_STOP jobs want to wait until no jobs are running to make a decision.
 	// As of time of write, only #defined does this to determine if something isn't defined anywhere
 	// before continuing.

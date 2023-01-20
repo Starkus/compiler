@@ -191,6 +191,29 @@ void CTCopyIRValue(CTContext *ctContext, CTRegister *dst, IRValue irValue)
 
 void PrintIRInstruction(Context *context, BucketArrayView<Value> localValues, IRInstruction inst);
 
+void *GetExternalProcedureAddress(Context *context, String name)
+{
+	const char *procCStr = StringToCStr(name, ThreadAllocator::Alloc);
+	auto ctLibs = context->ctExternalLibraries.Get();
+	while (true) {
+		for (int i = 0; i < ctLibs->size; ++i) {
+			CTLibrary *lib = &ctLibs[i];
+			if (!lib->address) {
+				lib->address = SYSLoadDynamicLibrary(lib->name);
+				if (!lib->address)
+					LogWarning(context, lib->loc, TPrintF("Could not load \"%S\" at "
+								"compile time", lib->name));
+			}
+			void *procStart = GetProcAddress((HMODULE)lib->address, procCStr);
+			if (procStart)
+				return procStart;
+		}
+		SwitchJob(context, YIELDREASON_NEED_DYNAMIC_LIBRARY, { .identifier = name });
+		// Lock again!
+		SYSMutexLock(context->ctExternalLibraries.lock);
+	}
+}
+
 ArrayView<const CTRegister *> CTInternalRunInstructions(CTContext *ctContext,
 		BucketArrayView<IRInstruction> irInstructions)
 {
@@ -1014,26 +1037,8 @@ ArrayView<const CTRegister *> CTInternalRunInstructions(CTContext *ctContext,
 				CTRunProcedure(context, procIdx, arguments);
 			else {
 				Procedure calleeProc = GetProcedureRead(context, procIdx);
-				const char *procCStr = StringToCStr(calleeProc.name, ThreadAllocator::Alloc);
-				void *procStart = nullptr;
-				{
-					auto ctLibs = context->ctExternalLibraries.Get();
-					for (int i = 0; i < ctLibs->size; ++i) {
-						CTLibrary *lib = &ctLibs[i];
-						if (!lib->address) {
-							lib->address = SYSLoadDynamicLibrary(lib->name);
-							if (!lib->address)
-								LogError(context, lib->loc, TPrintF("Could not load \"%S\" at "
-											"compile time", lib->name));
-						}
-						procStart = GetProcAddress((HMODULE)lib->address, procCStr);
-						if (procStart)
-							break;
-					}
-				}
-				if (!procStart)
-					LogError(context, inst.loc, TPrintF("Could not find external procedure \"%S\" "
-							"at compile time", calleeProc.name));
+				void *procStart = GetExternalProcedureAddress(context, calleeProc.name);
+				ASSERT(procStart);
 
 				u64 returnValue = SYSCallProcedureDynamically(procStart, arguments.size, arguments.data);
 

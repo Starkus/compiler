@@ -361,7 +361,13 @@ void X64MovNoTmp(Context *context, SourceLocation loc, IRValue dst, IRValue src)
 	if (dstType.size != srcType.size)
 		LogCompilerError(context, loc, TPrintF("Different sizes on MOV instruction: %d and %d",
 					dstType.size, srcType.size));
-	if (dstType.typeCategory == TYPECATEGORY_FLOATING) {
+	if (srcType.typeCategory == TYPECATEGORY_PROCEDURE) {
+		// LEA
+		ASSERT(dstType.typeCategory == TYPECATEGORY_PROCEDURE ||
+			   dstType.typeCategory == TYPECATEGORY_POINTER);
+		result.type = X64_LEA;
+	}
+	else if (dstType.typeCategory == TYPECATEGORY_FLOATING) {
 		// MOVSS and MOVSD
 		if (srcType.typeCategory != TYPECATEGORY_FLOATING)
 			LogCompilerError(context, loc, "Conversion of integer to float requires special"
@@ -598,7 +604,7 @@ bool X64WinABIShouldPassByCopy(Context *context, u32 typeTableIdx)
 }
 
 Array<u32, ThreadAllocator> X64ReadyWin64Parameters(Context *context, SourceLocation loc,
-		ArrayView<IRValue> parameters, bool isCaller)
+		ArrayView<IRValue> parameters, bool isCaller, bool includesReturnValue)
 {
 	IRJobData *jobData = (IRJobData *)SYSGetFiberData(context->flsIndex);
 
@@ -633,7 +639,9 @@ Array<u32, ThreadAllocator> X64ReadyWin64Parameters(Context *context, SourceLoca
 		bool isXMM = paramType.typeCategory == TYPECATEGORY_FLOATING;
 
 		IRValue slot;
-		switch(i) {
+		if (includesReturnValue && i == 0)
+			slot = RAX;
+		else switch(i) {
 		case 0:
 			slot = isXMM ? XMM0 : RCX; break;
 		case 1:
@@ -676,9 +684,21 @@ Array<u32, ThreadAllocator> X64ReadyWin64Parameters(Context *context, SourceLoca
 }
 
 Array<u32, ThreadAllocator> X64ReadyLinuxParameters(Context *context, SourceLocation loc,
-		ArrayView<IRValue> parameters, bool isCaller)
+		ArrayView<IRValue> parameters, bool isCaller, bool includesReturnValue)
 {
 	IRJobData *jobData = (IRJobData *)SYSGetFiberData(context->flsIndex);
+
+	if (includesReturnValue) {
+		// Pointer to return value is passed on RAX.
+		ASSERT(parameters.size > 0);
+		if (isCaller)
+			X64Mov(context, loc, RAX, parameters[0]);
+		else
+			X64Mov(context, loc, parameters[0], RAX);
+		// Remove from array and pretend it wasn't there.
+		++parameters.data;
+		--parameters.size;
+	}
 
 	int parameterCount = (int)parameters.size;
 
@@ -1447,7 +1467,7 @@ void X64ConvertInstruction(Context *context, IRInstruction inst)
 
 		bool isReturnByCopy = false;
 
-		if (inst.procedureCall.returnValues.size)
+		if (callingConvention != CC_DEFAULT && inst.procedureCall.returnValues.size)
 		{
 			IRValue returnValue = inst.procedureCall.returnValues[0];
 			isReturnByCopy = IRShouldPassByCopy(context, returnValue.typeTableIdx);
@@ -1477,13 +1497,13 @@ void X64ConvertInstruction(Context *context, IRInstruction inst)
 		{
 			case CC_WIN64:
 				paramValues =
-					X64ReadyWin64Parameters(context, inst.loc, paramSources, true);
+					X64ReadyWin64Parameters(context, inst.loc, paramSources, true, isReturnByCopy);
 				break;
 			case CC_DEFAULT:
 			case CC_LINUX64:
 			default:
 				paramValues =
-					X64ReadyLinuxParameters(context, inst.loc, paramSources, true);
+					X64ReadyLinuxParameters(context, inst.loc, paramSources, true, isReturnByCopy);
 		}
 
 		result.parameterValues.data = paramValues.data;
@@ -1515,6 +1535,7 @@ void X64ConvertInstruction(Context *context, IRInstruction inst)
 		u64 returnValueCount = inst.procedureCall.returnValues.size;
 		if (returnValueCount) {
 			if (callingConvention == CC_DEFAULT) {
+				// Our own convention for multiple return values
 				static IRValue integerReturnRegisters[]  = { RAX, RDI, RSI, RDX, RCX, R8, R9 };
 				static IRValue floatingReturnRegisters[] = {
 					XMM0, XMM1, XMM2, XMM3, XMM4, XMM5, XMM6, XMM7, XMM8 };
@@ -1552,6 +1573,7 @@ void X64ConvertInstruction(Context *context, IRInstruction inst)
 				}
 			}
 			else {
+				// Windows and Linux, only RAX. Pointer to big return value is passed on RAX.
 				ASSERT(returnValueCount == 1);
 				IRValue out = inst.procedureCall.returnValues[0];
 				u32 returnTypeIdx = out.typeTableIdx;
@@ -2308,6 +2330,21 @@ encode:
 			*DynamicArrayAdd(&g_relocations) = displacementRelocation;
 		}
 
+#if 0
+		{
+			char chars[32];
+			xed_decoded_inst_t decoded;
+			xed_state_t dstate64 = {};
+			dstate64.stack_addr_width = XED_ADDRESS_WIDTH_64b;
+			dstate64.mmode = XED_MACHINE_MODE_LONG_64;
+			xed_decoded_inst_zero_set_mode(&decoded, &dstate64);
+			xed_error_enum_t er = xed_decode(&decoded, buffer, 16);
+			if (er != XED_ERROR_NONE) Print("ERROR: %d  ", er);
+			xed_format_context(XED_SYNTAX_INTEL, &decoded, chars, 32, 0, nullptr, nullptr);
+			Print("%s\n", chars);
+		}
+#endif
+
 		return len;
 	}
 }
@@ -2787,6 +2824,109 @@ int ComparePointers(const void *lhs, const void *rhs)
 	return (lhsNum > rhsNum) - (lhsNum < rhsNum);
 }
 
+String GetLinkerExtraArguments(Context *context)
+{
+	String extraLinkerArguments = {};
+	for (int i = 0; i < context->libsToLink.size; ++i) {
+		String libName = context->libsToLink[i];
+		String libFullName;
+
+		// Working path relative
+		libFullName = SYSExpandPathWorkingDirectoryRelative(libName);
+		if (SYSFileExists(libFullName))
+			goto foundFullName;
+		libFullName = ChangeFilenameExtension(libFullName, ".obj"_s);
+		if (SYSFileExists(libFullName))
+			goto foundFullName;
+		libFullName = ChangeFilenameExtension(libFullName, ".lib"_s);
+		if (SYSFileExists(libFullName))
+			goto foundFullName;
+
+		libFullName = ChangeFilenameExtension(libName, ".lib"_s);
+
+foundFullName:
+		extraLinkerArguments = TPrintF("%S %S", extraLinkerArguments, libFullName);
+	}
+
+#if IS_WINDOWS
+	bool useWindowsSubsystem = false;
+	{
+		auto staticDefinitions = context->staticDefinitions.GetForRead();
+		u64 staticDefinitionCount = staticDefinitions->count;
+		for (u64 i = 0; i < staticDefinitionCount; ++i)
+		{
+			const StaticDefinition *currentDef = &staticDefinitions[i];
+			if (StringEquals("compiler_subsystem"_s, currentDef->name))
+			{
+				ASSERT(currentDef->definitionType == STATICDEFINITIONTYPE_CONSTANT);
+				ASSERT(currentDef->constant.type == CONSTANTTYPE_INTEGER);
+				useWindowsSubsystem = currentDef->constant.valueAsInt == 1;
+			}
+		}
+	}
+
+	String subsystemArgument;
+	if (useWindowsSubsystem)
+		subsystemArgument = "/subsystem:WINDOWS "_s;
+	else
+		subsystemArgument = "/subsystem:CONSOLE "_s;
+
+	extraLinkerArguments = TPrintF("%S %S", extraLinkerArguments, subsystemArgument);
+#endif
+
+	return extraLinkerArguments;
+}
+
+void GetOutputInfo(Context *context, String *outputFilename, String *outputPath,
+		OutputType *outputType, DynamicArray<String, ThreadAllocator> *exportedSymbols)
+{
+	*outputFilename = "output/out"_s;
+
+	*outputType = OUTPUTTYPE_EXECUTABLE;
+	{
+		auto staticDefinitions = context->staticDefinitions.GetForRead();
+		u64 staticDefinitionCount = staticDefinitions->count;
+		for (u64 i = 0; i < staticDefinitionCount; ++i)
+		{
+			const StaticDefinition *currentDef = &staticDefinitions[i];
+			if (StringEquals("compiler_output_name"_s, currentDef->name))
+			{
+				ASSERT(currentDef->definitionType == STATICDEFINITIONTYPE_CONSTANT);
+				ASSERT(currentDef->constant.type == CONSTANTTYPE_STRING);
+				*outputFilename = currentDef->constant.valueAsString;
+			}
+			if (StringEquals("compiler_output_type"_s, currentDef->name))
+			{
+				ASSERT(currentDef->definitionType == STATICDEFINITIONTYPE_CONSTANT);
+				ASSERT(currentDef->constant.type == CONSTANTTYPE_INTEGER);
+				*outputType = (OutputType)currentDef->constant.valueAsInt;
+				if (*outputType < 0 || *outputType >= OUTPUTTYPE_Count)
+					LogError(context, {}, "Invalid output type"_s);
+			}
+		}
+	}
+
+	if (!SYSIsAbsolutePath(*outputFilename))
+		*outputFilename = SYSExpandPathWorkingDirectoryRelative(*outputFilename);
+
+	*outputPath = { 0, outputFilename->data };
+	for (int i = 0, count = (int)outputFilename->size; i < count; ++i)
+		if (outputFilename->data[i] == '/' || outputFilename->data[i] == '\\')
+			outputPath->size = i;
+	SYSCreateDirectory(*outputPath);
+
+	*exportedSymbols = {};
+	if (*outputType != OUTPUTTYPE_EXECUTABLE) {
+		DynamicArrayInit(exportedSymbols, 8);
+		auto externalProcedures = context->procedures.GetForRead();
+		for (int i = 0; i < externalProcedures->count; ++i) {
+			Procedure proc = externalProcedures[i];
+			if (proc.isExported)
+				*DynamicArrayAdd(exportedSymbols) = proc.name;
+		}
+	}
+}
+
 void BackendGenerateOutputFile(Context *context)
 {
 	OutputBufferReset(context);
@@ -2937,79 +3077,17 @@ void BackendGenerateOutputFile(Context *context)
 	OutputBufferPrint(context, "END\n");
 #endif
 
-	String outputFilename = "output/out"_s;
-
-	String outputPath = SYSExpandPathWorkingDirectoryRelative("output"_s);
-	SYSCreateDirectory(outputPath);
-
-	bool makeLibrary = false;
-	{
-		auto staticDefinitions = context->staticDefinitions.GetForRead();
-		u64 staticDefinitionCount = staticDefinitions->count;
-		for (u64 i = 0; i < staticDefinitionCount; ++i)
-		{
-			const StaticDefinition *currentDef = &staticDefinitions[i];
-			if (StringEquals("compiler_output_name"_s, currentDef->name))
-			{
-				ASSERT(currentDef->definitionType == STATICDEFINITIONTYPE_CONSTANT);
-				ASSERT(currentDef->constant.type == CONSTANTTYPE_STRING);
-				outputFilename = currentDef->constant.valueAsString;
-			}
-			if (StringEquals("compiler_output_type"_s, currentDef->name))
-			{
-				ASSERT(currentDef->definitionType == STATICDEFINITIONTYPE_CONSTANT);
-				ASSERT(currentDef->constant.type == CONSTANTTYPE_INTEGER);
-				makeLibrary = currentDef->constant.valueAsInt == 1;
-			}
-		}
-	}
-
-	DynamicArray<String, ThreadAllocator> exportedSymbols = {};
-	if (makeLibrary) {
-		DynamicArrayInit(&exportedSymbols, 8);
-		auto externalProcedures = context->procedures.GetForRead();
-		for (int i = 0; i < externalProcedures->count; ++i) {
-			Procedure proc = externalProcedures[i];
-			if (proc.isExported)
-				*DynamicArrayAdd(&exportedSymbols) = proc.name;
-		}
-	}
+	String outputFilename, outputPath;
+	OutputType outputType;
+	DynamicArray<String, ThreadAllocator> exportedSymbols;
+	GetOutputInfo(context, &outputFilename, &outputPath, &outputType, &exportedSymbols);
 
 	OutputBufferWriteToFile(context, ChangeFilenameExtension(outputFilename, ".asm"_s));
 
 	if (!context->config.silent)
 		TimerSplit("X64 output file write"_s);
 
-	String extraLinkerArguments = {};
-	for (int i = 0; i < context->libsToLink.size; ++i)
-		extraLinkerArguments = TPrintF("%S %S", extraLinkerArguments,
-				context->libsToLink[i]);
-
-#if IS_WINDOWS
-	bool useWindowsSubsystem = false;
-	{
-		auto staticDefinitions = context->staticDefinitions.GetForRead();
-		u64 staticDefinitionCount = staticDefinitions->count;
-		for (u64 i = 0; i < staticDefinitionCount; ++i)
-		{
-			const StaticDefinition *currentDef = &staticDefinitions[i];
-			if (StringEquals("compiler_subsystem"_s, currentDef->name))
-			{
-				ASSERT(currentDef->definitionType == STATICDEFINITIONTYPE_CONSTANT);
-				ASSERT(currentDef->constant.type == CONSTANTTYPE_INTEGER);
-				useWindowsSubsystem = currentDef->constant.valueAsInt == 1;
-			}
-		}
-	}
-
-	String subsystemArgument;
-	if (useWindowsSubsystem)
-		subsystemArgument = "/subsystem:WINDOWS "_s;
-	else
-		subsystemArgument = "/subsystem:CONSOLE "_s;
-
-	extraLinkerArguments = TPrintF("%S %S", extraLinkerArguments, subsystemArgument);
-#endif
+	String extraLinkerArguments = GetLinkerExtraArguments(context);
 
 	if (!context->config.dontCallAssembler)
 	{
@@ -3020,7 +3098,7 @@ void BackendGenerateOutputFile(Context *context)
 		ProfilerEnd();
 
 		ProfilerBegin("Calling linker");
-		SYSRunLinker(outputPath, outputFilename, makeLibrary, exportedSymbols,
+		SYSRunLinker(outputPath, outputFilename, outputType, exportedSymbols,
 				extraLinkerArguments, context->config.silent);
 		if (!context->config.silent)
 			TimerSplit("Calling linker"_s);
@@ -3334,43 +3412,10 @@ void BackendGenerateWindowsObj(Context *context)
 	OutputBufferPut(context, sizeof(dataSectionHeader), &dataSectionHeader);
 	OutputBufferPut(context, sizeof(codeSectionHeader), &codeSectionHeader);
 
-	String outputFilename = "output/out"_s;
-
-	String outputPath = SYSExpandPathWorkingDirectoryRelative("output"_s);
-	SYSCreateDirectory(outputPath);
-
-	bool makeLibrary = false;
-	{
-		auto staticDefinitions = context->staticDefinitions.GetForRead();
-		u64 staticDefinitionCount = staticDefinitions->count;
-		for (u64 i = 0; i < staticDefinitionCount; ++i)
-		{
-			const StaticDefinition *currentDef = &staticDefinitions[i];
-			if (StringEquals("compiler_output_name"_s, currentDef->name))
-			{
-				ASSERT(currentDef->definitionType == STATICDEFINITIONTYPE_CONSTANT);
-				ASSERT(currentDef->constant.type == CONSTANTTYPE_STRING);
-				outputFilename = currentDef->constant.valueAsString;
-			}
-			if (StringEquals("compiler_output_type"_s, currentDef->name))
-			{
-				ASSERT(currentDef->definitionType == STATICDEFINITIONTYPE_CONSTANT);
-				ASSERT(currentDef->constant.type == CONSTANTTYPE_INTEGER);
-				makeLibrary = currentDef->constant.valueAsInt == 1;
-			}
-		}
-	}
-
-	DynamicArray<String, ThreadAllocator> exportedSymbols = {};
-	if (makeLibrary) {
-		DynamicArrayInit(&exportedSymbols, 8);
-		auto externalProcedures = context->procedures.GetForRead();
-		for (int i = 0; i < externalProcedures->count; ++i) {
-			Procedure proc = externalProcedures[i];
-			if (proc.isExported)
-				*DynamicArrayAdd(&exportedSymbols) = proc.name;
-		}
-	}
+	String outputFilename, outputPath;
+	OutputType outputType;
+	DynamicArray<String, ThreadAllocator> exportedSymbols;
+	GetOutputInfo(context, &outputFilename, &outputPath, &outputType, &exportedSymbols);
 
 	OutputBufferWriteToFile(context, ChangeFilenameExtension(outputFilename, ".obj"_s));
 
@@ -3378,39 +3423,10 @@ void BackendGenerateWindowsObj(Context *context)
 		TimerSplit("Generating output image"_s);
 
 	// Call linker
-	String extraLinkerArguments = {};
-	for (int i = 0; i < context->libsToLink.size; ++i)
-		extraLinkerArguments = TPrintF("%S %S", extraLinkerArguments,
-				context->libsToLink[i]);
-
-#if IS_WINDOWS
-	bool useWindowsSubsystem = false;
-	{
-		auto staticDefinitions = context->staticDefinitions.GetForRead();
-		u64 staticDefinitionCount = staticDefinitions->count;
-		for (u64 i = 0; i < staticDefinitionCount; ++i)
-		{
-			const StaticDefinition *currentDef = &staticDefinitions[i];
-			if (StringEquals("compiler_subsystem"_s, currentDef->name))
-			{
-				ASSERT(currentDef->definitionType == STATICDEFINITIONTYPE_CONSTANT);
-				ASSERT(currentDef->constant.type == CONSTANTTYPE_INTEGER);
-				useWindowsSubsystem = currentDef->constant.valueAsInt == 1;
-			}
-		}
-	}
-
-	String subsystemArgument;
-	if (useWindowsSubsystem)
-		subsystemArgument = "/subsystem:WINDOWS "_s;
-	else
-		subsystemArgument = "/subsystem:CONSOLE "_s;
-
-	extraLinkerArguments = TPrintF("%S %S", extraLinkerArguments, subsystemArgument);
-#endif
+	String extraLinkerArguments = GetLinkerExtraArguments(context);
 
 	ProfilerBegin("Calling linker");
-	SYSRunLinker(outputPath, outputFilename, makeLibrary, exportedSymbols, extraLinkerArguments,
+	SYSRunLinker(outputPath, outputFilename, outputType, exportedSymbols, extraLinkerArguments,
 			context->config.silent);
 	if (!context->config.silent)
 		TimerSplit("Calling linker"_s);
@@ -3515,9 +3531,10 @@ void BackendJobProc(Context *context, u32 procedureIdx)
 	Array<IRValue, ThreadAllocator> params;
 	ArrayInit(&params, paramCount + 1);
 
+	bool returnByCopy = false;
 	if (procTypeInfo.callingConvention != CC_DEFAULT)
 	{
-		bool returnByCopy = procTypeInfo.returnTypeIndices.size &&
+		returnByCopy = procTypeInfo.returnTypeIndices.size &&
 				IRShouldPassByCopy(context, procTypeInfo.returnTypeIndices[0]);
 
 		// Pointer to return value
@@ -3531,11 +3548,11 @@ void BackendJobProc(Context *context, u32 procedureIdx)
 	switch (procTypeInfo.callingConvention)
 	{
 		case CC_WIN64:
-			X64ReadyWin64Parameters(context, {}, params, false);
+			X64ReadyWin64Parameters(context, {}, params, false, returnByCopy);
 			break;
 		case CC_DEFAULT:
 		case CC_LINUX64:
-			X64ReadyLinuxParameters(context, {}, params, false);
+			X64ReadyLinuxParameters(context, {}, params, false, returnByCopy);
 	}
 
 #if DEBUG_BUILD
@@ -3606,7 +3623,6 @@ void BackendJobProc(Context *context, u32 procedureIdx)
 		{
 			u32 returnTypeIdx = procTypeInfo.returnTypeIndices[0];
 			IRValue returnValue = IRValueValue(proc.returnValueIndices[0], returnTypeIdx);
-			bool returnByCopy = IRShouldPassByCopy(context, returnTypeIdx);
 			if (returnByCopy && procTypeInfo.callingConvention != CC_DEFAULT)
 				X64AddInstruction2(context, {}, X64_LEA, RAX, returnValue);
 			else if (!returnByCopy) {

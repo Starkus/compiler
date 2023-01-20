@@ -105,6 +105,7 @@ struct ASTStructMemberDeclaration : ASTBase
 struct ASTStructDeclaration : ASTBase
 {
 	DynamicArray<ASTStructMemberDeclaration, LinearAllocator> members;
+	ASTExpression *alignExp;
 };
 
 struct ASTEnumMember
@@ -165,7 +166,7 @@ struct ASTType : ASTBase
 		struct
 		{
 			ASTType *arrayType;
-			u64 arrayCount;
+			ASTExpression *arrayCountExp;
 		};
 		ASTProcedurePrototype procedurePrototype;
 	};

@@ -36,7 +36,7 @@ struct Value
 	};
 };
 
-enum TypeCategory
+enum TypeCategory : u8
 {
 	TYPECATEGORY_INVALID,
 	TYPECATEGORY_NOT_READY,
@@ -113,6 +113,7 @@ struct TypeInfoAlias
 struct TypeInfo
 {
 	TypeCategory typeCategory;
+	u8 alignment;
 	u32 valueIdx; // Value with runtime type information.
 	u64 size;
 	union

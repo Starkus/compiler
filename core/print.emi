@@ -1,29 +1,24 @@
 PrintF :: (format : String, ..args)
 {
-	PrintArgument :: (arg : Any)
-	{
+	PrintArgument :: (arg : Any) {
 		typeInfo := arg.typeInfo;
-		while typeInfo.typeKind == TypeKind_Alias
-		{
+		while typeInfo.typeKind == TypeKind_Alias {
 			aliasInfo := cast(^TypeInfoAlias)typeInfo;
 			typeInfo = aliasInfo.typeInfo;
 		}
 
 		if typeInfo == typeof(String)
 			Print(@ cast(^String) arg.data);
-		else if typeInfo == typeof(Any)
-		{
+		else if typeInfo == typeof(Any) {
 			any := cast(^Any) arg.data;
 			PrintArgument(@any);
 		}
-		else if typeInfo.typeKind == TypeKind_Integer
-		{
+		else if typeInfo.typeKind == TypeKind_Integer {
 			intInfo := cast(^TypeInfoInteger) typeInfo;
 			num : u64;
 			isNegative : bool = false;
 
-			if intInfo.isSigned
-			{
+			if intInfo.isSigned {
 				signedNum : s64;
 				if intInfo.size == 1
 					signedNum = arg.asS8;
@@ -33,15 +28,13 @@ PrintF :: (format : String, ..args)
 					signedNum = arg.asS32;
 				else if intInfo.size == 8
 					signedNum = arg.asS64;
-				if signedNum < 0
-				{
+				if signedNum < 0 {
 					signedNum = -signedNum;
 					isNegative = true;
 				}
 				num = cast(u64)signedNum;
 			}
-			else
-			{
+			else {
 				if intInfo.size == 1
 					num = arg.asU8;
 				else if intInfo.size == 2
@@ -55,8 +48,7 @@ PrintF :: (format : String, ..args)
 			buffer : [20] u8;
 			n := num;
 			count := 0;
-			while 1
-			{
+			while 1 {
 				digit := n % 10;
 				buffer[19 - count] = cast(u8) digit + '0';
 				count += 1;
@@ -65,8 +57,7 @@ PrintF :: (format : String, ..args)
 				if n <= 0 break;
 			}
 
-			if isNegative
-			{
+			if isNegative {
 				buffer[19 - count] = '-';
 				count += 1;
 			}
@@ -76,8 +67,7 @@ PrintF :: (format : String, ..args)
 			numStr.data = ^buffer[20 - count];
 			Print(numStr);
 		}
-		else if typeInfo.typeKind == TypeKind_Floating
-		{
+		else if typeInfo.typeKind == TypeKind_Floating {
 			f : f64 = ?;
 			if typeInfo.size == 4
 				f = arg.asF32;
@@ -89,8 +79,7 @@ PrintF :: (format : String, ..args)
 			count := 0;
 
 			isNegative : bool = false;
-			if f < 0
-			{
+			if f < 0 {
 				isNegative = true;
 				f = -f;
 			}
@@ -98,12 +87,10 @@ PrintF :: (format : String, ..args)
 			// Fraction
 			n : s64 = f * 10000000.0 + 0.5;
 			start : bool = false;
-			for 0..7
-			{
+			for 0..7 {
 				digit := n % 10;
 				if digit > 0 start = true;
-				if start || i == 6
-				{
+				if start || i == 6 {
 					buffer[31 - count] = cast(u8) digit + '0';
 					count += 1;
 				}
@@ -114,46 +101,46 @@ PrintF :: (format : String, ..args)
 
 			// Wholes
 			n = f;
-			while true
-			{
+			while true {
 				digit := n % 10;
 				buffer[31 - count] = cast(u8) digit + '0';
 				count += 1;
 				n /= 10;
 				if n <= 0 break;
 			}
-			if isNegative
-			{
+			if isNegative {
 				buffer[31 - count] = '-';
 				count += 1;
 			}
 			numStr : String = { cast(u64) count, ^buffer[32 - count] };
 			Print(numStr);
 		}
-		else if typeInfo.typeKind == TypeKind_Struct
-		{
+		else if typeInfo.typeKind == TypeKind_Struct {
 			structInfo := cast(^TypeInfoStruct) typeInfo;
 			Print("{ ");
-			for structInfo.members
-			{
+			for structInfo.members {
 				memberPtr : ^void = arg.data + it.offset;
 
-				member : Any = { it.typeInfo, memberPtr };
-				if it.typeInfo.typeKind == TypeKind_Integer ||
-				   it.typeInfo.typeKind == TypeKind_Floating ||
-				   it.typeInfo.typeKind == TypeKind_Enum ||
-				   it.typeInfo.typeKind == TypeKind_Pointer
+				memberType := it.typeInfo;
+				while memberType.typeKind == TypeKind_Alias {
+					aliasInfo := cast(^TypeInfoAlias)memberType;
+					memberType = aliasInfo.typeInfo;
+				}
+
+				member : Any = { memberType, memberPtr };
+				if memberType.typeKind == TypeKind_Integer ||
+				   memberType.typeKind == TypeKind_Floating ||
+				   memberType.typeKind == TypeKind_Enum ||
+				   memberType.typeKind == TypeKind_Pointer
 					member.asU64 = @cast(^u64)memberPtr;
 
 				buffer : [128] u8 = ?;
 				str : String = { 0, ^buffer[0] };
-				if i > 0
-				{
+				if i > 0 {
 					@(cast(^u32) str.data) = 0x202C;
 					str.size = 2;
 				}
-				for it.name
-				{
+				for it.name {
 					buffer[str.size] = @it;
 					str.size += 1;
 				}
@@ -181,8 +168,7 @@ PrintF :: (format : String, ..args)
 			PrintArgument(num);
 			Print(")");
 		}
-		else if typeInfo.typeKind == TypeKind_Array
-		{
+		else if typeInfo.typeKind == TypeKind_Array {
 			arrayInfo := cast(^TypeInfoArray) typeInfo;
 			Print("{ ");
 			element : Any = ?;
@@ -190,52 +176,35 @@ PrintF :: (format : String, ..args)
 			elementSize := arrayInfo.elementTypeInfo.size;
 			buffer : ^u8 = cast(^u8)arg.data;
 			count : u64 = arrayInfo.count;
-			if count == 0
-			{
+			if count == 0 {
 				count = @ cast(^u64) buffer;
 				buffer = @ (cast(^^u8) buffer + 8);
 			}
 			Print("[");
 			PrintArgument(count);
 			Print("] ");
-			for 0..count
-			{
+			for 0..count {
 				if i > 0 Print(", ");
 
 				element.data = buffer + cast(u64)i * elementSize;
-				if (element.typeInfo.typeKind == TypeKind_Integer ||
-					element.typeInfo.typeKind == TypeKind_Floating ||
-					element.typeInfo.typeKind == TypeKind_Enum ||
-					element.typeInfo.typeKind == TypeKind_Pointer)
-				{
+				if element.typeInfo.typeKind == TypeKind_Integer ||
+				   element.typeInfo.typeKind == TypeKind_Floating ||
+				   element.typeInfo.typeKind == TypeKind_Enum ||
+				   element.typeInfo.typeKind == TypeKind_Pointer
 					element.data = @cast(^u64)element.data;
-				}
 
 				PrintArgument(element);
-				if i > 32
-				{
+				if i > 32 {
 					Print("...");
 					break;
 				}
 			}
 			Print(" }");
 		}
-		else if typeInfo.typeKind == TypeKind_Pointer
+		else if typeInfo.typeKind == TypeKind_Pointer ||
+				typeInfo.typeKind == TypeKind_ProcedurePointer
 		{
-			pointer : ^void = cast(^void) arg.asU64;
-			if pointer == null
-				Print("null");
-			else
-			{
-				pointerInfo := cast(^TypeInfoPointer) typeInfo;
-				Print("^");
-				pointedThing : Any = { pointerInfo.typeInfo, pointer };
-				PrintArgument(pointedThing);
-			}
-		}
-		else if typeInfo.typeKind == TypeKind_ProcedurePointer
-		{
-			pointer : u64 = @cast(^u64)arg.asU64;
+			pointer : u64 = arg.asU64;
 			if pointer == null
 				Print("null");
 			else {
@@ -279,7 +248,6 @@ PrintF :: (format : String, ..args)
 ToHex :: (num : u64, buffer : ^u8) -> String
 {
 	letterOffset :: 'A' - 10;
-	result : String;
 	cursor := buffer + 15;
 	count : u64 = 0;
 	for 0..16 {
@@ -292,5 +260,5 @@ ToHex :: (num : u64, buffer : ^u8) -> String
 		cursor -= 1;
 		count += 1;
 	}
-	return { count, cursor };
+	return { count, buffer };
 }

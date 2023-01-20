@@ -1,3 +1,11 @@
+#if compiler_output_type != COMPILER_OUTPUT_LIBRARY_STATIC
+{
+	#linklib "kernel32";
+	#linklib "user32";
+	#linklib "gdi32";
+	#linklib "winmm";
+}
+
 compiler_platform :: COMPILER_PLATFORM_WINDOWS;
 
 GetCommandLineA :: #external #convention(win64) () -> ^s8;

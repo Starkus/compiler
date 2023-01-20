@@ -1,5 +1,5 @@
 _TEXT SEGMENT
-CopyMemory PROC PUBLIC
+CopyMemory PROC EXPORT
 xor rax, rax
 $loop:
 cmp rax, rdx
@@ -13,7 +13,7 @@ jmp $loop
 $done:
 ret
 CopyMemory ENDP
-ZeroMemory PROC PUBLIC
+ZeroMemory PROC EXPORT
 xor rax, rax
 xor rdx, rdx
 $loop:

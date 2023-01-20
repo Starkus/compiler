@@ -1,4 +1,4 @@
-#define PRINTIR_PRINT_TYPES 1
+#define PRINTIR_PRINT_TYPES 0
 
 s64 PIRPrintOut(Context *context, const char *format, ...)
 {
@@ -265,7 +265,12 @@ void PrintIRInstruction(Context *context, BucketArrayView<Value> localValues, IR
 	} break;
 	case IRINSTRUCTIONTYPE_RETURN:
 	{
-		PIRPrintOut(context, "return\n");
+		PIRPrintOut(context, "return ");
+		for (int i = 0; i < inst.returnInst.returnValueIndices.size; ++i) {
+			if (i) PIRPrintOut(context, ", ");
+			IRValue irValue = IRValueValue(context, inst.returnInst.returnValueIndices[i]);
+			PrintIRValue(context, localValues, irValue);
+		}
 	} break;
 	case IRINSTRUCTIONTYPE_ASSIGNMENT:
 	case IRINSTRUCTIONTYPE_CONVERT_INT_TO_FLOAT:
@@ -389,6 +394,7 @@ void PrintJobIRInstructions(Context *context)
 			if (nextInst.type != IRINSTRUCTIONTYPE_LABEL &&
 				nextInst.type != IRINSTRUCTIONTYPE_PUSH_SCOPE &&
 				nextInst.type != IRINSTRUCTIONTYPE_POP_SCOPE &&
+				nextInst.type != IRINSTRUCTIONTYPE_PUSH_VALUE &&
 				nextInst.type != IRINSTRUCTIONTYPE_NOP) {
 				for (s64 i = inst.label->name.size + 2; i < padding; ++i)
 					PIRPrintOut(context, " ");
@@ -405,6 +411,7 @@ void PrintJobIRInstructions(Context *context)
 		}
 		else if (inst.type == IRINSTRUCTIONTYPE_PUSH_SCOPE ||
 				 inst.type == IRINSTRUCTIONTYPE_POP_SCOPE ||
+				 inst.type == IRINSTRUCTIONTYPE_PUSH_VALUE ||
 				 inst.type == IRINSTRUCTIONTYPE_NOP)
 			continue;
 		else {

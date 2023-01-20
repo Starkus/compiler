@@ -1,6 +1,6 @@
 Main :: (args : [] String) -> s64
 {
-	Print("Hello, Sailor!\n");
+	Print("Hello, Sailor! \x01\n");
 	Print("Test ok\n");
 	return 0;
 }

@@ -304,6 +304,8 @@ enum TokenType CalculateTokenType(Context *context, const Tokenizer *tokenizer)
 				return TOKEN_DIRECTIVE_CSTR;
 			else if (StringEquals(directive, "#run"_s))
 				return TOKEN_DIRECTIVE_RUN;
+			else if (StringEquals(directive, "#align"_s))
+				return TOKEN_DIRECTIVE_ALIGN;
 			else
 				return TOKEN_INVALID_DIRECTIVE;
 		} break;
@@ -605,6 +607,7 @@ u16 CalculateTokenSize(Context *context, const Tokenizer *tokenizer, enum TokenT
 		return 5;
 	case TOKEN_DIRECTIVE_ALIAS:
 	case TOKEN_DIRECTIVE_BREAK:
+	case TOKEN_DIRECTIVE_ALIGN:
 	case TOKEN_KEYWORD_RETURN:
 	case TOKEN_KEYWORD_REMOVE:
 	case TOKEN_KEYWORD_STRUCT:

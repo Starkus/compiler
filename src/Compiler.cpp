@@ -39,6 +39,15 @@ PerformanceAPI_Functions performanceAPI;
 #include "Multithreading.h"
 #include "Containers.h"
 
+// Keep in sync with core/basic.emi
+enum OutputType
+{
+	OUTPUTTYPE_EXECUTABLE = 0,
+	OUTPUTTYPE_LIBRARY_STATIC = 1,
+	OUTPUTTYPE_LIBRARY_DYNAMIC = 2,
+	OUTPUTTYPE_Count
+};
+
 THREADLOCAL u32 t_threadIndex;
 THREADLOCAL void *t_threadMem, *t_threadMemPtr;
 THREADLOCAL u64 t_threadMemSize;
@@ -85,6 +94,7 @@ s64 PrintString(String str)
 s64 Print(const char *format, ...)
 {
 	char *buffer = (char *)t_threadMemPtr;
+	if (*(u64 *)buffer != 0) PANIC;
 
 	va_list args;
 	va_start(args, format);
@@ -627,6 +637,21 @@ int main(int argc, char **argv)
 			Value v = context->globalValues.unsafe[yieldContext.index & VALUE_GLOBAL_MASK];
 			LogErrorNoCrash(context, yieldContext.loc, TPrintF("Value of static variable '%S' "
 						"never computed", GetValueName(v)));
+#if DEBUG_BUILD
+			LogNote(context, job->loc, TPrintF("On job: \"%S\"", job->description));
+#endif
+			errorsFound = true;
+		}
+		waitingJobs->size = 0;
+	}
+	{
+		auto waitingJobs = context->waitingJobsByReason[YIELDREASON_NEED_DYNAMIC_LIBRARY].Get();
+		for (int i = 0; i < waitingJobs->size; ++i) {
+			u32 jobIdx = waitingJobs[i];
+			const Job *job = &context->jobs.unsafe[jobIdx];
+			YieldContext yieldContext = job->context;
+			LogErrorNoCrash(context, yieldContext.loc, TPrintF("Could not find external procedure "
+						"\"%S\" at compile time", yieldContext.identifier));
 #if DEBUG_BUILD
 			LogNote(context, job->loc, TPrintF("On job: \"%S\"", job->description));
 #endif

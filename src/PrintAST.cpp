@@ -14,7 +14,13 @@ String ASTTypeToString(ASTType *type)
 	case ASTTYPENODETYPE_ARRAY:
 	{
 		String typeStr = ASTTypeToString(type->arrayType);
-		return TPrintF("[%d] %S", type->arrayCount, typeStr);
+		ASTExpression *countExp = type->arrayCountExp;
+		if (!countExp)
+			return TPrintF("[] %S", typeStr);
+		else {
+			// @Improve
+			return TPrintF("[exp] %S", typeStr);
+		}
 	}
 	case ASTTYPENODETYPE_STRUCT_DECLARATION:
 		return "Struct"_s;
@@ -209,12 +215,16 @@ void PrintASTType(Context *context, const ASTType *type)
 	} break;
 	case ASTTYPENODETYPE_ARRAY:
 	{
-		Print("[%d]", type->arrayCount);
+		Print("[]");
 
 		PrintSourceLocation(context, type->loc);
 		Print("\n");
 
 		++indentLevels;
+		Indent();
+		Print("Count:\n");
+		PrintExpression(context, type->arrayCountExp);
+
 		PrintASTType(context, type->arrayType);
 		--indentLevels;
 	} break;

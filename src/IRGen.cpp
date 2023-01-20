@@ -717,7 +717,7 @@ IRValue IRDoCast(Context *context, SourceLocation loc, IRValue srcValue, u32 typ
 		TypeInfo srcTypeInfo = GetTypeInfo(context, StripAllAliases(context, srcValue.typeTableIdx));
 
 		bool isSrcFloat = srcTypeInfo.typeCategory == TYPECATEGORY_FLOATING;
-		bool isDstFloat =   dstTypeInfo.typeCategory == TYPECATEGORY_FLOATING;
+		bool isDstFloat = dstTypeInfo.typeCategory == TYPECATEGORY_FLOATING;
 
 		if (srcTypeInfo.size == dstTypeInfo.size && isSrcFloat == isDstFloat) {
 			// No cast needed
@@ -1934,7 +1934,7 @@ IRValue IRGenFromExpression(Context *context, const ASTExpression *expression)
 				u32 varValueIdx = *GetVariableValueIdx(&varDecl, varIdx);
 				u32 varTypeIdx  = *GetVariableTypeIdx(&varDecl, varIdx);
 
-				TypeInfo varTypeInfo = TCGetTypeInfo(context, varTypeIdx);
+				TypeInfo varTypeInfo = GetTypeInfo(context, varTypeIdx);
 				void *staticData = AllocateStaticData(context, varValueIdx, varTypeInfo.size, 8);
 				memset(staticData, 0, varTypeInfo.size);
 				AddStaticDataPointersToRelocateInType(context, staticData, varTypeIdx);
@@ -2461,6 +2461,7 @@ skipGeneratingVarargsArray:
 
 			from = IRGenFromExpression(context, binaryOp.leftHand);
 			to =   IRGenFromExpression(context, binaryOp.rightHand);
+			to = IRDoCast(context, astFor->loc, to, from.typeTableIdx);
 
 			// Assign 'i'
 			IRAddComment(context, astFor->loc, "Assign 'i'"_s);

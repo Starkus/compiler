@@ -141,6 +141,13 @@ loop:
 			*DynamicArrayAdd(&jobs) = t_runningJobIdx;
 			SpinlockUnlock(&context->globalValuesLock);
 		} break;
+		case YIELDREASON_NEED_DYNAMIC_LIBRARY:
+		{
+			// IMPORTANT! ctExternalLibraries should be locked before calling SwitchJob!
+			auto jobs = context->waitingJobsByReason[YIELDREASON_NEED_DYNAMIC_LIBRARY].Get();
+			*DynamicArrayAdd(&jobs) = t_runningJobIdx;
+			SYSMutexUnlock(context->ctExternalLibraries.lock);
+		} break;
 		case YIELDREASON_PROC_BODY_NOT_READY:
 		case YIELDREASON_PROC_IR_NOT_READY:
 		{

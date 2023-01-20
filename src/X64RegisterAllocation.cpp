@@ -29,8 +29,10 @@ BasicBlock *PushBasicBlock(BasicBlock *currentBasicBlock,
 		BucketArray<BasicBlock, ThreadAllocator, 512> *basicBlocks)
 {
 	s64 endOfLastBlock = -1;
-	if (currentBasicBlock)
+	if (currentBasicBlock) {
 		endOfLastBlock = currentBasicBlock->endIdx;
+		ASSERT(currentBasicBlock->beginIdx <= currentBasicBlock->endIdx);
+	}
 
 	BasicBlock *result = BucketArrayAdd(basicBlocks);
 	*result = {};
@@ -370,41 +372,40 @@ void GenerateBasicBlocks(Context *context)
 	BasicBlock *currentBasicBlock = PushBasicBlock(nullptr, &jobData->beBasicBlocks);
 
 	u64 instructionCount = jobData->beInstructions.count;
-	for (int instructionIdx = 0; instructionIdx < instructionCount; ++instructionIdx)
-	{
+	for (int instructionIdx = 0; instructionIdx < instructionCount; ++instructionIdx) {
 		X64Instruction inst = jobData->beInstructions[instructionIdx];
 
 		if (context->config.logAllocationInfo)
 			Print("\t%S\n", X64InstructionToStr(context, inst, &proc->localValues));
 
-		if (inst.type >= X64_Jump_Begin && inst.type <= X64_Jump_End)
-		{
+		if (inst.type >= X64_Jump_Begin && inst.type <= X64_Jump_End) {
 			if (context->config.logAllocationInfo)
-				Print("- Split\n");
+				Print("- Split because of jump\n");
 
 			currentBasicBlock->endIdx = instructionIdx;
 			BasicBlock *previousBlock = currentBasicBlock;
 			currentBasicBlock = PushBasicBlock(currentBasicBlock, &jobData->beBasicBlocks);
 
 			// Only on conditional jumps, add previous block as input too.
-			if (inst.type != X64_JMP)
-			{
+			if (inst.type != X64_JMP) {
 				*DynamicArrayAdd(&previousBlock->outputs) = currentBasicBlock;
 				*DynamicArrayAdd(&currentBasicBlock->inputs) = previousBlock;
 			}
 		}
-		else switch (inst.type)
-		{
+		else switch (inst.type) {
 		case X64_Label:
 		{
-			if (context->config.logAllocationInfo)
-				Print("- Split\n");
+			// If we're not in a brand new block, push a new one
+			if (currentBasicBlock->beginIdx != instructionIdx) {
+				if (context->config.logAllocationInfo)
+					Print("- Split because of label \"%S\"\n", inst.label->name);
 
-			currentBasicBlock->endIdx = instructionIdx - 1;
-			BasicBlock *previousBlock = currentBasicBlock;
-			currentBasicBlock = PushBasicBlock(currentBasicBlock, &jobData->beBasicBlocks);
-			*DynamicArrayAdd(&currentBasicBlock->inputs) = previousBlock;
-			*DynamicArrayAdd(&previousBlock->outputs) = currentBasicBlock;
+				currentBasicBlock->endIdx = instructionIdx - 1;
+				BasicBlock *previousBlock = currentBasicBlock;
+				currentBasicBlock = PushBasicBlock(currentBasicBlock, &jobData->beBasicBlocks);
+				*DynamicArrayAdd(&currentBasicBlock->inputs) = previousBlock;
+				*DynamicArrayAdd(&previousBlock->outputs) = currentBasicBlock;
+			}
 		} break;
 		case X64_Patch:
 		case X64_Patch_Many:
@@ -478,7 +479,7 @@ void ResolveStackOffsets(Context *context)
 			continue;
 
 		u64 size = GetTypeInfo(context, value->typeTableIdx).size;
-		int alignment = size > 8 ? 8 : NextPowerOf2((int)size);
+		int alignment = GetTypeAlignment(context, value->typeTableIdx);
 		if (stackCursor & (alignment - 1))
 			stackCursor = (stackCursor + alignment) & ~(alignment - 1);
 		ASSERT(stackCursor < S32_MAX);
@@ -509,7 +510,7 @@ void ResolveStackOffsets(Context *context)
 			ASSERT(!(value->flags & VALUEFLAGS_IS_EXTERNAL));
 
 			u64 size = GetTypeInfo(context, value->typeTableIdx).size;
-			int alignment = size > 8 ? 8 : NextPowerOf2((int)size);
+			int alignment = GetTypeAlignment(context, value->typeTableIdx);
 			if (stackCursor & (alignment - 1))
 				stackCursor = (stackCursor + alignment) & ~(alignment - 1);
 			ASSERT(stackCursor < S32_MAX);
