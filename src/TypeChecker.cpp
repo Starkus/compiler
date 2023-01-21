@@ -2965,30 +2965,28 @@ ASTExpression InlineProcedureCopyTreeBranch(Context *context, const ASTExpressio
 				elementTypeTableIdx = rangeTypeInfo.arrayInfo.elementTypeTableIdx;
 			}
 
-			u32 pointerToElementTypeTableIdx = GetTypeInfoPointerOf(context, elementTypeTableIdx);
+			u32 pointerToElementTypeIdx = GetTypeInfoPointerOf(context, elementTypeTableIdx);
 			u32 elementValueIdx = TCNewValue(context, astFor.itemVariableName,
-					pointerToElementTypeTableIdx, 0);
+					pointerToElementTypeIdx, 0);
 			astFor.elementValueIdx = elementValueIdx;
 
-			TCScopeName newScopeName;
-			newScopeName.name = astFor.itemVariableName;
-			newScopeName.variableInfo.valueIdx = elementValueIdx;
-			newScopeName.variableInfo.typeTableIdx = pointerToElementTypeTableIdx;
-			newScopeName.loc = expression->any.loc;
-			*FixedArrayAdd(&scopeNamesToAdd) = newScopeName;
+			*FixedArrayAdd(&scopeNamesToAdd) = {
+				.type = NAMETYPE_VARIABLE,
+				.name = astFor.itemVariableName,
+				.loc = astFor.loc,
+				.variableInfo = { .valueIdx = elementValueIdx, .typeTableIdx = pointerToElementTypeIdx }
+			};
 		}
 
 		u32 indexValueIdx = TCNewValue(context, astFor.indexVariableName, indexTypeIdx, 0);
 		astFor.indexValueIdx = indexValueIdx;
 
-		TCScopeName newScopeName;
-		newScopeName.type = NAMETYPE_VARIABLE;
-		newScopeName.name = astFor.indexVariableName;
-		newScopeName.variableInfo.valueIdx = indexValueIdx;
-		newScopeName.variableInfo.typeTableIdx = indexTypeIdx;
-		newScopeName.loc = expression->any.loc;
-		*FixedArrayAdd(&scopeNamesToAdd) = newScopeName;
-
+		*FixedArrayAdd(&scopeNamesToAdd) = {
+			.type = NAMETYPE_VARIABLE,
+			.name = astFor.indexVariableName,
+			.loc = astFor.loc,
+			.variableInfo = { .valueIdx = indexValueIdx, .typeTableIdx = indexTypeIdx }
+		};
 		TCAddScopeNames(context, scopeNamesToAdd);
 
 		e = TCNewTreeNode(context);
@@ -4552,14 +4550,14 @@ void TypeCheckExpression(Context *context, ASTExpression *expression)
 				elementTypeTableIdx = rangeTypeInfo.arrayInfo.elementTypeTableIdx;
 			}
 
-			u32 pointerToElementTypeTableIdx = GetTypeInfoPointerOf(context, elementTypeTableIdx);
+			u32 pointerToElementTypeIdx = GetTypeInfoPointerOf(context, elementTypeTableIdx);
 			u32 elementValueIdx = TCNewValue(context, astFor->itemVariableName,
-					pointerToElementTypeTableIdx, 0);
+					pointerToElementTypeIdx, 0);
 			astFor->elementValueIdx = elementValueIdx;
 
 			newScopeName.name = astFor->itemVariableName;
 			newScopeName.variableInfo.valueIdx = elementValueIdx;
-			newScopeName.variableInfo.typeTableIdx = pointerToElementTypeTableIdx;
+			newScopeName.variableInfo.typeTableIdx = pointerToElementTypeIdx;
 			newScopeName.loc = expression->any.loc;
 			*FixedArrayAdd(&scopeNamesToAdd) = newScopeName;
 		}

@@ -94,7 +94,9 @@ s64 PrintString(String str)
 s64 Print(const char *format, ...)
 {
 	char *buffer = (char *)t_threadMemPtr;
+#if DEBUG_BUILD
 	if (*(u64 *)buffer != 0) PANIC;
+#endif
 
 	va_list args;
 	va_start(args, format);
