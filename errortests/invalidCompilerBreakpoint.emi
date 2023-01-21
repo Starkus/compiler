@@ -1,0 +1,5 @@
+Main :: (args: [] String) -> s64
+{
+	#break(foo);
+	return 0;
+}
