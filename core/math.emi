@@ -304,7 +304,7 @@ ReminderPiOver2 :: (x : f64, y : ^[2] f64) -> s32
 
 Sin :: (x : f64) -> f64
 {
-	xi := F64HighWord(x) &= 0x7fffffff;
+	xi := F64HighWord(x) & 0x7fffffff;
 	if (xi < 0x3fe921fb)				/* |x| ~< pi/4 */
 		return KSin(x, 0, 0);
 

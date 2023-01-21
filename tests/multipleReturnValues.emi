@@ -49,11 +49,6 @@ Main :: (args : [] String) -> s64
 	PrintF("Result: % - error: %\n", num, error);
 	if num != 0 || error != PARSEERROR_INVALID_CHARACTER failed = true;
 
-	// @Todo: syntax for declaring multiple variables at once.
-	//bigA : BigStruct = ?;
-	//bigB : BigStruct = ?;
-	//bigC : BigStruct = ?;
-	//bigA, bigB, bigC = ByCopy();
 	bigA, bigB, bigC := ByCopy();
 	PrintF("Big structs returned: % % %\n", bigA, bigB, bigC);
 

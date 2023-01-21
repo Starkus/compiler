@@ -733,21 +733,18 @@ extern "C" u64 SYSCallProcedureDynamically(void *start, u64 argCount, void *argV
 void *SYSLoadDynamicLibrary(String filename)
 {
 	const char *cstr = StringToCStr(filename, ThreadAllocator::Alloc);
-	Print("%s\n", cstr);
 	HMODULE result = LoadLibraryA(cstr);
 	if (result) return result;
 
 	// Look in working path
 	String workingPathRelative = SYSExpandPathWorkingDirectoryRelative(filename);
 	// this string is null terminated
-	Print("%s\n", workingPathRelative.data);
 	result = LoadLibraryA(workingPathRelative.data);
 	if (result) return result;
 
 	// Look in compiler path
 	String compilerPathRelative = SYSExpandPathCompilerRelative(TStringConcat("bin/"_s, filename));
 	// this string is null terminated
-	Print("%s\n", compilerPathRelative.data);
 	result = LoadLibraryA(compilerPathRelative.data);
 	return result;
 }

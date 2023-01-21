@@ -6,10 +6,6 @@
 * Create fibers up to a maximum count, then wait for others to finish and get deleted. This would
 	enable very edge cases where we could get full of fibers that can't finish but we can't create
 	new ones to keep going...
-* Proper error message when initializing a variable to multiple values.
-* Error when assignment is not at statement level.
-* There seems to be a problem with empty varargs.
-* Fix errortests, they are not failing properly.
 * Allow for expanding memory in ThreadAllocator.
 * Fix PrintIR, PrintAST and print asm before allocation.
 * #defined is set to 0 even if another #defined would potentially define what we are looking for. I
@@ -20,6 +16,5 @@
 * Verify small structs are passed properly through parameters
 * Return statements are being evaluated before deferred statements!
 * Replace big inline zeroing/initializing with static data
-* Maybe initialize string structs inline instead of having all of them as static data
 * For known procedures, check what registers it uses and only save those upon calling it
 * CodeGen: Flip operands when possible to avoid movs (e.g. immediate in cmp left hand)

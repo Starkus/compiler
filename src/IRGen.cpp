@@ -2781,9 +2781,9 @@ skipGeneratingVarargsArray:
 	} break;
 	case ASTNODETYPE_COMPILER_BREAKPOINT:
 	{
-		if (StringEquals(expression->compilerBreakpointType, "irgen"_s))
+		if (expression->compilerBreakpointType == COMPILERBREAKPOINT_IR_GEN)
 			BREAK;
-		else if (StringEquals(expression->compilerBreakpointType, "backend"_s)) {
+		else if (expression->compilerBreakpointType == COMPILERBREAKPOINT_CODE_GEN) {
 			IRInstruction breakInstruction = {
 				.type = IRINSTRUCTIONTYPE_COMPILER_BREAKPOINT,
 				.loc = expression->any.loc

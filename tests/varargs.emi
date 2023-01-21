@@ -1,5 +1,6 @@
 Varargs :: (..args)
 {
+	PrintF("Number of args: %\n", args.size);
 	i : s64 = 0;
 	while (i < cast(s64) args.size)
 	{

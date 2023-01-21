@@ -4908,7 +4908,7 @@ done:
 	} break;
 	case ASTNODETYPE_COMPILER_BREAKPOINT:
 	{
-		if (StringEquals(expression->compilerBreakpointType, "typechecker"_s))
+		if (expression->compilerBreakpointType == COMPILERBREAKPOINT_TYPE_CHECKER)
 			BREAK;
 	} break;
 	case ASTNODETYPE_RUN:
