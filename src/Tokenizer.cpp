@@ -362,8 +362,6 @@ enum TokenType CalculateTokenType(Context *context, const Tokenizer *tokenizer)
 				return TOKEN_OP_ASSIGNMENT_MINUS;
 			else if (next == '>')
 				return TOKEN_OP_ARROW;
-			else if (IsNumeric(next))
-				return TOKEN_LITERAL_NUMBER;
 			else
 				return TOKEN_OP_MINUS;
 		} break;

@@ -1726,6 +1726,28 @@ ASTExpression ParseExpression(Context *context, s32 precedence, bool isStatement
 				LogError(context, jobData->token->loc, "Invalid expression!"_s);
 			result.nodeType = ASTNODETYPE_UNARY_OPERATION;
 			result.unaryOperation = unaryOp;
+
+			if (unaryOp.op == TOKEN_OP_MINUS && unaryOp.expression->nodeType == ASTNODETYPE_LITERAL)
+			{
+				ASTLiteral *literal = &unaryOp.expression->literal;
+				switch (literal->type) {
+				case LITERALTYPE_INTEGER:
+					literal->integer = -literal->integer;
+					break;
+				case LITERALTYPE_FLOATING:
+					literal->floating = -literal->floating;
+					break;
+				case LITERALTYPE_CHARACTER:
+					literal->character = -literal->character;
+					break;
+				default:
+					continue;
+				}
+				literal->loc = result.any.loc;
+				result.nodeType = ASTNODETYPE_LITERAL;
+				result.literal = *literal;
+			}
+
 			continue;
 		}
 		else {

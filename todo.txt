@@ -1,4 +1,3 @@
-* Fix - getting sucked into literal number tokens even when it is a binary - operator.
 * Detect unreachable code and log error.
 * Backend gets confused with infinite loops.
 * Put 8 bit offsets on instructions where possible (mainly branches and calls). However this is
