@@ -25,8 +25,7 @@ void X64Patch(Context *context, X64Instruction *original, X64Instruction newInst
 	*original = patchInst;
 }
 
-BasicBlock *PushBasicBlock(BasicBlock *currentBasicBlock,
-		BucketArray<BasicBlock, ThreadAllocator, 512> *basicBlocks)
+BasicBlock *PushBasicBlock(Context *context, BasicBlock *currentBasicBlock)
 {
 	s64 endOfLastBlock = -1;
 	if (currentBasicBlock) {
@@ -34,7 +33,8 @@ BasicBlock *PushBasicBlock(BasicBlock *currentBasicBlock,
 		ASSERT(currentBasicBlock->beginIdx <= currentBasicBlock->endIdx);
 	}
 
-	BasicBlock *result = BucketArrayAdd(basicBlocks);
+	IRJobData *jobData = (IRJobData *)SYSGetFiberData(context->flsIndex);
+	BasicBlock *result = BucketArrayAdd(&jobData->beBasicBlocks);
 	*result = {};
 
 	result->beginIdx = endOfLastBlock + 1;
@@ -369,7 +369,7 @@ void GenerateBasicBlocks(Context *context)
 		Print("GENERATING BASIC BLOCKS FOR %S\n",
 				GetProcedureRead(context, jobData->procedureIdx).name);
 
-	BasicBlock *currentBasicBlock = PushBasicBlock(nullptr, &jobData->beBasicBlocks);
+	BasicBlock *currentBasicBlock = PushBasicBlock(context, nullptr);
 
 	u64 instructionCount = jobData->beInstructions.count;
 	for (int instructionIdx = 0; instructionIdx < instructionCount; ++instructionIdx) {
@@ -384,7 +384,7 @@ void GenerateBasicBlocks(Context *context)
 
 			currentBasicBlock->endIdx = instructionIdx;
 			BasicBlock *previousBlock = currentBasicBlock;
-			currentBasicBlock = PushBasicBlock(currentBasicBlock, &jobData->beBasicBlocks);
+			currentBasicBlock = PushBasicBlock(context, currentBasicBlock);
 
 			// Only on conditional jumps, add previous block as input too.
 			if (inst.type != X64_JMP) {
@@ -402,7 +402,7 @@ void GenerateBasicBlocks(Context *context)
 
 				currentBasicBlock->endIdx = instructionIdx - 1;
 				BasicBlock *previousBlock = currentBasicBlock;
-				currentBasicBlock = PushBasicBlock(currentBasicBlock, &jobData->beBasicBlocks);
+				currentBasicBlock = PushBasicBlock(context, currentBasicBlock);
 				*DynamicArrayAdd(&currentBasicBlock->inputs) = previousBlock;
 				*DynamicArrayAdd(&previousBlock->outputs) = currentBasicBlock;
 			}
@@ -679,6 +679,13 @@ void X64AllocateRegisters(Context *context)
 	DynamicArray<u32, ThreadAllocator> liveValues;
 	DynamicArrayInit(&liveValues, 32);
 	DoLivenessAnalisis(context, currentLeafBlock, &liveValues);
+
+	// Find any missed nodes (infinite loops)
+	for (int blockIdx = 0; blockIdx < jobData->beBasicBlocks.count; ++blockIdx) {
+		BasicBlock *block = &jobData->beBasicBlocks[blockIdx];
+		if (!block->livenessAnalizedOnce)
+			DoLivenessAnalisis(context, block, &liveValues);
+	}
 
 	ProfilerEnd();
 
