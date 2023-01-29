@@ -34,7 +34,7 @@ u32 RequestNewJob(Context *context, JobType type, void (*proc)(void *), void *ar
 		EnqueueReadyJob(context, newJobIdx);
 	}
 	else {
-		JobRequest jobRequest = { newJobIdx, proc, args };
+		JobRequest jobRequest = { newJobIdx, type, proc, args };
 		if (!MTQueueEnqueue(&context->jobsToCreate, jobRequest)) {
 			newJob->fiber = SYSCreateFiber(proc, args);
 			EnqueueReadyJob(context, newJobIdx);
@@ -213,12 +213,15 @@ loop:
 			JobRequest jobToCreate;
 			while (MTQueueDequeue(&context->jobsToCreate, &jobToCreate)) {
 				SpinlockLock(&context->jobs.lock);
-				u32 newJobIdx = (u32)context->jobs.unsafe.size;
-				Job *newJob = DynamicArrayAdd(&context->jobs.unsafe);
+				u32 newJobIdx = (u32)context->jobs.unsafe.count;
+				Job *newJob = BucketArrayAdd(&context->jobs.unsafe);
 				SpinlockUnlock(&context->jobs.lock);
 
-				*newJob = {};
-				newJob->fiber = SYSCreateFiber(jobToCreate.proc, jobToCreate.args);
+				*newJob = {
+					.fiber = SYSCreateFiber(jobToCreate.proc, jobToCreate.args),
+					.type = jobToCreate.type,
+					.state = JOBSTATE_INIT
+				};
 				EnqueueReadyJob(context, newJobIdx);
 			}
 		}

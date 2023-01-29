@@ -679,6 +679,9 @@ int main(int argc, char **argv)
 	if (errorsFound)
 		LogError(context, {}, "Errors were found. Aborting"_s);
 
+	ASSERT(MTQueueIsEmpty(&context->jobsToCreate));
+	ASSERT(MTQueueIsEmpty(&context->readyJobs));
+
 	for (int i = 0; i < context->jobs.unsafe.count; ++i) {
 		Job job = context->jobs.unsafe[i];
 		ASSERT(job.state == JOBSTATE_FINISHED);

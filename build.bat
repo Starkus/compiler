@@ -10,7 +10,7 @@ set Libraries=user32.lib winmm.lib shell32.lib advapi32.lib ..\external\xed\xed.
 IF "%1"=="-r" (
 	set CompilerFlags=%CompilerFlags% -MT -O2 -GL
 ) ELSE IF "%1"=="-p" (
-	set CompilerFlags=%CompilerFlags% -MT -O2 -GL -DUSE_PROFILER=1
+	set CompilerFlags=%CompilerFlags% -MT -O2 -GL -DUSE_PROFILER_API=1
 ) ELSE (
 	set CompilerFlags=%CompilerFlags% -MTd -Od -DDEBUG_BUILD=1
 )
