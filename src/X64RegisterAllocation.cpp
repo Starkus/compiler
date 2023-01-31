@@ -13,7 +13,7 @@ struct BasicBlock
 
 void X64Patch(Context *context, X64Instruction *original, X64Instruction newInst)
 {
-	IRJobData *jobData = (IRJobData *)SYSGetFiberData(context->flsIndex);
+	IRJobData *jobData = (IRJobData *)t_jobData;
 	X64Instruction *patch1 = BucketArrayAdd(&jobData->bePatchedInstructions);
 	*patch1 = newInst;
 	X64Instruction *patch2 = BucketArrayAdd(&jobData->bePatchedInstructions);
@@ -33,7 +33,7 @@ BasicBlock *PushBasicBlock(Context *context, BasicBlock *currentBasicBlock)
 		ASSERT(currentBasicBlock->beginIdx <= currentBasicBlock->endIdx);
 	}
 
-	IRJobData *jobData = (IRJobData *)SYSGetFiberData(context->flsIndex);
+	IRJobData *jobData = (IRJobData *)t_jobData;
 	BasicBlock *result = BucketArrayAdd(&jobData->beBasicBlocks);
 	*result = {};
 
@@ -81,7 +81,7 @@ inline bool AddValue(Context *context, u32 valueIdx, DynamicArray<u32, ThreadAll
 		if (!(valueFlags & VALUEFLAGS_ON_STATIC_STORAGE |
 					VALUEFLAGS_IS_EXTERNAL))
 		{
-			IRJobData *jobData = (IRJobData *)SYSGetFiberData(context->flsIndex);
+			IRJobData *jobData = (IRJobData *)t_jobData;
 			DynamicArrayAddUnique(&jobData->spilledValues, valueIdx);
 		}
 		return false;
@@ -140,7 +140,7 @@ inline bool IsXMMFast(IRJobData *jobData, u32 valueIdx)
 void DoLivenessAnalisisOnInstruction(Context *context, BasicBlock *basicBlock, X64Instruction *inst,
 		DynamicArray<u32, ThreadAllocator> *liveValues)
 {
-	IRJobData *jobData = (IRJobData *)SYSGetFiberData(context->flsIndex);
+	IRJobData *jobData = (IRJobData *)t_jobData;
 	Procedure *proc = &context->procedures.unsafe[jobData->procedureIdx];
 
 	if (context->config.logAllocationInfo)
@@ -313,7 +313,7 @@ void DoLivenessAnalisisOnInstruction(Context *context, BasicBlock *basicBlock, X
 void DoLivenessAnalisis(Context *context, BasicBlock *basicBlock,
 		DynamicArray<u32, ThreadAllocator> *liveValues)
 {
-	IRJobData *jobData = (IRJobData *)SYSGetFiberData(context->flsIndex);
+	IRJobData *jobData = (IRJobData *)t_jobData;
 
 	if (context->config.logAllocationInfo)
 		Print("Doing liveness analisis on block %S %d-%d\n",
@@ -362,7 +362,7 @@ void DoLivenessAnalisis(Context *context, BasicBlock *basicBlock,
 
 void GenerateBasicBlocks(Context *context)
 {
-	IRJobData *jobData = (IRJobData *)SYSGetFiberData(context->flsIndex);
+	IRJobData *jobData = (IRJobData *)t_jobData;
 	Procedure *proc = &context->procedures.unsafe[jobData->procedureIdx];
 
 	if (context->config.logAllocationInfo)
@@ -453,7 +453,7 @@ foundBlock:
 
 void ResolveStackOffsets(Context *context)
 {
-	IRJobData *jobData = (IRJobData *)SYSGetFiberData(context->flsIndex);
+	IRJobData *jobData = (IRJobData *)t_jobData;
 
 	DynamicArray<s64, ThreadAllocator> stack;
 	DynamicArrayInit(&stack, 16);
@@ -617,7 +617,7 @@ inline u64 RegisterSavingInstruction(Context *context, X64Instruction *inst, u64
 
 void X64AllocateRegisters(Context *context)
 {
-	IRJobData *jobData = (IRJobData *)SYSGetFiberData(context->flsIndex);
+	IRJobData *jobData = (IRJobData *)t_jobData;
 	Procedure *proc = &context->procedures.unsafe[jobData->procedureIdx];
 
 	BucketArrayInit(&jobData->beBasicBlocks);

@@ -1,5 +1,5 @@
-THREADLOCAL Fiber t_schedulerFiber;
 THREADLOCAL u32 t_runningJobIdx = U32_MAX;
+THREADLOCAL void *t_jobData = nullptr;
 THREADLOCAL YieldReason t_previousYieldReason;
 THREADLOCAL YieldContext t_previousYieldContext;
 
@@ -93,6 +93,7 @@ inline void SwitchJob(Context *context, YieldReason yieldReason, YieldContext yi
 	ASSERT(previousJob->state == JOBSTATE_RUNNING);
 	u32 previousJobIdx = t_runningJobIdx;
 
+	t_jobData = nullptr;
 	t_previousYieldReason = yieldReason;
 	t_previousYieldContext = yieldContext;
 	previousJob->fiber = GetCurrentFiber();
@@ -111,6 +112,7 @@ inline void FinishCurrentJob(Context *context)
 	previousJob->state = JOBSTATE_FINISHED;
 	previousJob->fiber = SYS_INVALID_FIBER_HANDLE;
 	t_runningJobIdx = U32_MAX;
+	t_jobData = nullptr;
 }
 
 // Fiber that swaps jobs around.
@@ -281,6 +283,7 @@ switchFiber:
 
 	Job *nextJob = &context->jobs.unsafe[nextJobIdx];
 	t_runningJobIdx = nextJobIdx;
+	t_jobData = nextJob->jobData;
 	if (nextJob->state == JOBSTATE_INIT) {
 		nextJob->state = JOBSTATE_RUNNING;
 		nextJob->startProcedure(nextJob->args);
@@ -308,7 +311,7 @@ int WorkerThreadProc(void *args)
 
 	MemoryInitThread(512 * 1024 * 1024);
 
-	t_schedulerFiber = SYSConvertThreadToFiber();
+	SYSConvertThreadToFiber();
 
 	SchedulerProc(context);
 

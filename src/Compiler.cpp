@@ -31,6 +31,8 @@ PerformanceAPI_Functions performanceAPI;
 #endif
 #include "Profiler.cpp"
 
+#define USE_OWN_ASSEMBLER 1
+
 // To properly turn this off, we'd need to make sure we don't leak locks anywhere we call LogError.
 #define EXIT_ON_FIRST_ERROR 1
 
@@ -194,8 +196,6 @@ struct Config
 struct Context
 {
 	Config config;
-
-	u32 flsIndex;
 
 	Mutex consoleMutex;
 
@@ -391,13 +391,11 @@ int main(int argc, char **argv)
 	Context *context = ALLOC(HeapAllocator, Context);
 	*context = {};
 	g_context = context;
-	context->flsIndex = SYSAllocFiberData();
 	context->consoleMutex = SYSCreateMutex();
 
 	// Allocate memory
 	Memory memory;
 	g_memory = &memory;
-	memory.flsIndex = context->flsIndex;
 	memory.linearMem = SYSAlloc(Memory::linearMemSize);
 	MemoryInit(&memory);
 
@@ -681,10 +679,10 @@ int main(int argc, char **argv)
 		ASSERT(job.state == JOBSTATE_FINISHED);
 	}
 
-#if 0
-	BackendGenerateOutputFile(context);
-#else
+#if USE_OWN_ASSEMBLER
 	BackendGenerateWindowsObj(context);
+#else
+	BackendGenerateOutputFile(context);
 #endif
 
 	if (!context->config.silent) {

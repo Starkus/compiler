@@ -319,27 +319,27 @@ bool CanValueBeMemory(Context *context, IRValue value)
 
 inline void X64AddInstruction0(Context *context, SourceLocation loc, X64InstructionType type)
 {
-	IRJobData *jobData = (IRJobData *)SYSGetFiberData(context->flsIndex);
+	IRJobData *jobData = (IRJobData *)t_jobData;
 	*BucketArrayAdd(&jobData->beInstructions) = { loc, type };
 }
 
 inline void X64AddInstruction1(Context *context, SourceLocation loc, X64InstructionType type, IRValue dst)
 {
-	IRJobData *jobData = (IRJobData *)SYSGetFiberData(context->flsIndex);
+	IRJobData *jobData = (IRJobData *)t_jobData;
 	*BucketArrayAdd(&jobData->beInstructions) = { loc, type, dst };
 }
 
 inline void X64AddInstruction2(Context *context, SourceLocation loc, X64InstructionType type, IRValue dst,
 		IRValue src)
 {
-	IRJobData *jobData = (IRJobData *)SYSGetFiberData(context->flsIndex);
+	IRJobData *jobData = (IRJobData *)t_jobData;
 	*BucketArrayAdd(&jobData->beInstructions) = { loc, type, dst, src };
 }
 
 void X64Mov(Context *context, SourceLocation loc, IRValue dst, IRValue src);
 void X64MovNoTmp(Context *context, SourceLocation loc, IRValue dst, IRValue src)
 {
-	IRJobData *jobData = (IRJobData *)SYSGetFiberData(context->flsIndex);
+	IRJobData *jobData = (IRJobData *)t_jobData;
 
 	X64Instruction result = { loc };
 	TypeInfo dstType = GetTypeInfo(context, StripAllAliases(context, dst.typeTableIdx));
@@ -468,7 +468,7 @@ void X64Mov(Context *context, SourceLocation loc, IRValue dst, IRValue src)
 
 void X64Test(Context *context, SourceLocation loc, IRValue value)
 {
-	IRJobData *jobData = (IRJobData *)SYSGetFiberData(context->flsIndex);
+	IRJobData *jobData = (IRJobData *)t_jobData;
 
 	X64FloatingType floatingType = X64FLOATINGTYPE_NONE;
 	TypeInfo typeInfo = GetTypeInfo(context, value.typeTableIdx);
@@ -534,7 +534,7 @@ IRValue X64PushRegisterParameter(u32 typeTableIdx, s32 *numberOfGPR, s32 *number
 
 void X64CopyMemory(Context *context, SourceLocation loc, IRValue dst, IRValue src, IRValue size)
 {
-	IRJobData *jobData = (IRJobData *)SYSGetFiberData(context->flsIndex);
+	IRJobData *jobData = (IRJobData *)t_jobData;
 
 	ASSERT(dst.valueType == IRVALUETYPE_VALUE ||
 		   dst.valueType == IRVALUETYPE_MEMORY);
@@ -606,7 +606,7 @@ bool X64WinABIShouldPassByCopy(Context *context, u32 typeTableIdx)
 Array<u32, ThreadAllocator> X64ReadyWin64Parameters(Context *context, SourceLocation loc,
 		ArrayView<IRValue> parameters, bool isCaller, bool includesReturnValue)
 {
-	IRJobData *jobData = (IRJobData *)SYSGetFiberData(context->flsIndex);
+	IRJobData *jobData = (IRJobData *)t_jobData;
 
 	int parameterCount = (int)parameters.size;
 
@@ -686,7 +686,7 @@ Array<u32, ThreadAllocator> X64ReadyWin64Parameters(Context *context, SourceLoca
 Array<u32, ThreadAllocator> X64ReadyLinuxParameters(Context *context, SourceLocation loc,
 		ArrayView<IRValue> parameters, bool isCaller, bool includesReturnValue)
 {
-	IRJobData *jobData = (IRJobData *)SYSGetFiberData(context->flsIndex);
+	IRJobData *jobData = (IRJobData *)t_jobData;
 
 	if (includesReturnValue) {
 		// Pointer to return value is passed on RAX.
@@ -886,7 +886,7 @@ Array<u32, ThreadAllocator> X64ReadyLinuxParameters(Context *context, SourceLoca
 
 void X64ConvertInstruction(Context *context, IRInstruction inst)
 {
-	IRJobData *jobData = (IRJobData *)SYSGetFiberData(context->flsIndex);
+	IRJobData *jobData = (IRJobData *)t_jobData;
 	X64Instruction result = { inst.loc };
 
 	X64FloatingType floatingType = X64FLOATINGTYPE_NONE;
@@ -2023,6 +2023,55 @@ printLabel:
 	}
 }
 
+inline s64 X64PrintInstruction(Context *context, X64Instruction inst,
+	BucketArray<Value, LinearAllocator, 256> *localValues)
+{
+	String instructionStr = X64InstructionToStr(context, inst, localValues);
+	return OutputBufferPut(context, instructionStr.size, instructionStr.data);
+}
+
+#include "X64RegisterAllocation.cpp"
+
+void X64PrintInstructions(Context *context)
+{
+	auto beFinalProcedureData = context->beFinalProcedureData.GetForRead();
+	int procCount = (int)beFinalProcedureData->size;
+	for (int finalProcIdx = 0; finalProcIdx < procCount; ++finalProcIdx)
+	{
+		X64FinalProcedure finalProc = beFinalProcedureData[finalProcIdx];
+		Procedure proc = GetProcedureRead(context, finalProc.procedureIdx);
+#if IS_WINDOWS
+		if (proc.isExported)
+			OutputBufferPrint(context, "\n%S PROC PUBLIC\n", proc.name);
+		else
+			OutputBufferPrint(context, "\n%S PROC PRIVATE\n", proc.name);
+#else
+		OutputBufferPrint(context, "\n%S:\n", proc.name);
+#endif
+		OutputBufferPrint(context, "push rbp\n");
+		OutputBufferPrint(context, "mov rbp, rsp\n");
+		if (finalProc.stackSize > 0)
+			OutputBufferPrint(context, "sub rsp, 0%llxh\n", finalProc.stackSize);
+
+		X64InstructionStream stream = X64InstructionStreamBegin(&finalProc.instructions);
+		X64Instruction *inst = X64InstructionStreamAdvance(&stream);
+		while (inst)
+		{
+			if (X64PrintInstruction(context, *inst, &finalProc.localValues))
+				OutputBufferPrint(context, "\n");
+			inst = X64InstructionStreamAdvance(&stream);
+		}
+
+		OutputBufferPrint(context, "leave\n");
+		OutputBufferPrint(context, "ret\n");
+#if IS_WINDOWS
+		OutputBufferPut(context, proc.name.size, proc.name.data);
+		OutputBufferPrint(context, " ENDP\n");
+#endif
+	}
+}
+
+#if USE_OWN_ASSEMBLER
 xed_encoder_operand_t X64IRValueToXEDOperand(Context *context, SourceLocation loc, IRValue value,
 		Relocation *displacementRelocation,
 		BucketArray<Value, LinearAllocator, 256> *localValues)
@@ -2330,70 +2379,7 @@ encode:
 			*DynamicArrayAdd(&g_relocations) = displacementRelocation;
 		}
 
-#if 0
-		{
-			char chars[32];
-			xed_decoded_inst_t decoded;
-			xed_state_t dstate64 = {};
-			dstate64.stack_addr_width = XED_ADDRESS_WIDTH_64b;
-			dstate64.mmode = XED_MACHINE_MODE_LONG_64;
-			xed_decoded_inst_zero_set_mode(&decoded, &dstate64);
-			xed_error_enum_t er = xed_decode(&decoded, buffer, 16);
-			if (er != XED_ERROR_NONE) Print("ERROR: %d  ", er);
-			xed_format_context(XED_SYNTAX_INTEL, &decoded, chars, 32, 0, nullptr, nullptr);
-			Print("%s\n", chars);
-		}
-#endif
-
 		return len;
-	}
-}
-
-inline s64 X64PrintInstruction(Context *context, X64Instruction inst,
-	BucketArray<Value, LinearAllocator, 256> *localValues)
-{
-	String instructionStr = X64InstructionToStr(context, inst, localValues);
-	return OutputBufferPut(context, instructionStr.size, instructionStr.data);
-}
-
-#include "X64RegisterAllocation.cpp"
-
-void X64PrintInstructions(Context *context)
-{
-	auto beFinalProcedureData = context->beFinalProcedureData.GetForRead();
-	int procCount = (int)beFinalProcedureData->size;
-	for (int finalProcIdx = 0; finalProcIdx < procCount; ++finalProcIdx)
-	{
-		X64FinalProcedure finalProc = beFinalProcedureData[finalProcIdx];
-		Procedure proc = GetProcedureRead(context, finalProc.procedureIdx);
-#if IS_WINDOWS
-		if (proc.isExported)
-			OutputBufferPrint(context, "\n%S PROC PUBLIC\n", proc.name);
-		else
-			OutputBufferPrint(context, "\n%S PROC PRIVATE\n", proc.name);
-#else
-		OutputBufferPrint(context, "\n%S:\n", proc.name);
-#endif
-		OutputBufferPrint(context, "push rbp\n");
-		OutputBufferPrint(context, "mov rbp, rsp\n");
-		if (finalProc.stackSize > 0)
-			OutputBufferPrint(context, "sub rsp, 0%llxh\n", finalProc.stackSize);
-
-		X64InstructionStream stream = X64InstructionStreamBegin(&finalProc.instructions);
-		X64Instruction *inst = X64InstructionStreamAdvance(&stream);
-		while (inst)
-		{
-			if (X64PrintInstruction(context, *inst, &finalProc.localValues))
-				OutputBufferPrint(context, "\n");
-			inst = X64InstructionStreamAdvance(&stream);
-		}
-
-		OutputBufferPrint(context, "leave\n");
-		OutputBufferPrint(context, "ret\n");
-#if IS_WINDOWS
-		OutputBufferPut(context, proc.name.size, proc.name.data);
-		OutputBufferPrint(context, " ENDP\n");
-#endif
 	}
 }
 
@@ -2442,6 +2428,7 @@ void X64EncodeInstructions(Context *context)
 		OutputBufferPut(context, bytes, buffer);
 	}
 }
+#endif
 
 void PrintOutEscapedString(Context *context, String str)
 {
@@ -2574,6 +2561,7 @@ void BackendMain(Context *context)
 	x64InstructionInfos[X64_MOVUPS] =    { "movups"_s,    OPERANDTYPE_REGMEM,    OPERANDACCESS_WRITE,     OPERANDTYPE_REGMEM, OPERANDACCESS_READ };
 	x64InstructionInfos[X64_MOVAPS] =    { "movaps"_s,    OPERANDTYPE_REGMEM,    OPERANDACCESS_WRITE,     OPERANDTYPE_REGMEM, OPERANDACCESS_READ };
 
+#if USE_OWN_ASSEMBLER
 	x64InstructionInfos[X64_INT].xedIClass =        XED_ICLASS_INT;
 	x64InstructionInfos[X64_INT1].xedIClass =       XED_ICLASS_INT1;
 	x64InstructionInfos[X64_INT3].xedIClass =       XED_ICLASS_INT3;
@@ -2655,6 +2643,7 @@ void BackendMain(Context *context)
 	x64InstructionInfos[X64_CVTSD2SS].xedIClass =   XED_ICLASS_CVTSD2SS;
 	x64InstructionInfos[X64_MOVUPS].xedIClass =     XED_ICLASS_MOVUPS;
 	x64InstructionInfos[X64_MOVAPS].xedIClass =     XED_ICLASS_MOVAPS;
+#endif
 
 	const u8 regValueFlags = VALUEFLAGS_IS_USED | VALUEFLAGS_IS_ALLOCATED;
 	u32 RAX_valueIdx = NewGlobalValue(context, "RAX"_s, TYPETABLEIDX_S64, regValueFlags);
@@ -3106,6 +3095,7 @@ void BackendGenerateOutputFile(Context *context)
 	}
 }
 
+#if USE_OWN_ASSEMBLER
 void BackendGenerateWindowsObj(Context *context)
 {
 	ProfilerBegin("Generating output image");
@@ -3432,10 +3422,11 @@ void BackendGenerateWindowsObj(Context *context)
 		TimerSplit("Calling linker"_s);
 	ProfilerEnd();
 }
+#endif
 
 void BackendJobProc(Context *context, u32 procedureIdx)
 {
-	IRJobData *jobData = (IRJobData *)SYSGetFiberData(context->flsIndex);
+	IRJobData *jobData = (IRJobData *)t_jobData;
 
 	static const String paramNames[] = {
 		"_param0"_s,

@@ -297,7 +297,8 @@ void PrintASTType(Context *context, const ASTType *type)
 	}
 }
 
-void PrintExpression(Context *context, const ASTExpression *e) {
+void PrintExpression(Context *context, const ASTExpression *e)
+{
 	Indent();
 	switch (e->nodeType)
 	{
@@ -565,10 +566,11 @@ void PrintExpression(Context *context, const ASTExpression *e) {
 	}
 }
 
-void PrintAST(Context *context) {
+void PrintAST(Context *context)
+{
 	static Mutex printASTMutex = SYSCreateMutex();
 
-	ParseJobData *jobData = (ParseJobData *)SYSGetFiberData(context->flsIndex);
+	ParseJobData *jobData = (ParseJobData *)t_jobData;
 	indentLevels = 0;
 
 	SYSMutexLock(printASTMutex);

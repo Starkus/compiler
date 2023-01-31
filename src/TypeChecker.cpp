@@ -12,7 +12,7 @@ inline String GetValueName(Value value)
 
 u32 TCNewValue(Context *context, u32 typeTableIdx, u32 flags, u32 immitateValueIdx = U32_MAX)
 {
-	TCJobData *jobData = (TCJobData *)SYSGetFiberData(context->flsIndex);
+	TCJobData *jobData = (TCJobData *)t_jobData;
 
 	ASSERT(typeTableIdx != 0);
 	ASSERT(!(flags & VALUEFLAGS_TRY_IMMITATE) || immitateValueIdx != U32_MAX);
@@ -32,7 +32,7 @@ u32 TCNewValue(Context *context, u32 typeTableIdx, u32 flags, u32 immitateValueI
 
 u32 TCNewValue(Context *context, String name, u32 typeTableIdx, u32 flags, u32 immitateValueIdx = U32_MAX)
 {
-	TCJobData *jobData = (TCJobData *)SYSGetFiberData(context->flsIndex);
+	TCJobData *jobData = (TCJobData *)t_jobData;
 
 	ASSERT(typeTableIdx != 0);
 	ASSERT(!(flags & VALUEFLAGS_TRY_IMMITATE) || immitateValueIdx != U32_MAX);
@@ -52,7 +52,7 @@ u32 TCNewValue(Context *context, String name, u32 typeTableIdx, u32 flags, u32 i
 
 u32 TCNewValue(Context *context, Value value)
 {
-	TCJobData *jobData = (TCJobData *)SYSGetFiberData(context->flsIndex);
+	TCJobData *jobData = (TCJobData *)t_jobData;
 
 	ASSERT(value.typeTableIdx != 0);
 	ASSERT(!(value.flags & VALUEFLAGS_TRY_IMMITATE) || value.tryImmitateValueIdx != U32_MAX);
@@ -68,7 +68,7 @@ u32 TCNewValue(Context *context, Value value)
 inline Value *TCGetValue(Context *context, u32 valueIdx)
 {
 	ASSERT(valueIdx > 0);
-	TCJobData *jobData = (TCJobData *)SYSGetFiberData(context->flsIndex);
+	TCJobData *jobData = (TCJobData *)t_jobData;
 	ASSERT(!(valueIdx & VALUE_GLOBAL_BIT));
 	return &jobData->localValues[valueIdx];
 }
@@ -150,7 +150,7 @@ inline void TCSetValueFlags(Context *context, u32 valueIdx, u32 flags) {
 		globalValues[valueIdx & VALUE_GLOBAL_MASK].flags |= flags;
 	}
 	else {
-		TCJobData *jobData = (TCJobData *)SYSGetFiberData(context->flsIndex);
+		TCJobData *jobData = (TCJobData *)t_jobData;
 		jobData->localValues[valueIdx].flags |= flags;
 	}
 }
@@ -160,7 +160,7 @@ inline Value TCGetValueRead(Context *context, u32 valueIdx) {
 	if (valueIdx & VALUE_GLOBAL_BIT)
 		return GetGlobalValue(context, valueIdx);
 	else {
-		TCJobData *jobData = (TCJobData *)SYSGetFiberData(context->flsIndex);
+		TCJobData *jobData = (TCJobData *)t_jobData;
 		return jobData->localValues[valueIdx];
 	}
 }
@@ -197,7 +197,7 @@ inline ASTExpression *TCNewTreeNode(Context *context) {
 }
 
 TCScope *GetTopMostScope(Context *context) {
-	TCJobData *jobData = (TCJobData *)SYSGetFiberData(context->flsIndex);
+	TCJobData *jobData = (TCJobData *)t_jobData;
 	if (jobData->scopeStack.size > 0)
 		return DynamicArrayBack(&jobData->scopeStack);
 	else
@@ -356,7 +356,7 @@ inline String TypeCategoryToString(TypeCategory typeCategory)
 
 inline void TCPushScope(Context *context)
 {
-	TCJobData *jobData = (TCJobData *)SYSGetFiberData(context->flsIndex);
+	TCJobData *jobData = (TCJobData *)t_jobData;
 
 	TCScope *newScope = DynamicArrayAdd(&jobData->scopeStack);
 
@@ -366,7 +366,7 @@ inline void TCPushScope(Context *context)
 
 inline void TCPopScope(Context *context)
 {
-	TCJobData *jobData = (TCJobData *)SYSGetFiberData(context->flsIndex);
+	TCJobData *jobData = (TCJobData *)t_jobData;
 	--jobData->scopeStack.size;
 }
 
@@ -408,7 +408,7 @@ TCScopeName FindGlobalName(Context *context, SourceLocation loc, String name)
 
 TCScopeName TCFindScopeName(Context *context, SourceLocation loc, String name)
 {
-	TCJobData *jobData = (TCJobData *)SYSGetFiberData(context->flsIndex);
+	TCJobData *jobData = (TCJobData *)t_jobData;
 
 	// Current stack
 	ArrayView<TCScope> scopeStack = jobData->scopeStack;
@@ -2296,7 +2296,7 @@ void GetSourceLocRangeForExpression(ASTExpression *expression,
 
 void TypeCheckVariableDeclaration(Context *context, ASTVariableDeclaration *varDecl)
 {
-	TCJobData *jobData = (TCJobData *)SYSGetFiberData(context->flsIndex);
+	TCJobData *jobData = (TCJobData *)t_jobData;
 
 	bool isGlobal = varDecl->isStatic || varDecl->isExternal;
 
@@ -3446,7 +3446,7 @@ tryAgain:
 	ASSERT(procTypeInfo.typeCategory == TYPECATEGORY_PROCEDURE);
 
 	if (proc.isInline && !proc.isBodyTypeChecked) {
-		TCJobData *jobData = (TCJobData *)SYSGetFiberData(context->flsIndex);
+		TCJobData *jobData = (TCJobData *)t_jobData;
 		TCCheckForCyclicInlineCalls(context, expression->any.loc, jobData->currentProcedureIdx,
 				overload.procedureIdx);
 
@@ -3484,12 +3484,11 @@ tryAgain:
 void GenerateTypeCheckJobs(Context *context, ASTExpression *expression);
 void TypeCheckExpression(Context *context, ASTExpression *expression)
 {
-	TCJobData *jobData = (TCJobData *)SYSGetFiberData(context->flsIndex);
+	TCJobData *jobData = (TCJobData *)t_jobData;
 
 	ASSERT(expression->typeTableIdx == TYPETABLEIDX_Unset);
 
-	switch (expression->nodeType)
-	{
+	switch (expression->nodeType) {
 	case ASTNODETYPE_GARBAGE:
 	{
 		expression->typeTableIdx = TYPETABLEIDX_Anything;
@@ -4925,9 +4924,9 @@ done:
 		irJobData.irInstructions = &irInstructions;
 		irJobData.localValues = &jobData->localValues;
 
-		SYSSetFiberData(context->flsIndex, &irJobData);
+		t_jobData = &irJobData;
 		IRValue resultIRValue = IRGenFromExpression(context, expression->runNode.expression);
-		SYSSetFiberData(context->flsIndex, jobData);
+		t_jobData = jobData;
 
 		CTRegister runResult = CTRunInstructions(context, jobData->localValues, irInstructions,
 				resultIRValue);
@@ -4937,9 +4936,7 @@ done:
 		jobData->localValues = oldLocalValues;
 	} break;
 	default:
-	{
-		LogError(context, expression->any.loc, "COMPILER PANIC! Unknown expression type on type checking"_s);
-	} break;
+		LogCompilerError(context, expression->any.loc, "Unknown expression type on type checking"_s);
 	}
 }
 
@@ -4953,10 +4950,12 @@ void TCJobProc(void *args)
 	jobData.currentProcedureIdx = U32_MAX;
 	jobData.onStaticContext = true;
 	jobData.currentReturnTypes = {};
-	SYSSetFiberData(context->flsIndex, &jobData);
+	t_jobData = &jobData;
 
-#if DEBUG_BUILD
 	Job *runningJob = GetCurrentJob(context);
+	runningJob->jobData = &jobData;
+	runningJob->state = JOBSTATE_RUNNING;
+#if DEBUG_BUILD
 	runningJob->loc = expression->any.loc;
 
 	String threadName = "TC:???"_s;
@@ -5052,15 +5051,17 @@ void TCStructJobProc(void *args)
 	TCStructJobArgs *argsStruct = (TCStructJobArgs *)args;
 	Context *context = argsStruct->context;
 
-#if DEBUG_BUILD
-	Job *runningJob = GetCurrentJob(context);
-	runningJob->description = SNPrintF(96, "TC:Struct \"%S\"", argsStruct->name);
-#endif
-
 	TCJobData jobData = {};
 	jobData.onStaticContext = true;
 	jobData.currentReturnTypes = {};
-	SYSSetFiberData(context->flsIndex, &jobData);
+	t_jobData = &jobData;
+
+	Job *runningJob = GetCurrentJob(context);
+	runningJob->jobData = &jobData;
+	runningJob->state = JOBSTATE_RUNNING;
+#if DEBUG_BUILD
+	runningJob->description = SNPrintF(96, "TC:Struct \"%S\"", argsStruct->name);
+#endif
 
 	u32 typeTableIdx = argsStruct->typeTableIdx;
 	TypeInfo t;

@@ -3,7 +3,7 @@ u32 IRNewValue(Context *context, u32 typeTableIdx, u32 flags, u32 immitateValueI
 	ASSERT(typeTableIdx != 0);
 	ASSERT(!(flags & VALUEFLAGS_TRY_IMMITATE) || immitateValueIdx != U32_MAX);
 
-	IRJobData *jobData = (IRJobData *)SYSGetFiberData(context->flsIndex);
+	IRJobData *jobData = (IRJobData *)t_jobData;
 
 	u64 idx = jobData->localValues->count;
 	Value *result = BucketArrayAdd(jobData->localValues);
@@ -24,7 +24,7 @@ u32 IRNewValue(Context *context, String name, u32 typeTableIdx, u32 flags, u32 i
 	ASSERT(typeTableIdx != 0);
 	ASSERT(!(flags & VALUEFLAGS_TRY_IMMITATE) || immitateValueIdx != U32_MAX);
 
-	IRJobData *jobData = (IRJobData *)SYSGetFiberData(context->flsIndex);
+	IRJobData *jobData = (IRJobData *)t_jobData;
 
 	u64 idx = jobData->localValues->count;
 	Value *result = BucketArrayAdd(jobData->localValues);
@@ -45,7 +45,7 @@ u32 IRNewValue(Context *context, Value value)
 	ASSERT(value.typeTableIdx != 0);
 	ASSERT(!(value.flags & VALUEFLAGS_TRY_IMMITATE) || value.tryImmitateValueIdx != U32_MAX);
 
-	IRJobData *jobData = (IRJobData *)SYSGetFiberData(context->flsIndex);
+	IRJobData *jobData = (IRJobData *)t_jobData;
 
 	u64 idx = jobData->localValues->count;
 	Value *result = BucketArrayAdd(jobData->localValues);
@@ -60,7 +60,7 @@ inline Value IRGetValue(Context *context, u32 valueIdx) {
 	if (valueIdx & VALUE_GLOBAL_BIT)
 		return GetGlobalValue(context, valueIdx);
 	else {
-		IRJobData *jobData = (IRJobData *)SYSGetFiberData(context->flsIndex);
+		IRJobData *jobData = (IRJobData *)t_jobData;
 		return (*jobData->localValues)[valueIdx];
 	}
 }
@@ -68,7 +68,7 @@ inline Value IRGetValue(Context *context, u32 valueIdx) {
 inline Value *IRGetLocalValue(Context *context, u32 valueIdx) {
 	ASSERT(valueIdx > 0);
 	ASSERT(!(valueIdx & VALUE_GLOBAL_BIT));
-	IRJobData *jobData = (IRJobData *)SYSGetFiberData(context->flsIndex);
+	IRJobData *jobData = (IRJobData *)t_jobData;
 	return &(*jobData->localValues)[valueIdx];
 }
 
@@ -78,7 +78,7 @@ inline void IRUpdateValue(Context *context, u32 valueIdx, Value *value) {
 		globalValues[valueIdx & VALUE_GLOBAL_MASK] = *value;
 	}
 	else {
-		IRJobData *jobData = (IRJobData *)SYSGetFiberData(context->flsIndex);
+		IRJobData *jobData = (IRJobData *)t_jobData;
 		(*jobData->localValues)[valueIdx] = *value;
 	}
 }
@@ -89,13 +89,13 @@ inline void IRSetValueFlags(Context *context, u32 valueIdx, u32 flags) {
 		globalValues[valueIdx & VALUE_GLOBAL_MASK].flags |= flags;
 	}
 	else {
-		IRJobData *jobData = (IRJobData *)SYSGetFiberData(context->flsIndex);
+		IRJobData *jobData = (IRJobData *)t_jobData;
 		(*jobData->localValues)[valueIdx].flags |= flags;
 	}
 }
 
 IRLabel *NewLabel(Context *context, String name) {
-	IRJobData *jobData = (IRJobData *)SYSGetFiberData(context->flsIndex);
+	IRJobData *jobData = (IRJobData *)t_jobData;
 
 	IRLabel result = {};
 
@@ -108,20 +108,20 @@ IRLabel *NewLabel(Context *context, String name) {
 }
 
 void PushIRScope(Context *context) {
-	IRJobData *jobData = (IRJobData *)SYSGetFiberData(context->flsIndex);
+	IRJobData *jobData = (IRJobData *)t_jobData;
 	IRScope newScope = {};
 	DynamicArrayInit(&newScope.deferredStatements, 4);
 	*DynamicArrayAdd(&jobData->irStack) = newScope;
 }
 
 inline void PopIRScope(Context *context) {
-	IRJobData *jobData = (IRJobData *)SYSGetFiberData(context->flsIndex);
+	IRJobData *jobData = (IRJobData *)t_jobData;
 	ASSERT(jobData->irStack.size);
 	--jobData->irStack.size;
 }
 
 inline IRInstruction *AddInstruction(Context *context) {
-	IRJobData *jobData = (IRJobData *)SYSGetFiberData(context->flsIndex);
+	IRJobData *jobData = (IRJobData *)t_jobData;
 	return BucketArrayAdd(jobData->irInstructions);
 }
 
@@ -895,7 +895,7 @@ void IRDoAssignment(Context *context, SourceLocation loc, IRValue dstValue, IRVa
 
 inline void IRInsertLabelInstruction(Context *context, SourceLocation loc, IRLabel *label)
 {
-	IRJobData *jobData = (IRJobData *)SYSGetFiberData(context->flsIndex);
+	IRJobData *jobData = (IRJobData *)t_jobData;
 	label->instructionIdx = jobData->irInstructions->count;
 	*AddInstruction(context) = {
 		.type = IRINSTRUCTIONTYPE_LABEL,
@@ -1398,7 +1398,7 @@ insertSimpleJump:
 
 IRValue IRDoInlineProcedureCall(Context *context, ASTProcedureCall astProcCall)
 {
-	IRJobData *jobData = (IRJobData *)SYSGetFiberData(context->flsIndex);
+	IRJobData *jobData = (IRJobData *)t_jobData;
 
 	SourceLocation loc = astProcCall.loc;
 
@@ -1762,7 +1762,7 @@ void IRAssignmentFromExpression(Context *context, IRValue dstValue,
 void IRGenProcedure(Context *context, u32 procedureIdx, SourceLocation loc,
 		BucketArray<Value, LinearAllocator, 256> *localValues)
 {
-	IRJobData *jobData = (IRJobData *)SYSGetFiberData(context->flsIndex);
+	IRJobData *jobData = (IRJobData *)t_jobData;
 	Procedure procedure = GetProcedureRead(context, procedureIdx);
 
 	ASSERT(procedure.astBody);
@@ -1807,7 +1807,7 @@ void IRGenProcedure(Context *context, u32 procedureIdx, SourceLocation loc,
 
 IRValue IRGenFromExpression(Context *context, const ASTExpression *expression)
 {
-	IRJobData *jobData = (IRJobData *)SYSGetFiberData(context->flsIndex);
+	IRJobData *jobData = (IRJobData *)t_jobData;
 
 	IRValue result = {};
 
@@ -2841,10 +2841,12 @@ void IRJobProcedure(void *args)
 	jobData.procedureIdx = procedureIdx;
 	jobData.returnValueIndices = GetProcedureRead(context, procedureIdx).returnValueIndices;
 	jobData.shouldReturnValueIdx = U32_MAX;
-	SYSSetFiberData(context->flsIndex, &jobData);
+	t_jobData = &jobData;
 
-#if DEBUG_BUILD
 	Job *runningJob = GetCurrentJob(context);
+	runningJob->jobData = &jobData;
+	runningJob->state = JOBSTATE_RUNNING;
+#if DEBUG_BUILD
 	runningJob->description = SStringConcat("IR:"_s, GetProcedureRead(context, procedureIdx).name);
 #endif
 
@@ -2877,10 +2879,12 @@ void IRJobExpression(void *args)
 	Context *context = argsStruct->context;
 
 	IRJobData jobData = {};
-	SYSSetFiberData(context->flsIndex, &jobData);
+	t_jobData = &jobData;
 
-#if DEBUG_BUILD
 	Job *runningJob = GetCurrentJob(context);
+	runningJob->jobData = &jobData;
+	runningJob->state = JOBSTATE_RUNNING;
+#if DEBUG_BUILD
 	runningJob->description = "IR:Expression"_s;
 #endif
 

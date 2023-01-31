@@ -1,6 +1,8 @@
+#if USE_OWN_ASSEMBLER
 extern "C" {
 #include "xed/xed-interface.h"
 }
+#endif
 
 enum X64OperandType
 {
@@ -29,7 +31,9 @@ struct X64InstructionInfo
 	u8 operandAccessRight;
 	u8 operandTypesDest;
 	u8 operandAccessDest;
+#if USE_OWN_ASSEMBLER
 	xed_iclass_enum_t xedIClass;
+#endif
 };
 
 enum X64InstructionType
@@ -479,6 +483,7 @@ IRValue x64Registers[X64REGISTER_Count] = {
 	XMM12,	XMM13,	XMM14,	XMM15
 };
 
+#if USE_OWN_ASSEMBLER
 xed_reg_enum_t x64RegisterToXED[X64REGISTER_Count] = {
 	XED_REG_RAX,
 	XED_REG_RCX,
@@ -570,6 +575,7 @@ xed_reg_enum_t x64RegisterToXED8[] = {
 	XED_REG_R14B,
 	XED_REG_R15B
 };
+#endif
 
 #if IS_LINUX
 String x64LinuxSyscallNames[] =

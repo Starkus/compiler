@@ -692,7 +692,7 @@ FatSourceLocation ExpandSourceLocation(Context *context, SourceLocation loc)
 
 void TokenizeFile(Context *context, u32 fileIdx)
 {
-	ParseJobData *jobData = (ParseJobData *)SYSGetFiberData(context->flsIndex);
+	ParseJobData *jobData = (ParseJobData *)t_jobData;
 
 	Tokenizer tokenizer = {};
 	SourceFile file;

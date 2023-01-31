@@ -239,21 +239,6 @@ inline ThreadHandle SYSGetCurrentThread()
 	return pthread_self();
 }
 
-inline u32 SYSAllocThreadData()
-{
-	u32 key;
-	pthread_key_create(&key, nullptr);
-	return key;
-}
-
-inline void *SYSGetThreadData(u32 key) {
-	return pthread_getspecific(key);
-}
-
-inline bool SYSSetThreadData(u32 key, void *value) {
-	return pthread_setspecific(key, value) == 0;
-}
-
 void SYSSetThreadDescription(ThreadHandle thread, String string) {
 	char buffer[32];
 	strncpy(buffer, string.data, 32);
@@ -365,7 +350,6 @@ inline s64 AtomicCompareExchange64(volatile s64 *destination, s64 exchange, s64 
 // Fibers!
 // @Improve: infinite storage for fibers
 ucontext_t fiberContexts[8192];
-void *g_fibersData[8192];
 u32 g_fiberCount = 0;
 __thread u32 g_currentFiber = U32_MAX;
 __thread ucontext_t g_originalContext;
@@ -403,17 +387,4 @@ inline void SYSSwitchToFiber(Fiber fiber) {
 		fiberContexts[fiber].uc_link = &g_originalContext;
 		swapcontext(&g_originalContext, &fiberContexts[fiber]);
 	}
-}
-
-inline u32 SYSAllocFiberData() {
-	return U32_MAX;
-}
-
-inline void *SYSGetFiberData(u32 key) {
-	return g_fibersData[g_currentFiber];
-}
-
-inline bool SYSSetFiberData(u32 key, void *value) {
-	g_fibersData[g_currentFiber] = value;
-	return true;
 }

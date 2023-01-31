@@ -335,7 +335,7 @@ void PrintJobIRInstructions(Context *context)
 {
 	static Mutex printIRMutex = SYSCreateMutex();
 
-	IRJobData *jobData = (IRJobData *)SYSGetFiberData(context->flsIndex);
+	IRJobData *jobData = (IRJobData *)t_jobData;
 
 	const int padding = 20;
 	Procedure proc = GetProcedureRead(context, jobData->procedureIdx);

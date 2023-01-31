@@ -21,7 +21,7 @@ void AssertToken(Context *context, Token *token, int type)
 
 void Advance(Context *context)
 {
-	ParseJobData *jobData = (ParseJobData *)SYSGetFiberData(context->flsIndex);
+	ParseJobData *jobData = (ParseJobData *)t_jobData;
 	ASSERT(jobData->token == &jobData->tokens[jobData->currentTokenIdx]);
 
 	++jobData->currentTokenIdx;
@@ -32,13 +32,13 @@ void Advance(Context *context)
 
 inline ASTExpression *PNewTreeNode(Context *context)
 {
-	ParseJobData *jobData = (ParseJobData *)SYSGetFiberData(context->flsIndex);
+	ParseJobData *jobData = (ParseJobData *)t_jobData;
 	return BucketArrayAdd(&jobData->astTreeNodes);
 }
 
 inline ASTType *NewASTType(Context *context)
 {
-	ParseJobData *jobData = (ParseJobData *)SYSGetFiberData(context->flsIndex);
+	ParseJobData *jobData = (ParseJobData *)t_jobData;
 	return BucketArrayAdd(&jobData->astTypes);
 }
 
@@ -98,7 +98,7 @@ inline s64 ParseInt(Context *context, String str)
 
 	if (parseResult.error)
 	{
-		ParseJobData *jobData = (ParseJobData *)SYSGetFiberData(context->flsIndex);
+		ParseJobData *jobData = (ParseJobData *)t_jobData;
 		switch (parseResult.error)
 		{
 		case PARSENUMBERRROR_OVERFLOW:
@@ -121,7 +121,7 @@ inline f64 ParseFloat(Context *context, String str)
 	ParseFloatResult parseResult = F64FromString(str);
 	if (parseResult.error)
 	{
-		ParseJobData *jobData = (ParseJobData *)SYSGetFiberData(context->flsIndex);
+		ParseJobData *jobData = (ParseJobData *)t_jobData;
 		switch (parseResult.error)
 		{
 		case PARSENUMBERRROR_OVERFLOW:
@@ -147,7 +147,7 @@ ASTEnumDeclaration ParseEnumDeclaration(Context *context);
 ASTProcedurePrototype ParseProcedurePrototype(Context *context);
 ASTType ParseType(Context *context)
 {
-	ParseJobData *jobData = (ParseJobData *)SYSGetFiberData(context->flsIndex);
+	ParseJobData *jobData = (ParseJobData *)t_jobData;
 
 	ASTType astType;
 	astType.loc = jobData->token->loc;
@@ -275,7 +275,7 @@ constexpr int GetOperatorPrecedence(s32 op)
 
 ASTStaticDefinition ParseStaticDefinition(Context *context, ArrayView<String> names)
 {
-	ParseJobData *jobData = (ParseJobData *)SYSGetFiberData(context->flsIndex);
+	ParseJobData *jobData = (ParseJobData *)t_jobData;
 	ASTStaticDefinition astStaticDef = {};
 	astStaticDef.loc = jobData->token->loc;
 
@@ -388,7 +388,7 @@ ASTStaticDefinition ParseStaticDefinition(Context *context, ArrayView<String> na
 
 ASTVariableDeclaration ParseVariableDeclaration(Context *context, ArrayView<String> names)
 {
-	ParseJobData *jobData = (ParseJobData *)SYSGetFiberData(context->flsIndex);
+	ParseJobData *jobData = (ParseJobData *)t_jobData;
 	ASTVariableDeclaration varDecl = {};
 	varDecl.loc = jobData->token->loc;
 
@@ -432,7 +432,7 @@ ASTVariableDeclaration ParseVariableDeclaration(Context *context, ArrayView<Stri
 
 bool TryParseUnaryOperation(Context *context, s32 prevPrecedence, ASTUnaryOperation *result)
 {
-	ParseJobData *jobData = (ParseJobData *)SYSGetFiberData(context->flsIndex);
+	ParseJobData *jobData = (ParseJobData *)t_jobData;
 
 	if (!IsOperatorToken(jobData->token->type))
 		return false;
@@ -471,7 +471,7 @@ bool TryParseUnaryOperation(Context *context, s32 prevPrecedence, ASTUnaryOperat
 bool TryParseBinaryOperation(Context *context, ASTExpression leftHand, s32 prevPrecedence,
 		ASTExpression *result)
 {
-	ParseJobData *jobData = (ParseJobData *)SYSGetFiberData(context->flsIndex);
+	ParseJobData *jobData = (ParseJobData *)t_jobData;
 
 	result->any.loc = jobData->token->loc;
 	result->typeTableIdx = TYPETABLEIDX_Unset;
@@ -686,7 +686,7 @@ abort:
 
 ASTIf ParseIf(Context *context)
 {
-	ParseJobData *jobData = (ParseJobData *)SYSGetFiberData(context->flsIndex);
+	ParseJobData *jobData = (ParseJobData *)t_jobData;
 	ASSERT(jobData->token->type == TOKEN_KEYWORD_IF ||
 		   jobData->token->type == TOKEN_DIRECTIVE_IF);
 	Advance(context);
@@ -719,7 +719,7 @@ ASTIf ParseIf(Context *context)
 
 ASTWhile ParseWhile(Context *context)
 {
-	ParseJobData *jobData = (ParseJobData *)SYSGetFiberData(context->flsIndex);
+	ParseJobData *jobData = (ParseJobData *)t_jobData;
 	ASSERT(jobData->token->type == TOKEN_KEYWORD_WHILE);
 
 	ASTWhile whileNode = {};
@@ -746,7 +746,7 @@ ASTWhile ParseWhile(Context *context)
 
 ASTFor ParseFor(Context *context)
 {
-	ParseJobData *jobData = (ParseJobData *)SYSGetFiberData(context->flsIndex);
+	ParseJobData *jobData = (ParseJobData *)t_jobData;
 	ASSERT(jobData->token->type == TOKEN_KEYWORD_FOR);
 
 	ASTFor forNode = {};
@@ -823,7 +823,7 @@ ASTFor ParseFor(Context *context)
 
 ASTStructMemberDeclaration ParseStructMemberDeclaration(Context *context)
 {
-	ParseJobData *jobData = (ParseJobData *)SYSGetFiberData(context->flsIndex);
+	ParseJobData *jobData = (ParseJobData *)t_jobData;
 	ASTStructMemberDeclaration structMem = {};
 	structMem.loc = jobData->token->loc;
 
@@ -868,7 +868,7 @@ ASTStructMemberDeclaration ParseStructMemberDeclaration(Context *context)
 
 ASTEnumDeclaration ParseEnumDeclaration(Context *context)
 {
-	ParseJobData *jobData = (ParseJobData *)SYSGetFiberData(context->flsIndex);
+	ParseJobData *jobData = (ParseJobData *)t_jobData;
 	SourceLocation loc = jobData->token->loc;
 
 	AssertToken(context, jobData->token, TOKEN_KEYWORD_ENUM);
@@ -918,7 +918,7 @@ ASTEnumDeclaration ParseEnumDeclaration(Context *context)
 
 ASTStructDeclaration ParseStructOrUnion(Context *context)
 {
-	ParseJobData *jobData = (ParseJobData *)SYSGetFiberData(context->flsIndex);
+	ParseJobData *jobData = (ParseJobData *)t_jobData;
 	SourceLocation loc = jobData->token->loc;
 
 	ASSERT(jobData->token->type == TOKEN_KEYWORD_STRUCT ||
@@ -957,7 +957,7 @@ ASTStructDeclaration ParseStructOrUnion(Context *context)
 
 Array<ASTExpression *, LinearAllocator> ParseGroupLiteral(Context *context)
 {
-	ParseJobData *jobData = (ParseJobData *)SYSGetFiberData(context->flsIndex);
+	ParseJobData *jobData = (ParseJobData *)t_jobData;
 	DynamicArray<ASTExpression *, LinearAllocator> members;
 	DynamicArrayInit(&members, 8);
 
@@ -1000,7 +1000,7 @@ Array<ASTExpression *, LinearAllocator> ParseGroupLiteral(Context *context)
 
 ASTProcedureParameter ParseProcedureParameter(Context *context)
 {
-	ParseJobData *jobData = (ParseJobData *)SYSGetFiberData(context->flsIndex);
+	ParseJobData *jobData = (ParseJobData *)t_jobData;
 	ASTProcedureParameter astParameter = {};
 	astParameter.loc = jobData->token->loc;
 
@@ -1041,7 +1041,7 @@ ASTProcedureParameter ParseProcedureParameter(Context *context)
 
 ASTProcedurePrototype ParseProcedurePrototype(Context *context)
 {
-	ParseJobData *jobData = (ParseJobData *)SYSGetFiberData(context->flsIndex);
+	ParseJobData *jobData = (ParseJobData *)t_jobData;
 	ASTProcedurePrototype astPrototype = {};
 	astPrototype.loc = jobData->token->loc;
 	astPrototype.callingConvention = CC_DEFAULT;
@@ -1207,7 +1207,7 @@ inline bool IsASTExpressionAStatement(ASTExpression *expression)
 
 ASTExpression ParseExpression(Context *context, s32 precedence, bool isStatement)
 {
-	ParseJobData *jobData = (ParseJobData *)SYSGetFiberData(context->flsIndex);
+	ParseJobData *jobData = (ParseJobData *)t_jobData;
 	ASTExpression result = {};
 	result.typeTableIdx = TYPETABLEIDX_Unset;
 	result.any.loc = jobData->token->loc;
@@ -1825,9 +1825,10 @@ void ParseJobProc(void *args)
 	BucketArrayInit(&jobData.astTreeNodes);
 	BucketArrayInit(&jobData.astTypes);
 
-	SYSSetFiberData(context->flsIndex, &jobData);
+	t_jobData = &jobData;
 
 	Job *runningJob = GetCurrentJob(context);
+	runningJob->jobData = &jobData;
 	runningJob->state = JOBSTATE_RUNNING;
 #if DEBUG_BUILD
 	runningJob->description = SStringConcat("P:"_s, context->sourceFiles[fileIdx].name);

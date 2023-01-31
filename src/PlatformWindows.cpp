@@ -582,18 +582,6 @@ inline ThreadHandle SYSGetCurrentThread() {
 	return GetCurrentThread();
 }
 
-inline u32 SYSAllocThreadData() {
-	return TlsAlloc();
-}
-
-inline void *SYSGetThreadData(u32 key) {
-	return TlsGetValue(key);
-}
-
-inline bool SYSSetThreadData(u32 key, void *value) {
-	return TlsSetValue(key, value);
-}
-
 void SYSSetThreadDescription(ThreadHandle thread, String string) {
 	char buffer[512];
 	char *dst = buffer;
@@ -606,18 +594,6 @@ void SYSSetThreadDescription(ThreadHandle thread, String string) {
 	*dst++ = 0;
 	*dst++ = 0;
 	SetThreadDescription(thread, (PCWSTR)buffer);
-}
-
-inline u32 SYSAllocFiberData() {
-	return FlsAlloc(nullptr);
-}
-
-inline void *SYSGetFiberData(u32 key) {
-	return FlsGetValue(key);
-}
-
-inline bool SYSSetFiberData(u32 key, void *value) {
-	return FlsSetValue(key, value);
 }
 
 Fiber g_runningFibers[8] = { SYS_INVALID_FIBER_HANDLE };

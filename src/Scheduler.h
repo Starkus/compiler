@@ -67,6 +67,7 @@ struct Job
 {
 	void (*startProcedure)(void *);
 	void *args;
+	void *jobData;
 	Fiber fiber;
 	JobType type;
 	JobState state;
