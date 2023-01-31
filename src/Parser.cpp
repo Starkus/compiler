@@ -1848,7 +1848,7 @@ void ParseJobProc(void *args)
 	if (context->config.logAST)
 		PrintAST(context);
 
-	SwitchJob(context, YIELDREASON_DONE, {});
+	FinishCurrentJob(context);
 }
 
 void ParserMain(Context *context)
@@ -1859,7 +1859,4 @@ void ParserMain(Context *context)
 
 	for (int i = 0; i < YIELDREASON_Count; ++i)
 		DynamicArrayInit(&context->waitingJobsByReason[i].unsafe, 64);
-
-	MTQueueInit<HeapAllocator>(&context->jobsToCreate, 512);
-	MTQueueInit<HeapAllocator>(&context->fibersToDelete, 512);
 }

@@ -65,6 +65,8 @@ enum JobState
 };
 struct Job
 {
+	void (*startProcedure)(void *);
+	void *args;
 	Fiber fiber;
 	JobType type;
 	JobState state;

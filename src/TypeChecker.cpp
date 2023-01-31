@@ -374,13 +374,13 @@ TCScopeName FindGlobalName(Context *context, SourceLocation loc, String name)
 {
 	// Lock this, if we need to switch fibers, we don't unlock until we added this fiber to a
 	// waiting list.
-	SYSLockForRead(&context->tcGlobalNames.rwLock);
+	RWSpinlockLockForRead(&context->tcGlobalNames.rwLock);
 	{
 		auto &globalNames = context->tcGlobalNames.unsafe;
 		for (int i = 0; i < globalNames.size; ++i) {
 			const TCScopeName *currentName = &globalNames[i];
 			if (StringEquals(name, currentName->name)) {
-				SYSUnlockForRead(&context->tcGlobalNames.rwLock);
+				RWSpinlockUnlockForRead(&context->tcGlobalNames.rwLock);
 				return *currentName;
 			}
 		}
@@ -391,13 +391,13 @@ TCScopeName FindGlobalName(Context *context, SourceLocation loc, String name)
 	SwitchJob(context, YIELDREASON_UNKNOWN_IDENTIFIER, { .loc = loc, .identifier = name });
 
 	// Lock again
-	SYSLockForRead(&context->tcGlobalNames.rwLock);
+	RWSpinlockLockForRead(&context->tcGlobalNames.rwLock);
 	{
 		auto &globalNames = context->tcGlobalNames.unsafe;
 		for (int i = 0; i < globalNames.size; ++i) {
 			const TCScopeName *currentName = &globalNames[i];
 			if (StringEquals(name, currentName->name)) {
-				SYSUnlockForRead(&context->tcGlobalNames.rwLock);
+				RWSpinlockUnlockForRead(&context->tcGlobalNames.rwLock);
 				return *currentName;
 			}
 		}
@@ -5012,7 +5012,7 @@ void TCJobProc(void *args)
 
 	TypeCheckExpression(context, expression);
 
-	SwitchJob(context, YIELDREASON_DONE, {});
+	FinishCurrentJob(context);
 }
 
 int GetTypeAlignment(Context *context, u32 typeTableIdx)
@@ -5145,7 +5145,7 @@ void TCStructJobProc(void *args)
 	// Wake up any jobs that were waiting for this type
 	WakeUpAllByIndex(context, YIELDREASON_TYPE_NOT_READY, typeTableIdx);
 
-	SwitchJob(context, YIELDREASON_DONE, {});
+	FinishCurrentJob(context);
 }
 
 void GenerateTypeCheckJobs(Context *context, ASTExpression *expression) {

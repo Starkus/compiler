@@ -2868,7 +2868,7 @@ void IRJobProcedure(void *args)
 
 	BackendJobProc(context, procedureIdx);
 
-	SwitchJob(context, YIELDREASON_DONE, {});
+	FinishCurrentJob(context);
 }
 
 void IRJobExpression(void *args)
@@ -2886,5 +2886,5 @@ void IRJobExpression(void *args)
 
 	IRGenFromExpression(context, argsStruct->expression);
 
-	SwitchJob(context, YIELDREASON_DONE, {});
+	FinishCurrentJob(context);
 }

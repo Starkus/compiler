@@ -83,7 +83,7 @@ s64 PrintString(String str)
 #endif
 
 	// Stdout
-	SYSWriteFile(g_hStdout,     (void *)str.data, str.size);
+	SYSWriteFile(g_hStdout,       (void *)str.data, str.size);
 
 	// Log file
 	SYSWriteFile(g_logFileHandle, (void *)str.data, str.size);
@@ -195,7 +195,6 @@ struct Context
 {
 	Config config;
 
-	u32 tlsIndex;
 	u32 flsIndex;
 
 	Mutex consoleMutex;
@@ -205,12 +204,10 @@ struct Context
 	DynamicArray<String, HeapAllocator> libsToLink;
 
 	// Scheduler
-	bool done;
+	volatile bool done;
 	SLContainer<BucketArray<Job, HeapAllocator, 512>> jobs; // Lock to add
 	MTQueue<u32> readyJobs;
 	volatile s32 failedJobsCount;
-	MTQueue<JobRequest> jobsToCreate;
-	MTQueue<Fiber> fibersToDelete;
 	MXContainer<DynamicArray<u32, HeapAllocator>> waitingJobsByReason[YIELDREASON_Count];
 
 	volatile u32 threadStatesLock;
@@ -244,7 +241,7 @@ struct Context
 	/* Don't add types to the type table by hand without checking what AddType() does! */
 	SLContainer<BucketArray<const TypeInfo, HeapAllocator, 1024>> typeTable; // Lock only to add
 
-	RWContainer<DynamicArray<TCScopeName, LinearAllocator>> tcGlobalNames;
+	SLRWContainer<DynamicArray<TCScopeName, LinearAllocator>> tcGlobalNames;
 	RWContainer<DynamicArray<u32, LinearAllocator>> tcGlobalTypeIndices;
 	MXContainer<DynamicArray<DynamicArray<InlineCall, LinearAllocator>, LinearAllocator>> tcInlineCalls;
 
@@ -394,14 +391,12 @@ int main(int argc, char **argv)
 	Context *context = ALLOC(HeapAllocator, Context);
 	*context = {};
 	g_context = context;
-	context->tlsIndex = SYSAllocThreadData();
 	context->flsIndex = SYSAllocFiberData();
 	context->consoleMutex = SYSCreateMutex();
 
 	// Allocate memory
 	Memory memory;
 	g_memory = &memory;
-	memory.tlsIndex = context->tlsIndex;
 	memory.flsIndex = context->flsIndex;
 	memory.linearMem = SYSAlloc(Memory::linearMemSize);
 	MemoryInit(&memory);
@@ -679,7 +674,6 @@ int main(int argc, char **argv)
 	if (errorsFound)
 		LogError(context, {}, "Errors were found. Aborting"_s);
 
-	ASSERT(MTQueueIsEmpty(&context->jobsToCreate));
 	ASSERT(MTQueueIsEmpty(&context->readyJobs));
 
 	for (int i = 0; i < context->jobs.unsafe.count; ++i) {
