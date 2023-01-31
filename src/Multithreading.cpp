@@ -16,6 +16,7 @@ inline void SpinlockLock(volatile u32 *locked)
 		}
 	}
 #else
+	// GCC/Clang
 	int oldLocked = 1;
 retry:
 	int eax = 0;
@@ -43,7 +44,70 @@ inline void SpinlockUnlock(volatile u32 *locked)
 	static_assert(sizeof(long) == sizeof(u32));
 	_Store_HLERelease((volatile long *)locked, 0);
 #else
+	// GCC/Clang
 	asm volatile("xrelease movl %1, %0" : "+m"(*locked) : "i"(0) : "memory");
+#endif
+}
+
+inline void RWSpinlockLockForRead(volatile s32 *lock)
+{
+#if IS_MSVC
+	for (;;) {
+		s32 expected = *lock;
+		if (expected >= 0) {
+			s32 desired = expected + 1;
+			if (_InterlockedCompareExchange_HLEAcquire((volatile long *)lock, desired, expected) ==
+					expected)
+				break;
+		}
+		_mm_pause();
+	}
+#else
+	// GCC/Clang
+#error not implemented
+#endif
+}
+
+inline void RWSpinlockUnlockForRead(volatile s32 *lock)
+{
+	ASSERT(*lock > 0);
+#if IS_MSVC
+	// Don't know of a way to emit an 'xrelease lock dec' on MSVC...
+	_InterlockedExchangeAdd_HLERelease((volatile long *)lock, -1);
+#else
+	// GCC/Clang
+#error not implemented
+#endif
+}
+
+inline void RWSpinlockLockForWrite(volatile s32 *lock)
+{
+#if IS_MSVC
+	for (;;) {
+		long oldLock = _InterlockedCompareExchange_HLEAcquire((volatile long *)lock, -1, 0);
+		if (!oldLock)
+			return;
+
+		for (;;) {
+			if (!*lock)
+				break;
+			_mm_pause();
+		}
+	}
+#else
+	// GCC/Clang
+#error not implemented
+#endif
+}
+
+inline void RWSpinlockUnlockForWrite(volatile s32 *lock)
+{
+	ASSERT(*lock == -1);
+#if IS_MSVC
+	_Store_HLERelease((volatile long *)lock, 0);
+#else
+	// GCC/Clang
+#error not implemented
 #endif
 }
 
@@ -222,6 +286,87 @@ public:
 
 	Handle<T> Get() {
 		return Handle<T>(this);
+	}
+};
+
+template <typename T>
+class SLRWContainer
+{
+public:
+	T unsafe;
+	volatile s32 rwLock;
+
+	SLRWContainer() {
+		rwLock = 0;
+	}
+
+	T &LockForRead() {
+		RWSpinlockLockForRead(&rwLock);
+		return unsafe;
+	}
+	void UnlockForRead() {
+		RWSpinlockUnlockForRead(&rwLock);
+	}
+	T &LockForWrite() {
+		RWSpinlockLockForWrite(&rwLock);
+		return unsafe;
+	}
+	void UnlockForWrite() {
+		RWSpinlockUnlockForWrite(&rwLock);
+	}
+
+	template <typename T2>
+	class HandleRead
+	{
+	public:
+		SLRWContainer<T2> *safeContainer;
+
+		HandleRead(SLRWContainer<T2> *safe) {
+			safeContainer = safe;
+			safeContainer->LockForRead();
+		}
+		~HandleRead() {
+			safeContainer->UnlockForRead();
+		}
+
+		const T2 &operator*() { return safeContainer->unsafe; }
+		const T2 *operator->() { return &safeContainer->unsafe; }
+		const T2 *operator&() { return &safeContainer->unsafe; }
+
+		const decltype(safeContainer->unsafe[0]) &operator[](s64 index) {
+			return safeContainer->unsafe[index];
+		}
+	};
+
+	HandleRead<T> GetForRead() {
+		return HandleRead<T>(this);
+	}
+
+	template <typename T2>
+	class HandleWrite
+	{
+	public:
+		SLRWContainer<T2> *safeContainer;
+
+		HandleWrite(SLRWContainer<T2> *safe) {
+			safe->LockForWrite();
+			safeContainer = safe;
+		}
+		~HandleWrite() {
+			safeContainer->UnlockForWrite();
+		}
+
+		T2 &operator*() { return safeContainer->unsafe; }
+		T2 *operator->() { return &safeContainer->unsafe; }
+		T2 *operator&() { return &safeContainer->unsafe; }
+
+		const decltype(safeContainer->unsafe[0]) &operator[](s64 index) {
+			return safeContainer->unsafe[index];
+		}
+	};
+
+	HandleWrite<T> GetForWrite() {
+		return HandleWrite<T>(this);
 	}
 };
 
