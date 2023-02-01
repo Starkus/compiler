@@ -3,7 +3,7 @@
 cls
 
 set SourceFiles=..\src\Compiler.cpp
-set CompilerFlags=-nologo -Gm- -GR- -GT -Oi -EHa- -W4 -wd4201 -wd4100 -wd4996 -wd4063 -FC -Z7 -I ..\external\ -std:c++latest
+set CompilerFlags=-nologo -GR- -GT -Oi -EHa- -W4 -wd4201 -wd4100 -wd4996 -wd4063 -FC -Z7 -I ..\external\ -std:c++latest
 set LinkerFlags=-opt:ref -incremental:no -debug:full DynamicCallWindows.obj
 set Libraries=user32.lib winmm.lib shell32.lib advapi32.lib ..\external\xed\xed.lib
 

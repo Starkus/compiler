@@ -70,8 +70,6 @@ FileHandle g_hStdout;
 FileHandle g_hStderr;
 FileHandle g_logFileHandle;
 u32 g_numberOfThreads;
-u32 g_threadIdxCreateFibers;
-u32 g_threadIdxDeleteFibers;
 
 #if _MSC_VER
 #include "PlatformWindows.cpp"
@@ -429,8 +427,6 @@ int main(int argc, char **argv)
 	GetSystemInfo(&win32SystemInfo);
 	int threadCount = win32SystemInfo.dwNumberOfProcessors;
 	g_numberOfThreads = threadCount;
-	g_threadIdxCreateFibers = 0;
-	g_threadIdxDeleteFibers = Min(threadCount, 1);
 
 	Array<ThreadHandle, LinearAllocator> threads;
 	Array<ThreadArgs,   LinearAllocator> threadArgs;

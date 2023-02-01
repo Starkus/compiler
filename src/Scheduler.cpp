@@ -1,3 +1,5 @@
+THREADLOCAL Fiber t_fiberToDelete = SYS_INVALID_FIBER_HANDLE;
+
 inline Job *GetCurrentJob(JobContext *context)
 {
 	return &context->global->jobs.unsafe[context->jobIdx];
@@ -84,6 +86,7 @@ void AuxiliaryFiberProc(void *arg)
 	SpinlockUnlock(&context->threadStatesLock);
 
 	SYSPrepareFiberForExit();
+	ExitThread(0);
 }
 
 // Procedure to switch to a different job.
@@ -107,6 +110,11 @@ inline void SwitchJob(JobContext *context, YieldReason yieldReason, YieldContext
 	};
 	Fiber newFiber = SYSCreateFiber(AuxiliaryFiberProc, &args);
 	SYSSwitchToFiber(newFiber);
+
+	// If we come back from a fiber that switched jobs because theirs was done, no need to keep it
+	// around.
+	if (t_fiberToDelete != SYS_INVALID_FIBER_HANDLE)
+		SYSDeleteFiber(t_fiberToDelete);
 }
 
 inline void FinishCurrentJob(JobContext *context)
@@ -290,6 +298,8 @@ switchFiber:
 		nextJob->startProcedure(nextJobIdx, nextJob->args);
 	}
 	else {
+		t_fiberToDelete = GetCurrentFiber();
+
 		Fiber fiber = nextJob->fiber;
 		nextJob->fiber = SYS_INVALID_FIBER_HANDLE;
 		ASSERT(fiber != SYS_INVALID_FIBER_HANDLE);
@@ -323,5 +333,5 @@ int WorkerThreadProc(void *args)
 
 	SYSPrepareFiberForExit();
 
-	return 0;
+	ExitThread(0);
 }
