@@ -19,13 +19,23 @@ s64 PIRPrintOut(Context *context, const char *format, ...)
 	return size;
 }
 
-inline Value PIRGetValue(Context *context, BucketArrayView<Value> localValues, u32 valueIdx) {
+inline Value PIRGetValue(Context *context, BucketArrayView<Value> localValues, u32 valueIdx)
+{
 	ASSERT(valueIdx > 0);
 	if (valueIdx & VALUE_GLOBAL_BIT)
 		return GetGlobalValue(context, valueIdx);
 	else {
 		return localValues[valueIdx];
 	}
+}
+
+inline IRValue PIRValueValue(Context *context, BucketArrayView<Value> localValues, u32 valueIdx)
+{
+	IRValue result;
+	result.valueType = IRVALUETYPE_VALUE;
+	result.valueIdx = valueIdx;
+	result.typeTableIdx = PIRGetValue(context, localValues, valueIdx).typeTableIdx;
+	return result;
 }
 
 inline String PIRValueToStr(Context *context, BucketArrayView<Value> localValues, u32 valueIdx)
@@ -157,16 +167,14 @@ void PrintIRInstructionOperator(Context *context, IRInstruction inst)
 
 void PrintIRInstruction(Context *context, BucketArrayView<Value> localValues, IRInstruction inst)
 {
-	if (inst.type >= IRINSTRUCTIONTYPE_UnaryBegin && inst.type <= IRINSTRUCTIONTYPE_UnaryEnd)
-	{
+	if (inst.type >= IRINSTRUCTIONTYPE_UnaryBegin && inst.type <= IRINSTRUCTIONTYPE_UnaryEnd) {
 		PrintIRValue(context, localValues, inst.unaryOperation.out);
 		PIRPrintOut(context, " := ");
 		PrintIRInstructionOperator(context, inst);
 		PrintIRValue(context, localValues, inst.unaryOperation.in);
 		PIRPrintOut(context, "\n");
 	}
-	else if (inst.type >= IRINSTRUCTIONTYPE_BinaryBegin && inst.type <= IRINSTRUCTIONTYPE_BinaryEnd)
-	{
+	else if (inst.type >= IRINSTRUCTIONTYPE_BinaryBegin && inst.type <= IRINSTRUCTIONTYPE_BinaryEnd) {
 		PrintIRValue(context, localValues, inst.binaryOperation.out);
 		PIRPrintOut(context, " := ");
 		PrintIRValue(context, localValues, inst.binaryOperation.left);
@@ -177,8 +185,7 @@ void PrintIRInstruction(Context *context, BucketArrayView<Value> localValues, IR
 		PIRPrintOut(context, "\n");
 	}
 	else if (inst.type >= IRINSTRUCTIONTYPE_CompareJumpBegin && inst.type <=
-			IRINSTRUCTIONTYPE_CompareJumpEnd)
-	{
+			IRINSTRUCTIONTYPE_CompareJumpEnd) {
 		PIRPrintOut(context, "if ");
 		PrintIRValue(context, localValues, inst.conditionalJump2.left);
 		PIRPrintOut(context, " ");
@@ -187,8 +194,7 @@ void PrintIRInstruction(Context *context, BucketArrayView<Value> localValues, IR
 		PrintIRValue(context, localValues, inst.conditionalJump2.right);
 		PIRPrintOut(context, " jump %S\n", inst.conditionalJump2.label->name);
 	}
-	else switch (inst.type)
-	{
+	else switch (inst.type) {
 	case IRINSTRUCTIONTYPE_LABEL:
 	{
 		PIRPrintOut(context, "%S:\n", inst.label->name);
@@ -268,7 +274,7 @@ void PrintIRInstruction(Context *context, BucketArrayView<Value> localValues, IR
 		PIRPrintOut(context, "return ");
 		for (int i = 0; i < inst.returnInst.returnValueIndices.size; ++i) {
 			if (i) PIRPrintOut(context, ", ");
-			IRValue irValue = IRValueValue(context, inst.returnInst.returnValueIndices[i]);
+			IRValue irValue = PIRValueValue(context, localValues, inst.returnInst.returnValueIndices[i]);
 			PrintIRValue(context, localValues, irValue);
 		}
 	} break;
@@ -331,44 +337,42 @@ void PrintIRInstruction(Context *context, BucketArrayView<Value> localValues, IR
 	}
 }
 
-void PrintJobIRInstructions(Context *context)
+void PrintJobIRInstructions(IRContext *context)
 {
 	static Mutex printIRMutex = SYSCreateMutex();
 
-	IRJobData *jobData = (IRJobData *)t_jobData;
-
 	const int padding = 20;
-	Procedure proc = GetProcedureRead(context, jobData->procedureIdx);
+	Procedure proc = GetProcedureRead(context->global, context->procedureIdx);
 	TypeInfoProcedure procTypeInfo = GetTypeInfo(context, proc.typeTableIdx).procedureInfo;
 
 	SYSMutexLock(printIRMutex);
 
-	OutputBufferReset(context);
+	OutputBufferReset(context->global);
 
 	String name = proc.name;
-	PIRPrintOut(context, "proc %S(", name);
+	PIRPrintOut(context->global, "proc %S(", name);
 
 	for (int paramIdx = 0; paramIdx < proc.parameterValues.size; ++paramIdx) {
-		if (paramIdx) PIRPrintOut(context, ", ");
+		if (paramIdx) PIRPrintOut(context->global, ", ");
 		u32 paramValueIdx = proc.parameterValues[paramIdx];
 		Value paramValue = IRGetValue(context, paramValueIdx);
 		String typeStr = TypeInfoToString(context, paramValue.typeTableIdx);
-		PIRPrintOut(context, "%S", PIRValueToStr(context, proc.localValues, paramValueIdx));
+		PIRPrintOut(context->global, "%S", PIRValueToStr(context->global, proc.localValues, paramValueIdx));
 #if PRINTIR_PRINT_TYPES
-		PIRPrintOut(context, " : %S", typeStr);
+		PIRPrintOut(context->global, " : %S", typeStr);
 #endif
 	}
-	PIRPrintOut(context, ")");
+	PIRPrintOut(context->global, ")");
 	if (procTypeInfo.returnTypeIndices.size) {
-		PIRPrintOut(context, " -> ");
+		PIRPrintOut(context->global, " -> ");
 		for (int returnIdx = 0; returnIdx < procTypeInfo.returnTypeIndices.size; ++returnIdx) {
-			if (returnIdx) PIRPrintOut(context, ", ");
+			if (returnIdx) PIRPrintOut(context->global, ", ");
 			String returnTypeStr = TypeInfoToString(context,
 					procTypeInfo.returnTypeIndices[returnIdx]);
-			PIRPrintOut(context, "%S", returnTypeStr);
+			PIRPrintOut(context->global, "%S", returnTypeStr);
 		}
 	}
-	PIRPrintOut(context, "\n");
+	PIRPrintOut(context->global, "\n");
 
 	u32 lastFileIdx = U32_MAX;
 	u32 lastLine = U32_MAX;
@@ -379,16 +383,16 @@ void PrintJobIRInstructions(Context *context)
 		IRInstruction inst = instructions[instructionIdx];
 
 		if (inst.loc.fileIdx != 0) {
-			FatSourceLocation fatLoc = ExpandSourceLocation(context, inst.loc);
+			FatSourceLocation fatLoc = ExpandSourceLocation(context->global, inst.loc);
 			if (inst.loc.fileIdx != lastFileIdx || fatLoc.line != lastLine)
-				PIRPrintOut(context, "On: %S\n", String{ fatLoc.lineSize, fatLoc.beginingOfLine });
+				PIRPrintOut(context->global, "On: %S\n", String{ fatLoc.lineSize, fatLoc.beginingOfLine });
 
 			lastFileIdx = inst.loc.fileIdx;
 			lastLine = fatLoc.line;
 		}
 
 		if (inst.type == IRINSTRUCTIONTYPE_LABEL) {
-			PIRPrintOut(context, "%S: ", inst.label->name);
+			PIRPrintOut(context->global, "%S: ", inst.label->name);
 
 			IRInstruction nextInst = instructions[instructionIdx + 1];
 			if (nextInst.type != IRINSTRUCTIONTYPE_LABEL &&
@@ -397,7 +401,7 @@ void PrintJobIRInstructions(Context *context)
 				nextInst.type != IRINSTRUCTIONTYPE_PUSH_VALUE &&
 				nextInst.type != IRINSTRUCTIONTYPE_NOP) {
 				for (s64 i = inst.label->name.size + 2; i < padding; ++i)
-					PIRPrintOut(context, " ");
+					PIRPrintOut(context->global, " ");
 
 				++instructionIdx;
 				if (instructionIdx >= instructionCount)
@@ -405,7 +409,7 @@ void PrintJobIRInstructions(Context *context)
 				inst = instructions[instructionIdx];
 			}
 			else {
-				PIRPrintOut(context, "\n");
+				PIRPrintOut(context->global, "\n");
 				continue;
 			}
 		}
@@ -416,13 +420,13 @@ void PrintJobIRInstructions(Context *context)
 			continue;
 		else {
 			for (s64 i = 0; i < padding; ++i)
-				PIRPrintOut(context, " ");
+				PIRPrintOut(context->global, " ");
 		}
 
-		PrintIRInstruction(context, proc.localValues, inst);
+		PrintIRInstruction(context->global, proc.localValues, inst);
 	}
-	PIRPrintOut(context, "\n");
+	PIRPrintOut(context->global, "\n");
 
-	OutputBufferWriteToFile(context, TPrintF("output/ir_%S.txt", proc.name));
+	OutputBufferWriteToFile(context->global, TPrintF("output/ir_%S.txt", proc.name));
 	SYSMutexUnlock(printIRMutex);
 }

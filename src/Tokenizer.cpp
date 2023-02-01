@@ -633,13 +633,13 @@ u16 CalculateTokenSize(Context *context, const Tokenizer *tokenizer, enum TokenT
 	}
 }
 
-Token ReadNewToken(Context *context, Tokenizer *tokenizer, const char *fileBuffer)
+Token ReadNewToken(PContext *context, Tokenizer *tokenizer, const char *fileBuffer)
 {
 	EatWhitespace(tokenizer);
 
 	Token newToken;
-	newToken.type = CalculateTokenType(context, tokenizer);
-	newToken.size = CalculateTokenSize(context, tokenizer, newToken.type);
+	newToken.type = CalculateTokenType(context->global, tokenizer);
+	newToken.size = CalculateTokenSize(context->global, tokenizer, newToken.type);
 	newToken.loc.fileIdx = tokenizer->fileIdx;
 	newToken.loc.character = (s32)(tokenizer->cursor - fileBuffer);
 	return newToken;
@@ -690,15 +690,13 @@ FatSourceLocation ExpandSourceLocation(Context *context, SourceLocation loc)
 	return result;
 }
 
-void TokenizeFile(Context *context, u32 fileIdx)
+void TokenizeFile(PContext *context, u32 fileIdx)
 {
-	ParseJobData *jobData = (ParseJobData *)t_jobData;
-
 	Tokenizer tokenizer = {};
 	SourceFile file;
 	{
-		ScopedLockSpin filesLock(&context->filesLock);
-		file = context->sourceFiles[fileIdx];
+		ScopedLockSpin filesLock(&context->global->filesLock);
+		file = context->global->sourceFiles[fileIdx];
 	}
 	tokenizer.fileIdx = fileIdx;
 	tokenizer.cursor = (char *)file.buffer;
@@ -730,13 +728,13 @@ void TokenizeFile(Context *context, u32 fileIdx)
 		Token newToken = ReadNewToken(context, &tokenizer, fileBuffer);
 
 		if (newToken.type == TOKEN_INVALID_DIRECTIVE)
-			LogError(context, newToken.loc, "Invalid parser directive"_s);
+			LogError(context->global, newToken.loc, "Invalid parser directive"_s);
 
-		*BucketArrayAdd(&jobData->tokens) = newToken;
+		*BucketArrayAdd(&context->tokens) = newToken;
 
 		tokenizer.cursor += newToken.size;
 	}
 
-	*BucketArrayAdd(&jobData->tokens) = { TOKEN_END_OF_FILE, 0,
+	*BucketArrayAdd(&context->tokens) = { TOKEN_END_OF_FILE, 0,
 		{ fileIdx, (u32)(tokenizer.cursor - file.buffer)-1 } };
 }

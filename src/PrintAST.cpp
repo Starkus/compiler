@@ -566,18 +566,17 @@ void PrintExpression(Context *context, const ASTExpression *e)
 	}
 }
 
-void PrintAST(Context *context)
+void PrintAST(PContext *context)
 {
 	static Mutex printASTMutex = SYSCreateMutex();
 
-	ParseJobData *jobData = (ParseJobData *)t_jobData;
 	indentLevels = 0;
 
 	SYSMutexLock(printASTMutex);
-	ArrayView<ASTExpression> statements = jobData->astRoot.block.statements;
+	ArrayView<ASTExpression> statements = context->astRoot.block.statements;
 	for (int i = 0; i < statements.size; ++i) {
 		const ASTExpression *statement = &statements[i];
-		PrintExpression(context, statement);
+		PrintExpression(context->global, statement);
 	}
 	SYSMutexUnlock(printASTMutex);
 }

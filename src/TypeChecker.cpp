@@ -10,15 +10,13 @@ inline String GetValueName(Value value)
 #endif
 }
 
-u32 TCNewValue(Context *context, u32 typeTableIdx, u32 flags, u32 immitateValueIdx = U32_MAX)
+u32 TCNewValue(TCContext *context, u32 typeTableIdx, u32 flags, u32 immitateValueIdx = U32_MAX)
 {
-	TCJobData *jobData = (TCJobData *)t_jobData;
-
 	ASSERT(typeTableIdx != 0);
 	ASSERT(!(flags & VALUEFLAGS_TRY_IMMITATE) || immitateValueIdx != U32_MAX);
 
-	u64 idx = jobData->localValues.count;
-	Value *result = BucketArrayAdd(&jobData->localValues);
+	u64 idx = context->localValues.count;
+	Value *result = BucketArrayAdd(&context->localValues);
 #if DEBUG_BUILD
 	result->name = {};
 #endif
@@ -30,15 +28,13 @@ u32 TCNewValue(Context *context, u32 typeTableIdx, u32 flags, u32 immitateValueI
 	return (u32)idx;
 }
 
-u32 TCNewValue(Context *context, String name, u32 typeTableIdx, u32 flags, u32 immitateValueIdx = U32_MAX)
+u32 TCNewValue(TCContext *context, String name, u32 typeTableIdx, u32 flags, u32 immitateValueIdx = U32_MAX)
 {
-	TCJobData *jobData = (TCJobData *)t_jobData;
-
 	ASSERT(typeTableIdx != 0);
 	ASSERT(!(flags & VALUEFLAGS_TRY_IMMITATE) || immitateValueIdx != U32_MAX);
 
-	u64 idx = jobData->localValues.count;
-	Value *result = BucketArrayAdd(&jobData->localValues);
+	u64 idx = context->localValues.count;
+	Value *result = BucketArrayAdd(&context->localValues);
 #if DEBUG_BUILD
 	result->name = name;
 #endif
@@ -50,27 +46,24 @@ u32 TCNewValue(Context *context, String name, u32 typeTableIdx, u32 flags, u32 i
 	return (u32)idx;
 }
 
-u32 TCNewValue(Context *context, Value value)
+u32 TCNewValue(TCContext *context, Value value)
 {
-	TCJobData *jobData = (TCJobData *)t_jobData;
-
 	ASSERT(value.typeTableIdx != 0);
 	ASSERT(!(value.flags & VALUEFLAGS_TRY_IMMITATE) || value.tryImmitateValueIdx != U32_MAX);
 
-	u64 idx = jobData->localValues.count;
-	Value *result = BucketArrayAdd(&jobData->localValues);
+	u64 idx = context->localValues.count;
+	Value *result = BucketArrayAdd(&context->localValues);
 	*result = value;
 
 	ASSERT(idx < U32_MAX);
 	return (u32)idx;
 }
 
-inline Value *TCGetValue(Context *context, u32 valueIdx)
+inline Value *TCGetValue(TCContext *context, u32 valueIdx)
 {
 	ASSERT(valueIdx > 0);
-	TCJobData *jobData = (TCJobData *)t_jobData;
 	ASSERT(!(valueIdx & VALUE_GLOBAL_BIT));
-	return &jobData->localValues[valueIdx];
+	return &context->localValues[valueIdx];
 }
 
 u32 NewGlobalValue(Context *context, u32 typeTableIdx, u32 flags, u32 immitateValueIdx = U32_MAX) {
@@ -144,24 +137,21 @@ inline void UpdateGlobalValue(Context *context, u32 valueIdx, Value *value) {
 	globalValues[valueIdx & VALUE_GLOBAL_MASK] = *value;
 }
 
-inline void TCSetValueFlags(Context *context, u32 valueIdx, u32 flags) {
+inline void TCSetValueFlags(TCContext *context, u32 valueIdx, u32 flags) {
 	if (valueIdx & VALUE_GLOBAL_BIT) {
-		auto globalValues = context->globalValues.GetForWrite();
+		auto globalValues = context->global->globalValues.GetForWrite();
 		globalValues[valueIdx & VALUE_GLOBAL_MASK].flags |= flags;
 	}
-	else {
-		TCJobData *jobData = (TCJobData *)t_jobData;
-		jobData->localValues[valueIdx].flags |= flags;
-	}
+	else
+		context->localValues[valueIdx].flags |= flags;
 }
 
-inline Value TCGetValueRead(Context *context, u32 valueIdx) {
+inline Value TCGetValueRead(TCContext *context, u32 valueIdx) {
 	ASSERT(valueIdx > 0);
 	if (valueIdx & VALUE_GLOBAL_BIT)
-		return GetGlobalValue(context, valueIdx);
+		return GetGlobalValue(context->global, valueIdx);
 	else {
-		TCJobData *jobData = (TCJobData *)t_jobData;
-		return jobData->localValues[valueIdx];
+		return context->localValues[valueIdx];
 	}
 }
 
@@ -192,24 +182,23 @@ inline void UpdateProcedure(Context *context, u32 procedureIdx, Procedure *value
 	}
 }
 
-inline ASTExpression *TCNewTreeNode(Context *context) {
+inline ASTExpression *TCNewTreeNode() {
 	return ALLOC(ThreadAllocator, ASTExpression);
 }
 
-TCScope *GetTopMostScope(Context *context) {
-	TCJobData *jobData = (TCJobData *)t_jobData;
-	if (jobData->scopeStack.size > 0)
-		return DynamicArrayBack(&jobData->scopeStack);
+TCScope *TCGetTopMostScope(TCContext *context) {
+	if (context->scopeStack.size > 0)
+		return DynamicArrayBack(&context->scopeStack);
 	else
 		return nullptr;
 }
 
-inline TypeInfo GetTypeInfo(Context *context, u32 typeTableIdx)
+inline TypeInfo GetTypeInfo(JobContext *context, u32 typeTableIdx)
 {
 	ASSERT(typeTableIdx > TYPETABLEIDX_Unset);
 
 	// Optimize common path: type IS ready! don't lock anything, just read.
-	auto &typeTable = context->typeTable.unsafe;
+	auto &typeTable = context->global->typeTable.unsafe;
 	TypeInfo result = typeTable[typeTableIdx];
 	if (result.typeCategory != TYPECATEGORY_NOT_READY)
 		return result;
@@ -219,7 +208,7 @@ inline TypeInfo GetTypeInfo(Context *context, u32 typeTableIdx)
 	// waiting list.
 	// We lock the list of jobs here instead of the type table because no one locks the type table
 	// to read it.
-	SYSMutexLock(context->waitingJobsByReason[YIELDREASON_TYPE_NOT_READY].lock);
+	SYSMutexLock(context->global->waitingJobsByReason[YIELDREASON_TYPE_NOT_READY].lock);
 	result = typeTable[typeTableIdx];
 
 	if (result.typeCategory == TYPECATEGORY_NOT_READY) {
@@ -227,18 +216,18 @@ inline TypeInfo GetTypeInfo(Context *context, u32 typeTableIdx)
 		// waiting list, so we don't miss waking it up when updating the type.
 		SwitchJob(context, YIELDREASON_TYPE_NOT_READY, { .index = typeTableIdx });
 		// Lock again!
-		SYSMutexLock(context->waitingJobsByReason[YIELDREASON_TYPE_NOT_READY].lock);
+		SYSMutexLock(context->global->waitingJobsByReason[YIELDREASON_TYPE_NOT_READY].lock);
 
 		result = typeTable[typeTableIdx];
 		if (result.typeCategory == TYPECATEGORY_NOT_READY)
-			LogCompilerError(context, {}, "Bad job resume"_s);
+			LogCompilerError(context->global, {}, "Bad job resume"_s);
 	}
 
-	SYSMutexUnlock(context->waitingJobsByReason[YIELDREASON_TYPE_NOT_READY].lock);
+	SYSMutexUnlock(context->global->waitingJobsByReason[YIELDREASON_TYPE_NOT_READY].lock);
 	return result;
 }
 
-String TypeInfoToString(Context *context, u32 typeTableIdx)
+String TypeInfoToString(JobContext *context, u32 typeTableIdx)
 {
 	if (typeTableIdx == TYPETABLEIDX_VOID)
 		return "void"_s;
@@ -354,33 +343,30 @@ inline String TypeCategoryToString(TypeCategory typeCategory)
 	}
 }
 
-inline void TCPushScope(Context *context)
+inline void TCPushScope(TCContext *context)
 {
-	TCJobData *jobData = (TCJobData *)t_jobData;
-
-	TCScope *newScope = DynamicArrayAdd(&jobData->scopeStack);
+	TCScope *newScope = DynamicArrayAdd(&context->scopeStack);
 
 	DynamicArrayInit(&newScope->names, 64);
 	DynamicArrayInit(&newScope->typeIndices, 64);
 }
 
-inline void TCPopScope(Context *context)
+inline void TCPopScope(TCContext *context)
 {
-	TCJobData *jobData = (TCJobData *)t_jobData;
-	--jobData->scopeStack.size;
+	--context->scopeStack.size;
 }
 
-TCScopeName FindGlobalName(Context *context, SourceLocation loc, String name)
+TCScopeName FindGlobalName(JobContext *context, SourceLocation loc, String name)
 {
 	// Lock this, if we need to switch fibers, we don't unlock until we added this fiber to a
 	// waiting list.
-	RWSpinlockLockForRead(&context->tcGlobalNames.rwLock);
+	RWSpinlockLockForRead(&context->global->tcGlobalNames.rwLock);
 	{
-		auto &globalNames = context->tcGlobalNames.unsafe;
+		auto &globalNames = context->global->tcGlobalNames.unsafe;
 		for (int i = 0; i < globalNames.size; ++i) {
 			const TCScopeName *currentName = &globalNames[i];
 			if (StringEquals(name, currentName->name)) {
-				RWSpinlockUnlockForRead(&context->tcGlobalNames.rwLock);
+				RWSpinlockUnlockForRead(&context->global->tcGlobalNames.rwLock);
 				return *currentName;
 			}
 		}
@@ -391,27 +377,25 @@ TCScopeName FindGlobalName(Context *context, SourceLocation loc, String name)
 	SwitchJob(context, YIELDREASON_UNKNOWN_IDENTIFIER, { .loc = loc, .identifier = name });
 
 	// Lock again
-	RWSpinlockLockForRead(&context->tcGlobalNames.rwLock);
+	RWSpinlockLockForRead(&context->global->tcGlobalNames.rwLock);
 	{
-		auto &globalNames = context->tcGlobalNames.unsafe;
+		auto &globalNames = context->global->tcGlobalNames.unsafe;
 		for (int i = 0; i < globalNames.size; ++i) {
 			const TCScopeName *currentName = &globalNames[i];
 			if (StringEquals(name, currentName->name)) {
-				RWSpinlockUnlockForRead(&context->tcGlobalNames.rwLock);
+				RWSpinlockUnlockForRead(&context->global->tcGlobalNames.rwLock);
 				return *currentName;
 			}
 		}
 	}
 	// Shouldn't have resumed this job if the identifier is still missing.
-	LogCompilerError(context, loc, "Bad job resume"_s);
+	LogCompilerError(context->global, loc, "Bad job resume"_s);
 }
 
-TCScopeName TCFindScopeName(Context *context, SourceLocation loc, String name)
+TCScopeName TCFindScopeName(TCContext *context, SourceLocation loc, String name)
 {
-	TCJobData *jobData = (TCJobData *)t_jobData;
-
 	// Current stack
-	ArrayView<TCScope> scopeStack = jobData->scopeStack;
+	ArrayView<TCScope> scopeStack = context->scopeStack;
 	for (s64 stackIdx = scopeStack.size - 1; stackIdx >= 0; --stackIdx) {
 		const TCScope *currentScope = &scopeStack[stackIdx];
 		for (int i = 0; i < currentScope->names.size; ++i) {
@@ -424,7 +408,7 @@ TCScopeName TCFindScopeName(Context *context, SourceLocation loc, String name)
 	return FindGlobalName(context, loc, name);
 }
 
-inline u32 TCNewStaticDefinition(Context *context, StaticDefinition *value)
+inline u32 NewStaticDefinition(Context *context, StaticDefinition *value)
 {
 	auto staticDefinitions = context->staticDefinitions.GetForWrite();
 	u64 result = staticDefinitions->count;
@@ -434,19 +418,13 @@ inline u32 TCNewStaticDefinition(Context *context, StaticDefinition *value)
 	return (u32)result;
 }
 
-inline StaticDefinition GetStaticDefinition(Context *context, u32 staticDefinitionIdx)
-{
-	auto staticDefinitions = context->staticDefinitions.GetForRead();
-	return staticDefinitions[staticDefinitionIdx];
-}
-
-inline StaticDefinition TCGetStaticDefinition(Context *context, u32 staticDefinitionIdx,
-		bool ensureTypeChecked)
+inline StaticDefinition GetStaticDefinition(JobContext *context, u32 staticDefinitionIdx,
+		bool ensureTypeChecked = false)
 {
 	StaticDefinition staticDefinition;
 
 	// Optimize most frequent path: def IS ready! no locking.
-	auto &staticDefinitions = context->staticDefinitions.unsafe;
+	auto &staticDefinitions = context->global->staticDefinitions.unsafe;
 	staticDefinition = staticDefinitions[staticDefinitionIdx];
 	if (staticDefinition.definitionType != STATICDEFINITIONTYPE_NOT_READY &&
 			(!ensureTypeChecked || staticDefinition.typeTableIdx != TYPETABLEIDX_Unset))
@@ -456,7 +434,7 @@ inline StaticDefinition TCGetStaticDefinition(Context *context, u32 staticDefini
 
 	// Lock this, if we need to switch fibers, we don't unlock until we added this fiber to a
 	// waiting list.
-	SYSLockForRead(&context->staticDefinitions.rwLock);
+	SYSLockForRead(&context->global->staticDefinitions.rwLock);
 
 	staticDefinition = staticDefinitions[staticDefinitionIdx];
 	if (staticDefinition.definitionType == STATICDEFINITIONTYPE_NOT_READY ||
@@ -466,21 +444,22 @@ inline StaticDefinition TCGetStaticDefinition(Context *context, u32 staticDefini
 		SwitchJob(context, YIELDREASON_STATIC_DEF_NOT_READY, { .index = staticDefinitionIdx });
 
 		// Need to lock these again!
-		SYSLockForRead(&context->staticDefinitions.rwLock);
+		SYSLockForRead(&context->global->staticDefinitions.rwLock);
 
 		staticDefinition = staticDefinitions[staticDefinitionIdx];
 
 		if (staticDefinition.definitionType == STATICDEFINITIONTYPE_NOT_READY ||
 				(ensureTypeChecked && staticDefinition.typeTableIdx == TYPETABLEIDX_Unset))
-			LogCompilerError(context, {}, "Bad job resume"_s);
+			LogCompilerError(context->global, {}, "Bad job resume"_s);
 	}
-	SYSUnlockForRead(&context->staticDefinitions.rwLock);
+	SYSUnlockForRead(&context->global->staticDefinitions.rwLock);
 	ProfilerEnd();
 	return staticDefinition;
 }
 
-inline void TCUpdateStaticDefinition(Context *context, u32 staticDefinitionIdx,
-		StaticDefinition *value) {
+inline void UpdateStaticDefinition(Context *context, u32 staticDefinitionIdx,
+		StaticDefinition *value)
+{
 	{
 		auto staticDefinitions = context->staticDefinitions.GetForWrite();
 		staticDefinitions[staticDefinitionIdx] = *value;
@@ -492,7 +471,7 @@ inline void TCUpdateStaticDefinition(Context *context, u32 staticDefinitionIdx,
 		WakeUpAllByIndex(context, YIELDREASON_STATIC_DEF_NOT_READY, staticDefinitionIdx);
 }
 
-u32 FindTypeInStackByName(Context *context, SourceLocation loc, String name)
+u32 FindTypeInStackByName(TCContext *context, SourceLocation loc, String name)
 {
 	u32 typeTableIdx = TYPETABLEIDX_Unset;
 
@@ -502,13 +481,13 @@ u32 FindTypeInStackByName(Context *context, SourceLocation loc, String name)
 	if (scopeName.type == NAMETYPE_PRIMITIVE)
 		return scopeName.primitiveTypeTableIdx;
 	else if (scopeName.type != NAMETYPE_STATIC_DEFINITION)
-		LogError(context, loc, TPrintF("\"%S\" is not a type!", name));
+		LogError(context->global, loc, TPrintF("\"%S\" is not a type!", name));
 
 	StaticDefinition staticDefinition =
-		TCGetStaticDefinition(context, scopeName.staticDefinitionIdx, true);
+		GetStaticDefinition(context, scopeName.staticDefinitionIdx, true);
 
 	if (staticDefinition.definitionType != STATICDEFINITIONTYPE_TYPE)
-		LogError(context, loc, TPrintF("\"%S\" is not a type!", name));
+		LogError(context->global, loc, TPrintF("\"%S\" is not a type!", name));
 
 	typeTableIdx = staticDefinition.typeTableIdx;
 	return typeTableIdx;
@@ -532,7 +511,7 @@ enum TypeCheckErrorCode
 	TYPECHECK_CANT_DEDUCE_TYPE,
 };
 
-void ReportTypeCheckError(Context *context, TypeCheckErrorCode errorCode, SourceLocation sourceLoc,
+void ReportTypeCheckError(JobContext *context, TypeCheckErrorCode errorCode, SourceLocation sourceLoc,
 		u32 leftTypeIdx, u32 rightTypeIdx)
 {
 	String leftStr  = TypeInfoToString(context, leftTypeIdx);
@@ -540,25 +519,25 @@ void ReportTypeCheckError(Context *context, TypeCheckErrorCode errorCode, Source
 	switch (errorCode)
 	{
 	case TYPECHECK_SIGN_MISMATCH:
-		LogError(context, sourceLoc, TPrintF(
+		LogError(context->global, sourceLoc, TPrintF(
 			"Integer sign mismatch! (left is %S and right is %S)", leftStr, rightStr));
 	case TYPECHECK_SIZE_MISMATCH:
-		LogError(context, sourceLoc, TPrintF(
+		LogError(context->global, sourceLoc, TPrintF(
 			"Integer size mismatch! (left is %S and right is %S)", leftStr, rightStr));
 	case TYPECHECK_TYPE_CATEGORY_MISMATCH:
-		LogError(context, sourceLoc, TPrintF(
+		LogError(context->global, sourceLoc, TPrintF(
 			"Expression type mismatch! (left is %S and right is %S)", leftStr, rightStr));
 	case TYPECHECK_POINTED_TYPE_MISMATCH:
-		LogError(context, sourceLoc, TPrintF(
+		LogError(context->global, sourceLoc, TPrintF(
 			"Unrelated pointed types! (left is %S and right is %S)", leftStr, rightStr));
 	case TYPECHECK_ARRAY_SIZE_MISMATCH:
-		LogError(context, sourceLoc, TPrintF(
+		LogError(context->global, sourceLoc, TPrintF(
 			"Size of arrays are different! (left is %S and right is %S)", leftStr, rightStr));
 	case TYPECHECK_STRUCT_MISMATCH:
-		LogError(context, sourceLoc, TPrintF(
+		LogError(context->global, sourceLoc, TPrintF(
 			"Expressions evaluate to different structs! (left is %S and right is %S)", leftStr, rightStr));
 	case TYPECHECK_MISC_PANIC:
-		LogError(context, sourceLoc, TPrintF(
+		LogError(context->global, sourceLoc, TPrintF(
 			"Expression type mismatch! (left is %S and right is %S)", leftStr, rightStr));
 	default:
 		ASSERT(errorCode == TYPECHECK_COOL);
@@ -586,12 +565,12 @@ inline u32 StripAllAliases(Context *context, u32 typeTableIdx) {
 	return typeTableIdx;
 }
 
-u32 GetTypeInfoPointerOf(Context *context, u32 inType);
-TypeCheckErrorCode CheckTypesMatch(Context *context, u32 leftTypeIdx, u32 rightTypeIdx)
+u32 GetTypeInfoPointerOf(JobContext *context, u32 inType);
+TypeCheckErrorCode CheckTypesMatch(JobContext *context, u32 leftTypeIdx, u32 rightTypeIdx)
 {
 	// Get rid of implicitly cast aliases
-	leftTypeIdx  = StripImplicitlyCastAliases(context, leftTypeIdx);
-	rightTypeIdx = StripImplicitlyCastAliases(context, rightTypeIdx);
+	leftTypeIdx  = StripImplicitlyCastAliases(context->global, leftTypeIdx);
+	rightTypeIdx = StripImplicitlyCastAliases(context->global, rightTypeIdx);
 
 	if ((leftTypeIdx == TYPETABLEIDX_VOID) != (rightTypeIdx == TYPETABLEIDX_VOID))
 		return TYPECHECK_TYPE_CATEGORY_MISMATCH;
@@ -606,25 +585,22 @@ TypeCheckErrorCode CheckTypesMatch(Context *context, u32 leftTypeIdx, u32 rightT
 	TypeInfo left  = GetTypeInfo(context, leftTypeIdx);
 	TypeInfo right = GetTypeInfo(context, rightTypeIdx);
 
-	if (leftTypeIdx == TYPETABLEIDX_BOOL)
-	{
+	if (leftTypeIdx == TYPETABLEIDX_BOOL) {
 		if (right.typeCategory == TYPECATEGORY_INTEGER ||
 			right.typeCategory == TYPECATEGORY_FLOATING)
 			return TYPECHECK_COOL;
 		return TYPECHECK_TYPE_CATEGORY_MISMATCH;
 	}
 
-	if (rightTypeIdx == TYPETABLEIDX_INTEGER)
-	{
+	if (rightTypeIdx == TYPETABLEIDX_INTEGER) {
 		if (left.typeCategory == TYPECATEGORY_INTEGER ||
 			left.typeCategory == TYPECATEGORY_POINTER || // @Check: Allow ptr = int? Confusing.
 			left.typeCategory == TYPECATEGORY_FLOATING)
 			return TYPECHECK_COOL;
 
 		// Allow implicit cast of <number> to <alias of number type>
-		if (left.typeCategory == TYPECATEGORY_ALIAS)
-		{
-			u32 leftTypeIdxStripped = StripAllAliases(context, leftTypeIdx);
+		if (left.typeCategory == TYPECATEGORY_ALIAS) {
+			u32 leftTypeIdxStripped = StripAllAliases(context->global, leftTypeIdx);
 			TypeCategory strippedTypeCategory =
 				GetTypeInfo(context, leftTypeIdxStripped).typeCategory;
 			if (strippedTypeCategory == TYPECATEGORY_INTEGER ||
@@ -634,17 +610,15 @@ TypeCheckErrorCode CheckTypesMatch(Context *context, u32 leftTypeIdx, u32 rightT
 
 		return TYPECHECK_TYPE_CATEGORY_MISMATCH;
 	}
-	else if (leftTypeIdx == TYPETABLEIDX_INTEGER)
-	{
+	else if (leftTypeIdx == TYPETABLEIDX_INTEGER) {
 		if (right.typeCategory == TYPECATEGORY_INTEGER ||
 			right.typeCategory == TYPECATEGORY_POINTER || // @Check: Allow ptr = int? Confusing.
 			right.typeCategory == TYPECATEGORY_FLOATING)
 			return TYPECHECK_COOL;
 
 		// Allow implicit cast of <number> to <alias of number type>
-		if (right.typeCategory == TYPECATEGORY_ALIAS)
-		{
-			u32 rightTypeIdxStripped = StripAllAliases(context, rightTypeIdx);
+		if (right.typeCategory == TYPECATEGORY_ALIAS) {
+			u32 rightTypeIdxStripped = StripAllAliases(context->global, rightTypeIdx);
 			TypeCategory strippedTypeCategory =
 				GetTypeInfo(context, rightTypeIdxStripped).typeCategory;
 			if (strippedTypeCategory == TYPECATEGORY_INTEGER ||
@@ -654,15 +628,13 @@ TypeCheckErrorCode CheckTypesMatch(Context *context, u32 leftTypeIdx, u32 rightT
 
 		return TYPECHECK_TYPE_CATEGORY_MISMATCH;
 	}
-	else if (rightTypeIdx == TYPETABLEIDX_FLOATING)
-	{
+	else if (rightTypeIdx == TYPETABLEIDX_FLOATING) {
 		if (left.typeCategory == TYPECATEGORY_FLOATING)
 			return TYPECHECK_COOL;
 		return TYPECHECK_TYPE_CATEGORY_MISMATCH;
 	}
 
-	if (left.typeCategory != right.typeCategory)
-	{
+	if (left.typeCategory != right.typeCategory) {
 		// Allow int->float and float->int
 #if 1
 		if ((left.typeCategory == TYPECATEGORY_INTEGER ||
@@ -695,13 +667,12 @@ TypeCheckErrorCode CheckTypesMatch(Context *context, u32 leftTypeIdx, u32 rightT
 		return TYPECHECK_TYPE_CATEGORY_MISMATCH;
 	}
 
-	switch (left.typeCategory)
-	{
+	switch (left.typeCategory) {
 	case TYPECATEGORY_POINTER:
 	{
-		u32 pointedTypeIdxLeft  = StripImplicitlyCastAliases(context,
+		u32 pointedTypeIdxLeft  = StripImplicitlyCastAliases(context->global,
 				left.pointerInfo.pointedTypeTableIdx);
-		u32 pointedTypeIdxRight = StripImplicitlyCastAliases(context,
+		u32 pointedTypeIdxRight = StripImplicitlyCastAliases(context->global,
 				right.pointerInfo.pointedTypeTableIdx);
 
 		// Cast any pointer to void pointer
@@ -797,24 +768,20 @@ TypeCheckErrorCode CheckTypesMatch(Context *context, u32 leftTypeIdx, u32 rightT
 	return TYPECHECK_MISC_PANIC;
 }
 
-const StructMember *FindStructMemberByName(Context *context, TypeInfo structTypeInfo, String name)
+const StructMember *FindStructMemberByName(JobContext *context, TypeInfo structTypeInfo, String name)
 {
-	for (int i = 0; i < structTypeInfo.structInfo.members.size; ++i)
-	{
+	for (int i = 0; i < structTypeInfo.structInfo.members.size; ++i) {
 		const StructMember *currentMember = &structTypeInfo.structInfo.members[i];
 		if (StringEquals(name, currentMember->name))
 			return currentMember;
-		if (currentMember->isUsing || currentMember->name.size == 0)
-		{
+		if (currentMember->isUsing || currentMember->name.size == 0) {
 			// Anonymous structs/unions and using
 			TypeInfo memberTypeInfo = GetTypeInfo(context, currentMember->typeTableIdx);
 			ASSERT(memberTypeInfo.typeCategory == TYPECATEGORY_STRUCT ||
 				   memberTypeInfo.typeCategory == TYPECATEGORY_UNION);
 			const StructMember *found = FindStructMemberByName(context, memberTypeInfo, name);
-			if (found)
-			{
-				if (currentMember->offset)
-				{
+			if (found) {
+				if (currentMember->offset) {
 					// Copy struct member and add the parent member's offset.
 					StructMember *shiftedMember = ALLOC(LinearAllocator, StructMember);
 					memcpy(shiftedMember, found, sizeof(StructMember));
@@ -828,7 +795,7 @@ const StructMember *FindStructMemberByName(Context *context, TypeInfo structType
 	return nullptr;
 }
 
-void InferTypesInExpression(Context *context, ASTExpression *expression, u32 typeTableIdx)
+void InferTypesInExpression(JobContext *context, ASTExpression *expression, u32 typeTableIdx)
 {
 	TypeInfo typeInfo = GetTypeInfo(context, typeTableIdx);
 	if (expression->typeTableIdx == TYPETABLEIDX_INTEGER &&
@@ -857,7 +824,7 @@ struct TypeCheckResult
 	u32 leftTypeIdx;
 	u32 rightTypeIdx;
 };
-TypeCheckResult CheckTypesMatchAndSpecialize(Context *context, u32 leftTypeIdx, ASTExpression *rightHand)
+TypeCheckResult CheckTypesMatchAndSpecialize(JobContext *context, u32 leftTypeIdx, ASTExpression *rightHand)
 {
 	u32 rightTypeIdx = rightHand->typeTableIdx;
 
@@ -866,9 +833,9 @@ TypeCheckResult CheckTypesMatchAndSpecialize(Context *context, u32 leftTypeIdx, 
 
 	// Get rid of aliases
 	if (leftTypeIdx >= TYPETABLEIDX_Begin)
-		leftTypeIdx  = StripImplicitlyCastAliases(context, leftTypeIdx);
+		leftTypeIdx  = StripImplicitlyCastAliases(context->global, leftTypeIdx);
 	if (rightTypeIdx >= TYPETABLEIDX_Begin)
-		rightTypeIdx = StripImplicitlyCastAliases(context, rightTypeIdx);
+		rightTypeIdx = StripImplicitlyCastAliases(context->global, rightTypeIdx);
 
 	TypeCheckResult result = { TYPECHECK_COOL, leftTypeIdx, rightTypeIdx };
 
@@ -899,7 +866,7 @@ TypeCheckResult CheckTypesMatchAndSpecialize(Context *context, u32 leftTypeIdx, 
 					// Pop struct frame
 					--structStack.size;
 					if (structStack.size == 0)
-						LogError(context, rightHand->any.loc, "Too many values in struct literal"_s);
+						LogError(context->global, rightHand->any.loc, "Too many values in struct literal"_s);
 					continue;
 				}
 
@@ -938,7 +905,7 @@ TypeCheckResult CheckTypesMatchAndSpecialize(Context *context, u32 leftTypeIdx, 
 				ASTExpression *literalMemberExp = rightHand->literal.members[memberIdx];
 				if (literalMemberExp->nodeType != ASTNODETYPE_BINARY_OPERATION ||
 					literalMemberExp->binaryOperation.op != TOKEN_OP_ASSIGNMENT)
-					LogError(context, literalMemberExp->any.loc, "Non-named member found after "
+					LogError(context->global, literalMemberExp->any.loc, "Non-named member found after "
 							"named members in group literal"_s);
 
 				ASTExpression *leftExp  = literalMemberExp->binaryOperation.leftHand;
@@ -965,14 +932,14 @@ TypeCheckResult CheckTypesMatchAndSpecialize(Context *context, u32 leftTypeIdx, 
 		}
 		else if (structTypeInfo.typeCategory == TYPECATEGORY_ARRAY) {
 			if (structTypeInfo.arrayInfo.count < rightHand->literal.members.size)
-				LogError(context, rightHand->any.loc, "Too many values in array literal"_s);
+				LogError(context->global, rightHand->any.loc, "Too many values in array literal"_s);
 
 			for (int memberIdx = 0; memberIdx < rightHand->literal.members.size; ++memberIdx) {
 				ASTExpression *literalMemberExp = rightHand->literal.members[memberIdx];
 
 				if (literalMemberExp->nodeType == ASTNODETYPE_IDENTIFIER &&
 					literalMemberExp->binaryOperation.op == TOKEN_OP_ASSIGNMENT)
-					LogError(context, literalMemberExp->any.loc, "Named members not allowed in array literals"_s);
+					LogError(context->global, literalMemberExp->any.loc, "Named members not allowed in array literals"_s);
 
 				TypeCheckResult typeCheckResult = CheckTypesMatchAndSpecialize(context,
 						structTypeInfo.arrayInfo.elementTypeTableIdx,
@@ -1001,8 +968,8 @@ TypeCheckResult CheckTypesMatchAndSpecialize(Context *context, u32 leftTypeIdx, 
 		return result;
 	}
 	else {
-		u32 strippedLeftTypeIdx  = StripAllAliases(context, leftTypeIdx);
-		u32 strippedRightTypeIdx = StripAllAliases(context, rightTypeIdx);
+		u32 strippedLeftTypeIdx  = StripAllAliases(context->global, leftTypeIdx);
+		u32 strippedRightTypeIdx = StripAllAliases(context->global, rightTypeIdx);
 		TypeCategory strippedLeftTypeCat  = GetTypeInfo(context, strippedLeftTypeIdx).typeCategory;
 		TypeCategory strippedRightTypeCat = GetTypeInfo(context, strippedRightTypeIdx).typeCategory;
 
@@ -1167,7 +1134,7 @@ inline void AddStaticDataPointerToRelocate(Context *context, void *ptr)
 	*DynamicArrayAdd(&context->staticDataPointersToRelocate) = ptr;
 }
 
-bool DoesTypeContainPointers(Context *context, u32 typeTableIdx)
+bool DoesTypeContainPointers(JobContext *context, u32 typeTableIdx)
 {
 	TypeInfo typeInfo = GetTypeInfo(context, typeTableIdx);
 	if (typeInfo.typeCategory == TYPECATEGORY_POINTER)
@@ -1185,9 +1152,9 @@ bool DoesTypeContainPointers(Context *context, u32 typeTableIdx)
 	return false;
 }
 
-void AddStaticDataPointersToRelocateInType(Context *context, void *ptr, u32 typeTableIdx)
+void AddStaticDataPointersToRelocateInType(JobContext *context, void *ptr, u32 typeTableIdx)
 {
-	typeTableIdx = StripAllAliases(context, typeTableIdx);
+	typeTableIdx = StripAllAliases(context->global, typeTableIdx);
 	TypeInfo typeInfo = GetTypeInfo(context, typeTableIdx);
 	ASSERT(typeInfo.typeCategory != TYPECATEGORY_NOT_READY);
 
@@ -1204,7 +1171,7 @@ void AddStaticDataPointersToRelocateInType(Context *context, void *ptr, u32 type
 	}
 
 	if (typeInfo.typeCategory == TYPECATEGORY_POINTER)
-		AddStaticDataPointerToRelocate(context, ptr);
+		AddStaticDataPointerToRelocate(context->global, ptr);
 	else if (typeInfo.typeCategory == TYPECATEGORY_STRUCT) {
 		u64 memberCount = typeInfo.structInfo.members.size;
 		for (int i = 0; i < memberCount; ++i) {
@@ -1225,31 +1192,31 @@ inline String CopyStringToStaticData(Context *context, String string, bool nullT
 	return { string.size, nameCopy };
 }
 
-UserFacingTypeInfo *GetUserFacingTypeInfoPointer(Context *context, u32 typeTableIdx)
+UserFacingTypeInfo *GetUserFacingTypeInfoPointer(JobContext *context, u32 typeTableIdx)
 {
 	UserFacingTypeInfo *result;
 
 	// @Unsafe
-	auto &typeTable = context->typeTable.unsafe;
+	auto &typeTable = context->global->typeTable.unsafe;
 	u32 typeInfoValueIdx = typeTable[typeTableIdx].valueIdx;
 
-	SpinlockLock(&context->globalValuesLock);
-	void **mapValue = HashMapGet(context->globalValueContents, typeInfoValueIdx & VALUE_GLOBAL_MASK);
+	SpinlockLock(&context->global->globalValuesLock);
+	void **mapValue = HashMapGet(context->global->globalValueContents, typeInfoValueIdx & VALUE_GLOBAL_MASK);
 	if (!mapValue) {
 		SwitchJob(context, YIELDREASON_GLOBAL_VALUE_NOT_ALLOCATED, { .index = typeInfoValueIdx });
 		// Lock again!
-		SpinlockLock(&context->globalValuesLock);
-		mapValue = HashMapGet(context->globalValueContents, typeInfoValueIdx & VALUE_GLOBAL_MASK);
+		SpinlockLock(&context->global->globalValuesLock);
+		mapValue = HashMapGet(context->global->globalValueContents, typeInfoValueIdx & VALUE_GLOBAL_MASK);
 		if (!mapValue)
-			LogCompilerError(context, {}, "Bad job resume"_s);
+			LogCompilerError(context->global, {}, "Bad job resume"_s);
 	}
-	SpinlockUnlock(&context->globalValuesLock);
+	SpinlockUnlock(&context->global->globalValuesLock);
 
 	result = (UserFacingTypeInfo *)*mapValue;
 	return result;
 }
 
-void WriteUserFacingTypeInfoToStaticData(Context *context, TypeInfo typeInfo)
+void WriteUserFacingTypeInfoToStaticData(JobContext *context, TypeInfo typeInfo)
 {
 	u64 size;
 	switch (typeInfo.typeCategory) {
@@ -1281,13 +1248,13 @@ void WriteUserFacingTypeInfoToStaticData(Context *context, TypeInfo typeInfo)
 
 	UserFacingTypeInfo *out;
 
-	SpinlockLock(&context->globalValuesLock);
-	void **existing = HashMapGet(context->globalValueContents, typeInfo.valueIdx & VALUE_GLOBAL_MASK);
-	SpinlockUnlock(&context->globalValuesLock);
+	SpinlockLock(&context->global->globalValuesLock);
+	void **existing = HashMapGet(context->global->globalValueContents, typeInfo.valueIdx & VALUE_GLOBAL_MASK);
+	SpinlockUnlock(&context->global->globalValuesLock);
 	if (existing)
 		out = (UserFacingTypeInfo *)*existing;
 	else
-		out = (UserFacingTypeInfo *)AllocateStaticData(context, typeInfo.valueIdx, size, 8);
+		out = (UserFacingTypeInfo *)AllocateStaticData(context->global, typeInfo.valueIdx, size, 8);
 
 	out->size = typeInfo.size;
 	switch (typeInfo.typeCategory) {
@@ -1308,30 +1275,30 @@ void WriteUserFacingTypeInfoToStaticData(Context *context, TypeInfo typeInfo)
 		ArrayView<UserFacingStructMember> members;
 		u64 memberCount = typeInfo.structInfo.members.size;
 		members.size = memberCount;
-		members.data = (UserFacingStructMember *)AllocateStaticData(context, U32_MAX, memberCount *
+		members.data = (UserFacingStructMember *)AllocateStaticData(context->global, U32_MAX, memberCount *
 				sizeof(UserFacingStructMember), 8);
 		for (int i = 0; i < memberCount; ++i) {
 			StructMember *origMember = &typeInfo.structInfo.members[i];
 			UserFacingTypeInfo *memberUfti = GetUserFacingTypeInfoPointer(context,
 					origMember->typeTableIdx);
 			UserFacingStructMember member = {
-				.name = CopyStringToStaticData(context, origMember->name),
+				.name = CopyStringToStaticData(context->global, origMember->name),
 				.typeInfo = memberUfti,
 				.offset = origMember->offset
 			};
 			members[i] = member;
 
-			AddStaticDataPointerToRelocate(context, &members[i].name.data);
-			AddStaticDataPointerToRelocate(context, &members[i].typeInfo);
+			AddStaticDataPointerToRelocate(context->global, &members[i].name.data);
+			AddStaticDataPointerToRelocate(context->global, &members[i].typeInfo);
 		}
 
-		outStruct->name = CopyStringToStaticData(context, typeInfo.structInfo.name);
+		outStruct->name = CopyStringToStaticData(context->global, typeInfo.structInfo.name);
 		outStruct->isUnion = typeInfo.typeCategory == TYPECATEGORY_UNION;
 		outStruct->memberCount = members.size;
 		outStruct->members = members.data;
 
-		AddStaticDataPointerToRelocate(context, &outStruct->name.data);
-		AddStaticDataPointerToRelocate(context, &outStruct->members);
+		AddStaticDataPointerToRelocate(context->global, &outStruct->name.data);
+		AddStaticDataPointerToRelocate(context->global, &outStruct->members);
 	} break;
 	case TYPECATEGORY_ENUM:
 	{
@@ -1347,8 +1314,8 @@ void WriteUserFacingTypeInfoToStaticData(Context *context, TypeInfo typeInfo)
 		outEnum->valueCount = memberCount;
 
 		if (memberCount) {
-			outEnum->names = (String *)AllocateStaticData(context, U32_MAX, memberCount * sizeof(String), 8);
-			outEnum->values = (s64 *)AllocateStaticData(context, U32_MAX, memberCount * sizeof(s64), 8);
+			outEnum->names = (String *)AllocateStaticData(context->global, U32_MAX, memberCount * sizeof(String), 8);
+			outEnum->values = (s64 *)AllocateStaticData(context->global, U32_MAX, memberCount * sizeof(s64), 8);
 		}
 		else {
 			outEnum->names = nullptr;
@@ -1356,15 +1323,15 @@ void WriteUserFacingTypeInfoToStaticData(Context *context, TypeInfo typeInfo)
 		}
 
 		for (int i = 0; i < memberCount; ++i) {
-			outEnum->names[i]  = CopyStringToStaticData(context, typeInfo.enumInfo.names[i]);
+			outEnum->names[i]  = CopyStringToStaticData(context->global, typeInfo.enumInfo.names[i]);
 			outEnum->values[i] = typeInfo.enumInfo.values[i];
 
-			AddStaticDataPointerToRelocate(context, &outEnum->names[i].data);
+			AddStaticDataPointerToRelocate(context->global, &outEnum->names[i].data);
 		}
 
-		AddStaticDataPointerToRelocate(context, &outEnum->typeInfo);
-		AddStaticDataPointerToRelocate(context, &outEnum->names);
-		AddStaticDataPointerToRelocate(context, &outEnum->values);
+		AddStaticDataPointerToRelocate(context->global, &outEnum->typeInfo);
+		AddStaticDataPointerToRelocate(context->global, &outEnum->names);
+		AddStaticDataPointerToRelocate(context->global, &outEnum->values);
 	} break;
 	case TYPECATEGORY_POINTER:
 	{
@@ -1378,7 +1345,7 @@ void WriteUserFacingTypeInfoToStaticData(Context *context, TypeInfo typeInfo)
 			outPointer->typeInfo = ufti;
 		}
 
-		AddStaticDataPointerToRelocate(context, &outPointer->typeInfo);
+		AddStaticDataPointerToRelocate(context->global, &outPointer->typeInfo);
 	} break;
 	case TYPECATEGORY_ARRAY:
 	{
@@ -1389,7 +1356,7 @@ void WriteUserFacingTypeInfoToStaticData(Context *context, TypeInfo typeInfo)
 				typeInfo.arrayInfo.elementTypeTableIdx);
 		outArray->elementTypeInfo = ufti;
 
-		AddStaticDataPointerToRelocate(context, &outArray->elementTypeInfo);
+		AddStaticDataPointerToRelocate(context->global, &outArray->elementTypeInfo);
 	} break;
 	case TYPECATEGORY_PROCEDURE:
 	{
@@ -1398,7 +1365,7 @@ void WriteUserFacingTypeInfoToStaticData(Context *context, TypeInfo typeInfo)
 		u64 paramCount = typeInfo.procedureInfo.parameters.size;
 		ArrayView<UserFacingTypeInfo *> parameters;
 		parameters.size = paramCount;
-		parameters.data = (UserFacingTypeInfo **)AllocateStaticData(context, U32_MAX, paramCount *
+		parameters.data = (UserFacingTypeInfo **)AllocateStaticData(context->global, U32_MAX, paramCount *
 				sizeof(UserFacingTypeInfo *), 8);
 		for (int i = 0; i < paramCount; ++i) {
 			ProcedureParameter *origParam = &typeInfo.procedureInfo.parameters[i];
@@ -1406,13 +1373,13 @@ void WriteUserFacingTypeInfoToStaticData(Context *context, TypeInfo typeInfo)
 					origParam->typeTableIdx);
 			parameters[i] = paramUfti;
 
-			AddStaticDataPointerToRelocate(context, &parameters[i]);
+			AddStaticDataPointerToRelocate(context->global, &parameters[i]);
 		}
 		outProcedure->parameterCount = parameters.size;
 		outProcedure->parameters = parameters.data;
 		outProcedure->isVarargs = typeInfo.procedureInfo.isVarargs;
 
-		AddStaticDataPointerToRelocate(context, &outProcedure->parameters);
+		AddStaticDataPointerToRelocate(context->global, &outProcedure->parameters);
 	} break;
 	case TYPECATEGORY_ALIAS:
 	{
@@ -1422,20 +1389,20 @@ void WriteUserFacingTypeInfoToStaticData(Context *context, TypeInfo typeInfo)
 				typeInfo.aliasInfo.aliasedTypeIdx);
 		outAlias->typeInfo = ufti;
 
-		AddStaticDataPointerToRelocate(context, &outAlias->typeInfo);
+		AddStaticDataPointerToRelocate(context->global, &outAlias->typeInfo);
 	} break;
 	}
 }
 
-inline u32 AddType(Context *context, TypeInfo typeInfo)
+inline u32 AddType(JobContext *context, TypeInfo typeInfo)
 {
 	// Should lock type table before calling
-	ASSERT(context->typeTable.lock != 0);
-	typeInfo.valueIdx = NewGlobalValue(context, String{}, TYPETABLEIDX_Unset, VALUEFLAGS_ON_STATIC_STORAGE);
+	ASSERT(context->global->typeTable.lock != 0);
+	typeInfo.valueIdx = NewGlobalValue(context->global, String{}, TYPETABLEIDX_Unset, VALUEFLAGS_ON_STATIC_STORAGE);
 
 	u32 typeTableIdx;
 	{
-		auto *typeTable = &context->typeTable.unsafe;
+		auto *typeTable = &context->global->typeTable.unsafe;
 
 		s64 typeCount = typeTable->count;
 		ASSERT(typeCount < U32_MAX); // Out of type memory
@@ -1443,14 +1410,14 @@ inline u32 AddType(Context *context, TypeInfo typeInfo)
 
 		*(TypeInfo *)BucketArrayAdd(typeTable) = typeInfo;
 	}
-	SpinlockUnlock(&context->typeTable.lock);
+	SpinlockUnlock(&context->global->typeTable.lock);
 
 	{
-		Value value = GetGlobalValue(context, typeInfo.valueIdx);
+		Value value = GetGlobalValue(context->global, typeInfo.valueIdx);
 #if DEBUG_BUILD
 		value.name = SNPrintF(16, "_typeInfo%lld", typeTableIdx);
 #endif
-		UpdateGlobalValue(context, typeInfo.valueIdx, &value);
+		UpdateGlobalValue(context->global, typeInfo.valueIdx, &value);
 	}
 
 	// Set up static data for user-facing type info
@@ -1459,32 +1426,32 @@ inline u32 AddType(Context *context, TypeInfo typeInfo)
 	return typeTableIdx;
 }
 
-u32 FindOrAddTypeTableIdx(Context *context, TypeInfo typeInfo)
+u32 FindOrAddTypeTableIdx(JobContext *context, TypeInfo typeInfo)
 {
 	{
 		// Optimize most frequent path. Read without locking.
-		auto &typeTable = context->typeTable.unsafe;
+		auto &typeTable = context->global->typeTable.unsafe;
 
 		u32 tableSize = (u32)typeTable.count;
 		for (u32 i = 0; i < tableSize; ++i)
 		{
 			TypeInfo t = typeTable[i];
-			if (AreTypeInfosEqual(context, typeInfo, t))
+			if (AreTypeInfosEqual(context->global, typeInfo, t))
 				return i;
 		}
 	}
 	{
 		// Check it didn't get added when we released the lock
 		// @Speed: ugh...
-		SpinlockLock(&context->typeTable.lock);
-		auto &typeTable = context->typeTable.unsafe;
+		SpinlockLock(&context->global->typeTable.lock);
+		auto &typeTable = context->global->typeTable.unsafe;
 
 		u32 tableSize = (u32)typeTable.count;
 		for (u32 i = 0; i < tableSize; ++i)
 		{
 			TypeInfo t = typeTable[i];
-			if (AreTypeInfosEqual(context, typeInfo, t)) {
-				SpinlockUnlock(&context->typeTable.lock);
+			if (AreTypeInfosEqual(context->global, typeInfo, t)) {
+				SpinlockUnlock(&context->global->typeTable.lock);
 				return i;
 			}
 		}
@@ -1493,9 +1460,9 @@ u32 FindOrAddTypeTableIdx(Context *context, TypeInfo typeInfo)
 }
 
 // Util TypeInfo procedures
-u32 GetTypeInfoPointerOf(Context *context, u32 inType)
+u32 GetTypeInfoPointerOf(JobContext *context, u32 inType)
 {
-	ASSERT(inType < (u32)context->typeTable.unsafe.count);
+	ASSERT(inType < (u32)context->global->typeTable.unsafe.count);
 
 	TypeInfo resultTypeInfo = {};
 	resultTypeInfo.typeCategory = TYPECATEGORY_POINTER;
@@ -1504,7 +1471,7 @@ u32 GetTypeInfoPointerOf(Context *context, u32 inType)
 	return FindOrAddTypeTableIdx(context, resultTypeInfo);
 }
 
-u32 GetTypeInfoArrayOf(Context *context, u32 inType, s64 count)
+u32 GetTypeInfoArrayOf(JobContext *context, u32 inType, s64 count)
 {
 	TypeInfo resultTypeInfo = {};
 	resultTypeInfo.typeCategory = TYPECATEGORY_ARRAY;
@@ -1512,39 +1479,38 @@ u32 GetTypeInfoArrayOf(Context *context, u32 inType, s64 count)
 	resultTypeInfo.arrayInfo.count = count;
 	if (count == 0)
 		resultTypeInfo.size = 8 + g_pointerSize;
-	else
-	{
+	else {
 		s64 elementSize = GetTypeInfo(context, inType).size;
 		resultTypeInfo.size = elementSize * count;
 	}
 	return FindOrAddTypeTableIdx(context, resultTypeInfo);
 }
 
-u32 TypeCheckType(Context *context, String name, SourceLocation loc, ASTType *astType);
+u32 TypeCheckType(TCContext *context, String name, SourceLocation loc, ASTType *astType);
 
-void TCAddScopeNames(Context *context, ArrayView<TCScopeName> scopeNames)
+void TCAddScopeNames(TCContext *context, ArrayView<TCScopeName> scopeNames)
 {
 	// Primitives
-	for (int i = 0; i < context->tcPrimitiveTypes.size; ++i) {
-		const TCScopeName *currentName = &context->tcPrimitiveTypes[i];
+	for (int i = 0; i < context->global->tcPrimitiveTypes.size; ++i) {
+		const TCScopeName *currentName = &context->global->tcPrimitiveTypes[i];
 		ASSERT(currentName->type == NAMETYPE_PRIMITIVE);
 		for (int j = 0; j < scopeNames.size; ++j) {
 			if (StringEquals(scopeNames[j].name, currentName->name))
-				LogError(context, scopeNames[j].loc, TPrintF("Can not use name \"%S\", it is a "
+				LogError(context->global, scopeNames[j].loc, TPrintF("Can not use name \"%S\", it is a "
 						"language primitive", scopeNames[j].name));
 		}
 	}
 
-	TCScope *stackTop = GetTopMostScope(context);
+	TCScope *stackTop = TCGetTopMostScope(context);
 	if (stackTop) {
 		// Check if already exists
 		for (int i = 0; i < stackTop->names.size; ++i) {
 			TCScopeName *currentName = &stackTop->names[i];
 			for (int j = 0; j < scopeNames.size; ++j) {
 				if (StringEquals(scopeNames[j].name, currentName->name)) {
-					LogErrorNoCrash(context, scopeNames[j].loc, TPrintF("Name \"%S\" already assigned",
+					LogErrorNoCrash(context->global, scopeNames[j].loc, TPrintF("Name \"%S\" already assigned",
 								scopeNames[j].name));
-					LogNote(context, currentName->loc, "First defined here"_s);
+					LogNote(context->global, currentName->loc, "First defined here"_s);
 					PANIC;
 				}
 			}
@@ -1556,16 +1522,16 @@ void TCAddScopeNames(Context *context, ArrayView<TCScopeName> scopeNames)
 	}
 	else {
 		{
-			auto globalNames = context->tcGlobalNames.GetForWrite();
+			auto globalNames = context->global->tcGlobalNames.GetForWrite();
 
 			// Check if already exists
 			for (int i = 0; i < globalNames->size; ++i) {
 				const TCScopeName *currentName = &globalNames[i];
 				for (int j = 0; j < scopeNames.size; ++j) {
 					if (StringEquals(scopeNames[j].name, currentName->name)) {
-						LogErrorNoCrash(context, scopeNames[j].loc, TPrintF("Name \"%S\" already "
+						LogErrorNoCrash(context->global, scopeNames[j].loc, TPrintF("Name \"%S\" already "
 									"assigned", scopeNames[j].name));
-						LogNote(context, currentName->loc, "First defined here"_s);
+						LogNote(context->global, currentName->loc, "First defined here"_s);
 						PANIC;
 					}
 				}
@@ -1577,13 +1543,13 @@ void TCAddScopeNames(Context *context, ArrayView<TCScopeName> scopeNames)
 		}
 
 		// Wake up any jobs that were waiting for these names
-		auto jobsWaiting = context->waitingJobsByReason[YIELDREASON_UNKNOWN_IDENTIFIER].Get();
+		auto jobsWaiting = context->global->waitingJobsByReason[YIELDREASON_UNKNOWN_IDENTIFIER].Get();
 		for (int i = 0; i < jobsWaiting->size; ) {
 			u32 jobIdx = jobsWaiting[i];
-			const Job *job = &context->jobs.unsafe[jobIdx];
+			const Job *job = &context->global->jobs.unsafe[jobIdx];
 			for (int nameIdx = 0; nameIdx < scopeNames.size; ++nameIdx) {
 				if (StringEquals(job->context.identifier, scopeNames[nameIdx].name)) {
-					EnqueueReadyJob(context, jobIdx);
+					EnqueueReadyJob(context->global, jobIdx);
 					// Remove waiting job
 					DynamicArraySwapRemove(&jobsWaiting, i);
 					goto outerContinue;
@@ -1596,10 +1562,9 @@ outerContinue:
 	}
 }
 
-void TypeCheckExpression(Context *context, ASTExpression *expression);
-Constant TryEvaluateConstant(Context *context, ASTExpression *expression);
-void TCStructJobProc(void *args);
-u32 TypeCheckStructDeclaration(Context *context, String name, bool isUnion,
+void TypeCheckExpression(TCContext *context, ASTExpression *expression);
+Constant TryEvaluateConstant(JobContext *context, ASTExpression *expression);
+u32 TypeCheckStructDeclaration(TCContext *context, String name, bool isUnion,
 		ASTStructDeclaration astStructDecl)
 {
 	u8 alignment = 0;
@@ -1607,12 +1572,12 @@ u32 TypeCheckStructDeclaration(Context *context, String name, bool isUnion,
 		TypeCheckExpression(context, astStructDecl.alignExp);
 		Constant constant = TryEvaluateConstant(context, astStructDecl.alignExp);
 		if (constant.type == CONSTANTTYPE_INVALID)
-			LogError(context, astStructDecl.alignExp->any.loc, "Could not evaluate alignment"_s);
+			LogError(context->global, astStructDecl.alignExp->any.loc, "Could not evaluate alignment"_s);
 		if (constant.type != CONSTANTTYPE_INTEGER)
-			LogError(context, astStructDecl.alignExp->any.loc, "Alignment expression did not "
+			LogError(context->global, astStructDecl.alignExp->any.loc, "Alignment expression did not "
 					"evaluate to an integer"_s);
 		if (constant.valueAsInt > U8_MAX)
-			LogError(context, astStructDecl.alignExp->any.loc, "Alignment specified is too large"_s);
+			LogError(context->global, astStructDecl.alignExp->any.loc, "Alignment specified is too large"_s);
 		alignment = (u8)constant.valueAsInt;
 	}
 
@@ -1641,10 +1606,9 @@ u32 TypeCheckStructDeclaration(Context *context, String name, bool isUnion,
 		typeTableIdx = TYPETABLEIDX_TYPE_INFO_PROCEDURE_STRUCT;
 	else if (StringEquals(name, "TypeInfoAlias"_s))
 		typeTableIdx = TYPETABLEIDX_TYPE_INFO_ALIAS_STRUCT;
-	else
-	{
-		SpinlockLock(&context->typeTable.lock);
-		ASSERT(context->typeTable.unsafe.count < U32_MAX);
+	else {
+		SpinlockLock(&context->global->typeTable.lock);
+		ASSERT(context->global->typeTable.unsafe.count < U32_MAX);
 		TypeInfo t = {
 			.typeCategory = TYPECATEGORY_NOT_READY,
 			.alignment = alignment,
@@ -1655,16 +1619,15 @@ u32 TypeCheckStructDeclaration(Context *context, String name, bool isUnion,
 		typeTableIdx = AddType(context, t);
 
 		// Allocate static data but don't fill it
-		AllocateStaticData(context, context->typeTable.unsafe[typeTableIdx].valueIdx,
+		AllocateStaticData(context->global, context->global->typeTable.unsafe[typeTableIdx].valueIdx,
 				sizeof(UserFacingTypeInfoStruct), 8);
 	}
 
-	TCScope *stackTop = GetTopMostScope(context);
+	TCScope *stackTop = TCGetTopMostScope(context);
 	if (stackTop)
 		*DynamicArrayAdd(&stackTop->typeIndices) = typeTableIdx;
-	else
-	{
-		auto globalTypes = context->tcGlobalTypeIndices.GetForWrite();
+	else {
+		auto globalTypes = context->global->tcGlobalTypeIndices.GetForWrite();
 		*DynamicArrayAdd(&globalTypes) = typeTableIdx;
 	}
 
@@ -1672,13 +1635,13 @@ u32 TypeCheckStructDeclaration(Context *context, String name, bool isUnion,
 	// dependencies where two structs each have a member whose type is of the other struct.
 	TCStructJobArgs *args = ALLOC(LinearAllocator, TCStructJobArgs);
 	*args = {
-		.context = context,
+		.context = context->global,
 		.typeTableIdx = typeTableIdx,
 		.astStructDecl = astStructDecl,
 		.name = name,
 		.isUnion = isUnion
 	};
-	RequestNewJob(context, JOBTYPE_TYPE_CHECK, TCStructJobProc, (void *)args);
+	RequestNewJob(context->global, JOBTYPE_TYPE_CHECK, TCStructJobProc, (void *)args);
 
 	return typeTableIdx;
 }
@@ -1712,23 +1675,21 @@ Constant ConstantFromCTRegister(CTRegister ctRegister, u32 typeTableIdx)
 	return result;
 }
 
-Constant TryEvaluateConstant(Context *context, ASTExpression *expression)
+Constant TryEvaluateConstant(JobContext *context, ASTExpression *expression)
 {
 	Constant result;
 	result.type = CONSTANTTYPE_INVALID;
 	result.valueAsInt = 0xFA11FA11FA11FA11;
 	result.typeTableIdx = expression->typeTableIdx;
 
-	switch (expression->nodeType)
-	{
+	switch (expression->nodeType) {
 	case ASTNODETYPE_RUN:
 	{
 		result = expression->runNode.result;
 	} break;
 	case ASTNODETYPE_LITERAL:
 	{
-		switch (expression->literal.type)
-		{
+		switch (expression->literal.type) {
 		case LITERALTYPE_INTEGER:
 		case LITERALTYPE_CHARACTER:
 			result.type = CONSTANTTYPE_INTEGER;
@@ -1764,11 +1725,10 @@ Constant TryEvaluateConstant(Context *context, ASTExpression *expression)
 	} break;
 	case ASTNODETYPE_IDENTIFIER:
 	{
-		if (expression->identifier.type == NAMETYPE_STATIC_DEFINITION)
-		{
+		if (expression->identifier.type == NAMETYPE_STATIC_DEFINITION) {
 			result.type = CONSTANTTYPE_INTEGER;
 			result = GetStaticDefinition(context,
-					expression->identifier.staticDefinitionIdx).constant;
+					expression->identifier.staticDefinitionIdx, false).constant;
 		}
 		else
 			goto error;
@@ -1999,9 +1959,9 @@ error:
 	return { CONSTANTTYPE_INVALID };
 }
 
-bool TypeCheckProcedurePrototype(Context *context, ASTProcedurePrototype *prototype);
-TypeInfo TypeInfoFromASTProcedurePrototype(Context *context, ASTProcedurePrototype *prototype);
-u32 TypeCheckType(Context *context, String name, SourceLocation loc, ASTType *astType)
+bool TypeCheckProcedurePrototype(TCContext *context, ASTProcedurePrototype *prototype);
+TypeInfo TypeInfoFromASTProcedurePrototype(JobContext *context, ASTProcedurePrototype *prototype);
+u32 TypeCheckType(TCContext *context, String name, SourceLocation loc, ASTType *astType)
 {
 	switch (astType->nodeType)
 	{
@@ -2017,9 +1977,9 @@ u32 TypeCheckType(Context *context, String name, SourceLocation loc, ASTType *as
 			TypeCheckExpression(context, astType->arrayCountExp);
 			Constant constant = TryEvaluateConstant(context, astType->arrayCountExp);
 			if (constant.type == CONSTANTTYPE_INVALID)
-				LogError(context, loc, "Could not evaluate array count"_s);
+				LogError(context->global, loc, "Could not evaluate array count"_s);
 			if (constant.type != CONSTANTTYPE_INTEGER)
-				LogError(context, loc, "Array count did not evaluate to an integer"_s);
+				LogError(context->global, loc, "Array count did not evaluate to an integer"_s);
 			arrayCount = constant.valueAsInt;
 		}
 		return GetTypeInfoArrayOf(context, elementTypeIdx, arrayCount);
@@ -2046,10 +2006,10 @@ u32 TypeCheckType(Context *context, String name, SourceLocation loc, ASTType *as
 			innerTypeIdx = TypeCheckType(context, {}, astTypeLoc,
 					astType->enumDeclaration.astType);
 
-			u32 strippedInnerTypeIdx = StripImplicitlyCastAliases(context, innerTypeIdx);
+			u32 strippedInnerTypeIdx = StripImplicitlyCastAliases(context->global, innerTypeIdx);
 			if (strippedInnerTypeIdx < TYPETABLEIDX_PrimitiveBegin ||
 				strippedInnerTypeIdx > TYPETABLEIDX_PrimitiveEnd)
-				LogError(context, astTypeLoc, "Only primitive types are allowed as enum field types"_s);
+				LogError(context->global, astTypeLoc, "Only primitive types are allowed as enum field types"_s);
 		}
 
 		TypeInfo t = {};
@@ -2059,7 +2019,7 @@ u32 TypeCheckType(Context *context, String name, SourceLocation loc, ASTType *as
 		t.size = GetTypeInfo(context, innerTypeIdx).size;
 		u32 typeTableIdx;
 		{
-			SpinlockLock(&context->typeTable.lock);
+			SpinlockLock(&context->global->typeTable.lock);
 			typeTableIdx = AddType(context, t);
 		}
 
@@ -2092,7 +2052,7 @@ u32 TypeCheckType(Context *context, String name, SourceLocation loc, ASTType *as
 			if (astMember.value) {
 				Constant constant = TryEvaluateConstant(context, astMember.value);
 				if (constant.type == CONSTANTTYPE_INVALID)
-					LogError(context, astMember.value->any.loc,
+					LogError(context->global, astMember.value->any.loc,
 							"Failed to evaluate constant in static definition"_s);
 				else if (constant.type == CONSTANTTYPE_FLOATING)
 					currentValue = (s64)constant.valueAsFloat;
@@ -2103,7 +2063,7 @@ u32 TypeCheckType(Context *context, String name, SourceLocation loc, ASTType *as
 			staticDefinition.constant.valueAsInt = currentValue;
 			staticDefinition.constant.typeTableIdx = typeTableIdx;
 
-			u32 newStaticDefIdx = TCNewStaticDefinition(context, &staticDefinition);
+			u32 newStaticDefIdx = NewStaticDefinition(context->global, &staticDefinition);
 			*ArrayAdd(&valueStaticDefs) = newStaticDefIdx;
 
 			// Add scope names one by one since every one could depend on any previous one.
@@ -2128,18 +2088,18 @@ u32 TypeCheckType(Context *context, String name, SourceLocation loc, ASTType *as
 		// Update type info
 		{
 			// Unsafe!
-			auto &typeTable = context->typeTable.unsafe;
+			auto &typeTable = context->global->typeTable.unsafe;
 			t.valueIdx = typeTable[typeTableIdx].valueIdx;
 			(TypeInfo&)typeTable[typeTableIdx] = t;
 
 			WriteUserFacingTypeInfoToStaticData(context, t);
 		}
 
-		TCScope *stackTop = GetTopMostScope(context);
+		TCScope *stackTop = TCGetTopMostScope(context);
 		if (stackTop)
 			*DynamicArrayAdd(&stackTop->typeIndices) = typeTableIdx;
 		else {
-			auto globalTypes = context->tcGlobalTypeIndices.GetForWrite();
+			auto globalTypes = context->global->tcGlobalTypeIndices.GetForWrite();
 			*DynamicArrayAdd(&globalTypes) = typeTableIdx;
 		}
 
@@ -2184,7 +2144,7 @@ u32 InferType(u32 fromType) {
 	return fromType;
 }
 
-void AddStructMembersToScope(Context *context, SourceLocation loc, ASTExpression *valueExpression)
+void TCAddStructMembersToScope(TCContext *context, SourceLocation loc, ASTExpression *valueExpression)
 {
 	// This procedure spills all members of a struct expression into the current stack.
 	// The way we do this is, we add a TCScopeName which has a member access AST node, left hand of
@@ -2200,9 +2160,9 @@ void AddStructMembersToScope(Context *context, SourceLocation loc, ASTExpression
 	for (int memberIdx = 0; memberIdx < typeInfo.structInfo.members.size; ++memberIdx) {
 		const StructMember *member = &typeInfo.structInfo.members[memberIdx];
 
-		ASTExpression *memberAccessExp = TCNewTreeNode(context);
+		ASTExpression *memberAccessExp = TCNewTreeNode();
 		{
-			ASTExpression *rightHand = TCNewTreeNode(context);
+			ASTExpression *rightHand = TCNewTreeNode();
 			ASTExpression r = {};
 			r.nodeType = ASTNODETYPE_IDENTIFIER;
 			r.identifier.type = NAMETYPE_STRUCT_MEMBER;
@@ -2228,25 +2188,23 @@ void AddStructMembersToScope(Context *context, SourceLocation loc, ASTExpression
 		}
 		else {
 			// For using/anonymous members we recurse, spilling it's members too.
-			AddStructMembersToScope(context, loc, memberAccessExp);
+			TCAddStructMembersToScope(context, loc, memberAccessExp);
 		}
 	}
 	TCAddScopeNames(context, scopeNamesToAdd);
 }
 
-bool IsExpressionAType(Context *context, ASTExpression *expression)
+bool IsExpressionAType(JobContext *context, ASTExpression *expression)
 {
-	switch (expression->nodeType)
-	{
+	switch (expression->nodeType) {
 	case ASTNODETYPE_TYPE:
 		return true;
 	case ASTNODETYPE_IDENTIFIER:
-		switch (expression->identifier.type)
-		{
+		switch (expression->identifier.type) {
 		case NAMETYPE_STATIC_DEFINITION:
 		{
 			u32 defIdx = expression->identifier.staticDefinitionIdx;
-			StaticDefinition staticDef = TCGetStaticDefinition(context, defIdx, false);
+			StaticDefinition staticDef = GetStaticDefinition(context, defIdx, false);
 			return staticDef.definitionType == STATICDEFINITIONTYPE_TYPE;
 		}
 		case NAMETYPE_PRIMITIVE:
@@ -2294,14 +2252,12 @@ void GetSourceLocRangeForExpression(ASTExpression *expression,
 		*end = bEnd;
 }
 
-void TypeCheckVariableDeclaration(Context *context, ASTVariableDeclaration *varDecl)
+void TypeCheckVariableDeclaration(TCContext *context, ASTVariableDeclaration *varDecl)
 {
-	TCJobData *jobData = (TCJobData *)t_jobData;
-
 	bool isGlobal = varDecl->isStatic || varDecl->isExternal;
 
-	if (jobData->onStaticContext && !isGlobal)
-		LogError(context, varDecl->loc, "Variable on static scope has to be declared either "
+	if (context->onStaticContext && !isGlobal)
+		LogError(context->global, varDecl->loc, "Variable on static scope has to be declared either "
 				"static or external"_s);
 
 	int varCount = (int)varDecl->nameCount;
@@ -2318,7 +2274,7 @@ void TypeCheckVariableDeclaration(Context *context, ASTVariableDeclaration *varD
 		varDecl->specifiedTypeIdx = TypeCheckType(context, {}, varDecl->loc, varDecl->astType);
 		ASSERT(varDecl->specifiedTypeIdx != TYPETABLEIDX_Unset);
 		if (varDecl->specifiedTypeIdx == TYPETABLEIDX_VOID)
-			LogError(context, varDecl->loc, "Variable can't be of type void"_s);
+			LogError(context->global, varDecl->loc, "Variable can't be of type void"_s);
 		for (int varIdx = 0; varIdx < varCount; ++varIdx)
 			*GetVariableTypeIdx(varDecl, varIdx) = varDecl->specifiedTypeIdx;
 	}
@@ -2327,7 +2283,7 @@ void TypeCheckVariableDeclaration(Context *context, ASTVariableDeclaration *varD
 		TypeCheckExpression(context, varDecl->astInitialValue);
 
 		if (IsExpressionAType(context, varDecl->astInitialValue))
-			LogError(context, varDecl->astInitialValue->any.loc, "Initial value of variable is a "
+			LogError(context->global, varDecl->astInitialValue->any.loc, "Initial value of variable is a "
 					"type"_s);
 
 		ASTExpression *astInitialValue = varDecl->astInitialValue;
@@ -2335,7 +2291,7 @@ void TypeCheckVariableDeclaration(Context *context, ASTVariableDeclaration *varD
 		if (varDecl->astType) {
 			ASSERT(varDecl->specifiedTypeIdx != TYPETABLEIDX_Unset);
 			if (astInitialValue->typeTableIdx == TYPETABLEIDX_VOID)
-				LogError(context, astInitialValue->any.loc, "Trying to initialize a variable with "
+				LogError(context->global, astInitialValue->any.loc, "Trying to initialize a variable with "
 						"a void expression"_s);
 
 			TypeCheckResult typeCheckResult = CheckTypesMatchAndSpecialize(context,
@@ -2360,10 +2316,10 @@ void TypeCheckVariableDeclaration(Context *context, ASTVariableDeclaration *varD
 			u32 procTypeIdx = astInitialValue->procedureCall.procedureTypeIdx;
 			TypeInfoProcedure procTypeInfo = GetTypeInfo(context, procTypeIdx).procedureInfo;
 			if (varCount < procTypeInfo.returnTypeIndices.size)
-				LogError(context, varDecl->loc, "Not enough variables to receive all return "
+				LogError(context->global, varDecl->loc, "Not enough variables to receive all return "
 						"values"_s);
 			else if (varCount > procTypeInfo.returnTypeIndices.size)
-				LogError(context, varDecl->loc, "Too many variables for procedure call return "
+				LogError(context->global, varDecl->loc, "Too many variables for procedure call return "
 						"values"_s);
 			for (int varIdx = 0; varIdx < varCount; ++varIdx) {
 				u32 returnTypeIdx = procTypeInfo.returnTypeIndices[varIdx];
@@ -2375,7 +2331,7 @@ void TypeCheckVariableDeclaration(Context *context, ASTVariableDeclaration *varD
 		else {
 			// Infer type: not return values
 			if (astInitialValue->typeTableIdx == TYPETABLEIDX_VOID)
-				LogError(context, astInitialValue->any.loc, "Cannot initialize a variable with a "
+				LogError(context->global, astInitialValue->any.loc, "Cannot initialize a variable with a "
 						"void expression"_s);
 
 			if (astInitialValue->nodeType == ASTNODETYPE_MULTIPLE_EXPRESSIONS) {
@@ -2386,10 +2342,10 @@ void TypeCheckVariableDeclaration(Context *context, ASTVariableDeclaration *varD
 					SourceLocation beg, end;
 					GetSourceLocRangeForExpression(astInitialValue, &beg, &end);
 					if (varCount == 1)
-						Log2Error(context, varDecl->loc, end,
+						Log2Error(context->global, varDecl->loc, end,
 								"Trying to initialize a variable to multiple values"_s);
 					else
-						Log2Error(context, varDecl->loc, end,
+						Log2Error(context->global, varDecl->loc, end,
 								TPrintF("Trying to initialize %d variables to %d values",
 									varCount, givenValuesCount));
 				}
@@ -2406,7 +2362,7 @@ void TypeCheckVariableDeclaration(Context *context, ASTVariableDeclaration *varD
 				if (varCount > 1) {
 					SourceLocation beg, end;
 					GetSourceLocRangeForExpression(astInitialValue, &beg, &end);
-					Log2Error(context, varDecl->loc, end,
+					Log2Error(context->global, varDecl->loc, end,
 							"Trying to initialize multiple variables to a single value"_s);
 				}
 				u32 valueTypeIdx = InferType(astInitialValue->typeTableIdx);
@@ -2418,7 +2374,7 @@ void TypeCheckVariableDeclaration(Context *context, ASTVariableDeclaration *varD
 		}
 	}
 
-	u32 newValueFlags  = context->config.dontPromoteMemoryToRegisters ? VALUEFLAGS_FORCE_MEMORY : 0;
+	u32 newValueFlags  = context->global->config.dontPromoteMemoryToRegisters ? VALUEFLAGS_FORCE_MEMORY : 0;
 	newValueFlags     |= varDecl->isStatic   ? VALUEFLAGS_ON_STATIC_STORAGE : 0;
 	newValueFlags     |= varDecl->isExternal ? VALUEFLAGS_IS_EXTERNAL       : 0;
 
@@ -2432,7 +2388,7 @@ void TypeCheckVariableDeclaration(Context *context, ASTVariableDeclaration *varD
 		if (!isGlobal)
 			valueIdx = TCNewValue(context, varName, typeIdx, newValueFlags);
 		else
-			valueIdx = NewGlobalValue(context, varName, typeIdx, newValueFlags);
+			valueIdx = NewGlobalValue(context->global, varName, typeIdx, newValueFlags);
 		*GetVariableValueIdx(varDecl, varIdx) = valueIdx;
 
 		TCScopeName newScopeName;
@@ -2448,14 +2404,14 @@ void TypeCheckVariableDeclaration(Context *context, ASTVariableDeclaration *varD
 	if (varCount == 0) {
 		TypeCategory typeCat = GetTypeInfo(context, varDecl->specifiedTypeIdx).typeCategory;
 		if (typeCat != TYPECATEGORY_STRUCT && typeCat != TYPECATEGORY_UNION)
-			LogError(context, varDecl->loc, "Anonymous variable has to be a struct/union!"_s);
+			LogError(context->global, varDecl->loc, "Anonymous variable has to be a struct/union!"_s);
 		if (isGlobal)
-			LogError(context, varDecl->loc, "Anonymous variable can't be static!"_s);
+			LogError(context->global, varDecl->loc, "Anonymous variable can't be static!"_s);
 
 		varDecl->anonymousVariableValueIdx = TCNewValue(context, ""_s, varDecl->specifiedTypeIdx,
 				newValueFlags);
 
-		ASTExpression *varExp = TCNewTreeNode(context);
+		ASTExpression *varExp = TCNewTreeNode();
 		{
 			ASTExpression e = {};
 			e.typeTableIdx = varDecl->specifiedTypeIdx;
@@ -2464,30 +2420,26 @@ void TypeCheckVariableDeclaration(Context *context, ASTVariableDeclaration *varD
 			e.identifier.valueIdx = varDecl->anonymousVariableValueIdx;
 			*varExp = e;
 		}
-		AddStructMembersToScope(context, varDecl->loc, varExp);
+		TCAddStructMembersToScope(context, varDecl->loc, varExp);
 	}
 }
 
-void TypeCheckProcedureParameter(Context *context, ASTProcedureParameter *astParam)
+void TypeCheckProcedureParameter(TCContext *context, ASTProcedureParameter *astParam)
 {
-	if (astParam->astType)
-	{
+	if (astParam->astType) {
 		astParam->typeTableIdx = TypeCheckType(context, {}, astParam->loc, astParam->astType);
 
 		if (astParam->typeTableIdx == TYPETABLEIDX_VOID)
-			LogError(context, astParam->loc, "Variable can't be of type void!"_s);
+			LogError(context->global, astParam->loc, "Variable can't be of type void!"_s);
 	}
 
-	if (astParam->astInitialValue)
-	{
+	if (astParam->astInitialValue) {
 		TypeCheckExpression(context, astParam->astInitialValue);
 
-		if (astParam->astType)
-		{
+		if (astParam->astType) {
 			TypeCheckResult typeCheckResult = CheckTypesMatchAndSpecialize(context,
 					astParam->typeTableIdx, astParam->astInitialValue);
-			if (typeCheckResult.errorCode != TYPECHECK_COOL)
-			{
+			if (typeCheckResult.errorCode != TYPECHECK_COOL) {
 				Print("Variable declaration type and initial type don't match\n");
 				ReportTypeCheckError(context, typeCheckResult.errorCode, astParam->loc,
 						astParam->typeTableIdx, astParam->astInitialValue->typeTableIdx);
@@ -2495,10 +2447,9 @@ void TypeCheckProcedureParameter(Context *context, ASTProcedureParameter *astPar
 			astParam->typeTableIdx = typeCheckResult.leftTypeIdx;
 			astParam->astInitialValue->typeTableIdx = typeCheckResult.rightTypeIdx;
 		}
-		else
-		{
+		else {
 			if (astParam->astInitialValue->typeTableIdx == TYPETABLEIDX_VOID)
-				LogError(context, astParam->loc, "Variable can't be of type void!"_s);
+				LogError(context->global, astParam->loc, "Variable can't be of type void!"_s);
 
 			astParam->typeTableIdx = InferType(astParam->astInitialValue->typeTableIdx);
 		}
@@ -2511,10 +2462,9 @@ enum ReturnCheckResult
 	RETURNCHECKRESULT_SOMETIMES,
 	RETURNCHECKRESULT_ALWAYS
 };
-ReturnCheckResult CheckIfReturnsValue(Context *context, ASTExpression *expression)
+ReturnCheckResult TCCheckIfReturnsValue(Context *context, ASTExpression *expression)
 {
-	switch (expression->nodeType)
-	{
+	switch (expression->nodeType) {
 	case ASTNODETYPE_RETURN:
 	{
 		return RETURNCHECKRESULT_ALWAYS;
@@ -2524,7 +2474,7 @@ ReturnCheckResult CheckIfReturnsValue(Context *context, ASTExpression *expressio
 		ReturnCheckResult result = RETURNCHECKRESULT_NEVER;
 		for (int i = 0; i < expression->block.statements.size; ++i)
 		{
-			ReturnCheckResult statementResult = CheckIfReturnsValue(context, &expression->block.statements[i]);
+			ReturnCheckResult statementResult = TCCheckIfReturnsValue(context, &expression->block.statements[i]);
 			if (statementResult > result)
 			{
 				result = statementResult;
@@ -2534,10 +2484,10 @@ ReturnCheckResult CheckIfReturnsValue(Context *context, ASTExpression *expressio
 	}
 	case ASTNODETYPE_IF:
 	{
-		ReturnCheckResult ifStatement = CheckIfReturnsValue(context, expression->ifNode.body);
+		ReturnCheckResult ifStatement = TCCheckIfReturnsValue(context, expression->ifNode.body);
 		ReturnCheckResult elseStatement = RETURNCHECKRESULT_NEVER;
 		if (expression->ifNode.elseBody)
-			elseStatement = CheckIfReturnsValue(context, expression->ifNode.elseBody);
+			elseStatement = TCCheckIfReturnsValue(context, expression->ifNode.elseBody);
 
 		if (ifStatement == RETURNCHECKRESULT_ALWAYS && elseStatement == RETURNCHECKRESULT_ALWAYS)
 			return RETURNCHECKRESULT_ALWAYS;
@@ -2547,40 +2497,36 @@ ReturnCheckResult CheckIfReturnsValue(Context *context, ASTExpression *expressio
 	}
 	case ASTNODETYPE_WHILE:
 	{
-		return CheckIfReturnsValue(context, expression->whileNode.body);
+		return TCCheckIfReturnsValue(context, expression->whileNode.body);
 	}
 	case ASTNODETYPE_FOR:
 	{
-		return CheckIfReturnsValue(context, expression->forNode.body);
+		return TCCheckIfReturnsValue(context, expression->forNode.body);
 	}
 	}
 	return RETURNCHECKRESULT_NEVER;
 }
 
-bool TypeCheckProcedurePrototype(Context *context, ASTProcedurePrototype *astPrototype)
+bool TypeCheckProcedurePrototype(TCContext *context, ASTProcedurePrototype *astPrototype)
 {
 	// Parameters
 	bool beginOptionalParameters = false;
-	for (int i = 0; i < astPrototype->astParameters.size; ++i)
-	{
+	for (int i = 0; i < astPrototype->astParameters.size; ++i) {
 		TypeCheckProcedureParameter(context, &astPrototype->astParameters[i]);
 
 		ASTProcedureParameter astParameter = astPrototype->astParameters[i];
-		if (!astParameter.astInitialValue)
-		{
+		if (!astParameter.astInitialValue) {
 			if (beginOptionalParameters)
-				LogError(context, astParameter.loc,
+				LogError(context->global, astParameter.loc,
 						"Non-optional parameter after optional parameter found!"_s);
 		}
 		else
 			beginOptionalParameters = true;
 	}
 
-	if (astPrototype->astReturnTypes.size)
-	{
+	if (astPrototype->astReturnTypes.size) {
 		u32 firstTypeIdx = TypeCheckType(context, {}, astPrototype->loc, astPrototype->astReturnTypes[0]);
-		if (firstTypeIdx != TYPETABLEIDX_VOID)
-		{
+		if (firstTypeIdx != TYPETABLEIDX_VOID) {
 			DynamicArrayInit(&astPrototype->returnTypeIndices, astPrototype->astReturnTypes.size);
 			*DynamicArrayAdd(&astPrototype->returnTypeIndices) = firstTypeIdx;
 			for (int i = 1; i < astPrototype->astReturnTypes.size; ++i)
@@ -2592,7 +2538,7 @@ bool TypeCheckProcedurePrototype(Context *context, ASTProcedurePrototype *astPro
 	return true;
 }
 
-TypeInfo TypeInfoFromASTProcedurePrototype(Context *context, ASTProcedurePrototype *astPrototype)
+TypeInfo TypeInfoFromASTProcedurePrototype(JobContext *context, ASTProcedurePrototype *astPrototype)
 {
 	TypeInfo t = {};
 	t.size = g_pointerSize;
@@ -2624,7 +2570,7 @@ TypeInfo TypeInfoFromASTProcedurePrototype(Context *context, ASTProcedurePrototy
 			{
 				procParam.defaultValue = TryEvaluateConstant(context, astParameter.astInitialValue);
 				if (procParam.defaultValue.type == CONSTANTTYPE_INVALID)
-					LogError(context, astParameter.astInitialValue->any.loc,
+					LogError(context->global, astParameter.astInitialValue->any.loc,
 							"Failed to evaluate constant in default parameter"_s);
 			}
 			*DynamicArrayAdd(&parameters) = procParam;
@@ -2647,15 +2593,14 @@ TypeInfo TypeInfoFromASTProcedurePrototype(Context *context, ASTProcedurePrototy
 	return t;
 }
 
-ASTExpression InlineProcedureCopyTreeBranch(Context *context, const ASTExpression *expression)
+ASTExpression TCInlineProcedureCopyTreeBranch(TCContext *context, const ASTExpression *expression)
 {
 	ASTExpression result;
 	result.nodeType = expression->nodeType;
 	result.any.loc = expression->any.loc;
 	result.typeTableIdx = expression->typeTableIdx;
 
-	switch (expression->nodeType)
-	{
+	switch (expression->nodeType) {
 	case ASTNODETYPE_BLOCK:
 	{
 		ASTBlock astBlock = {};
@@ -2663,9 +2608,8 @@ ASTExpression InlineProcedureCopyTreeBranch(Context *context, const ASTExpressio
 
 		TCPushScope(context);
 
-		for (int i = 0; i < expression->block.statements.size; ++i)
-		{
-			ASTExpression statement = InlineProcedureCopyTreeBranch(context,
+		for (int i = 0; i < expression->block.statements.size; ++i) {
+			ASTExpression statement = TCInlineProcedureCopyTreeBranch(context,
 					&expression->block.statements[i]);
 			if (statement.nodeType != ASTNODETYPE_INVALID)
 				*DynamicArrayAdd(&astBlock.statements) = statement;
@@ -2680,7 +2624,7 @@ ASTExpression InlineProcedureCopyTreeBranch(Context *context, const ASTExpressio
 	{
 		ASTVariableDeclaration varDecl = expression->variableDeclaration;
 
-		u32 flags = (context->config.dontPromoteMemoryToRegisters ? VALUEFLAGS_FORCE_MEMORY : 0) |
+		u32 flags = (context->global->config.dontPromoteMemoryToRegisters ? VALUEFLAGS_FORCE_MEMORY : 0) |
 					(varDecl.isStatic   ? VALUEFLAGS_ON_STATIC_STORAGE : 0) |
 					(varDecl.isExternal ? VALUEFLAGS_IS_EXTERNAL       : 0);
 
@@ -2698,7 +2642,7 @@ ASTExpression InlineProcedureCopyTreeBranch(Context *context, const ASTExpressio
 			if (!varDecl.isStatic && !varDecl.isExternal)
 				valueIdx = TCNewValue(context, varName, typeTableIdx, flags);
 			else
-				valueIdx = NewGlobalValue(context, varName, typeTableIdx, flags);
+				valueIdx = NewGlobalValue(context->global, varName, typeTableIdx, flags);
 			*GetVariableValueIdx(&varDecl, varIdx) = valueIdx;
 
 			TCScopeName newScopeName;
@@ -2715,7 +2659,7 @@ ASTExpression InlineProcedureCopyTreeBranch(Context *context, const ASTExpressio
 			ASSERT(!varDecl.isStatic && !varDecl.isExternal);
 			varDecl.anonymousVariableValueIdx = TCNewValue(context, ""_s, varDecl.specifiedTypeIdx, flags);
 
-			ASTExpression *varExp = TCNewTreeNode(context);
+			ASTExpression *varExp = TCNewTreeNode();
 			*varExp = {
 				.nodeType = ASTNODETYPE_IDENTIFIER,
 				.typeTableIdx = varDecl.specifiedTypeIdx,
@@ -2724,12 +2668,12 @@ ASTExpression InlineProcedureCopyTreeBranch(Context *context, const ASTExpressio
 					.valueIdx = varDecl.anonymousVariableValueIdx
 				}
 			};
-			AddStructMembersToScope(context, varDecl.loc, varExp);
+			TCAddStructMembersToScope(context, varDecl.loc, varExp);
 		}
 
 		if (varDecl.astInitialValue) {
-			ASTExpression *astInitialValue = TCNewTreeNode(context);
-			*astInitialValue = InlineProcedureCopyTreeBranch(context, varDecl.astInitialValue);
+			ASTExpression *astInitialValue = TCNewTreeNode();
+			*astInitialValue = TCInlineProcedureCopyTreeBranch(context, varDecl.astInitialValue);
 			varDecl.astInitialValue = astInitialValue;
 		}
 
@@ -2790,27 +2734,27 @@ ASTExpression InlineProcedureCopyTreeBranch(Context *context, const ASTExpressio
 	}
 	case ASTNODETYPE_RETURN:
 	{
-		ASTExpression *e = TCNewTreeNode(context);
-		*e = InlineProcedureCopyTreeBranch(context, expression->returnNode.expression);
+		ASTExpression *e = TCNewTreeNode();
+		*e = TCInlineProcedureCopyTreeBranch(context, expression->returnNode.expression);
 		result.returnNode.expression = e;
 		return result;
 	}
 	case ASTNODETYPE_DEFER:
 	{
-		ASTExpression *e = TCNewTreeNode(context);
-		*e = InlineProcedureCopyTreeBranch(context, expression->deferNode.expression);
+		ASTExpression *e = TCNewTreeNode();
+		*e = TCInlineProcedureCopyTreeBranch(context, expression->deferNode.expression);
 		result.deferNode.expression = e;
 		return result;
 	}
 	case ASTNODETYPE_USING:
 	{
-		ASTExpression *usingExp = TCNewTreeNode(context);
-		*usingExp = InlineProcedureCopyTreeBranch(context, expression->usingNode.expression);
+		ASTExpression *usingExp = TCNewTreeNode();
+		*usingExp = TCInlineProcedureCopyTreeBranch(context, expression->usingNode.expression);
 
 		if (usingExp->nodeType == ASTNODETYPE_VARIABLE_DECLARATION)
 		{
 			ASSERT(usingExp->variableDeclaration.nameCount == 1);
-			ASTExpression *varExp = TCNewTreeNode(context);
+			ASTExpression *varExp = TCNewTreeNode();
 			*varExp = {
 				.nodeType = ASTNODETYPE_IDENTIFIER,
 				.typeTableIdx = usingExp->variableDeclaration.typeIdx,
@@ -2819,10 +2763,10 @@ ASTExpression InlineProcedureCopyTreeBranch(Context *context, const ASTExpressio
 					.valueIdx = usingExp->variableDeclaration.valueIdx
 				},
 			};
-			AddStructMembersToScope(context, usingExp->any.loc, varExp);
+			TCAddStructMembersToScope(context, usingExp->any.loc, varExp);
 		}
 		else
-			AddStructMembersToScope(context, usingExp->any.loc, usingExp);
+			TCAddStructMembersToScope(context, usingExp->any.loc, usingExp);
 
 		result.usingNode.expression = usingExp;
 		return result;
@@ -2836,14 +2780,14 @@ ASTExpression InlineProcedureCopyTreeBranch(Context *context, const ASTExpressio
 		if (argCount) {
 			DynamicArrayInit(&astProcCall.arguments, argCount);
 			for (int argIdx = 0; argIdx < argCount; ++argIdx) {
-				ASTExpression *arg = TCNewTreeNode(context);
-				*arg = InlineProcedureCopyTreeBranch(context, original.arguments[argIdx]);
+				ASTExpression *arg = TCNewTreeNode();
+				*arg = TCInlineProcedureCopyTreeBranch(context, original.arguments[argIdx]);
 				*DynamicArrayAdd(&astProcCall.arguments) = arg;
 			}
 		}
 
-		ASTExpression *exp = TCNewTreeNode(context);
-		*exp = InlineProcedureCopyTreeBranch(context, original.procedureExpression);
+		ASTExpression *exp = TCNewTreeNode();
+		*exp = TCInlineProcedureCopyTreeBranch(context, original.procedureExpression);
 
 		result.procedureCall = astProcCall;
 		return result;
@@ -2851,8 +2795,8 @@ ASTExpression InlineProcedureCopyTreeBranch(Context *context, const ASTExpressio
 	case ASTNODETYPE_UNARY_OPERATION:
 	{
 		ASTUnaryOperation astUnary = expression->unaryOperation;
-		ASTExpression *e = TCNewTreeNode(context);
-		*e = InlineProcedureCopyTreeBranch(context, expression->unaryOperation.expression);
+		ASTExpression *e = TCNewTreeNode();
+		*e = TCInlineProcedureCopyTreeBranch(context, expression->unaryOperation.expression);
 		astUnary.expression = e;
 		result.unaryOperation = astUnary;
 		return result;
@@ -2860,15 +2804,15 @@ ASTExpression InlineProcedureCopyTreeBranch(Context *context, const ASTExpressio
 	case ASTNODETYPE_BINARY_OPERATION:
 	{
 		ASTBinaryOperation astBinary = expression->binaryOperation;
-		ASTExpression *l = TCNewTreeNode(context);
-		ASTExpression *r = TCNewTreeNode(context);
-		*l = InlineProcedureCopyTreeBranch(context, expression->binaryOperation.leftHand);
+		ASTExpression *l = TCNewTreeNode();
+		ASTExpression *r = TCNewTreeNode();
+		*l = TCInlineProcedureCopyTreeBranch(context, expression->binaryOperation.leftHand);
 
 		// For member access we can just copy
 		if (expression->binaryOperation.op == TOKEN_OP_MEMBER_ACCESS)
 			*r = *expression->binaryOperation.rightHand;
 		else
-			*r = InlineProcedureCopyTreeBranch(context, expression->binaryOperation.rightHand);
+			*r = TCInlineProcedureCopyTreeBranch(context, expression->binaryOperation.rightHand);
 
 		astBinary.leftHand = l;
 		astBinary.rightHand = r;
@@ -2884,8 +2828,8 @@ ASTExpression InlineProcedureCopyTreeBranch(Context *context, const ASTExpressio
 			ArrayInit(&astLiteral.members, expression->literal.members.size);
 			for (int memberIdx = 0; memberIdx < expression->literal.members.size; ++memberIdx)
 			{
-				ASTExpression *e = TCNewTreeNode(context);
-				*e = InlineProcedureCopyTreeBranch(context,
+				ASTExpression *e = TCNewTreeNode();
+				*e = TCInlineProcedureCopyTreeBranch(context,
 						expression->literal.members[memberIdx]);
 				*ArrayAdd(&astLiteral.members) = e;
 			}
@@ -2898,18 +2842,18 @@ ASTExpression InlineProcedureCopyTreeBranch(Context *context, const ASTExpressio
 	{
 		ASTIf astIf = expression->ifNode;
 
-		ASTExpression *e = TCNewTreeNode(context);
-		*e = InlineProcedureCopyTreeBranch(context, expression->ifNode.condition);
+		ASTExpression *e = TCNewTreeNode();
+		*e = TCInlineProcedureCopyTreeBranch(context, expression->ifNode.condition);
 		astIf.condition = e;
 
-		e = TCNewTreeNode(context);
-		*e = InlineProcedureCopyTreeBranch(context, expression->ifNode.body);
+		e = TCNewTreeNode();
+		*e = TCInlineProcedureCopyTreeBranch(context, expression->ifNode.body);
 		astIf.body = e;
 
 		if (expression->ifNode.elseBody)
 		{
-			e = TCNewTreeNode(context);
-			*e = InlineProcedureCopyTreeBranch(context, expression->ifNode.elseBody);
+			e = TCNewTreeNode();
+			*e = TCInlineProcedureCopyTreeBranch(context, expression->ifNode.elseBody);
 			astIf.elseBody = e;
 		}
 
@@ -2920,12 +2864,12 @@ ASTExpression InlineProcedureCopyTreeBranch(Context *context, const ASTExpressio
 	{
 		ASTWhile astWhile = expression->whileNode;
 
-		ASTExpression *e = TCNewTreeNode(context);
-		*e = InlineProcedureCopyTreeBranch(context, expression->whileNode.condition);
+		ASTExpression *e = TCNewTreeNode();
+		*e = TCInlineProcedureCopyTreeBranch(context, expression->whileNode.condition);
 		astWhile.condition = e;
 
-		e = TCNewTreeNode(context);
-		*e = InlineProcedureCopyTreeBranch(context, expression->whileNode.body);
+		e = TCNewTreeNode();
+		*e = TCInlineProcedureCopyTreeBranch(context, expression->whileNode.body);
 		astWhile.body = e;
 
 		result.whileNode = astWhile;
@@ -2935,8 +2879,8 @@ ASTExpression InlineProcedureCopyTreeBranch(Context *context, const ASTExpressio
 	{
 		ASTFor astFor = expression->forNode;
 
-		ASTExpression *e = TCNewTreeNode(context);
-		*e = InlineProcedureCopyTreeBranch(context, astFor.range);
+		ASTExpression *e = TCNewTreeNode();
+		*e = TCInlineProcedureCopyTreeBranch(context, astFor.range);
 		astFor.range = e;
 
 		TCPushScope(context);
@@ -2989,8 +2933,8 @@ ASTExpression InlineProcedureCopyTreeBranch(Context *context, const ASTExpressio
 		};
 		TCAddScopeNames(context, scopeNamesToAdd);
 
-		e = TCNewTreeNode(context);
-		*e = InlineProcedureCopyTreeBranch(context, expression->forNode.body);
+		e = TCNewTreeNode();
+		*e = TCInlineProcedureCopyTreeBranch(context, expression->forNode.body);
 		astFor.body = e;
 
 		TCPopScope(context);
@@ -3009,8 +2953,8 @@ ASTExpression InlineProcedureCopyTreeBranch(Context *context, const ASTExpressio
 	}
 	case ASTNODETYPE_CAST:
 	{
-		ASTExpression *e = TCNewTreeNode(context);
-		*e = InlineProcedureCopyTreeBranch(context, expression->castNode.expression);
+		ASTExpression *e = TCNewTreeNode();
+		*e = TCInlineProcedureCopyTreeBranch(context, expression->castNode.expression);
 		result.castNode.expression = e;
 		return result;
 	}
@@ -3023,7 +2967,7 @@ ASTExpression InlineProcedureCopyTreeBranch(Context *context, const ASTExpressio
 			DynamicArrayInit(&astIntrinsic.arguments, argCount);
 			for (int argIdx = 0; argIdx < argCount; ++argIdx)
 			{
-				*DynamicArrayAdd(&astIntrinsic.arguments) = InlineProcedureCopyTreeBranch(context,
+				*DynamicArrayAdd(&astIntrinsic.arguments) = TCInlineProcedureCopyTreeBranch(context,
 						&expression->intrinsic.arguments[argIdx]);
 			}
 		}
@@ -3035,7 +2979,7 @@ ASTExpression InlineProcedureCopyTreeBranch(Context *context, const ASTExpressio
 	}
 }
 
-void TCAddParametersToScope(Context *context, ArrayView<u32> parameterValues,
+void TCAddParametersToScope(TCContext *context, ArrayView<u32> parameterValues,
 		const ASTProcedurePrototype *astPrototype)
 {
 	Array<TCScopeName, ThreadAllocator> scopeNamesToAdd;
@@ -3045,7 +2989,7 @@ void TCAddParametersToScope(Context *context, ArrayView<u32> parameterValues,
 		u32 paramValueIdx = parameterValues[i];
 
 		if (astParameter.isUsing) {
-			ASTExpression *varExp = TCNewTreeNode(context);
+			ASTExpression *varExp = TCNewTreeNode();
 			{
 				ASTExpression e = {};
 				e.typeTableIdx = astParameter.typeTableIdx;
@@ -3054,7 +2998,7 @@ void TCAddParametersToScope(Context *context, ArrayView<u32> parameterValues,
 				e.identifier.valueIdx = paramValueIdx;
 				*varExp = e;
 			}
-			AddStructMembersToScope(context, astParameter.loc, varExp);
+			TCAddStructMembersToScope(context, astParameter.loc, varExp);
 		}
 
 		TCScopeName newScopeName;
@@ -3108,12 +3052,12 @@ u32 NewProcedure(Context *context, Procedure p, bool isExternal)
 	return procedureIdx;
 }
 
-bool TCPushParametersAndInlineProcedureCall(Context *context, ASTProcedureCall *astProcCall)
+bool TCPushParametersAndInlineProcedureCall(TCContext *context, ASTProcedureCall *astProcCall)
 {
 	if (astProcCall->callType != CALLTYPE_STATIC)
 		return false;
 
-	Procedure proc = GetProcedureRead(context, astProcCall->procedureIdx);
+	Procedure proc = GetProcedureRead(context->global, astProcCall->procedureIdx);
 
 	if (astProcCall->inlineType == CALLINLINETYPE_NEVER_INLINE)
 		return false;
@@ -3128,15 +3072,13 @@ bool TCPushParametersAndInlineProcedureCall(Context *context, ASTProcedureCall *
 	s64 totalArguments = procTypeInfo.parameters.size;
 	ArrayInit(&astProcCall->inlineParameterValues, totalArguments + 1);
 
-	for (int argIdx = 0; argIdx < totalArguments; ++argIdx)
-	{
+	for (int argIdx = 0; argIdx < totalArguments; ++argIdx) {
 		u32 paramTypeIdx = procTypeInfo.parameters[argIdx].typeTableIdx;
 		u32 newValueIdx = TCNewValue(context, SNPrintF(12, "_inlinearg%d", argIdx),
 				paramTypeIdx, 0);
 		*ArrayAdd(&astProcCall->inlineParameterValues) = newValueIdx;
 	}
-	if (procTypeInfo.isVarargs)
-	{
+	if (procTypeInfo.isVarargs) {
 		static u32 arrayTableIdx = GetTypeInfoArrayOf(context, TYPETABLEIDX_ANY_STRUCT, 0);
 		u32 newValueIdx = TCNewValue(context, "_inlinevarargs"_s, arrayTableIdx, 0);
 		*ArrayAdd(&astProcCall->inlineParameterValues) = newValueIdx;
@@ -3144,8 +3086,8 @@ bool TCPushParametersAndInlineProcedureCall(Context *context, ASTProcedureCall *
 
 	TCAddParametersToScope(context, astProcCall->inlineParameterValues, &proc.astPrototype);
 
-	ASTExpression *e = TCNewTreeNode(context);
-	*e = InlineProcedureCopyTreeBranch(context, proc.astBody);
+	ASTExpression *e = TCNewTreeNode();
+	*e = TCInlineProcedureCopyTreeBranch(context, proc.astBody);
 	astProcCall->astBodyInlineCopy = e;
 
 	TCPopScope(context);
@@ -3153,12 +3095,11 @@ bool TCPushParametersAndInlineProcedureCall(Context *context, ASTProcedureCall *
 	return true;
 }
 
-bool TCIsPrimitiveOperation(Context *context, enum TokenType op, u32 leftTypeIdx, u32 rightTypeIdx)
+bool TCIsPrimitiveOperation(JobContext *context, enum TokenType op, u32 leftTypeIdx, u32 rightTypeIdx)
 {
-	leftTypeIdx  = StripImplicitlyCastAliases(context, leftTypeIdx);
-	rightTypeIdx = StripImplicitlyCastAliases(context, rightTypeIdx);
-	switch (op)
-	{
+	leftTypeIdx  = StripImplicitlyCastAliases(context->global, leftTypeIdx);
+	rightTypeIdx = StripImplicitlyCastAliases(context->global, rightTypeIdx);
+	switch (op) {
 	case TOKEN_OP_ASSIGNMENT:
 		return CheckTypesMatch(context, leftTypeIdx, rightTypeIdx) == TYPECHECK_COOL;
 	case TOKEN_OP_MEMBER_ACCESS:
@@ -3277,10 +3218,9 @@ bool TCIsPrimitiveOperation(Context *context, enum TokenType op, u32 leftTypeIdx
 	}
 }
 
-bool TCIsPrimitiveOperation(Context *context, enum TokenType op, u32 inputTypeIdx)
+bool TCIsPrimitiveOperation(JobContext *context, enum TokenType op, u32 inputTypeIdx)
 {
-	switch (op)
-	{
+	switch (op) {
 	case TOKEN_OP_MINUS:
 	{
 		TypeCategory leftCat  = GetTypeInfo(context, inputTypeIdx).typeCategory;
@@ -3335,7 +3275,7 @@ void TCCheckForCyclicInlineCalls(Context *context, SourceLocation loc, u32 calle
 }
 
 String OperatorToString(s32 op);
-bool LookForOperatorOverload(Context *context, ASTExpression *expression)
+bool TCLookForOperatorOverload(TCContext *context, ASTExpression *expression)
 {
 	OperatorOverload overload = {};
 	bool foundOverload = false;
@@ -3365,14 +3305,14 @@ bool LookForOperatorOverload(Context *context, ASTExpression *expression)
 	bool triedOnce = false;
 tryAgain:
 	{
-		auto operatorOverloads = context->operatorOverloads.GetForRead();
+		auto operatorOverloads = context->global->operatorOverloads.GetForRead();
 		for (int overloadIdx = 0; overloadIdx < operatorOverloads->size; ++overloadIdx) {
 			OperatorOverload currentOverload = operatorOverloads[overloadIdx];
 
 			if (op != currentOverload.op)
 				continue;
 
-			Procedure procedure = GetProcedureRead(context, currentOverload.procedureIdx);
+			Procedure procedure = GetProcedureRead(context->global, currentOverload.procedureIdx);
 			TypeInfo procType = GetTypeInfo(context, procedure.typeTableIdx);
 			ASSERT(procType.typeCategory == TYPECATEGORY_PROCEDURE);
 
@@ -3386,7 +3326,7 @@ tryAgain:
 					continue;
 
 				if (foundOverload)
-					LogError(context, expression->any.loc,
+					LogError(context->global, expression->any.loc,
 							TPrintF("Multiple overloads found for operator %S with operand of "
 								"type %S",
 								OperatorToString(op),
@@ -3409,7 +3349,7 @@ tryAgain:
 					continue;
 
 				if (foundOverload)
-					LogError(context, expression->any.loc,
+					LogError(context->global, expression->any.loc,
 							TPrintF("Multiple overloads found for operator %S with left hand "
 								"of type %S and right hand of type %S",
 								OperatorToString(op),
@@ -3423,7 +3363,7 @@ tryAgain:
 		if (!foundOverload) {
 			// Shouldn't have resumed this job if the overload still doesn't exist.
 			if (triedOnce)
-				LogCompilerError(context, expression->any.loc, "Bad job resume"_s);
+				LogCompilerError(context->global, expression->any.loc, "Bad job resume"_s);
 			triedOnce = true;
 
 			SwitchJob(context, YIELDREASON_UNKNOWN_OVERLOAD, {
@@ -3434,31 +3374,30 @@ tryAgain:
 						.rightTypeIdx = rightHand ? rightHand->typeTableIdx : U32_MAX
 					}});
 			// Lock again!
-			SYSLockForRead(&context->operatorOverloads.rwLock);
+			SYSLockForRead(&context->global->operatorOverloads.rwLock);
 			goto tryAgain;
 		}
 	}
 
 	ASSERT(foundOverload);
-	Procedure proc = GetProcedureRead(context, overload.procedureIdx);
+	Procedure proc = GetProcedureRead(context->global, overload.procedureIdx);
 
 	TypeInfo procTypeInfo = GetTypeInfo(context, proc.typeTableIdx);
 	ASSERT(procTypeInfo.typeCategory == TYPECATEGORY_PROCEDURE);
 
 	if (proc.isInline && !proc.isBodyTypeChecked) {
-		TCJobData *jobData = (TCJobData *)t_jobData;
-		TCCheckForCyclicInlineCalls(context, expression->any.loc, jobData->currentProcedureIdx,
+		TCCheckForCyclicInlineCalls(context->global, expression->any.loc, context->currentProcedureIdx,
 				overload.procedureIdx);
 
-		auto procedures = context->procedures.GetForRead();
+		auto procedures = context->global->procedures.GetForRead();
 		proc = procedures[overload.procedureIdx];
 		if (!proc.isBodyTypeChecked) {
 			SwitchJob(context, YIELDREASON_PROC_BODY_NOT_READY, { .index = overload.procedureIdx });
 			// Lock again!
-			SYSLockForRead(&context->procedures.rwLock);
+			SYSLockForRead(&context->global->procedures.rwLock);
 			proc = procedures[overload.procedureIdx];
 			if (!proc.isBodyTypeChecked)
-				LogCompilerError(context, expression->any.loc, "Bad job resume"_s);
+				LogCompilerError(context->global, expression->any.loc, "Bad job resume"_s);
 		}
 	}
 
@@ -3482,10 +3421,8 @@ tryAgain:
 }
 
 void GenerateTypeCheckJobs(Context *context, ASTExpression *expression);
-void TypeCheckExpression(Context *context, ASTExpression *expression)
+void TypeCheckExpression(TCContext *context, ASTExpression *expression)
 {
-	TCJobData *jobData = (TCJobData *)t_jobData;
-
 	ASSERT(expression->typeTableIdx == TYPETABLEIDX_Unset);
 
 	switch (expression->nodeType) {
@@ -3515,15 +3452,15 @@ void TypeCheckExpression(Context *context, ASTExpression *expression)
 		ASTVariableDeclaration *varDecl = &expression->variableDeclaration;
 		TypeCheckVariableDeclaration(context, varDecl);
 
-		if (jobData->onStaticContext) {
+		if (context->onStaticContext) {
 			IRJobArgs *args = ALLOC(LinearAllocator, IRJobArgs);
 			*args = {
-				.context = context,
+				.context = context->global,
 				.procedureIdx = 0,
 				.localValues = {},
 				.expression = expression
 			};
-			RequestNewJob(context, JOBTYPE_CODEGEN, IRJobExpression, (void *)args);
+			RequestNewJob(context->global, JOBTYPE_CODEGEN, IRJobExpression, (void *)args);
 		}
 	} break;
 	case ASTNODETYPE_STATIC_DEFINITION:
@@ -3533,22 +3470,19 @@ void TypeCheckExpression(Context *context, ASTExpression *expression)
 		switch (astStaticDef->expression->nodeType) {
 		case ASTNODETYPE_PROCEDURE_DECLARATION:
 		{
-			BucketArray<Value, LinearAllocator, 256> oldLocalValues = jobData->localValues;
-			BucketArrayInit(&jobData->localValues);
-			*BucketArrayAdd(&jobData->localValues) = {}; // No value number 0?
-
-			DynamicArray<TCScope, ThreadAllocator> oldScopeStack = jobData->scopeStack;
+			TCContext procedureContext = *context;
+			BucketArrayInit(&procedureContext.localValues);
+			*BucketArrayAdd(&procedureContext.localValues) = {}; // No value number 0?
 			// Don't allocate a new array if old is empty.
-			if (oldScopeStack.size)
-				DynamicArrayInit(&jobData->scopeStack, 8);
+			if (context->scopeStack.size)
+				DynamicArrayInit(&procedureContext.scopeStack, 8);
 
-			bool oldOnStaticContext = jobData->onStaticContext;
-			jobData->onStaticContext = false;
+			procedureContext.onStaticContext = false;
 
 			ASTProcedureDeclaration *astProcDecl = &astStaticDef->expression->procedureDeclaration;
 			ASTProcedurePrototype *astPrototype = &astProcDecl->prototype;
 
-			TypeCheckProcedurePrototype(context, astPrototype);
+			TypeCheckProcedurePrototype(&procedureContext, astPrototype);
 			TypeInfo t = TypeInfoFromASTProcedurePrototype(context, astPrototype);
 
 			u32 typeTableIdx = FindOrAddTypeTableIdx(context, t);
@@ -3563,7 +3497,7 @@ void TypeCheckExpression(Context *context, ASTExpression *expression)
 			procedure.isExported = astProcDecl->isExported;
 			procedure.astPrototype = astProcDecl->prototype;
 			DynamicArrayInit(&procedure.parameterValues, 4);
-			u32 procedureIdx = NewProcedure(context, procedure, astProcDecl->isExternal);
+			u32 procedureIdx = NewProcedure(context->global, procedure, astProcDecl->isExternal);
 			astProcDecl->procedureIdx = procedureIdx;
 
 			StaticDefinition newStaticDef = {};
@@ -3573,7 +3507,7 @@ void TypeCheckExpression(Context *context, ASTExpression *expression)
 			newStaticDef.procedureIdx = procedureIdx;
 			newStaticDef.typeTableIdx = typeTableIdx;
 
-			u32 newStaticDefIdx = TCNewStaticDefinition(context, &newStaticDef);
+			u32 newStaticDefIdx = NewStaticDefinition(context->global, &newStaticDef);
 			astStaticDef->staticDefinitionIdx = newStaticDefIdx;
 
 			// Add scope name
@@ -3589,93 +3523,75 @@ void TypeCheckExpression(Context *context, ASTExpression *expression)
 					newScopeName.name = *GetVariableName(astStaticDef, i);
 					*ArrayAdd(&scopeNamesToAdd) = newScopeName;
 				}
-				TCAddScopeNames(context, scopeNamesToAdd);
+				TCAddScopeNames(&procedureContext, scopeNamesToAdd);
 			}
 
-			TCPushScope(context);
+			TCPushScope(&procedureContext);
 
-			if (procedure.astBody)
-			{
+			if (procedure.astBody) {
 				// Parameters
 				ArrayView<ASTProcedureParameter> astParameters = astPrototype->astParameters;
-				for (int i = 0; i < astParameters.size; ++i)
-				{
+				for (int i = 0; i < astParameters.size; ++i) {
 					const ASTProcedureParameter *astParameter = &astParameters[i];
-					u32 paramValueIdx = TCNewValue(context, astParameter->name, astParameter->typeTableIdx, 0);
+					u32 paramValueIdx = TCNewValue(&procedureContext, astParameter->name, astParameter->typeTableIdx, 0);
 					*DynamicArrayAdd(&procedure.parameterValues) = paramValueIdx;
 				}
 				// Varargs array
-				if (astPrototype->isVarargs)
-				{
+				if (astPrototype->isVarargs) {
 					static u32 arrayTableIdx = GetTypeInfoArrayOf(context, TYPETABLEIDX_ANY_STRUCT, 0);
 
-					u32 valueIdx = TCNewValue(context, astPrototype->varargsName, arrayTableIdx, 0);
+					u32 valueIdx = TCNewValue(&procedureContext, astPrototype->varargsName, arrayTableIdx, 0);
 					*DynamicArrayAdd(&procedure.parameterValues) = valueIdx;
 				}
 
-				TCAddParametersToScope(context, procedure.parameterValues, &astProcDecl->prototype);
+				TCAddParametersToScope(&procedureContext, procedure.parameterValues, &astProcDecl->prototype);
 
-				if (astPrototype->returnTypeIndices.size)
-				{
+				if (astPrototype->returnTypeIndices.size) {
 					ArrayInit(&procedure.returnValueIndices, astPrototype->returnTypeIndices.size);
 					for (int i = 0; i < astPrototype->returnTypeIndices.size; ++i)
-						*ArrayAdd(&procedure.returnValueIndices) = TCNewValue(context, "_returnValue"_s,
+						*ArrayAdd(&procedure.returnValueIndices) = TCNewValue(&procedureContext, "_returnValue"_s,
 							astPrototype->returnTypeIndices[i], 0);
 				}
 
-				u32 previousCurrentProcIdx = jobData->currentProcedureIdx;
-				jobData->currentProcedureIdx = procedureIdx;
+				procedureContext.currentProcedureIdx = procedureIdx;
+				procedureContext.currentReturnTypes = t.procedureInfo.returnTypeIndices;
 
-				ArrayView<u32> previousReturnTypes = jobData->currentReturnTypes;
-				jobData->currentReturnTypes = t.procedureInfo.returnTypeIndices;
-
-				TypeCheckExpression(context, procedure.astBody);
-
-				jobData->currentProcedureIdx = previousCurrentProcIdx;
-				jobData->currentReturnTypes  = previousReturnTypes;
+				TypeCheckExpression(&procedureContext, procedure.astBody);
 			}
 			procedure.isBodyTypeChecked = true;
 
-			UpdateProcedure(context, procedureIdx, &procedure);
+			UpdateProcedure(context->global, procedureIdx, &procedure);
 
 			// Wake up any jobs that were waiting for this procedure body
-			WakeUpAllByIndex(context, YIELDREASON_PROC_BODY_NOT_READY, procedureIdx);
+			WakeUpAllByIndex(context->global, YIELDREASON_PROC_BODY_NOT_READY, procedureIdx);
 
 			expression->typeTableIdx = procedure.typeTableIdx;
-			TCPopScope(context);
+			TCPopScope(&procedureContext);
 
 			if (procedure.astBody)
 			{
 				// Check all paths return
 				if (t.procedureInfo.returnTypeIndices.size)
 				{
-					ReturnCheckResult result = CheckIfReturnsValue(context, procedure.astBody);
+					ReturnCheckResult result = TCCheckIfReturnsValue(context->global, procedure.astBody);
 					if (result == RETURNCHECKRESULT_SOMETIMES)
-						LogError(context, expression->any.loc, "Procedure doesn't always return a value"_s);
+						LogError(context->global, expression->any.loc, "Procedure doesn't always return a value"_s);
 					else if (result == RETURNCHECKRESULT_NEVER)
-						LogError(context, expression->any.loc, "Procedure has to return a value"_s);
+						LogError(context->global, expression->any.loc, "Procedure has to return a value"_s);
 				}
 
 				// Code gen!
 				{
 					IRJobArgs *args = ALLOC(LinearAllocator, IRJobArgs);
 					*args = {
-						.context = context,
+						.context = context->global,
 						.procedureIdx = procedureIdx,
-						.localValues = jobData->localValues,
+						.localValues = procedureContext.localValues,
 						.expression = nullptr
 					};
-					jobData->localValues = {}; // Safety clear
-					RequestNewJob(context, JOBTYPE_CODEGEN, IRJobProcedure, (void *)args);
+					RequestNewJob(context->global, JOBTYPE_CODEGEN, IRJobProcedure, (void *)args);
 				}
 			}
-
-			jobData->localValues = oldLocalValues;
-			if (oldScopeStack.size)
-				jobData->scopeStack = oldScopeStack;
-			else
-				jobData->scopeStack.size = 0;
-			jobData->onStaticContext = oldOnStaticContext;
 		} break;
 		case ASTNODETYPE_TYPE:
 		case ASTNODETYPE_ALIAS:
@@ -3685,7 +3601,7 @@ void TypeCheckExpression(Context *context, ASTExpression *expression)
 			newStaticDef.name = *GetVariableName(astStaticDef, 0);
 			newStaticDef.definitionType = STATICDEFINITIONTYPE_TYPE;
 
-			u32 newStaticDefIdx = TCNewStaticDefinition(context, &newStaticDef);
+			u32 newStaticDefIdx = NewStaticDefinition(context->global, &newStaticDef);
 			astStaticDef->staticDefinitionIdx = newStaticDefIdx;
 
 			// Add scope name
@@ -3712,11 +3628,8 @@ void TypeCheckExpression(Context *context, ASTExpression *expression)
 			if (astStaticDef->expression->astType.nodeType == ASTTYPENODETYPE_STRUCT_DECLARATION ||
 				astStaticDef->expression->astType.nodeType == ASTTYPENODETYPE_UNION_DECLARATION ||
 				astStaticDef->expression->astType.nodeType == ASTTYPENODETYPE_ENUM_DECLARATION)
-			{
 				newTypeIdx = result;
-			}
-			else
-			{
+			else {
 				TypeInfo t;
 				t.typeCategory = TYPECATEGORY_ALIAS;
 				t.size = GetTypeInfo(context, result).size;
@@ -3729,7 +3642,7 @@ void TypeCheckExpression(Context *context, ASTExpression *expression)
 
 			newStaticDef.typeTableIdx = newTypeIdx;
 			expression->typeTableIdx = newTypeIdx;
-			TCUpdateStaticDefinition(context, newStaticDefIdx, &newStaticDef);
+			UpdateStaticDefinition(context->global, newStaticDefIdx, &newStaticDef);
 		} break;
 		default:
 		{
@@ -3742,7 +3655,7 @@ void TypeCheckExpression(Context *context, ASTExpression *expression)
 			{
 				ASSERT(astStaticDef->expression->typeTableIdx != TYPETABLEIDX_Unset);
 				u32 identifierStaticDefIdx = astStaticDef->expression->identifier.staticDefinitionIdx;
-				newStaticDef = TCGetStaticDefinition(context, identifierStaticDefIdx, true);
+				newStaticDef = GetStaticDefinition(context, identifierStaticDefIdx, true);
 				newStaticDef.name = *GetVariableName(astStaticDef, 0);
 				newStaticDef.typeTableIdx = astStaticDef->expression->typeTableIdx;
 				expression->typeTableIdx = astStaticDef->expression->typeTableIdx;
@@ -3752,7 +3665,7 @@ void TypeCheckExpression(Context *context, ASTExpression *expression)
 				Constant constant = TryEvaluateConstant(context, astStaticDef->expression);
 
 				if (constant.type == CONSTANTTYPE_INVALID)
-					LogError(context, astStaticDef->expression->any.loc,
+					LogError(context->global, astStaticDef->expression->any.loc,
 							"Failed to evaluate constant"_s);
 
 				newStaticDef = {};
@@ -3768,7 +3681,7 @@ void TypeCheckExpression(Context *context, ASTExpression *expression)
 
 			}
 
-			u32 newStaticDefIdx = TCNewStaticDefinition(context, &newStaticDef);
+			u32 newStaticDefIdx = NewStaticDefinition(context->global, &newStaticDef);
 			astStaticDef->staticDefinitionIdx = newStaticDefIdx;
 
 			// Add scope names
@@ -3793,7 +3706,7 @@ void TypeCheckExpression(Context *context, ASTExpression *expression)
 	{
 		ASTExpression **providedReturnValues = nullptr;
 		u64 providedReturnValuesCount = 0;
-		u64 requiredReturnValuesCount = jobData->currentReturnTypes.size;
+		u64 requiredReturnValuesCount = context->currentReturnTypes.size;
 
 		ASTExpression *returnExp = expression->returnNode.expression;
 		if (returnExp != nullptr) {
@@ -3810,21 +3723,21 @@ void TypeCheckExpression(Context *context, ASTExpression *expression)
 		}
 
 		if (providedReturnValuesCount != requiredReturnValuesCount)
-			LogError(context, returnExp->any.loc, TPrintF("Returning wrong amount of "
+			LogError(context->global, returnExp->any.loc, TPrintF("Returning wrong amount of "
 					"values: %d required but %d were provided", requiredReturnValuesCount,
 					providedReturnValuesCount));
 
 		for (int i = 0; i < providedReturnValuesCount; ++i) {
 			ASTExpression *currentExp = providedReturnValues[i];
 			if (IsExpressionAType(context, currentExp))
-				LogError(context, currentExp->any.loc, "Trying to return a type"_s);
+				LogError(context->global, currentExp->any.loc, "Trying to return a type"_s);
 
 			TypeCheckResult typeCheckResult = CheckTypesMatchAndSpecialize(context,
-					jobData->currentReturnTypes[i], currentExp);
+					context->currentReturnTypes[i], currentExp);
 			currentExp->typeTableIdx = typeCheckResult.rightTypeIdx;
 			if (typeCheckResult.errorCode != TYPECHECK_COOL) {
 				ReportTypeCheckError(context, typeCheckResult.errorCode, currentExp->any.loc,
-						typeCheckResult.rightTypeIdx, jobData->currentReturnTypes[i]);
+						typeCheckResult.rightTypeIdx, context->currentReturnTypes[i]);
 			}
 		}
 	} break;
@@ -3848,7 +3761,7 @@ void TypeCheckExpression(Context *context, ASTExpression *expression)
 
 			u32 variableTypeIdx = scopeName.variableInfo.typeTableIdx;
 			if (variableTypeIdx == TYPETABLEIDX_Unset)
-				LogError(context, expression->any.loc, TPrintF("COMPILER ERROR! Variable "
+				LogError(context->global, expression->any.loc, TPrintF("COMPILER ERROR! Variable "
 								"\"%S\" not type checked", string));
 
 			expression->typeTableIdx = variableTypeIdx;
@@ -3866,7 +3779,7 @@ void TypeCheckExpression(Context *context, ASTExpression *expression)
 		case NAMETYPE_STATIC_DEFINITION:
 		{
 			expression->identifier.staticDefinitionIdx = scopeName.staticDefinitionIdx;
-			StaticDefinition staticDefinition = TCGetStaticDefinition(context,
+			StaticDefinition staticDefinition = GetStaticDefinition(context,
 					scopeName.staticDefinitionIdx, true);
 			expression->typeTableIdx = staticDefinition.typeTableIdx;
 		} break;
@@ -3883,9 +3796,8 @@ void TypeCheckExpression(Context *context, ASTExpression *expression)
 		ASTExpression *usingExp = expression->usingNode.expression;
 		TypeCheckExpression(context, usingExp);
 
-		if (usingExp->nodeType == ASTNODETYPE_VARIABLE_DECLARATION)
-		{
-			ASTExpression *varExp = TCNewTreeNode(context);
+		if (usingExp->nodeType == ASTNODETYPE_VARIABLE_DECLARATION) {
+			ASTExpression *varExp = TCNewTreeNode();
 			ASSERT(usingExp->variableDeclaration.nameCount == 1);
 			{
 				ASTExpression e = {};
@@ -3895,10 +3807,10 @@ void TypeCheckExpression(Context *context, ASTExpression *expression)
 				e.identifier.valueIdx = usingExp->variableDeclaration.valueIdx;
 				*varExp = e;
 			}
-			AddStructMembersToScope(context, usingExp->any.loc, varExp);
+			TCAddStructMembersToScope(context, usingExp->any.loc, varExp);
 		}
 		else
-			AddStructMembersToScope(context, usingExp->any.loc, usingExp);
+			TCAddStructMembersToScope(context, usingExp->any.loc, usingExp);
 	} break;
 	case ASTNODETYPE_PROCEDURE_CALL:
 	{
@@ -3916,31 +3828,31 @@ void TypeCheckExpression(Context *context, ASTExpression *expression)
 			TCScopeName scopeName = TCFindScopeName(context, astProcCall->loc, procName);
 			if (scopeName.type == NAMETYPE_STATIC_DEFINITION) {
 				callType = CALLTYPE_STATIC;
-				StaticDefinition staticDefinition = TCGetStaticDefinition(context,
+				StaticDefinition staticDefinition = GetStaticDefinition(context,
 						scopeName.staticDefinitionIdx, false);
 
 				if (staticDefinition.definitionType != STATICDEFINITIONTYPE_PROCEDURE)
-					LogError(context, expression->any.loc, "Calling a non-procedure"_s);
+					LogError(context->global, expression->any.loc, "Calling a non-procedure"_s);
 
 				procedureIdx = staticDefinition.procedureIdx;
-				Procedure proc = GetProcedureRead(context, procedureIdx);
+				Procedure proc = GetProcedureRead(context->global, procedureIdx);
 				if ((proc.isInline || astProcCall->inlineType == CALLINLINETYPE_ALWAYS_INLINE) &&
 						astProcCall->inlineType != CALLINLINETYPE_NEVER_INLINE) {
 
-					TCCheckForCyclicInlineCalls(context, astProcExp->any.loc,
-							jobData->currentProcedureIdx, procedureIdx);
+					TCCheckForCyclicInlineCalls(context->global, astProcExp->any.loc,
+							context->currentProcedureIdx, procedureIdx);
 
 					// We need the whole body type checked
 					if (!proc.isBodyTypeChecked) {
-						auto procedures = context->procedures.GetForRead();
+						auto procedures = context->global->procedures.GetForRead();
 						proc = procedures[procedureIdx];
 						if (!proc.isBodyTypeChecked) {
 							SwitchJob(context, YIELDREASON_PROC_BODY_NOT_READY, { .index = procedureIdx });
 							// Lock again!
-							SYSLockForRead(&context->procedures.rwLock);
+							SYSLockForRead(&context->global->procedures.rwLock);
 							proc = procedures[procedureIdx];
 							if (!proc.isBodyTypeChecked)
-								LogCompilerError(context, expression->any.loc, "Bad job resume"_s);
+								LogCompilerError(context->global, expression->any.loc, "Bad job resume"_s);
 						}
 					}
 				}
@@ -3949,8 +3861,8 @@ void TypeCheckExpression(Context *context, ASTExpression *expression)
 		}
 
 		if (procedureTypeIdx == TYPETABLEIDX_Unset)
-			LogCompilerError(context, astProcExp->any.loc, TPrintF("Procedure \"%S\" not type "
-						"checked", GetProcedureRead(context, procedureIdx).name));
+			LogCompilerError(context->global, astProcExp->any.loc, TPrintF("Procedure \"%S\" not type "
+						"checked", GetProcedureRead(context->global, procedureIdx).name));
 		ASSERT(GetTypeInfo(context, procedureTypeIdx).typeCategory == TYPECATEGORY_PROCEDURE);
 
 		s64 givenArguments = astProcCall->arguments.size;
@@ -3985,18 +3897,18 @@ void TypeCheckExpression(Context *context, ASTExpression *expression)
 		s64 totalArguments = procTypeInfo.parameters.size;
 		if (procTypeInfo.isVarargs) {
 			if (requiredArguments > givenArguments)
-				LogError(context, astProcExp->any.loc,
+				LogError(context->global, astProcExp->any.loc,
 						TPrintF("Procedure%S needs at least %d arguments but only %d were given",
 							errorProcedureName, requiredArguments, givenArguments));
 		}
 		else {
 			if (requiredArguments > givenArguments)
-				LogError(context, astProcExp->any.loc,
+				LogError(context->global, astProcExp->any.loc,
 						TPrintF("Procedure%S needs at least %d arguments but only %d were given",
 						errorProcedureName, requiredArguments, givenArguments));
 
 			if (givenArguments > totalArguments)
-				LogError(context, astProcExp->any.loc,
+				LogError(context->global, astProcExp->any.loc,
 						TPrintF("Procedure%S needs %d arguments but %d were given",
 						errorProcedureName, totalArguments, givenArguments));
 		}
@@ -4012,7 +3924,7 @@ void TypeCheckExpression(Context *context, ASTExpression *expression)
 			if (typeCheckResult.errorCode != TYPECHECK_COOL) {
 				String paramStr = TypeInfoToString(context, paramTypeIdx);
 				String givenStr = TypeInfoToString(context, arg->typeTableIdx);
-				LogError(context, arg->any.loc, TPrintF("When calling procedure%S: type of "
+				LogError(context->global, arg->any.loc, TPrintF("When calling procedure%S: type of "
 							"parameter #%d didn't match (parameter is %S but %S was given)",
 							errorProcedureName, argIdx, paramStr, givenStr));
 			}
@@ -4034,7 +3946,7 @@ void TypeCheckExpression(Context *context, ASTExpression *expression)
 		TypeCheckExpression(context, input);
 
 		if (IsExpressionAType(context, input))
-			LogError(context, input->any.loc, "Input of unary operator is a type"_s);
+			LogError(context->global, input->any.loc, "Input of unary operator is a type"_s);
 
 		if (TCIsPrimitiveOperation(context, expression->unaryOperation.op, input->typeTableIdx)) {
 			u32 expressionType = input->typeTableIdx;
@@ -4045,14 +3957,14 @@ void TypeCheckExpression(Context *context, ASTExpression *expression)
 				TypeCheckErrorCode typeCheckResult = CheckTypesMatch(context, TYPETABLEIDX_BOOL,
 						expressionType);
 				if (typeCheckResult != TYPECHECK_COOL)
-					LogError(context, expression->any.loc, "Expression can't be cast to boolean"_s);
+					LogError(context->global, expression->any.loc, "Expression can't be cast to boolean"_s);
 				expression->typeTableIdx = TYPETABLEIDX_BOOL;
 			} break;
 			case TOKEN_OP_POINTER_TO:
 			{
 				// Forbid pointer to temporal values
 				if (IsTemporalValue(input))
-					LogError(context, expression->any.loc, "Trying to get pointer to temporal value"_s);
+					LogError(context->global, expression->any.loc, "Trying to get pointer to temporal value"_s);
 
 				ASTExpression *e = input;
 				switch (e->nodeType) {
@@ -4069,7 +3981,7 @@ void TypeCheckExpression(Context *context, ASTExpression *expression)
 			{
 				TypeInfo expressionTypeInfo = GetTypeInfo(context, expressionType);
 				if (expressionTypeInfo.typeCategory != TYPECATEGORY_POINTER)
-					LogError(context, expression->any.loc, "Trying to dereference a non pointer"_s);
+					LogError(context->global, expression->any.loc, "Trying to dereference a non pointer"_s);
 				expression->typeTableIdx = expressionTypeInfo.pointerInfo.pointedTypeTableIdx;
 			} break;
 			default:
@@ -4079,7 +3991,7 @@ void TypeCheckExpression(Context *context, ASTExpression *expression)
 			};
 		}
 		else {
-			bool found = LookForOperatorOverload(context, expression);
+			bool found = TCLookForOperatorOverload(context, expression);
 			ASSERT(found);
 		}
 	} break;
@@ -4092,17 +4004,17 @@ void TypeCheckExpression(Context *context, ASTExpression *expression)
 			TypeCheckExpression(context, leftHand);
 
 			if (IsExpressionAType(context, leftHand))
-				LogError(context, leftHand->any.loc, "Left hand of member access operator is a type"_s);
+				LogError(context->global, leftHand->any.loc, "Left hand of member access operator is a type"_s);
 
 			u32 leftHandTypeIdx = leftHand->typeTableIdx;
 
 			if (rightHand->nodeType != ASTNODETYPE_IDENTIFIER)
-				LogError(context, rightHand->any.loc, "Expected identifier after member access operator"_s);
+				LogError(context->global, rightHand->any.loc, "Expected identifier after member access operator"_s);
 
 			rightHand->identifier.type = NAMETYPE_STRUCT_MEMBER;
 
 			// Get rid of aliases
-			u32 structTypeIdx = StripImplicitlyCastAliases(context, leftHandTypeIdx);
+			u32 structTypeIdx = StripImplicitlyCastAliases(context->global, leftHandTypeIdx);
 
 			TypeInfo structTypeInfo = GetTypeInfo(context, structTypeIdx);
 
@@ -4114,13 +4026,13 @@ void TypeCheckExpression(Context *context, ASTExpression *expression)
 			if (structTypeInfo.typeCategory == TYPECATEGORY_ARRAY) {
 				// This is only for dynamic size arrays!
 				if (structTypeInfo.arrayInfo.count != 0)
-					LogError(context, expression->any.loc, "Array left of '.' has to be of dynamic size! ([])"_s);
+					LogError(context->global, expression->any.loc, "Array left of '.' has to be of dynamic size! ([])"_s);
 
 				structTypeInfo = GetTypeInfo(context, TYPETABLEIDX_ARRAY_STRUCT);
 			}
 			else if (structTypeInfo.typeCategory != TYPECATEGORY_STRUCT &&
 					 structTypeInfo.typeCategory != TYPECATEGORY_UNION) {
-				LogError(context, expression->any.loc, "Left of '.' has to be a struct/union"_s);
+				LogError(context->global, expression->any.loc, "Left of '.' has to be a struct/union"_s);
 			}
 
 			String memberName = rightHand->identifier.string;
@@ -4131,7 +4043,7 @@ void TypeCheckExpression(Context *context, ASTExpression *expression)
 				expression->typeTableIdx = foundMember->typeTableIdx;
 			}
 			else
-				LogError(context, expression->any.loc, TPrintF("\"%S\" is not a member of \"%S\"",
+				LogError(context->global, expression->any.loc, TPrintF("\"%S\" is not a member of \"%S\"",
 						memberName, TypeInfoToString(context, structTypeIdx)));
 		}
 		else if (expression->binaryOperation.op == TOKEN_OP_ARRAY_ACCESS)
@@ -4140,9 +4052,9 @@ void TypeCheckExpression(Context *context, ASTExpression *expression)
 			TypeCheckExpression(context, rightHand);
 
 			if (IsExpressionAType(context, leftHand))
-				LogError(context, leftHand->any.loc, "Input of array access is a type"_s);
+				LogError(context->global, leftHand->any.loc, "Input of array access is a type"_s);
 			if (IsExpressionAType(context, rightHand))
-				LogError(context, rightHand->any.loc, "Index of array access is a type"_s);
+				LogError(context->global, rightHand->any.loc, "Index of array access is a type"_s);
 
 			u32 arrayType = leftHand->typeTableIdx;
 			TypeInfo arrayTypeInfo = GetTypeInfo(context, arrayType);
@@ -4160,7 +4072,7 @@ void TypeCheckExpression(Context *context, ASTExpression *expression)
 			else
 			{
 				if (arrayTypeInfo.typeCategory != TYPECATEGORY_ARRAY)
-					LogError(context, leftHand->any.loc,
+					LogError(context->global, leftHand->any.loc,
 							"Expression does not evaluate to an array"_s);
 				expression->typeTableIdx = arrayTypeInfo.arrayInfo.elementTypeTableIdx;
 			}
@@ -4170,9 +4082,9 @@ void TypeCheckExpression(Context *context, ASTExpression *expression)
 			TypeCheckExpression(context, rightHand);
 
 			if (IsExpressionAType(context, leftHand))
-				LogError(context, leftHand->any.loc, "Left hand of binary operator is a type"_s);
+				LogError(context->global, leftHand->any.loc, "Left hand of binary operator is a type"_s);
 			if (IsExpressionAType(context, rightHand))
-				LogError(context, rightHand->any.loc, "Right hand of binary operator is a type"_s);
+				LogError(context->global, rightHand->any.loc, "Right hand of binary operator is a type"_s);
 
 			if (leftHand->nodeType == ASTNODETYPE_MULTIPLE_EXPRESSIONS) {
 				u64 leftHandCount = leftHand->multipleExpressions.array.size;
@@ -4184,7 +4096,7 @@ void TypeCheckExpression(Context *context, ASTExpression *expression)
 					ArrayView<u32> returnTypeIndices =
 						GetTypeInfo(context, procTypeIdx).procedureInfo.returnTypeIndices;
 					if (leftHandCount != returnTypeIndices.size)
-						LogError(context, expression->any.loc, TPrintF("Left hand expression has %d "
+						LogError(context->global, expression->any.loc, TPrintF("Left hand expression has %d "
 									"values, but right hand has %d", leftHandCount, returnTypeIndices.size));
 
 					for (int i = 0; i < leftHandCount; ++i) {
@@ -4193,7 +4105,7 @@ void TypeCheckExpression(Context *context, ASTExpression *expression)
 						if (tcResult.errorCode != TYPECHECK_COOL) {
 							String leftStr =  TypeInfoToString(context, leftHand->multipleExpressions.array[i]->typeTableIdx);
 							String rightStr = TypeInfoToString(context, returnTypeIndices[i]);
-							LogError(context, expression->any.loc, TPrintF("Type mismatch on input "
+							LogError(context->global, expression->any.loc, TPrintF("Type mismatch on input "
 										"number %d of operator %S (left hand is \"%S\" and right hand is \"%S\")",
 										i, OperatorToString(expression->binaryOperation.op), leftStr, rightStr));
 						}
@@ -4203,16 +4115,17 @@ void TypeCheckExpression(Context *context, ASTExpression *expression)
 				else {
 					// Check both sides' expressions against each other.
 					if (rightHand->nodeType != ASTNODETYPE_MULTIPLE_EXPRESSIONS)
-						LogError(context, expression->any.loc, TPrintF("Left hand expression has %d "
+						LogError(context->global, expression->any.loc, TPrintF("Left hand expression has %d "
 									"values, but right hand has 1", leftHandCount));
 
 					u64 rightHandCount = rightHand->multipleExpressions.array.size;
 					if (leftHandCount != rightHandCount)
-						LogError(context, expression->any.loc, TPrintF("Left hand expression has %d "
+						LogError(context->global, expression->any.loc, TPrintF("Left hand expression has %d "
 									"values, but right hand has %d", leftHandCount, rightHandCount));
 
 					for (int i = 0; i < leftHandCount; ++i) {
-						TypeCheckResult typeCheckResult = CheckTypesMatchAndSpecialize(context,
+						TypeCheckResult typeCheckResult =
+							CheckTypesMatchAndSpecialize(context,
 								leftHand->multipleExpressions.array[i]->typeTableIdx,
 								rightHand->multipleExpressions.array[i]);
 						leftHand->multipleExpressions.array[i]->typeTableIdx  = typeCheckResult.leftTypeIdx;
@@ -4222,7 +4135,7 @@ void TypeCheckExpression(Context *context, ASTExpression *expression)
 						{
 							String leftStr =  TypeInfoToString(context, typeCheckResult.leftTypeIdx);
 							String rightStr = TypeInfoToString(context, typeCheckResult.rightTypeIdx);
-							LogError(context, expression->any.loc, TPrintF("Type mismatch on input "
+							LogError(context->global, expression->any.loc, TPrintF("Type mismatch on input "
 										"number %d of operator %S (left hand is \"%S\" and right hand is \"%S\")",
 										i, OperatorToString(expression->binaryOperation.op), leftStr, rightStr));
 						}
@@ -4231,7 +4144,7 @@ void TypeCheckExpression(Context *context, ASTExpression *expression)
 			}
 			else {
 				if (rightHand->nodeType == ASTNODETYPE_MULTIPLE_EXPRESSIONS)
-					LogError(context, expression->any.loc, TPrintF("Left hand expression has 1 "
+					LogError(context->global, expression->any.loc, TPrintF("Left hand expression has 1 "
 								"value, but right hand has %d",
 								rightHand->multipleExpressions.array.size));
 
@@ -4243,7 +4156,7 @@ void TypeCheckExpression(Context *context, ASTExpression *expression)
 				if (typeCheckResult.errorCode != TYPECHECK_COOL) {
 					String leftStr =  TypeInfoToString(context, leftHand->typeTableIdx);
 					String rightStr = TypeInfoToString(context, rightHand->typeTableIdx);
-					LogError(context, expression->any.loc, TPrintF("Type mismatch on inputs of "
+					LogError(context->global, expression->any.loc, TPrintF("Type mismatch on inputs of "
 								"operator %S (left hand is \"%S\" and right hand is \"%S\")",
 								OperatorToString(expression->binaryOperation.op),
 								leftStr, rightStr));
@@ -4255,9 +4168,9 @@ void TypeCheckExpression(Context *context, ASTExpression *expression)
 			TypeCheckExpression(context, rightHand);
 
 			if (IsExpressionAType(context, leftHand))
-				LogError(context, leftHand->any.loc, "Left hand of binary operator is a type"_s);
+				LogError(context->global, leftHand->any.loc, "Left hand of binary operator is a type"_s);
 			if (IsExpressionAType(context, rightHand))
-				LogError(context, rightHand->any.loc, "Right hand of binary operator is a type"_s);
+				LogError(context->global, rightHand->any.loc, "Right hand of binary operator is a type"_s);
 
 			if (TCIsPrimitiveOperation(context, expression->binaryOperation.op,
 						leftHand->typeTableIdx, rightHand->typeTableIdx)) {
@@ -4278,7 +4191,7 @@ void TypeCheckExpression(Context *context, ASTExpression *expression)
 					{
 						String leftStr =  TypeInfoToString(context, leftHand->typeTableIdx);
 						String rightStr = TypeInfoToString(context, rightHand->typeTableIdx);
-						LogError(context, expression->any.loc, TPrintF("Type mismatch on inputs of "
+						LogError(context->global, expression->any.loc, TPrintF("Type mismatch on inputs of "
 									"operator %S (left hand is \"%S\" and right hand is \"%S\")",
 									OperatorToString(expression->binaryOperation.op),
 									leftStr, rightStr));
@@ -4286,28 +4199,27 @@ void TypeCheckExpression(Context *context, ASTExpression *expression)
 				} break;
 				case TOKEN_OP_RANGE:
 				{
-					if (typeCheckResult.errorCode != TYPECHECK_COOL)
-					{
+					if (typeCheckResult.errorCode != TYPECHECK_COOL) {
 						String leftStr =  TypeInfoToString(context, leftHand->typeTableIdx);
 						String rightStr = TypeInfoToString(context, rightHand->typeTableIdx);
-						LogError(context, expression->any.loc, TPrintF("Invalid types on inputs of "
+						LogError(context->global, expression->any.loc, TPrintF("Invalid types on inputs of "
 									"operator %S (left hand is \"%S\" and right hand is \"%S\")",
 									OperatorToString(expression->binaryOperation.op),
 									leftStr, rightStr));
 					}
 
 					// Both operands have to be integers
-					TypeCategory leftCat = GetTypeInfo(context, StripAllAliases(context,
-							leftHand->typeTableIdx)).typeCategory;
+					TypeCategory leftCat = GetTypeInfo(context,
+							StripAllAliases(context->global, leftHand->typeTableIdx)).typeCategory;
 					if (leftCat != TYPECATEGORY_INTEGER)
-						LogError(context, leftHand->any.loc, TPrintF("Left hand of .. operator "
+						LogError(context->global, leftHand->any.loc, TPrintF("Left hand of .. operator "
 									"does not evaluate to an integer (%S)",
 									TypeInfoToString(context, leftHand->typeTableIdx)));
 
-					TypeCategory rightCat = GetTypeInfo(context, StripAllAliases(context,
-							rightHand->typeTableIdx)).typeCategory;
+					TypeCategory rightCat = GetTypeInfo(context,
+							StripAllAliases(context->global, rightHand->typeTableIdx)).typeCategory;
 					if (rightCat != TYPECATEGORY_INTEGER)
-						LogError(context, rightHand->any.loc, TPrintF("Right hand of .. operator "
+						LogError(context->global, rightHand->any.loc, TPrintF("Right hand of .. operator "
 									"does not evaluate to an integer (%S)",
 									TypeInfoToString(context, typeCheckResult.rightTypeIdx)));
 				} break;
@@ -4317,7 +4229,7 @@ void TypeCheckExpression(Context *context, ASTExpression *expression)
 					{
 						String leftStr =  TypeInfoToString(context, leftHand->typeTableIdx);
 						String rightStr = TypeInfoToString(context, rightHand->typeTableIdx);
-						LogError(context, expression->any.loc, TPrintF("Type mismatch on inputs of "
+						LogError(context->global, expression->any.loc, TPrintF("Type mismatch on inputs of "
 									"operator %S (left hand is \"%S\" and right hand is \"%S\")",
 									OperatorToString(expression->binaryOperation.op),
 									leftStr, rightStr));
@@ -4345,19 +4257,19 @@ void TypeCheckExpression(Context *context, ASTExpression *expression)
 					{
 						String leftStr =  TypeInfoToString(context, leftHand->typeTableIdx);
 						String rightStr = TypeInfoToString(context, rightHand->typeTableIdx);
-						LogError(context, expression->any.loc, TPrintF("Type mismatch on inputs of "
+						LogError(context->global, expression->any.loc, TPrintF("Type mismatch on inputs of "
 									"operator %S (left hand is \"%S\" and right hand is \"%S\")",
 									OperatorToString(expression->binaryOperation.op),
 									leftStr, rightStr));
 					}
 
-					TypeCategory leftCat  = GetTypeInfo(context, StripAllAliases(context,
-							leftHand->typeTableIdx)).typeCategory;
+					TypeCategory leftCat  = GetTypeInfo(context,
+							StripAllAliases(context->global, leftHand->typeTableIdx)).typeCategory;
 					if (leftCat != TYPECATEGORY_INTEGER &&
 						leftCat != TYPECATEGORY_FLOATING &&
 						leftCat != TYPECATEGORY_ENUM &&
 						leftCat != TYPECATEGORY_POINTER)
-						LogError(context, expression->any.loc, TPrintF("Invalid types on inputs of "
+						LogError(context->global, expression->any.loc, TPrintF("Invalid types on inputs of "
 									"operator %S (left hand is \"%S\"",
 									OperatorToString(expression->binaryOperation.op),
 									TypeInfoToString(context, leftHand->typeTableIdx)));
@@ -4368,17 +4280,17 @@ void TypeCheckExpression(Context *context, ASTExpression *expression)
 					{
 						String leftStr =  TypeInfoToString(context, leftHand->typeTableIdx);
 						String rightStr = TypeInfoToString(context, rightHand->typeTableIdx);
-						LogError(context, expression->any.loc, TPrintF("Type mismatch on inputs of "
+						LogError(context->global, expression->any.loc, TPrintF("Type mismatch on inputs of "
 									"operator %S (left hand is \"%S\" and right hand is \"%S\")",
 									OperatorToString(expression->binaryOperation.op),
 									leftStr, rightStr));
 					}
 
-					TypeCategory leftCat  = GetTypeInfo(context, StripAllAliases(context,
-							leftHand->typeTableIdx)).typeCategory;
+					TypeCategory leftCat  = GetTypeInfo(context,
+							StripAllAliases(context->global, leftHand->typeTableIdx)).typeCategory;
 					if (leftCat != TYPECATEGORY_INTEGER &&
 						leftCat != TYPECATEGORY_FLOATING)
-						LogError(context, expression->any.loc, TPrintF("Invalid types on inputs of "
+						LogError(context->global, expression->any.loc, TPrintF("Invalid types on inputs of "
 									"operator %S (left hand is \"%S\")",
 									OperatorToString(expression->binaryOperation.op),
 									TypeInfoToString(context, leftHand->typeTableIdx)));
@@ -4403,7 +4315,7 @@ void TypeCheckExpression(Context *context, ASTExpression *expression)
 				};
 			}
 			else {
-				bool found = LookForOperatorOverload(context, expression);
+				bool found = TCLookForOperatorOverload(context, expression);
 				ASSERT(found);
 			}
 		}
@@ -4436,7 +4348,7 @@ void TypeCheckExpression(Context *context, ASTExpression *expression)
 					ASTExpression *rightExp = memberExp->binaryOperation.rightHand;
 
 					if (leftExp->nodeType != ASTNODETYPE_IDENTIFIER)
-						LogError(context, leftExp->any.loc, "Expected identifier before '='"_s);
+						LogError(context->global, leftExp->any.loc, "Expected identifier before '='"_s);
 
 					TypeCheckExpression(context, rightExp);
 				}
@@ -4460,7 +4372,7 @@ void TypeCheckExpression(Context *context, ASTExpression *expression)
 		TypeCheckErrorCode typeCheckResult = CheckTypesMatch(context, TYPETABLEIDX_BOOL,
 				conditionType);
 		if (typeCheckResult != TYPECHECK_COOL)
-			LogError(context, expression->any.loc, "If condition doesn't evaluate to a boolean"_s);
+			LogError(context->global, expression->any.loc, "If condition doesn't evaluate to a boolean"_s);
 
 		TypeCheckExpression(context, expression->ifNode.body);
 
@@ -4475,11 +4387,11 @@ void TypeCheckExpression(Context *context, ASTExpression *expression)
 		TypeCheckErrorCode typeCheckResult = CheckTypesMatch(context, TYPETABLEIDX_BOOL,
 				conditionType);
 		if (typeCheckResult != TYPECHECK_COOL)
-			LogError(context, expression->any.loc, "If condition doesn't evaluate to a boolean"_s);
+			LogError(context->global, expression->any.loc, "If condition doesn't evaluate to a boolean"_s);
 
 		Constant conditionResult = TryEvaluateConstant(context, expression->ifStaticNode.condition);
 		if (conditionResult.type == CONSTANTTYPE_INVALID)
-			LogError(context, expression->ifStaticNode.condition->any.loc,
+			LogError(context->global, expression->ifStaticNode.condition->any.loc,
 					"Failed to evaluate static if condition"_s);
 
 		bool evaluatesToTrue = conditionResult.valueAsInt != 0;
@@ -4499,7 +4411,7 @@ void TypeCheckExpression(Context *context, ASTExpression *expression)
 		TypeCheckErrorCode typeCheckResult = CheckTypesMatch(context, TYPETABLEIDX_BOOL,
 				conditionType);
 		if (typeCheckResult != TYPECHECK_COOL)
-			LogError(context, expression->any.loc, "While condition doesn't evaluate to a boolean"_s);
+			LogError(context->global, expression->any.loc, "While condition doesn't evaluate to a boolean"_s);
 
 		TypeCheckExpression(context, expression->whileNode.body);
 	} break;
@@ -4543,7 +4455,7 @@ void TypeCheckExpression(Context *context, ASTExpression *expression)
 					rangeTypeInfo = GetTypeInfo(context, rangeTypeInfo.pointerInfo.pointedTypeTableIdx);
 
 				if (rangeTypeInfo.typeCategory != TYPECATEGORY_ARRAY)
-					LogError(context, astFor->range->any.loc, "'for' range "
+					LogError(context->global, astFor->range->any.loc, "'for' range "
 							"expression does not evaluate to an array nor is it a number range "
 							"(..)"_s);
 				elementTypeTableIdx = rangeTypeInfo.arrayInfo.elementTypeTableIdx;
@@ -4562,13 +4474,13 @@ void TypeCheckExpression(Context *context, ASTExpression *expression)
 		}
 		TCAddScopeNames(context, scopeNamesToAdd);
 
-		u32 oldForArray = jobData->currentForLoopArrayType;
-		jobData->currentForLoopArrayType = astFor->range->typeTableIdx;
+		u32 oldForArray = context->currentForLoopArrayType;
+		context->currentForLoopArrayType = astFor->range->typeTableIdx;
 
 		TypeCheckExpression(context, astFor->body);
 
 		// Important to restore whether we yield or not!
-		jobData->currentForLoopArrayType = oldForArray;
+		context->currentForLoopArrayType = oldForArray;
 
 		TCPopScope(context);
 	} break;
@@ -4578,9 +4490,9 @@ void TypeCheckExpression(Context *context, ASTExpression *expression)
 	} break;
 	case ASTNODETYPE_REMOVE:
 	{
-		TypeInfo forArrayType = GetTypeInfo(context, jobData->currentForLoopArrayType);
+		TypeInfo forArrayType = GetTypeInfo(context, context->currentForLoopArrayType);
 		if (forArrayType.typeCategory != TYPECATEGORY_ARRAY || forArrayType.arrayInfo.count != 0)
-			LogError(context, expression->any.loc, "'remove' found but there wasn't a for loop "
+			LogError(context->global, expression->any.loc, "'remove' found but there wasn't a for loop "
 					"with a dynamic sized array as range"_s);
 	} break;
 	case ASTNODETYPE_TYPE:
@@ -4616,8 +4528,7 @@ void TypeCheckExpression(Context *context, ASTExpression *expression)
 	} break;
 	case ASTNODETYPE_INTRINSIC:
 	{
-		if (expression->intrinsic.type == INTRINSIC_UNSET)
-		{
+		if (expression->intrinsic.type == INTRINSIC_UNSET) {
 			if (StringEquals(expression->intrinsic.name, "breakpoint"_s))
 				expression->intrinsic.type = INTRINSIC_BREAKPOINT;
 			else if (StringEquals(expression->intrinsic.name, "sqrt32"_s))
@@ -4625,12 +4536,11 @@ void TypeCheckExpression(Context *context, ASTExpression *expression)
 			else if (StringEquals(expression->intrinsic.name, "sqrt64"_s))
 				expression->intrinsic.type = INTRINSIC_SQRT64;
 			else
-				LogError(context, expression->any.loc, "Invalid compiler intrinsic"_s);
+				LogError(context->global, expression->any.loc, "Invalid compiler intrinsic"_s);
 		}
 
 		FixedArray<u32, 4> argTypes;
-		switch (expression->intrinsic.type)
-		{
+		switch (expression->intrinsic.type) {
 		case INTRINSIC_BREAKPOINT:
 		{
 			argTypes.size = 0;
@@ -4652,20 +4562,18 @@ void TypeCheckExpression(Context *context, ASTExpression *expression)
 		}
 
 		if (expression->intrinsic.arguments.size > ArrayCount(argTypes))
-			LogError(context, expression->any.loc, "Too many arguments for intrinsic"_s);
-		for (int argIdx = 0; argIdx < expression->intrinsic.arguments.size; ++argIdx)
-		{
+			LogError(context->global, expression->any.loc, "Too many arguments for intrinsic"_s);
+		for (int argIdx = 0; argIdx < expression->intrinsic.arguments.size; ++argIdx) {
 			ASTExpression *arg = &expression->intrinsic.arguments[argIdx];
 			TypeCheckExpression(context, arg);
 			TypeCheckResult typeCheckResult = CheckTypesMatchAndSpecialize(context,
 					argTypes[argIdx], arg);
 			arg->typeTableIdx = typeCheckResult.rightTypeIdx;
 
-			if (typeCheckResult.errorCode != TYPECHECK_COOL)
-			{
+			if (typeCheckResult.errorCode != TYPECHECK_COOL) {
 				String paramStr = TypeInfoToString(context, argTypes[argIdx]);
 				String givenStr = TypeInfoToString(context, arg->typeTableIdx);
-				LogError(context, arg->any.loc, TPrintF("When calling intrinsic \"%S\": type of "
+				LogError(context->global, arg->any.loc, TPrintF("When calling intrinsic \"%S\": type of "
 							"parameter #%d didn't match (parameter is %S but %S was given)",
 							expression->intrinsic.name, argIdx, paramStr, givenStr));
 			}
@@ -4676,21 +4584,17 @@ void TypeCheckExpression(Context *context, ASTExpression *expression)
 	{
 		ASTOperatorOverload *astOverload = &expression->operatorOverload;
 
-		BucketArray<Value, LinearAllocator, 256> oldLocalValues = jobData->localValues;
-		BucketArrayInit(&jobData->localValues);
-		*BucketArrayAdd(&jobData->localValues) = {}; // No value number 0?
-
-		DynamicArray<TCScope, ThreadAllocator> oldScopeStack = jobData->scopeStack;
+		TCContext procedureContext = *context;
+		BucketArrayInit(&procedureContext.localValues);
+		*BucketArrayAdd(&procedureContext.localValues) = {}; // No value number 0?
 		// Don't allocate a new array if old is empty.
-		if (oldScopeStack.size)
-			DynamicArrayInit(&jobData->scopeStack, 8);
-
-		bool oldOnStaticContext = jobData->onStaticContext;
-		jobData->onStaticContext = false;
+		if (context->scopeStack.size)
+			DynamicArrayInit(&procedureContext.scopeStack, 8);
+		procedureContext.onStaticContext = false;
 
 		static u64 overloadUniqueId = 0;
 
-		TypeCheckProcedurePrototype(context, &astOverload->prototype);
+		TypeCheckProcedurePrototype(&procedureContext, &astOverload->prototype);
 		TypeInfo t = TypeInfoFromASTProcedurePrototype(context, &astOverload->prototype);
 
 		u32 typeTableIdx = FindOrAddTypeTableIdx(context, t);
@@ -4706,53 +4610,48 @@ void TypeCheckExpression(Context *context, ASTExpression *expression)
 		p.isInline = astOverload->isInline;
 		p.astPrototype = astOverload->prototype;
 		DynamicArrayInit(&p.parameterValues, 4);
-		overload.procedureIdx = NewProcedure(context, p, false);
+		overload.procedureIdx = NewProcedure(context->global, p, false);
 
 		astOverload->procedureIdx = overload.procedureIdx;
 
-		TCPushScope(context);
+		TCPushScope(&procedureContext);
 
-		Procedure procedure = GetProcedureRead(context, astOverload->procedureIdx);
+		Procedure procedure = GetProcedureRead(context->global, astOverload->procedureIdx);
 
 		// Return values
 		u64 returnValueCount = astOverload->prototype.returnTypeIndices.size;
-		if (returnValueCount)
-		{
+		if (returnValueCount) {
 			ArrayInit(&procedure.returnValueIndices, returnValueCount);
-			for (int i = 0; i < returnValueCount; ++i)
-			{
+			for (int i = 0; i < returnValueCount; ++i) {
 				u32 returnType = astOverload->prototype.returnTypeIndices[i];
-				*ArrayAdd(&procedure.returnValueIndices) = TCNewValue(context, "_returnValue"_s, returnType, 0);
+				*ArrayAdd(&procedure.returnValueIndices) = TCNewValue(&procedureContext, "_returnValue"_s, returnType, 0);
 			}
 		}
 
 		// Parameters
 		u64 paramCount = astOverload->prototype.astParameters.size;
-		if (paramCount == 0)
-		{
-			LogError(context, expression->any.loc, TPrintF(
+		if (paramCount == 0) {
+			LogError(context->global, expression->any.loc, TPrintF(
 					"No parameters provided on overload for operator %S.",
 					OperatorToString(astOverload->op)));
 		}
-		else if (paramCount == 1)
-		{
+		else if (paramCount == 1) {
 			if (astOverload->op != TOKEN_OP_NOT &&
 				astOverload->op != TOKEN_OP_BITWISE_NOT &&
 				astOverload->op != TOKEN_OP_MINUS)
-				LogError(context, expression->any.loc, TPrintF(
+				LogError(context->global, expression->any.loc, TPrintF(
 							"Only 1 parameter is present on overload for operator %S. "
 							"Expected 2.", OperatorToString(astOverload->op)));
 
 			// No overloading builtin operations
 			u32 inputHandTypeIdx = astOverload->prototype.astParameters[0].typeTableIdx;
 			if (TCIsPrimitiveOperation(context, astOverload->op, inputHandTypeIdx))
-				LogError(context, expression->any.loc, "Overloading a vanilla operation is forbidden"_s);
+				LogError(context->global, expression->any.loc, "Overloading a vanilla operation is forbidden"_s);
 		}
-		else if (paramCount == 2)
-		{
+		else if (paramCount == 2) {
 			if (astOverload->op == TOKEN_OP_NOT ||
 				astOverload->op == TOKEN_OP_BITWISE_NOT)
-				LogError(context, expression->any.loc, TPrintF(
+				LogError(context->global, expression->any.loc, TPrintF(
 							"2 parameters found on overload for operator %S. "
 							"Expected 1.", OperatorToString(astOverload->op)));
 
@@ -4760,96 +4659,80 @@ void TypeCheckExpression(Context *context, ASTExpression *expression)
 			u32 leftHandTypeIdx  = astOverload->prototype.astParameters[0].typeTableIdx;
 			u32 rightHandTypeIdx = astOverload->prototype.astParameters[1].typeTableIdx;
 			if (TCIsPrimitiveOperation(context, astOverload->op, leftHandTypeIdx, rightHandTypeIdx))
-				LogError(context, expression->any.loc, "Overloading a vanilla operation is forbidden"_s);
+				LogError(context->global, expression->any.loc, "Overloading a vanilla operation is forbidden"_s);
 		}
-		else
-		{
-			LogError(context, expression->any.loc, TPrintF(
+		else {
+			LogError(context->global, expression->any.loc, TPrintF(
 					"Too many parameters provided on overload for operator %S.",
 					OperatorToString(astOverload->op)));
 		}
 
 		{
-			auto operatorOverloads = context->operatorOverloads.GetForWrite();
+			auto operatorOverloads = context->global->operatorOverloads.GetForWrite();
 			*DynamicArrayAdd(&operatorOverloads) = overload;
 		}
 
 		// Wake up any job waiting for this overload.
-		WakeUpAllByIndex(context, YIELDREASON_UNKNOWN_OVERLOAD, astOverload->op);
+		WakeUpAllByIndex(context->global, YIELDREASON_UNKNOWN_OVERLOAD, astOverload->op);
 		static_assert(offsetof(YieldContext, index) == offsetof(YieldContext, overload.op));
 		static_assert(  sizeof(YieldContext::index) ==   sizeof(YieldContext::overload.op));
 
-		for (int i = 0; i < paramCount; ++i)
-		{
+		for (int i = 0; i < paramCount; ++i) {
 			ASTProcedureParameter astParameter = astOverload->prototype.astParameters[i];
-			u32 paramValueIdx = TCNewValue(context, astParameter.name, astParameter.typeTableIdx, 0);
+			u32 paramValueIdx = TCNewValue(&procedureContext, astParameter.name, astParameter.typeTableIdx, 0);
 			*DynamicArrayAdd(&procedure.parameterValues) = paramValueIdx;
 		}
 		// Varargs array
 		ASSERT(!astOverload->prototype.isVarargs);
 
-		TCAddParametersToScope(context, procedure.parameterValues, &astOverload->prototype);
+		TCAddParametersToScope(&procedureContext, procedure.parameterValues, &astOverload->prototype);
 
-		if (astOverload->astBody)
-		{
-			u32 previousCurrentProcIdx = jobData->currentProcedureIdx;
-			jobData->currentProcedureIdx = astOverload->procedureIdx;
+		if (astOverload->astBody) {
+			procedureContext.currentProcedureIdx = astOverload->procedureIdx;
+			procedureContext.currentReturnTypes = t.procedureInfo.returnTypeIndices;
 
-			ArrayView<u32> previousReturnTypes = jobData->currentReturnTypes;
-			jobData->currentReturnTypes = t.procedureInfo.returnTypeIndices;
-
-			TypeCheckExpression(context, astOverload->astBody);
-
-			jobData->currentProcedureIdx = previousCurrentProcIdx;
-			jobData->currentReturnTypes = previousReturnTypes;
+			TypeCheckExpression(&procedureContext, astOverload->astBody);
 		}
 		procedure.isBodyTypeChecked = true;
 
-		UpdateProcedure(context, astOverload->procedureIdx, &procedure);
+		UpdateProcedure(context->global, astOverload->procedureIdx, &procedure);
 		// Wake up any jobs that were waiting for this procedure body
-		WakeUpAllByIndex(context, YIELDREASON_PROC_BODY_NOT_READY, astOverload->procedureIdx);
+		WakeUpAllByIndex(context->global, YIELDREASON_PROC_BODY_NOT_READY, astOverload->procedureIdx);
 
 		expression->typeTableIdx = procedure.typeTableIdx;
 
-		TCPopScope(context);
+		TCPopScope(&procedureContext);
 
 		// Check all paths return
 		if (astOverload->astBody && t.procedureInfo.returnTypeIndices.size) {
-			ReturnCheckResult result = CheckIfReturnsValue(context, astOverload->astBody);
+			ReturnCheckResult result = TCCheckIfReturnsValue(context->global, astOverload->astBody);
 			if (result == RETURNCHECKRESULT_SOMETIMES)
-				LogError(context, expression->any.loc, "Procedure doesn't always return a value"_s);
+				LogError(context->global, expression->any.loc, "Procedure doesn't always return a value"_s);
 			else if (result == RETURNCHECKRESULT_NEVER)
-				LogError(context, expression->any.loc, "Procedure has to return a value"_s);
+				LogError(context->global, expression->any.loc, "Procedure has to return a value"_s);
 		}
-
-		jobData->localValues = oldLocalValues;
-		if (oldScopeStack.size)
-			jobData->scopeStack = oldScopeStack;
-		else
-			jobData->scopeStack.size = 0;
-		jobData->onStaticContext = oldOnStaticContext;
 	} break;
 	case ASTNODETYPE_INCLUDE:
 	{
 		String filename = expression->include.filename;
-		CompilerAddSourceFile(context, filename, expression->any.loc);
+		CompilerAddSourceFile(context->global, filename, expression->any.loc);
 	} break;
 	case ASTNODETYPE_LINKLIB:
 	{
 		String filename = expression->linklib.filename;
-		*DynamicArrayAdd(&context->libsToLink) = filename;
+		*DynamicArrayAdd(&context->global->libsToLink) = filename;
 
 		CTLibrary ctLib = { .name = ChangeFilenameExtension(filename, ".dll"_s),
 			.loc = expression->any.loc };
-		auto ctLibs = context->ctExternalLibraries.Get();
+		auto ctLibs = context->global->ctExternalLibraries.Get();
 		*DynamicArrayAdd(&ctLibs) = ctLib;
 
 		// Wake up any jobs that are looking for dynamic libraries
 		{
-			auto jobsWaiting = context->waitingJobsByReason[YIELDREASON_NEED_DYNAMIC_LIBRARY].Get();
+			auto jobsWaiting = context->global->waitingJobsByReason[YIELDREASON_NEED_DYNAMIC_LIBRARY].Get();
 			for (int i = 0; i < jobsWaiting->size; ++i) {
 				u32 jobIdx = jobsWaiting[i];
-				EnqueueReadyJob(context, jobIdx);
+				EnqueueReadyJob(context->global, jobIdx);
 			}
 			jobsWaiting->size = 0;
 		}
@@ -4862,7 +4745,7 @@ void TypeCheckExpression(Context *context, ASTExpression *expression)
 		bool isDefined = false;
 
 		// Current stack
-		ArrayView<TCScope> scopeStack = jobData->scopeStack;
+		ArrayView<TCScope> scopeStack = context->scopeStack;
 		for (s64 stackIdx = scopeStack.size - 1; stackIdx >= 0; --stackIdx) {
 			const TCScope *currentScope = &scopeStack[stackIdx];
 			for (int i = 0; i < currentScope->names.size; ++i) {
@@ -4875,7 +4758,7 @@ void TypeCheckExpression(Context *context, ASTExpression *expression)
 		}
 		// Global scope
 		{
-			auto globalNames = context->tcGlobalNames.GetForRead();
+			auto globalNames = context->global->tcGlobalNames.GetForRead();
 			for (int i = 0; i < globalNames->size; ++i) {
 				const TCScopeName *currentName = &globalNames[i];
 				if (StringEquals(identifier, currentName->name)) {
@@ -4887,7 +4770,7 @@ void TypeCheckExpression(Context *context, ASTExpression *expression)
 		SwitchJob(context, YIELDREASON_WAITING_FOR_STOP, {});
 		// Look one last time...
 		{
-			auto globalNames = context->tcGlobalNames.GetForRead();
+			auto globalNames = context->global->tcGlobalNames.GetForRead();
 			// @Improve: resume loop at the last index we checked?
 			for (int i = 0; i < globalNames->size; ++i) {
 				const TCScopeName *currentName = &globalNames[i];
@@ -4910,50 +4793,47 @@ done:
 	} break;
 	case ASTNODETYPE_RUN:
 	{
-		BucketArray<Value, LinearAllocator, 256> oldLocalValues = jobData->localValues;
-		BucketArrayInit(&jobData->localValues);
-		*BucketArrayAdd(&jobData->localValues) = {}; // No value number 0?
+		TCContext tcRunContext = *context;
+		BucketArrayInit(&tcRunContext.localValues);
+		*BucketArrayAdd(&tcRunContext.localValues) = {}; // No value number 0?
 
-		TypeCheckExpression(context, expression->runNode.expression);
+		TypeCheckExpression(&tcRunContext, expression->runNode.expression);
 		expression->typeTableIdx = expression->runNode.expression->typeTableIdx;
 
 		BucketArray<IRInstruction, LinearAllocator, 256> irInstructions;
 		BucketArrayInit(&irInstructions);
 
-		IRJobData irJobData = {};
-		irJobData.irInstructions = &irInstructions;
-		irJobData.localValues = &jobData->localValues;
+		IRContext irJobContext = {};
+		irJobContext.global = context->global;
+		irJobContext.irInstructions = &irInstructions;
+		irJobContext.localValues = &tcRunContext.localValues;
 
-		t_jobData = &irJobData;
-		IRValue resultIRValue = IRGenFromExpression(context, expression->runNode.expression);
-		t_jobData = jobData;
+		IRValue resultIRValue = IRGenFromExpression(&irJobContext, expression->runNode.expression);
 
-		CTRegister runResult = CTRunInstructions(context, jobData->localValues, irInstructions,
+		CTRegister runResult = CTRunInstructions(context, tcRunContext.localValues, irInstructions,
 				resultIRValue);
 
 		expression->runNode.result = ConstantFromCTRegister(runResult, expression->typeTableIdx);
-
-		jobData->localValues = oldLocalValues;
 	} break;
 	default:
-		LogCompilerError(context, expression->any.loc, "Unknown expression type on type checking"_s);
+		LogCompilerError(context->global, expression->any.loc, "Unknown expression type on type checking"_s);
 	}
 }
 
-void TCJobProc(void *args)
+void TCJobProc(u32 jobIdx, void *args)
 {
 	TCJobArgs *argsStruct = (TCJobArgs *)args;
-	Context *context = argsStruct->context;
+
+	TCContext *context = ALLOC(LinearAllocator, TCContext);
+	context->global = argsStruct->context;
+	context->jobIdx = jobIdx;
 
 	ASTExpression *expression = argsStruct->expression;
-	TCJobData jobData = {};
-	jobData.currentProcedureIdx = U32_MAX;
-	jobData.onStaticContext = true;
-	jobData.currentReturnTypes = {};
-	t_jobData = &jobData;
+	context->currentProcedureIdx = U32_MAX;
+	context->onStaticContext = true;
+	context->currentReturnTypes = {};
 
 	Job *runningJob = GetCurrentJob(context);
-	runningJob->jobData = &jobData;
 	runningJob->state = JOBSTATE_RUNNING;
 #if DEBUG_BUILD
 	runningJob->loc = expression->any.loc;
@@ -5003,7 +4883,7 @@ void TCJobProc(void *args)
 	case ASTNODETYPE_IF_STATIC:
 	case ASTNODETYPE_OPERATOR_OVERLOAD:
 	{
-		DynamicArrayInit(&jobData.scopeStack, 8);
+		DynamicArrayInit(&context->scopeStack, 8);
 	} break;
 	default:
 		PANIC;
@@ -5014,7 +4894,7 @@ void TCJobProc(void *args)
 	FinishCurrentJob(context);
 }
 
-int GetTypeAlignment(Context *context, u32 typeTableIdx)
+int GetTypeAlignment(JobContext *context, u32 typeTableIdx)
 {
 	int alignment = 0;
 	TypeInfo typeInfo = GetTypeInfo(context, typeTableIdx);
@@ -5046,18 +4926,18 @@ int GetTypeAlignment(Context *context, u32 typeTableIdx)
 	return alignment;
 }
 
-void TCStructJobProc(void *args)
+void TCStructJobProc(u32 jobIdx, void *args)
 {
 	TCStructJobArgs *argsStruct = (TCStructJobArgs *)args;
-	Context *context = argsStruct->context;
 
-	TCJobData jobData = {};
-	jobData.onStaticContext = true;
-	jobData.currentReturnTypes = {};
-	t_jobData = &jobData;
+	TCContext *context = ALLOC(LinearAllocator, TCContext);
+	context->global = argsStruct->context;
+	context->jobIdx = jobIdx;
+
+	context->onStaticContext = true;
+	context->currentReturnTypes = {};
 
 	Job *runningJob = GetCurrentJob(context);
-	runningJob->jobData = &jobData;
 	runningJob->state = JOBSTATE_RUNNING;
 #if DEBUG_BUILD
 	runningJob->description = SNPrintF(96, "TC:Struct \"%S\"", argsStruct->name);
@@ -5066,7 +4946,7 @@ void TCStructJobProc(void *args)
 	u32 typeTableIdx = argsStruct->typeTableIdx;
 	TypeInfo t;
 	{
-		auto &typeTable = context->typeTable.unsafe;
+		auto &typeTable = context->global->typeTable.unsafe;
 		ASSERT(typeTable[typeTableIdx].typeCategory == TYPECATEGORY_NOT_READY);
 		t = typeTable[typeTableIdx];
 	}
@@ -5081,11 +4961,11 @@ void TCStructJobProc(void *args)
 		ASTStructMemberDeclaration *astMember = &argsStruct->astStructDecl.members[memberIdx];
 
 		if (astMember->astType == nullptr)
-			LogError(context, astMember->loc, TPrintF("Type missing in declaration of struct "
+			LogError(context->global, astMember->loc, TPrintF("Type missing in declaration of struct "
 					"member \"%S\"", astMember->name));
 
 		if (astMember->value != nullptr)
-			LogWarning(context, astMember->value->any.loc, TPrintF("Default value found on member "
+			LogWarning(context->global, astMember->value->any.loc, TPrintF("Default value found on member "
 						"\"%S\". This is not yet supported", astMember->name));
 
 		astMember->typeTableIdx = TypeCheckType(context, {}, astMember->loc, astMember->astType);
@@ -5098,7 +4978,7 @@ void TCStructJobProc(void *args)
 		TypeInfo memberTypeInfo = GetTypeInfo(context, member.typeTableIdx);
 		if (astMember->isUsing && memberTypeInfo.typeCategory != TYPECATEGORY_STRUCT &&
 				memberTypeInfo.typeCategory != TYPECATEGORY_UNION)
-			LogError(context, astMember->loc, TPrintF("'using' keyword only supported for struct "
+			LogError(context->global, astMember->loc, TPrintF("'using' keyword only supported for struct "
 					"or union members, but \"%S\" was %S", astMember->name,
 					TypeCategoryToString(memberTypeInfo.typeCategory)));
 
@@ -5135,7 +5015,7 @@ void TCStructJobProc(void *args)
 	// Update stub type
 	{
 		// Unsafe!
-		auto &typeTable = context->typeTable.unsafe;
+		auto &typeTable = context->global->typeTable.unsafe;
 		ASSERT(typeTable[typeTableIdx].typeCategory == TYPECATEGORY_NOT_READY);
 		t.valueIdx = typeTable[typeTableIdx].valueIdx;
 		(TypeInfo&)typeTable[typeTableIdx] = t;
@@ -5144,7 +5024,7 @@ void TCStructJobProc(void *args)
 	}
 
 	// Wake up any jobs that were waiting for this type
-	WakeUpAllByIndex(context, YIELDREASON_TYPE_NOT_READY, typeTableIdx);
+	WakeUpAllByIndex(context->global, YIELDREASON_TYPE_NOT_READY, typeTableIdx);
 
 	FinishCurrentJob(context);
 }
@@ -5335,8 +5215,10 @@ void TypeCheckMain(Context *context)
 
 		SpinlockUnlock(&context->typeTable.lock);
 
+		JobContext fakeJobContext = { context, U32_MAX };
 		for (int i = TYPETABLEIDX_PrimitiveBegin; i < TYPETABLEIDX_PrimitiveEnd; ++i)
-			WriteUserFacingTypeInfoToStaticData(context, typeTableFast[i]);
+			// Yeah this needs a job context but it shouldn't need to yield to do this
+			WriteUserFacingTypeInfoToStaticData(&fakeJobContext, typeTableFast[i]);
 
 		for (int i = TYPETABLEIDX_BuiltinStructsBegin; i < TYPETABLEIDX_BuiltinStructsEnd; ++i)
 			AllocateStaticData(context, typeTableFast[i].valueIdx, sizeof(UserFacingTypeInfoStruct), 8);

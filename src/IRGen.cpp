@@ -1,12 +1,10 @@
-u32 IRNewValue(Context *context, u32 typeTableIdx, u32 flags, u32 immitateValueIdx = U32_MAX)
+u32 IRNewValue(IRContext *context, u32 typeTableIdx, u32 flags, u32 immitateValueIdx = U32_MAX)
 {
 	ASSERT(typeTableIdx != 0);
 	ASSERT(!(flags & VALUEFLAGS_TRY_IMMITATE) || immitateValueIdx != U32_MAX);
 
-	IRJobData *jobData = (IRJobData *)t_jobData;
-
-	u64 idx = jobData->localValues->count;
-	Value *result = BucketArrayAdd(jobData->localValues);
+	u64 idx = context->localValues->count;
+	Value *result = BucketArrayAdd(context->localValues);
 #if DEBUG_BUILD
 	result->name = {};
 #endif
@@ -19,15 +17,13 @@ u32 IRNewValue(Context *context, u32 typeTableIdx, u32 flags, u32 immitateValueI
 	return (u32)idx;
 }
 
-u32 IRNewValue(Context *context, String name, u32 typeTableIdx, u32 flags, u32 immitateValueIdx = U32_MAX)
+u32 IRNewValue(IRContext *context, String name, u32 typeTableIdx, u32 flags, u32 immitateValueIdx = U32_MAX)
 {
 	ASSERT(typeTableIdx != 0);
 	ASSERT(!(flags & VALUEFLAGS_TRY_IMMITATE) || immitateValueIdx != U32_MAX);
 
-	IRJobData *jobData = (IRJobData *)t_jobData;
-
-	u64 idx = jobData->localValues->count;
-	Value *result = BucketArrayAdd(jobData->localValues);
+	u64 idx = context->localValues->count;
+	Value *result = BucketArrayAdd(context->localValues);
 #if DEBUG_BUILD
 	result->name = name;
 #endif
@@ -40,102 +36,96 @@ u32 IRNewValue(Context *context, String name, u32 typeTableIdx, u32 flags, u32 i
 	return (u32)idx;
 }
 
-u32 IRNewValue(Context *context, Value value)
+u32 IRNewValue(IRContext *context, Value value)
 {
 	ASSERT(value.typeTableIdx != 0);
 	ASSERT(!(value.flags & VALUEFLAGS_TRY_IMMITATE) || value.tryImmitateValueIdx != U32_MAX);
 
-	IRJobData *jobData = (IRJobData *)t_jobData;
-
-	u64 idx = jobData->localValues->count;
-	Value *result = BucketArrayAdd(jobData->localValues);
+	u64 idx = context->localValues->count;
+	Value *result = BucketArrayAdd(context->localValues);
 	*result = value;
 
 	ASSERT(idx < U32_MAX);
 	return (u32)idx;
 }
 
-inline Value IRGetValue(Context *context, u32 valueIdx) {
+inline Value IRGetValue(IRContext *context, u32 valueIdx)
+{
 	ASSERT(valueIdx > 0);
 	if (valueIdx & VALUE_GLOBAL_BIT)
-		return GetGlobalValue(context, valueIdx);
-	else {
-		IRJobData *jobData = (IRJobData *)t_jobData;
-		return (*jobData->localValues)[valueIdx];
-	}
+		return GetGlobalValue(context->global, valueIdx);
+	else
+		return (*context->localValues)[valueIdx];
 }
 
-inline Value *IRGetLocalValue(Context *context, u32 valueIdx) {
+inline Value *IRGetLocalValue(IRContext *context, u32 valueIdx)
+{
 	ASSERT(valueIdx > 0);
 	ASSERT(!(valueIdx & VALUE_GLOBAL_BIT));
-	IRJobData *jobData = (IRJobData *)t_jobData;
-	return &(*jobData->localValues)[valueIdx];
+	return &(*context->localValues)[valueIdx];
 }
 
-inline void IRUpdateValue(Context *context, u32 valueIdx, Value *value) {
+inline void IRUpdateValue(IRContext *context, u32 valueIdx, Value *value)
+{
 	if (valueIdx & VALUE_GLOBAL_BIT) {
-		auto globalValues = context->globalValues.GetForWrite();
+		auto globalValues = context->global->globalValues.GetForWrite();
 		globalValues[valueIdx & VALUE_GLOBAL_MASK] = *value;
 	}
-	else {
-		IRJobData *jobData = (IRJobData *)t_jobData;
-		(*jobData->localValues)[valueIdx] = *value;
-	}
+	else
+		(*context->localValues)[valueIdx] = *value;
 }
 
-inline void IRSetValueFlags(Context *context, u32 valueIdx, u32 flags) {
+inline void IRSetValueFlags(IRContext *context, u32 valueIdx, u32 flags)
+{
 	if (valueIdx & VALUE_GLOBAL_BIT) {
-		auto globalValues = context->globalValues.GetForWrite();
+		auto globalValues = context->global->globalValues.GetForWrite();
 		globalValues[valueIdx & VALUE_GLOBAL_MASK].flags |= flags;
 	}
-	else {
-		IRJobData *jobData = (IRJobData *)t_jobData;
-		(*jobData->localValues)[valueIdx].flags |= flags;
-	}
+	else
+		(*context->localValues)[valueIdx].flags |= flags;
 }
 
-IRLabel *NewLabel(Context *context, String name) {
-	IRJobData *jobData = (IRJobData *)t_jobData;
-
+IRLabel *IRNewLabel(IRContext *context, String name)
+{
 	IRLabel result = {};
 
 	result.name = name;
 	result.instructionIdx = -1;
 
-	IRLabel *newLabel = BucketArrayAdd(&jobData->irLabels);
+	IRLabel *newLabel = BucketArrayAdd(&context->irLabels);
 	*newLabel = result;
 	return newLabel;
 }
 
-void PushIRScope(Context *context) {
-	IRJobData *jobData = (IRJobData *)t_jobData;
+void PushIRScope(IRContext *context)
+{
 	IRScope newScope = {};
 	DynamicArrayInit(&newScope.deferredStatements, 4);
-	*DynamicArrayAdd(&jobData->irStack) = newScope;
+	*DynamicArrayAdd(&context->irStack) = newScope;
 }
 
-inline void PopIRScope(Context *context) {
-	IRJobData *jobData = (IRJobData *)t_jobData;
-	ASSERT(jobData->irStack.size);
-	--jobData->irStack.size;
+inline void PopIRScope(IRContext *context)
+{
+	ASSERT(context->irStack.size);
+	--context->irStack.size;
 }
 
-inline IRInstruction *AddInstruction(Context *context) {
-	IRJobData *jobData = (IRJobData *)t_jobData;
-	return BucketArrayAdd(jobData->irInstructions);
+inline IRInstruction *IRAddInstruction(IRContext *context)
+{
+	return BucketArrayAdd(context->irInstructions);
 }
 
-inline void IRAddComment(Context *context, SourceLocation loc, String comment)
+inline void IRAddComment(IRContext *context, SourceLocation loc, String comment)
 {
 	IRInstruction result = {
 		.type = IRINSTRUCTIONTYPE_COMMENT,
 		.loc = loc,
 		.comment = comment
 	};
-	*AddInstruction(context) = result;
+	*IRAddInstruction(context) = result;
 }
 
-bool IRShouldPassByCopy(Context *context, u32 typeTableIdx)
+bool IRShouldPassByCopy(JobContext *context, u32 typeTableIdx)
 {
 	TypeInfo typeInfo = GetTypeInfo(context, typeTableIdx);
 	// @Speed
@@ -157,7 +147,7 @@ inline IRValue IRValueValue(u32 valueIdx, u32 typeTableIdx)
 	return result;
 }
 
-inline IRValue IRValueValue(Context *context, u32 valueIdx)
+inline IRValue IRValueValue(IRContext *context, u32 valueIdx)
 {
 	IRValue result;
 	result.valueType = IRVALUETYPE_VALUE;
@@ -186,7 +176,7 @@ inline IRValue IRValueImmediate(s64 immediate, u32 typeTableIdx = TYPETABLEIDX_S
 	return result;
 }
 
-IRValue IRValueImmediateString(Context *context, String string)
+IRValue IRValueImmediateString(JobContext *context, String string)
 {
 	IRValue result;
 	result.valueType = IRVALUETYPE_IMMEDIATE_STRING;
@@ -194,7 +184,7 @@ IRValue IRValueImmediateString(Context *context, String string)
 	if (string.size == 0)
 		result.immediateStringIdx = 0;
 	else {
-		auto stringLiterals = context->stringLiterals.GetForWrite();
+		auto stringLiterals = context->global->stringLiterals.GetForWrite();
 		s64 stringCount = stringLiterals->count;
 		ASSERT(stringCount < U32_MAX);
 		for (u32 stringIdx = 0; stringIdx < stringCount; ++stringIdx) {
@@ -205,13 +195,13 @@ IRValue IRValueImmediateString(Context *context, String string)
 		}
 		// Create a new one
 		u32 idx = (u32)stringCount;
-		u32 globalValueIdx = NewGlobalValue(context, SNPrintF(8, "_str%u", idx),
+		u32 globalValueIdx = NewGlobalValue(context->global, SNPrintF(8, "_str%u", idx),
 				GetTypeInfoPointerOf(context, TYPETABLEIDX_U8), VALUEFLAGS_ON_STATIC_STORAGE);
-		String staticDataStr = CopyStringToStaticData(context, string);
+		String staticDataStr = CopyStringToStaticData(context->global, string);
 
 		{
-			ScopedLockSpin lock(&context->globalValuesLock);
-			*HashMapGetOrAdd(&context->globalValueContents, globalValueIdx & VALUE_GLOBAL_MASK) =
+			ScopedLockSpin lock(&context->global->globalValuesLock);
+			*HashMapGetOrAdd(&context->global->globalValueContents, globalValueIdx & VALUE_GLOBAL_MASK) =
 				(u8 *)staticDataStr.data;
 		}
 
@@ -222,9 +212,9 @@ done:
 	return result;
 }
 
-IRValue IRPointerToValue(Context *context, SourceLocation loc, IRValue in);
+IRValue IRPointerToValue(IRContext *context, SourceLocation loc, IRValue in);
 
-IRValue IRValueImmediateCStr(Context *context, String string)
+IRValue IRValueImmediateCStr(IRContext *context, String string)
 {
 	u32 charPtrTypeIdx = GetTypeInfoPointerOf(context, TYPETABLEIDX_U8);
 	if (string.size == 0)
@@ -232,7 +222,7 @@ IRValue IRValueImmediateCStr(Context *context, String string)
 
 	u32 globalValueIdx;
 	{
-		auto stringLiterals = context->cStringLiterals.GetForWrite();
+		auto stringLiterals = context->global->cStringLiterals.GetForWrite();
 		s64 stringCount = stringLiterals->count;
 		ASSERT(stringCount < U32_MAX);
 		for (u32 stringIdx = 0; stringIdx < stringCount; ++stringIdx) {
@@ -243,13 +233,13 @@ IRValue IRValueImmediateCStr(Context *context, String string)
 		}
 		// Create a new one
 		u32 idx = (u32)stringCount;
-		globalValueIdx = NewGlobalValue(context, SNPrintF(8, "_cstr%u", idx),
+		globalValueIdx = NewGlobalValue(context->global, SNPrintF(8, "_cstr%u", idx),
 				charPtrTypeIdx, VALUEFLAGS_ON_STATIC_STORAGE);
-		String staticDataStr = CopyStringToStaticData(context, string, true);
+		String staticDataStr = CopyStringToStaticData(context->global, string, true);
 
 		{
-			ScopedLockSpin lock(&context->globalValuesLock);
-			*HashMapGetOrAdd(&context->globalValueContents, globalValueIdx & VALUE_GLOBAL_MASK) =
+			ScopedLockSpin lock(&context->global->globalValuesLock);
+			*HashMapGetOrAdd(&context->global->globalValueContents, globalValueIdx & VALUE_GLOBAL_MASK) =
 				(u8 *)staticDataStr.data;
 		}
 
@@ -347,7 +337,7 @@ inline IRValue IRValueProcedure(Context *context, u32 procedureIdx)
 	return result;
 }
 
-inline IRValue IRValueNewValue(Context *context, u32 typeTableIdx, u32 flags, u32 immitateValueIdx = 0)
+inline IRValue IRValueNewValue(IRContext *context, u32 typeTableIdx, u32 flags, u32 immitateValueIdx = 0)
 {
 	u32 newValueIdx = IRNewValue(context, typeTableIdx, flags, immitateValueIdx);
 
@@ -358,7 +348,7 @@ inline IRValue IRValueNewValue(Context *context, u32 typeTableIdx, u32 flags, u3
 	return result;
 }
 
-inline IRValue IRValueNewValue(Context *context, String name, u32 typeTableIdx, u32 flags,
+inline IRValue IRValueNewValue(IRContext *context, String name, u32 typeTableIdx, u32 flags,
 		u32 immitateValueIdx = 0)
 {
 	u32 newValueIdx = IRNewValue(context, name, typeTableIdx, flags, immitateValueIdx);
@@ -370,7 +360,7 @@ inline IRValue IRValueNewValue(Context *context, String name, u32 typeTableIdx, 
 	return result;
 }
 
-inline IRValue IRValueTypeOf(Context *context, u32 typeTableIdx)
+inline IRValue IRValueTypeOf(JobContext *context, u32 typeTableIdx)
 {
 	static u32 typeInfoPointerTypeIdx = GetTypeInfoPointerOf(context,
 			TYPETABLEIDX_TYPE_INFO_STRUCT);
@@ -378,9 +368,7 @@ inline IRValue IRValueTypeOf(Context *context, u32 typeTableIdx)
 	return IRValueValue(typeValueIdx, typeInfoPointerTypeIdx);
 }
 
-IRValue IRGenFromExpression(Context *context, const ASTExpression *expression);
-
-IRValue IRDereferenceValue(Context *context, SourceLocation loc, IRValue in)
+IRValue IRDereferenceValue(IRContext *context, SourceLocation loc, IRValue in)
 {
 	TypeInfo pointerTypeInfo = GetTypeInfo(context, in.typeTableIdx);
 	ASSERT(pointerTypeInfo.typeCategory == TYPECATEGORY_POINTER);
@@ -389,9 +377,8 @@ IRValue IRDereferenceValue(Context *context, SourceLocation loc, IRValue in)
 	ASSERTF(in.valueType == IRVALUETYPE_VALUE || in.valueType == IRVALUETYPE_MEMORY,
 			"Dereferenced value must be either VALUE or MEMORY");
 
-	if (in.valueType == IRVALUETYPE_VALUE) {
+	if (in.valueType == IRVALUETYPE_VALUE)
 		return IRValueMemory(in.valueIdx, pointedTypeIdx);
-	}
 	else if (in.valueType == IRVALUETYPE_MEMORY) {
 		u32 newValueIdx = IRNewValue(context, in.typeTableIdx, VALUEFLAGS_TRY_IMMITATE,
 				in.mem.baseValueIdx);
@@ -401,7 +388,7 @@ IRValue IRDereferenceValue(Context *context, SourceLocation loc, IRValue in)
 		IRGetLocalValue(context, newValueIdx)->name = name;
 #endif
 
-		*AddInstruction(context) = {
+		*IRAddInstruction(context) = {
 			.type = IRINSTRUCTIONTYPE_ASSIGNMENT,
 			.loc = loc,
 			.assignment = { .src = in, .dst = value }
@@ -414,7 +401,7 @@ IRValue IRDereferenceValue(Context *context, SourceLocation loc, IRValue in)
 		ASSERT(false);
 }
 
-IRValue IRPointerToValue(Context *context, SourceLocation loc, IRValue in)
+IRValue IRPointerToValue(IRContext *context, SourceLocation loc, IRValue in)
 {
 	ASSERT(in.valueType == IRVALUETYPE_VALUE || in.valueType == IRVALUETYPE_MEMORY);
 	u32 pointerTypeIdx = GetTypeInfoPointerOf(context, in.typeTableIdx);
@@ -430,13 +417,13 @@ IRValue IRPointerToValue(Context *context, SourceLocation loc, IRValue in)
 	addressInst.loc = loc;
 	addressInst.unaryOperation.in = in;
 	addressInst.unaryOperation.out = result;
-	*AddInstruction(context) = addressInst;
+	*IRAddInstruction(context) = addressInst;
 
 	return result;
 }
 
-void IRDoAssignment(Context *context, SourceLocation loc, IRValue dstValue, IRValue srcValue);
-IRValue IRDoMemberAccess(Context *context, SourceLocation loc, u32 structPtrValueIdx,
+void IRDoAssignment(IRContext *context, SourceLocation loc, IRValue dstValue, IRValue srcValue);
+IRValue IRDoMemberAccess(IRContext *context, SourceLocation loc, u32 structPtrValueIdx,
 		StructMember structMember)
 {
 #if DEBUG_BUILD
@@ -455,7 +442,7 @@ IRValue IRDoMemberAccess(Context *context, SourceLocation loc, u32 structPtrValu
 	return result;
 }
 
-IRValue IRDoArrayAccess(Context *context, SourceLocation loc, u32 arrayPtrValueIdx,
+IRValue IRDoArrayAccess(IRContext *context, SourceLocation loc, u32 arrayPtrValueIdx,
 		u32 arrayTypeIdx, IRValue indexValue)
 {
 	TypeInfo arrayTypeInfo = GetTypeInfo(context, arrayTypeIdx);
@@ -512,7 +499,7 @@ IRValue IRDoArrayAccess(Context *context, SourceLocation loc, u32 arrayPtrValueI
 	if (elementSize == 1)
 		IRDoAssignment(context, loc, offsetValue, indexValue);
 	else
-		*AddInstruction(context) = {
+		*IRAddInstruction(context) = {
 			.type = IRINSTRUCTIONTYPE_MULTIPLY,
 			.loc = loc,
 			.binaryOperation = {
@@ -525,7 +512,7 @@ IRValue IRDoArrayAccess(Context *context, SourceLocation loc, u32 arrayPtrValueI
 	IRValue pointerToElementValue = IRValueNewValue(context, "_array_element"_s,
 			pointerToElementTypeIdx, 0);
 	IRValue pointerToArray = IRValueValue(arrayPtrValueIdx, pointerToElementTypeIdx);
-	*AddInstruction(context) = {
+	*IRAddInstruction(context) = {
 		.type = IRINSTRUCTIONTYPE_ADD,
 		.loc = loc,
 		.binaryOperation = {
@@ -538,23 +525,23 @@ IRValue IRDoArrayAccess(Context *context, SourceLocation loc, u32 arrayPtrValueI
 	return IRValueMemory(pointerToElementValue.valueIdx, elementTypeIdx);
 }
 
-inline void IRPushValueIntoStack(Context *context, SourceLocation loc, u32 valueIdx)
+inline void IRPushValueIntoStack(IRContext *context, SourceLocation loc, u32 valueIdx)
 {
-	*AddInstruction(context) = {
+	*IRAddInstruction(context) = {
 		.type = IRINSTRUCTIONTYPE_PUSH_VALUE,
 		.loc = loc,
 		.pushValue = { .valueIdx = valueIdx }
 	};
 }
 
-inline u32 IRAddTempValue(Context *context, SourceLocation loc, u32 typeTableIdx, u8 flags)
+inline u32 IRAddTempValue(IRContext *context, SourceLocation loc, u32 typeTableIdx, u8 flags)
 {
 	u32 valueIdx = IRNewValue(context, typeTableIdx, flags);
 	IRPushValueIntoStack(context, loc, valueIdx);
 	return valueIdx;
 }
 
-IRValue IRDoCast(Context *context, SourceLocation loc, IRValue srcValue, u32 typeTableIdx)
+IRValue IRDoCast(IRContext *context, SourceLocation loc, IRValue srcValue, u32 typeTableIdx)
 {
 	ASSERT(srcValue.valueType != IRVALUETYPE_TUPLE);
 	// Cast string literal to string struct
@@ -572,7 +559,7 @@ IRValue IRDoCast(Context *context, SourceLocation loc, IRValue srcValue, u32 typ
 
 		StringLiteral literal;
 		{
-			auto stringLiterals = context->stringLiterals.GetForRead();
+			auto stringLiterals = context->global->stringLiterals.GetForRead();
 			literal = stringLiterals[srcValue.immediateStringIdx];
 		}
 
@@ -589,7 +576,7 @@ IRValue IRDoCast(Context *context, SourceLocation loc, IRValue srcValue, u32 typ
 				.dst = sizeMember
 			}
 		};
-		*AddInstruction(context) = sizeSetInst;
+		*IRAddInstruction(context) = sizeSetInst;
 
 		IRValue dataMember = IRDoMemberAccess(context, loc, dstPtr.valueIdx,
 				stringTypeInfo.structInfo.members[1]);
@@ -604,7 +591,7 @@ IRValue IRDoCast(Context *context, SourceLocation loc, IRValue srcValue, u32 typ
 				.dst = dataMember
 			}
 		};
-		*AddInstruction(context) = dataSetInst;
+		*IRAddInstruction(context) = dataSetInst;
 
 		return result;
 	}
@@ -640,7 +627,7 @@ IRValue IRDoCast(Context *context, SourceLocation loc, IRValue srcValue, u32 typ
 				.out = typeInfoMember
 			}
 		};
-		*AddInstruction(context) = typeAssignInst;
+		*IRAddInstruction(context) = typeAssignInst;
 
 		// Access data member
 		static u32 voidPtrTypeIdx = GetTypeInfoPointerOf(context, TYPETABLEIDX_VOID);
@@ -664,7 +651,7 @@ IRValue IRDoCast(Context *context, SourceLocation loc, IRValue srcValue, u32 typ
 #endif
 				IRValue tempVarIRValue = IRValueValue(anyContentValueIdx, srcValue.typeTableIdx);
 
-				*AddInstruction(context) = {
+				*IRAddInstruction(context) = {
 					.type = IRINSTRUCTIONTYPE_ASSIGNMENT,
 					.loc = loc,
 					.assignment = {
@@ -675,7 +662,7 @@ IRValue IRDoCast(Context *context, SourceLocation loc, IRValue srcValue, u32 typ
 
 				dataValue = tempVarIRValue;
 
-				*AddInstruction(context) = {
+				*IRAddInstruction(context) = {
 					.type = IRINSTRUCTIONTYPE_ASSIGNMENT,
 					.loc = loc,
 					.assignment = {
@@ -688,7 +675,7 @@ IRValue IRDoCast(Context *context, SourceLocation loc, IRValue srcValue, u32 typ
 			else {
 				dataMember.typeTableIdx = dataValue.typeTableIdx;
 
-				*AddInstruction(context) = {
+				*IRAddInstruction(context) = {
 					.type = IRINSTRUCTIONTYPE_ASSIGNMENT,
 					.loc = loc,
 					.assignment = {
@@ -700,7 +687,7 @@ IRValue IRDoCast(Context *context, SourceLocation loc, IRValue srcValue, u32 typ
 		}
 		// These are already in memory, just save a pointer
 		else {
-			*AddInstruction(context) = {
+			*IRAddInstruction(context) = {
 				.type = IRINSTRUCTIONTYPE_ASSIGNMENT,
 				.loc = loc,
 				.assignment = {
@@ -713,8 +700,8 @@ IRValue IRDoCast(Context *context, SourceLocation loc, IRValue srcValue, u32 typ
 		return result;
 	}
 	else {
-		TypeInfo dstTypeInfo = GetTypeInfo(context, StripAllAliases(context, typeTableIdx));
-		TypeInfo srcTypeInfo = GetTypeInfo(context, StripAllAliases(context, srcValue.typeTableIdx));
+		TypeInfo dstTypeInfo = GetTypeInfo(context, StripAllAliases(context->global, typeTableIdx));
+		TypeInfo srcTypeInfo = GetTypeInfo(context, StripAllAliases(context->global, srcValue.typeTableIdx));
 
 		bool isSrcFloat = srcTypeInfo.typeCategory == TYPECATEGORY_FLOATING;
 		bool isDstFloat = dstTypeInfo.typeCategory == TYPECATEGORY_FLOATING;
@@ -759,21 +746,21 @@ IRValue IRDoCast(Context *context, SourceLocation loc, IRValue srcValue, u32 typ
 			IRDoAssignment(context, loc, dataMember, dataValue);
 		}
 		else if (isSrcFloat && !isDstFloat) {
-			*AddInstruction(context) = {
+			*IRAddInstruction(context) = {
 				.type = IRINSTRUCTIONTYPE_CONVERT_FLOAT_TO_INT,
 				.loc = loc,
 				.assignment = { .src = srcValue, .dst = result }
 			};
 		}
 		else if (!isSrcFloat && isDstFloat) {
-			*AddInstruction(context) = {
+			*IRAddInstruction(context) = {
 				.type = IRINSTRUCTIONTYPE_CONVERT_INT_TO_FLOAT,
 				.loc = loc,
 				.assignment = { .src = srcValue, .dst = result }
 			};
 		}
 		else if (isSrcFloat) {
-			*AddInstruction(context) = {
+			*IRAddInstruction(context) = {
 				.type = IRINSTRUCTIONTYPE_CONVERT_PRECISION,
 				.loc = loc,
 				.assignment = { .src = srcValue, .dst = result }
@@ -781,20 +768,20 @@ IRValue IRDoCast(Context *context, SourceLocation loc, IRValue srcValue, u32 typ
 		}
 		else if (srcTypeInfo.size < dstTypeInfo.size) {
 			if (dstTypeInfo.typeCategory == TYPECATEGORY_INTEGER && dstTypeInfo.integerInfo.isSigned)
-				*AddInstruction(context) = {
+				*IRAddInstruction(context) = {
 					.type = IRINSTRUCTIONTYPE_SIGN_EXTEND,
 					.loc = loc,
 					.assignment = { .src = srcValue, .dst = result }
 				};
 			else
-				*AddInstruction(context) = {
+				*IRAddInstruction(context) = {
 					.type = IRINSTRUCTIONTYPE_ZERO_EXTEND,
 					.loc = loc,
 					.assignment = { .src = srcValue, .dst = result }
 				};
 		}
 		else if (srcTypeInfo.size > dstTypeInfo.size) {
-			*AddInstruction(context) = {
+			*IRAddInstruction(context) = {
 				.type = IRINSTRUCTIONTYPE_TRUNCATE,
 				.loc = loc,
 				.assignment = { .src = srcValue, .dst = result }
@@ -807,7 +794,7 @@ IRValue IRDoCast(Context *context, SourceLocation loc, IRValue srcValue, u32 typ
 	}
 }
 
-void IRDoAssignment(Context *context, SourceLocation loc, IRValue dstValue, IRValue srcValue)
+void IRDoAssignment(IRContext *context, SourceLocation loc, IRValue dstValue, IRValue srcValue)
 {
 	ASSERT(dstValue.valueType != IRVALUETYPE_IMMEDIATE_INTEGER);
 	ASSERT(dstValue.valueType != IRVALUETYPE_IMMEDIATE_FLOAT);
@@ -827,8 +814,8 @@ void IRDoAssignment(Context *context, SourceLocation loc, IRValue dstValue, IRVa
 
 	srcValue = IRDoCast(context, loc, srcValue, dstValue.typeTableIdx);
 
-	dstValue.typeTableIdx = StripAllAliases(context, dstValue.typeTableIdx);
-	srcValue.typeTableIdx = StripAllAliases(context, srcValue.typeTableIdx);
+	dstValue.typeTableIdx = StripAllAliases(context->global, dstValue.typeTableIdx);
+	srcValue.typeTableIdx = StripAllAliases(context->global, srcValue.typeTableIdx);
 
 	TypeInfo dstTypeInfo = GetTypeInfo(context, dstValue.typeTableIdx);
 	TypeInfo srcTypeInfo = GetTypeInfo(context, srcValue.typeTableIdx);
@@ -855,11 +842,10 @@ void IRDoAssignment(Context *context, SourceLocation loc, IRValue dstValue, IRVa
 			}
 		};
 
-		*AddInstruction(context) = inst;
+		*IRAddInstruction(context) = inst;
 	}
 	else if (dstTypeInfo.typeCategory == TYPECATEGORY_FLOATING &&
-			 srcValue.valueType == IRVALUETYPE_IMMEDIATE_INTEGER)
-	{
+			 srcValue.valueType == IRVALUETYPE_IMMEDIATE_INTEGER) {
 		// Can't just pretend we can assign an integer immediate to a floating point value. We need
 		// to convert it to a floating point number first.
 		// @Check: Maybe we should do this on backend?
@@ -867,16 +853,15 @@ void IRDoAssignment(Context *context, SourceLocation loc, IRValue dstValue, IRVa
 			.type = IRINSTRUCTIONTYPE_ASSIGNMENT,
 			.loc = loc,
 			.assignment = {
-				.src = IRValueImmediateFloat(context, (f64)srcValue.immediate, dstValue.typeTableIdx),
+				.src = IRValueImmediateFloat(context->global, (f64)srcValue.immediate, dstValue.typeTableIdx),
 				.dst = dstValue
 			}
 		};
 
-		*AddInstruction(context) = inst;
+		*IRAddInstruction(context) = inst;
 
 	}
-	else
-	{
+	else {
 		IRInstruction inst = {
 			.type = IRINSTRUCTIONTYPE_ASSIGNMENT,
 			.loc = loc,
@@ -889,22 +874,21 @@ void IRDoAssignment(Context *context, SourceLocation loc, IRValue dstValue, IRVa
 		if (srcValue.valueType == IRVALUETYPE_PROCEDURE)
 			inst.type = IRINSTRUCTIONTYPE_LOAD_EFFECTIVE_ADDRESS;
 
-		*AddInstruction(context) = inst;
+		*IRAddInstruction(context) = inst;
 	}
 }
 
-inline void IRInsertLabelInstruction(Context *context, SourceLocation loc, IRLabel *label)
+inline void IRInsertLabelInstruction(IRContext *context, SourceLocation loc, IRLabel *label)
 {
-	IRJobData *jobData = (IRJobData *)t_jobData;
-	label->instructionIdx = jobData->irInstructions->count;
-	*AddInstruction(context) = {
+	label->instructionIdx = context->irInstructions->count;
+	*IRAddInstruction(context) = {
 		.type = IRINSTRUCTIONTYPE_LABEL,
 		.loc = loc,
 		.label = label
 	};
 }
 
-IRValue IRInstructionFromBinaryOperation(Context *context, const ASTExpression *expression,
+IRValue IRInstructionFromBinaryOperation(IRContext *context, const ASTExpression *expression,
 		IRValue outValue)
 {
 	SourceLocation loc = expression->any.loc;
@@ -937,7 +921,7 @@ IRValue IRInstructionFromBinaryOperation(Context *context, const ASTExpression *
 			inst.loc = expression->any.loc;
 			inst.assignment.dst = newValue;
 			inst.assignment.src = irValue;
-			*AddInstruction(context) = inst;
+			*IRAddInstruction(context) = inst;
 
 			u32 pointedTypeIdx = structTypeInfo.pointerInfo.pointedTypeTableIdx;
 			structPtr = IRValueValue(newValueIdx, pointedTypeIdx);
@@ -968,12 +952,12 @@ IRValue IRInstructionFromBinaryOperation(Context *context, const ASTExpression *
 				indexValue);
 	}
 	else if (expression->binaryOperation.op == TOKEN_OP_AND) {
-		IRLabel *assignZeroLabel = NewLabel(context, "assignZero"_s);
+		IRLabel *assignZeroLabel = IRNewLabel(context, "assignZero"_s);
 
 		IRValue leftValue  = IRGenFromExpression(context, leftHand);
 
 		// Short-circuit jump
-		*AddInstruction(context) = {
+		*IRAddInstruction(context) = {
 			.type = IRINSTRUCTIONTYPE_JUMP_IF_ZERO,
 			.loc = loc,
 			.conditionalJump = {
@@ -985,7 +969,7 @@ IRValue IRInstructionFromBinaryOperation(Context *context, const ASTExpression *
 		IRValue rightValue = IRGenFromExpression(context, rightHand);
 
 		// Second jump
-		*AddInstruction(context) = {
+		*IRAddInstruction(context) = {
 			.type = IRINSTRUCTIONTYPE_JUMP_IF_ZERO,
 			.loc = loc,
 			.conditionalJump = {
@@ -996,10 +980,10 @@ IRValue IRInstructionFromBinaryOperation(Context *context, const ASTExpression *
 
 		IRDoAssignment(context, loc, outValue, IRValueImmediate(1));
 
-		IRLabel *skipAssignZeroLabel = NewLabel(context, "skipAssignZero"_s);
+		IRLabel *skipAssignZeroLabel = IRNewLabel(context, "skipAssignZero"_s);
 
 		// Skip-assigning-zero jump
-		*AddInstruction(context) = {
+		*IRAddInstruction(context) = {
 			.type = IRINSTRUCTIONTYPE_JUMP,
 			.loc = loc,
 			.jump = { .label = skipAssignZeroLabel }
@@ -1014,13 +998,13 @@ IRValue IRInstructionFromBinaryOperation(Context *context, const ASTExpression *
 		result = outValue;
 	}
 	else if (expression->binaryOperation.op == TOKEN_OP_OR) {
-		IRLabel *assignZeroLabel = NewLabel(context, "assignZero"_s);
-		IRLabel *skipRightLabel = NewLabel(context, "skipRight"_s);
+		IRLabel *assignZeroLabel = IRNewLabel(context, "assignZero"_s);
+		IRLabel *skipRightLabel = IRNewLabel(context, "skipRight"_s);
 
 		IRValue leftValue  = IRGenFromExpression(context, leftHand);
 
 		// Short-circuit jump
-		*AddInstruction(context) = {
+		*IRAddInstruction(context) = {
 			.type = IRINSTRUCTIONTYPE_JUMP_IF_NOT_ZERO,
 			.loc = loc,
 			.conditionalJump = {
@@ -1032,7 +1016,7 @@ IRValue IRInstructionFromBinaryOperation(Context *context, const ASTExpression *
 		IRValue rightValue = IRGenFromExpression(context, rightHand);
 
 		// Second jump
-		*AddInstruction(context) = {
+		*IRAddInstruction(context) = {
 			.type = IRINSTRUCTIONTYPE_JUMP_IF_ZERO,
 			.loc = loc,
 			.conditionalJump = {
@@ -1045,10 +1029,10 @@ IRValue IRInstructionFromBinaryOperation(Context *context, const ASTExpression *
 
 		IRDoAssignment(context, loc, outValue, IRValueImmediate(1));
 
-		IRLabel *skipAssignZeroLabel = NewLabel(context, "skipAssignZero"_s);
+		IRLabel *skipAssignZeroLabel = IRNewLabel(context, "skipAssignZero"_s);
 
 		// Skip-assign-zero jump
-		*AddInstruction(context) = {
+		*IRAddInstruction(context) = {
 			.type = IRINSTRUCTIONTYPE_JUMP,
 			.loc = loc,
 			.jump = { .label = skipAssignZeroLabel }
@@ -1063,11 +1047,11 @@ IRValue IRInstructionFromBinaryOperation(Context *context, const ASTExpression *
 		result = outValue;
 	}
 	else if (expression->binaryOperation.op == TOKEN_OP_ASSIGNMENT_AND) {
-		IRLabel *skipAssignZeroLabel = NewLabel(context, "skipAssignZero"_s);
+		IRLabel *skipAssignZeroLabel = IRNewLabel(context, "skipAssignZero"_s);
 
 		IRValue leftValue  = IRGenFromExpression(context, leftHand);
 
-		*AddInstruction(context) = {
+		*IRAddInstruction(context) = {
 			.type = IRINSTRUCTIONTYPE_JUMP_IF_ZERO,
 			.loc = loc,
 			.conditionalJump = {
@@ -1078,7 +1062,7 @@ IRValue IRInstructionFromBinaryOperation(Context *context, const ASTExpression *
 
 		IRValue rightValue = IRGenFromExpression(context, rightHand);
 
-		*AddInstruction(context) = {
+		*IRAddInstruction(context) = {
 			.type = IRINSTRUCTIONTYPE_JUMP_IF_NOT_ZERO,
 			.loc = loc,
 			.conditionalJump = {
@@ -1092,11 +1076,11 @@ IRValue IRInstructionFromBinaryOperation(Context *context, const ASTExpression *
 		IRInsertLabelInstruction(context, loc, skipAssignZeroLabel);
 	}
 	else if (expression->binaryOperation.op == TOKEN_OP_ASSIGNMENT_OR) {
-		IRLabel *skipAssignOneLabel = NewLabel(context, "skipAssignOne"_s);
+		IRLabel *skipAssignOneLabel = IRNewLabel(context, "skipAssignOne"_s);
 
 		IRValue leftValue  = IRGenFromExpression(context, leftHand);
 
-		*AddInstruction(context) = {
+		*IRAddInstruction(context) = {
 			.type = IRINSTRUCTIONTYPE_JUMP_IF_NOT_ZERO,
 			.loc = loc,
 			.conditionalJump = {
@@ -1107,7 +1091,7 @@ IRValue IRInstructionFromBinaryOperation(Context *context, const ASTExpression *
 
 		IRValue rightValue = IRGenFromExpression(context, rightHand);
 
-		*AddInstruction(context) = {
+		*IRAddInstruction(context) = {
 			.type = IRINSTRUCTIONTYPE_JUMP_IF_ZERO,
 			.loc = loc,
 			.conditionalJump = {
@@ -1215,11 +1199,11 @@ IRValue IRInstructionFromBinaryOperation(Context *context, const ASTExpression *
 		} break;
 		case TOKEN_OP_RANGE:
 		{
-			LogError(context, expression->any.loc, "Range operator used in invalid context"_s);
+			LogError(context->global, expression->any.loc, "Range operator used in invalid context"_s);
 		} break;
 		default:
 		{
-			LogError(context, expression->any.loc, "Binary operator unrecognized during IR generation"_s);
+			LogError(context->global, expression->any.loc, "Binary operator unrecognized during IR generation"_s);
 		} break;
 		}
 
@@ -1244,7 +1228,7 @@ IRValue IRInstructionFromBinaryOperation(Context *context, const ASTExpression *
 		}
 
 		inst.binaryOperation.out = out;
-		*AddInstruction(context) = inst;
+		*IRAddInstruction(context) = inst;
 
 		if (castOutput)
 			IRDoAssignment(context, loc, outValue, out);
@@ -1262,7 +1246,7 @@ IRValue IRInstructionFromBinaryOperation(Context *context, const ASTExpression *
 	return result;
 }
 
-void IRConditionalJumpFromExpression(Context *context, ASTExpression *conditionExp, IRLabel *label, bool jumpIfTrue)
+void IRConditionalJumpFromExpression(IRContext *context, ASTExpression *conditionExp, IRLabel *label, bool jumpIfTrue)
 {
 	// The following tries to avoid saving condition to a bool, then comparing the bool with
 	// 0 in the conditional jump.
@@ -1283,7 +1267,7 @@ void IRConditionalJumpFromExpression(Context *context, ASTExpression *conditionE
 	else if (conditionExp->nodeType == ASTNODETYPE_BINARY_OPERATION &&
 			 conditionExp->binaryOperation.op == (jumpIfTrue ? TOKEN_OP_AND : TOKEN_OP_OR))
 	{
-		IRLabel *skipRightHandLabel = NewLabel(context, "skipRightHand"_s);
+		IRLabel *skipRightHandLabel = IRNewLabel(context, "skipRightHand"_s);
 
 		IRConditionalJumpFromExpression(context, conditionExp->binaryOperation.leftHand, skipRightHandLabel, !jumpIfTrue);
 		IRConditionalJumpFromExpression(context, conditionExp->binaryOperation.rightHand, label, jumpIfTrue);
@@ -1364,7 +1348,7 @@ void IRConditionalJumpFromExpression(Context *context, ASTExpression *conditionE
 		jump.conditionalJump2.label = label;
 		jump.conditionalJump2.left  = leftResult;
 		jump.conditionalJump2.right = rightResult;
-		*AddInstruction(context) = jump;
+		*IRAddInstruction(context) = jump;
 		return;
 	}
 
@@ -1380,7 +1364,7 @@ defaultConditionEvaluation:
 			else return;
 		}
 
-		IRInstruction *jump = AddInstruction(context);
+		IRInstruction *jump = IRAddInstruction(context);
 		jump->type = jumpIfTrue ? IRINSTRUCTIONTYPE_JUMP_IF_NOT_ZERO : IRINSTRUCTIONTYPE_JUMP_IF_ZERO;
 		jump->loc = conditionExp->any.loc;
 		jump->conditionalJump.label = label;
@@ -1389,32 +1373,29 @@ defaultConditionEvaluation:
 	}
 insertSimpleJump:
 	{
-		IRInstruction *jump = AddInstruction(context);
+		IRInstruction *jump = IRAddInstruction(context);
 		jump->type = IRINSTRUCTIONTYPE_JUMP;
 		jump->jump.label = label;
 		return;
 	}
 }
 
-IRValue IRDoInlineProcedureCall(Context *context, ASTProcedureCall astProcCall)
+IRValue IRDoInlineProcedureCall(IRContext *context, ASTProcedureCall astProcCall)
 {
-	IRJobData *jobData = (IRJobData *)t_jobData;
-
 	SourceLocation loc = astProcCall.loc;
 
 	ASSERT(astProcCall.callType == CALLTYPE_STATIC);
-	Procedure procedure = GetProcedureRead(context, astProcCall.procedureIdx);
+	Procedure procedure = GetProcedureRead(context->global, astProcCall.procedureIdx);
 
-	IRLabel *oldReturnLabel = jobData->returnLabel;
-	ArrayView<u32> oldReturnValueIndices = jobData->returnValueIndices;
+	IRLabel *oldReturnLabel = context->returnLabel;
+	ArrayView<u32> oldReturnValueIndices = context->returnValueIndices;
 
 	TypeInfoProcedure procTypeInfo = GetTypeInfo(context, procedure.typeTableIdx).procedureInfo;
 	u64 returnValueCount = procTypeInfo.returnTypeIndices.size;
 
 	Array<u32, ThreadAllocator> inlineReturnValues;
 	ArrayInit(&inlineReturnValues, returnValueCount);
-	for (int i = 0; i < returnValueCount; ++i)
-	{
+	for (int i = 0; i < returnValueCount; ++i) {
 		IRValue returnValue = IRValueNewValue(context, "_inline_return"_s,
 				procTypeInfo.returnTypeIndices[i], 0);
 		IRPushValueIntoStack(context, loc, returnValue.valueIdx);
@@ -1425,8 +1406,7 @@ IRValue IRDoInlineProcedureCall(Context *context, ASTProcedureCall astProcCall)
 	IRValue returnValue = {};
 	if (returnValueCount == 1)
 		returnValue = IRValueValue(inlineReturnValues[0], procTypeInfo.returnTypeIndices[0]);
-	else if (returnValueCount > 1)
-	{
+	else if (returnValueCount > 1) {
 		returnValue.valueType = IRVALUETYPE_TUPLE;
 		ArrayInit(&returnValue.tuple, returnValueCount);
 		for (int i = 0; i < returnValueCount; ++i)
@@ -1434,7 +1414,7 @@ IRValue IRDoInlineProcedureCall(Context *context, ASTProcedureCall astProcCall)
 				IRValueValue(inlineReturnValues[i], procTypeInfo.returnTypeIndices[i]);
 	}
 
-	jobData->returnValueIndices = inlineReturnValues;
+	context->returnValueIndices = inlineReturnValues;
 
 	// Support both varargs and default parameters here
 	s32 procParamCount = (s32)procTypeInfo.parameters.size;
@@ -1442,8 +1422,7 @@ IRValue IRDoInlineProcedureCall(Context *context, ASTProcedureCall astProcCall)
 
 	// Set up parameters
 	s64 normalArgumentsCount = Min(callParamCount, procParamCount);
-	for (int argIdx = 0; argIdx < normalArgumentsCount; ++argIdx)
-	{
+	for (int argIdx = 0; argIdx < normalArgumentsCount; ++argIdx) {
 		ASTExpression *arg = astProcCall.arguments[argIdx];
 		IRValue argValue = IRGenFromExpression(context, arg);
 
@@ -1455,16 +1434,14 @@ IRValue IRDoInlineProcedureCall(Context *context, ASTProcedureCall astProcCall)
 	}
 
 	// Default parameters
-	for (u64 argIdx = astProcCall.arguments.size; argIdx < procParamCount;
-			++argIdx)
-	{
+	for (u64 argIdx = astProcCall.arguments.size; argIdx < procParamCount; ++argIdx) {
 		ProcedureParameter procParam = procTypeInfo.parameters[argIdx];
 		Constant constant = procParam.defaultValue;
 		IRValue arg = {};
 		if (constant.type == CONSTANTTYPE_INTEGER)
 			arg = IRValueImmediate(constant.valueAsInt, procParam.typeTableIdx);
 		else if (constant.type == CONSTANTTYPE_FLOATING)
-			arg = IRValueImmediateFloat(context, constant.valueAsFloat,
+			arg = IRValueImmediateFloat(context->global, constant.valueAsFloat,
 					procParam.typeTableIdx);
 		else
 			ASSERT(!"Invalid constant type");
@@ -1477,18 +1454,15 @@ IRValue IRDoInlineProcedureCall(Context *context, ASTProcedureCall astProcCall)
 	}
 
 	// Varargs
-	if (isVarargs)
-	{
+	if (isVarargs) {
 		static u32 anyPointerTypeIdx = GetTypeInfoPointerOf(context, TYPETABLEIDX_ANY_STRUCT);
 		static u32 arrayOfAnyTypeIdx = GetTypeInfoArrayOf(context, TYPETABLEIDX_ANY_STRUCT, 0);
 
 		s64 varargsCount = astProcCall.arguments.size - procParamCount;
 
-		if (varargsCount == 1)
-		{
+		if (varargsCount == 1) {
 			ASTExpression *varargsArrayExp = astProcCall.arguments[procParamCount];
-			if (varargsArrayExp->typeTableIdx == arrayOfAnyTypeIdx)
-			{
+			if (varargsArrayExp->typeTableIdx == arrayOfAnyTypeIdx) {
 				IRAddComment(context, loc, "Forwarding varargs array"_s);
 
 				IRValue varargsArray = IRGenFromExpression(context, varargsArrayExp);
@@ -1506,8 +1480,7 @@ IRValue IRDoInlineProcedureCall(Context *context, ASTProcedureCall astProcCall)
 		IRAddComment(context, loc, "Build varargs array"_s);
 
 		IRValue pointerToBuffer;
-		if (varargsCount > 0)
-		{
+		if (varargsCount > 0) {
 			// Allocate stack space for buffer
 			u32 bufferValueIdx = IRAddTempValue(context, loc,
 					GetTypeInfoArrayOf(context, TYPETABLEIDX_ANY_STRUCT, varargsCount),
@@ -1520,8 +1493,7 @@ IRValue IRDoInlineProcedureCall(Context *context, ASTProcedureCall astProcCall)
 
 			// Fill the buffer
 			int nonVarargs = (int)procParamCount;
-			for (int argIdx = 0; argIdx < varargsCount; ++argIdx)
-			{
+			for (int argIdx = 0; argIdx < varargsCount; ++argIdx) {
 				ASTExpression *arg = astProcCall.arguments[argIdx + nonVarargs];
 
 				IRValue bufferIndexValue = IRValueImmediate(argIdx);
@@ -1574,16 +1546,16 @@ IRValue IRDoInlineProcedureCall(Context *context, ASTProcedureCall astProcCall)
 skipGeneratingVarargsArray:
 
 	// IRGen
-	IRLabel *returnLabel = NewLabel(context, "inline_return"_s);
-	jobData->returnLabel = returnLabel;
+	IRLabel *returnLabel = IRNewLabel(context, "inline_return"_s);
+	context->returnLabel = returnLabel;
 
 	ASSERT(astProcCall.astBodyInlineCopy);
 	IRGenFromExpression(context, astProcCall.astBodyInlineCopy);
 
 	IRInsertLabelInstruction(context, loc, returnLabel);
 
-	jobData->returnLabel = oldReturnLabel;
-	jobData->returnValueIndices = oldReturnValueIndices;
+	context->returnLabel = oldReturnLabel;
+	context->returnValueIndices = oldReturnValueIndices;
 
 	return returnValue;
 }
@@ -1618,7 +1590,7 @@ IRValue IRValueFromConstant(Context *context, Constant constant)
 	return result;
 }
 
-void IRFillValueWithGroupLiteral(Context *context, IRValue value, ASTLiteral astLiteral)
+void IRFillValueWithGroupLiteral(IRContext *context, IRValue value, ASTLiteral astLiteral)
 {
 	SourceLocation loc = astLiteral.loc;
 
@@ -1630,8 +1602,7 @@ void IRFillValueWithGroupLiteral(Context *context, IRValue value, ASTLiteral ast
 		groupTypeInfo.typeCategory == TYPECATEGORY_UNION)
 	{
 		u64 nonNamedCount = astLiteral.members.size;
-		struct NamedMember
-		{
+		struct NamedMember {
 			String name;
 			ASTExpression *expr;
 		};
@@ -1643,8 +1614,7 @@ void IRFillValueWithGroupLiteral(Context *context, IRValue value, ASTLiteral ast
 			for (; i < astLiteral.members.size; ++i) {
 				ASTExpression *literalMemberExp = astLiteral.members[i];
 				if (literalMemberExp->nodeType == ASTNODETYPE_BINARY_OPERATION &&
-					literalMemberExp->binaryOperation.op == TOKEN_OP_ASSIGNMENT)
-				{
+					literalMemberExp->binaryOperation.op == TOKEN_OP_ASSIGNMENT) {
 					nonNamedCount = i;
 					break;
 				}
@@ -1670,8 +1640,7 @@ void IRFillValueWithGroupLiteral(Context *context, IRValue value, ASTLiteral ast
 		*DynamicArrayAdd(&structStack) = { value, groupTypeIdx, 0 };
 
 		int memberIdx = 0;
-		while (structStack.size > 0)
-		{
+		while (structStack.size > 0) {
 			StructStackFrame currentFrame = structStack[structStack.size - 1];
 			TypeInfo currentStructTypeInfo = GetTypeInfo(context, currentFrame.structTypeIdx);
 			IRValue innerStructPtr = IRPointerToValue(context, loc, currentFrame.irValue);
@@ -1687,8 +1656,7 @@ void IRFillValueWithGroupLiteral(Context *context, IRValue value, ASTLiteral ast
 			StructMember currentMember = currentStructTypeInfo.structInfo.members[currentFrame.idx];
 			TypeCategory memberTypeCat = GetTypeInfo(context, currentMember.typeTableIdx).typeCategory;
 
-			if (memberTypeCat == TYPECATEGORY_STRUCT || memberTypeCat == TYPECATEGORY_UNION)
-			{
+			if (memberTypeCat == TYPECATEGORY_STRUCT || memberTypeCat == TYPECATEGORY_UNION) {
 				// Push struct frame
 				++structStack[structStack.size - 1].idx;
 				IRValue innerStructValue = IRDoMemberAccess(context, loc,
@@ -1699,13 +1667,11 @@ void IRFillValueWithGroupLiteral(Context *context, IRValue value, ASTLiteral ast
 
 			IRValue memberValue = IRDoMemberAccess(context, loc, innerStructPtr.valueIdx, currentMember);
 			IRValue src;
-			if (memberIdx < nonNamedCount)
-			{
+			if (memberIdx < nonNamedCount) {
 				ASTExpression *literalMemberExp = astLiteral.members[memberIdx];
 				src = IRGenFromExpression(context, literalMemberExp);
 			}
-			else
-			{
+			else {
 				src = IRValueImmediate(0, currentMember.typeTableIdx); // @Check: floats
 
 				for (int i = 0; i < namedMembers.size; ++i)
@@ -1718,11 +1684,9 @@ void IRFillValueWithGroupLiteral(Context *context, IRValue value, ASTLiteral ast
 			++memberIdx;
 		}
 	}
-	else if (groupTypeInfo.typeCategory == TYPECATEGORY_ARRAY)
-	{
+	else if (groupTypeInfo.typeCategory == TYPECATEGORY_ARRAY) {
 		IRValue ptrToArray = IRPointerToValue(context, loc, value);
-		for (int memberIdx = 0; memberIdx < astLiteral.members.size; ++memberIdx)
-		{
+		for (int memberIdx = 0; memberIdx < astLiteral.members.size; ++memberIdx) {
 			ASTExpression *literalMemberExp = astLiteral.members[memberIdx];
 
 			IRValue indexIRValue = IRValueImmediate(memberIdx);
@@ -1736,7 +1700,7 @@ void IRFillValueWithGroupLiteral(Context *context, IRValue value, ASTLiteral ast
 		ASSERT(!"Invalid type to the left of group literal. Type checking should catch this");
 }
 
-void IRAssignmentFromExpression(Context *context, IRValue dstValue,
+void IRAssignmentFromExpression(IRContext *context, IRValue dstValue,
 		ASTExpression *srcExpression)
 {
 	// We do some things here to try to avoid intermediate values
@@ -1759,25 +1723,23 @@ void IRAssignmentFromExpression(Context *context, IRValue dstValue,
 	}
 }
 
-void IRGenProcedure(Context *context, u32 procedureIdx, SourceLocation loc,
+void IRGenProcedure(IRContext *context, u32 procedureIdx, SourceLocation loc,
 		BucketArray<Value, LinearAllocator, 256> *localValues)
 {
-	IRJobData *jobData = (IRJobData *)t_jobData;
-	Procedure procedure = GetProcedureRead(context, procedureIdx);
+	Procedure procedure = GetProcedureRead(context->global, procedureIdx);
 
 	ASSERT(procedure.astBody);
 
-	Procedure *proc = &context->procedures.unsafe[procedureIdx];
+	Procedure *proc = &context->global->procedures.unsafe[procedureIdx];
 	proc->localValues = *localValues;
 	BucketArrayInit(&proc->irInstructions);
-	jobData->irInstructions = &proc->irInstructions;
-	jobData->localValues = &proc->localValues;
+	context->irInstructions = &proc->irInstructions;
+	context->localValues = &proc->localValues;
 
-	IRLabel *returnLabel = NewLabel(context, "return"_s);
-	jobData->returnLabel = returnLabel;
+	IRLabel *returnLabel = IRNewLabel(context, "return"_s);
+	context->returnLabel = returnLabel;
 
-	for (int i = 0; i < procedure.parameterValues.size; ++i)
-	{
+	for (int i = 0; i < procedure.parameterValues.size; ++i) {
 		s32 paramValueIdx = procedure.parameterValues[i];
 		IRPushValueIntoStack(context, loc, paramValueIdx);
 	}
@@ -1798,95 +1760,84 @@ void IRGenProcedure(Context *context, u32 procedureIdx, SourceLocation loc,
 	IRInstruction returnInst;
 	returnInst.type = IRINSTRUCTIONTYPE_RETURN;
 	returnInst.loc = {};
-	ArrayInit(&returnInst.returnInst.returnValueIndices, jobData->returnValueIndices.size);
-	returnInst.returnInst.returnValueIndices.size = jobData->returnValueIndices.size;
-	for (int i = 0; i < jobData->returnValueIndices.size; ++i)
-		returnInst.returnInst.returnValueIndices[i] = jobData->returnValueIndices[i];
-	*AddInstruction(context) = returnInst;
+	ArrayInit(&returnInst.returnInst.returnValueIndices, context->returnValueIndices.size);
+	returnInst.returnInst.returnValueIndices.size = context->returnValueIndices.size;
+	for (int i = 0; i < context->returnValueIndices.size; ++i)
+		returnInst.returnInst.returnValueIndices[i] = context->returnValueIndices[i];
+	*IRAddInstruction(context) = returnInst;
 }
 
-IRValue IRGenFromExpression(Context *context, const ASTExpression *expression)
+IRValue IRGenFromExpression(IRContext *context, const ASTExpression *expression)
 {
-	IRJobData *jobData = (IRJobData *)t_jobData;
-
 	IRValue result = {};
 
-	switch (expression->nodeType)
-	{
+	switch (expression->nodeType) {
 	case ASTNODETYPE_BLOCK:
 	{
 		PushIRScope(context);
-		int currentScopeIdx = (int)jobData->irStack.size - 1;
-		IRScope *currentScope = &jobData->irStack[currentScopeIdx];
+		int currentScopeIdx = (int)context->irStack.size - 1;
+		IRScope *currentScope = &context->irStack[currentScopeIdx];
 		int parentScopeIdx = currentScopeIdx - 1;
-		currentScope->closeLabel = NewLabel(context, "closeScope"_s);
+		currentScope->closeLabel = IRNewLabel(context, "closeScope"_s);
 
-		*AddInstruction(context) = { IRINSTRUCTIONTYPE_PUSH_SCOPE, expression->any.loc };
+		*IRAddInstruction(context) = { IRINSTRUCTIONTYPE_PUSH_SCOPE, expression->any.loc };
 
 		for (int i = 0; i < expression->block.statements.size; ++i)
 			IRGenFromExpression(context, &expression->block.statements[i]);
 
-		*AddInstruction(context) = { IRINSTRUCTIONTYPE_POP_SCOPE, expression->any.loc };
+		*IRAddInstruction(context) = { IRINSTRUCTIONTYPE_POP_SCOPE, expression->any.loc };
 
 		bool isThereCleanUpToDo = false;
-		for (s64 stackIdx = currentScopeIdx; stackIdx >= 0; --stackIdx)
-		{
-			if (jobData->irStack[stackIdx].deferredStatements.size)
-			{
+		for (s64 stackIdx = currentScopeIdx; stackIdx >= 0; --stackIdx) {
+			if (context->irStack[stackIdx].deferredStatements.size) {
 				isThereCleanUpToDo = true;
 				break;
 			}
 		}
 
-		if (isThereCleanUpToDo)
-		{
-			if (jobData->shouldReturnValueIdx == U32_MAX)
-				jobData->shouldReturnValueIdx = IRNewValue(context, TYPETABLEIDX_U8, 0);
+		if (isThereCleanUpToDo) {
+			if (context->shouldReturnValueIdx == U32_MAX)
+				context->shouldReturnValueIdx = IRNewValue(context, TYPETABLEIDX_U8, 0);
 
 			// Set should-return register to 0
-			IRValue shouldReturnRegister = IRValueValue(context, jobData->shouldReturnValueIdx);
+			IRValue shouldReturnRegister = IRValueValue(context, context->shouldReturnValueIdx);
 			IRValue zero = IRValueImmediate(0);
 			IRDoAssignment(context, {}, shouldReturnRegister, zero);
 
 			// Add close label
-			IRInstruction *closeScopeLabelInst = AddInstruction(context);
+			IRInstruction *closeScopeLabelInst = IRAddInstruction(context);
 			closeScopeLabelInst->type  = IRINSTRUCTIONTYPE_LABEL;
 			closeScopeLabelInst->loc   = {};
 			closeScopeLabelInst->label = currentScope->closeLabel;
 
 			// Run deferred statements
 			for (s64 j = currentScope->deferredStatements.size - 1; j >= 0; --j)
-			{
 				IRGenFromExpression(context, currentScope->deferredStatements[j]);
-			}
 
 			// If should-return register is set, return
-			if (parentScopeIdx > 0)
-			{
-				IRLabel *skipLabel = NewLabel(context, "skipReturn"_s);
+			if (parentScopeIdx > 0) {
+				IRLabel *skipLabel = IRNewLabel(context, "skipReturn"_s);
 
 				IRInstruction jumpIfShouldntReturnInst;
 				jumpIfShouldntReturnInst.type = IRINSTRUCTIONTYPE_JUMP_IF_ZERO;
 				jumpIfShouldntReturnInst.loc = expression->any.loc;
 				jumpIfShouldntReturnInst.conditionalJump.label = skipLabel;
 				jumpIfShouldntReturnInst.conditionalJump.condition = shouldReturnRegister;
-				*AddInstruction(context) = jumpIfShouldntReturnInst;
+				*IRAddInstruction(context) = jumpIfShouldntReturnInst;
 
 				// Jump to closing of next scope with deferred statements
 				IRInstruction jumpInst;
 				jumpInst.type = IRINSTRUCTIONTYPE_JUMP;
 				jumpInst.loc = {};
-				jumpInst.jump.label = jobData->returnLabel;
-				for (int scopeIdx = parentScopeIdx; scopeIdx >= 0; --scopeIdx)
-				{
-					IRScope *scope = &jobData->irStack[scopeIdx];
-					if (scope->deferredStatements.size > 0)
-					{
+				jumpInst.jump.label = context->returnLabel;
+				for (int scopeIdx = parentScopeIdx; scopeIdx >= 0; --scopeIdx) {
+					IRScope *scope = &context->irStack[scopeIdx];
+					if (scope->deferredStatements.size > 0) {
 						jumpInst.jump.label = scope->closeLabel;
 						break;
 					}
 				}
-				*AddInstruction(context) = jumpInst;
+				*IRAddInstruction(context) = jumpInst;
 
 				IRInsertLabelInstruction(context, {}, skipLabel);
 			}
@@ -1898,8 +1849,7 @@ IRValue IRGenFromExpression(Context *context, const ASTExpression *expression)
 	{
 		result.valueType = IRVALUETYPE_TUPLE;
 		ArrayInit(&result.tuple, expression->multipleExpressions.array.size);
-		for (int i = 0; i < expression->multipleExpressions.array.size; ++i)
-		{
+		for (int i = 0; i < expression->multipleExpressions.array.size; ++i) {
 			IRValue v = IRGenFromExpression(context, expression->multipleExpressions.array[i]);
 			*ArrayAdd(&result.tuple) = v;
 		}
@@ -1908,14 +1858,14 @@ IRValue IRGenFromExpression(Context *context, const ASTExpression *expression)
 	{
 		ASTVariableDeclaration varDecl = expression->variableDeclaration;
 
-		auto *oldIRInstructions = jobData->irInstructions;
-		auto *oldLocalValues = jobData->localValues;
+		auto *oldIRInstructions = context->irInstructions;
+		auto *oldLocalValues = context->localValues;
 		BucketArray<IRInstruction, LinearAllocator, 256> staticVarIRInstructions;
 		BucketArray<Value, LinearAllocator, 256> staticVarLocalValues;
 		if (varDecl.isStatic) {
 			// IR gen into a separate array
-			jobData->irInstructions = &staticVarIRInstructions;
-			jobData->localValues = &staticVarLocalValues;
+			context->irInstructions = &staticVarIRInstructions;
+			context->localValues = &staticVarLocalValues;
 			BucketArrayInit(&staticVarIRInstructions);
 			BucketArrayInit(&staticVarLocalValues);
 			// Value 0 is invalid
@@ -1935,13 +1885,13 @@ IRValue IRGenFromExpression(Context *context, const ASTExpression *expression)
 				u32 varTypeIdx  = *GetVariableTypeIdx(&varDecl, varIdx);
 
 				TypeInfo varTypeInfo = GetTypeInfo(context, varTypeIdx);
-				void *staticData = AllocateStaticData(context, varValueIdx, varTypeInfo.size, 8);
+				void *staticData = AllocateStaticData(context->global, varValueIdx, varTypeInfo.size, 8);
 				memset(staticData, 0, varTypeInfo.size);
 				AddStaticDataPointersToRelocateInType(context, staticData, varTypeIdx);
 			}
 			else if (varDecl.isExternal) {
 				ASSERT(varDecl.astInitialValue == nullptr);
-				auto externalVars = context->irExternalVariables.GetForWrite();
+				auto externalVars = context->global->irExternalVariables.GetForWrite();
 				*DynamicArrayAdd(&externalVars) = valueIdx;
 			}
 
@@ -1976,11 +1926,11 @@ IRValue IRGenFromExpression(Context *context, const ASTExpression *expression)
 						inst.zeroMemory.dst = IRPointerToValue(context, varDecl.loc, dstValue);
 						inst.zeroMemory.size = sizeValue;
 
-						*AddInstruction(context) = inst;
+						*IRAddInstruction(context) = inst;
 					}
 					else if (dstTypeInfo.typeCategory == TYPECATEGORY_FLOATING) {
 						IRValue dstValue = IRValueValue(context, valueIdx);
-						IRValue srcValue = IRValueImmediateFloat(context, 0, typeIdx);
+						IRValue srcValue = IRValueImmediateFloat(context->global, 0, typeIdx);
 						IRDoAssignment(context, varDecl.loc, dstValue, srcValue);
 					}
 					else {
@@ -1995,29 +1945,26 @@ IRValue IRGenFromExpression(Context *context, const ASTExpression *expression)
 			IRPushValueIntoStack(context, varDecl.loc, varDecl.anonymousVariableValueIdx);
 
 		if (varDecl.isStatic) {
-			CTRunInstructions(context, *jobData->localValues, staticVarIRInstructions,
+			CTRunInstructions(context, *context->localValues, staticVarIRInstructions,
 					{ IRVALUETYPE_INVALID });
-			jobData->irInstructions = oldIRInstructions;
-			jobData->localValues = oldLocalValues;
+			context->irInstructions = oldIRInstructions;
+			context->localValues = oldLocalValues;
 		}
 	} break;
 	case ASTNODETYPE_IDENTIFIER:
 	{
-		switch (expression->identifier.type)
-		{
+		switch (expression->identifier.type) {
 		case NAMETYPE_STATIC_DEFINITION:
 		{
 			StaticDefinition staticDefinition = GetStaticDefinition(context,
 					expression->identifier.staticDefinitionIdx);
-			switch (staticDefinition.definitionType)
-			{
+			switch (staticDefinition.definitionType) {
 			case STATICDEFINITIONTYPE_CONSTANT:
 			{
 				Constant constant = staticDefinition.constant;
-				u32 typeTableIdx = StripAllAliases(context, expression->typeTableIdx);
+				u32 typeTableIdx = StripAllAliases(context->global, expression->typeTableIdx);
 				TypeCategory typeCat = GetTypeInfo(context, typeTableIdx).typeCategory;
-				if (typeCat == TYPECATEGORY_FLOATING)
-				{
+				if (typeCat == TYPECATEGORY_FLOATING) {
 					f64 f;
 					if (constant.type == CONSTANTTYPE_INTEGER)
 						f = (f64)constant.valueAsInt;
@@ -2025,14 +1972,14 @@ IRValue IRGenFromExpression(Context *context, const ASTExpression *expression)
 						f = constant.valueAsFloat;
 					else
 						ASSERT(false);
-					result = IRValueImmediateFloat(context, f, typeTableIdx);
+					result = IRValueImmediateFloat(context->global, f, typeTableIdx);
 				}
 				else
 					result = IRValueImmediate(constant.valueAsInt, typeTableIdx);
 			} break;
 			case STATICDEFINITIONTYPE_PROCEDURE:
 			{
-				result = IRValueProcedure(context, staticDefinition.procedureIdx);
+				result = IRValueProcedure(context->global, staticDefinition.procedureIdx);
 			} break;
 			default:
 				ASSERT(!"Invalid static definition type found while generating IR");
@@ -2058,11 +2005,10 @@ IRValue IRGenFromExpression(Context *context, const ASTExpression *expression)
 		IRInstruction procCallInst = {};
 		procCallInst.loc = astProcCall->loc;
 		u32 procTypeIdx;
-		switch (astProcCall->callType)
-		{
+		switch (astProcCall->callType) {
 		case CALLTYPE_STATIC:
 		{
-			Procedure proc = GetProcedureRead(context, astProcCall->procedureIdx);
+			Procedure proc = GetProcedureRead(context->global, astProcCall->procedureIdx);
 			if ((proc.isInline || astProcCall->inlineType == CALLINLINETYPE_ALWAYS_INLINE) &&
 					astProcCall->inlineType != CALLINLINETYPE_NEVER_INLINE)
 				return IRDoInlineProcedureCall(context, *astProcCall);
@@ -2146,7 +2092,7 @@ IRValue IRGenFromExpression(Context *context, const ASTExpression *expression)
 			if (constant.type == CONSTANTTYPE_INTEGER)
 				param = IRValueImmediate(constant.valueAsInt, procParam.typeTableIdx);
 			else if (constant.type == CONSTANTTYPE_FLOATING)
-				param = IRValueImmediateFloat(context, constant.valueAsFloat,
+				param = IRValueImmediateFloat(context->global, constant.valueAsFloat,
 						procParam.typeTableIdx);
 			else
 				ASSERT(!"Invalid constant type");
@@ -2254,7 +2200,7 @@ IRValue IRGenFromExpression(Context *context, const ASTExpression *expression)
 		}
 
 skipGeneratingVarargsArray:
-		*AddInstruction(context) = procCallInst;
+		*IRAddInstruction(context) = procCallInst;
 		break;
 	}
 	case ASTNODETYPE_INTRINSIC:
@@ -2272,7 +2218,7 @@ skipGeneratingVarargsArray:
 			*ArrayAdd(&inst.intrinsic.parameters) = param;
 		}
 
-		*AddInstruction(context) = inst;
+		*IRAddInstruction(context) = inst;
 		break;
 	}
 	case ASTNODETYPE_UNARY_OPERATION:
@@ -2316,7 +2262,7 @@ skipGeneratingVarargsArray:
 			} break;
 			}
 
-			*AddInstruction(context) = inst;
+			*IRAddInstruction(context) = inst;
 			result = inst.unaryOperation.out;
 		}
 	} break;
@@ -2341,10 +2287,10 @@ skipGeneratingVarargsArray:
 		switch (expression->literal.type) {
 		case LITERALTYPE_INTEGER:
 		{
-			u32 typeTableIdx = StripAllAliases(context, expression->typeTableIdx);
+			u32 typeTableIdx = StripAllAliases(context->global, expression->typeTableIdx);
 			TypeCategory typeCat = GetTypeInfo(context, typeTableIdx).typeCategory;
 			if (typeCat == TYPECATEGORY_FLOATING)
-				result = IRValueImmediateFloat(context, (f64)expression->literal.integer,
+				result = IRValueImmediateFloat(context->global, (f64)expression->literal.integer,
 						typeTableIdx);
 			else
 				result = IRValueImmediate(expression->literal.integer, typeTableIdx);
@@ -2354,8 +2300,8 @@ skipGeneratingVarargsArray:
 			break;
 		case LITERALTYPE_FLOATING:
 		{
-			u32 typeTableIdx = StripAllAliases(context, expression->typeTableIdx);
-			result = IRValueImmediateFloat(context, expression->literal.floating,
+			u32 typeTableIdx = StripAllAliases(context->global, expression->typeTableIdx);
+			result = IRValueImmediateFloat(context->global, expression->literal.floating,
 					typeTableIdx);
 		} break;
 		case LITERALTYPE_STRING:
@@ -2381,7 +2327,7 @@ skipGeneratingVarargsArray:
 	} break;
 	case ASTNODETYPE_IF:
 	{
-		IRLabel *skipLabel = NewLabel(context, "skipIf"_s);
+		IRLabel *skipLabel = IRNewLabel(context, "skipIf"_s);
 		IRConditionalJumpFromExpression(context, expression->ifNode.condition, skipLabel, false);
 
 		// Body!
@@ -2390,11 +2336,11 @@ skipGeneratingVarargsArray:
 		IRInstruction *jumpAfterElse = nullptr;
 		if (expression->ifNode.elseBody)
 			// If we have an else, add a jump instruction here.
-			jumpAfterElse = AddInstruction(context);
+			jumpAfterElse = IRAddInstruction(context);
 
 		IRInsertLabelInstruction(context, expression->any.loc, skipLabel);
 
-		IRLabel *afterElseLabel = NewLabel(context, "afterElse"_s);
+		IRLabel *afterElseLabel = IRNewLabel(context, "afterElse"_s);
 
 		if (expression->ifNode.elseBody)
 		{
@@ -2417,28 +2363,28 @@ skipGeneratingVarargsArray:
 	} break;
 	case ASTNODETYPE_WHILE:
 	{
-		IRLabel *loopLabel     = NewLabel(context, "loop"_s);
-		IRLabel *breakLabel    = NewLabel(context, "break"_s);
+		IRLabel *loopLabel     = IRNewLabel(context, "loop"_s);
+		IRLabel *breakLabel    = IRNewLabel(context, "break"_s);
 		IRInsertLabelInstruction(context, expression->any.loc, loopLabel);
 
-		IRLabel *oldBreakLabel    = jobData->currentBreakLabel;
-		IRLabel *oldContinueLabel = jobData->currentContinueLabel;
-		jobData->currentBreakLabel    = breakLabel;
-		jobData->currentContinueLabel = loopLabel;
+		IRLabel *oldBreakLabel    = context->currentBreakLabel;
+		IRLabel *oldContinueLabel = context->currentContinueLabel;
+		context->currentBreakLabel    = breakLabel;
+		context->currentContinueLabel = loopLabel;
 
 		IRConditionalJumpFromExpression(context, expression->whileNode.condition, breakLabel, false);
 
 		IRGenFromExpression(context, expression->whileNode.body);
 
-		IRInstruction *loopJump = AddInstruction(context);
+		IRInstruction *loopJump = IRAddInstruction(context);
 		loopJump->type = IRINSTRUCTIONTYPE_JUMP;
 		loopJump->loc = expression->any.loc;
 		loopJump->jump.label = loopLabel;
 
 		IRInsertLabelInstruction(context, expression->any.loc, breakLabel);
 
-		jobData->currentBreakLabel    = oldBreakLabel;
-		jobData->currentContinueLabel = oldContinueLabel;
+		context->currentBreakLabel    = oldBreakLabel;
+		context->currentContinueLabel = oldContinueLabel;
 	} break;
 	case ASTNODETYPE_FOR:
 	{
@@ -2467,8 +2413,7 @@ skipGeneratingVarargsArray:
 			IRAddComment(context, astFor->loc, "Assign 'i'"_s);
 			IRDoAssignment(context, astFor->loc, indexValue, from);
 		}
-		else
-		{
+		else {
 			arrayValue = IRGenFromExpression(context, astFor->range);
 
 			TypeInfo rangeTypeInfo = GetTypeInfo(context, arrayValue.typeTableIdx);
@@ -2493,8 +2438,7 @@ skipGeneratingVarargsArray:
 			u32 pointerToElementTypeTableIdx = GetTypeInfoPointerOf(context, elementTypeIdx);
 
 			from = IRValueImmediate(0);
-			if (rangeTypeInfo.arrayInfo.count == 0 || arrayValue.typeTableIdx == TYPETABLEIDX_STRING_STRUCT)
-			{
+			if (rangeTypeInfo.arrayInfo.count == 0 || arrayValue.typeTableIdx == TYPETABLEIDX_STRING_STRUCT) {
 				// Compare with size member
 				StructMember sizeMember = {
 					.typeTableIdx = GetTypeInfoPointerOf(context, TYPETABLEIDX_U8),
@@ -2517,30 +2461,30 @@ skipGeneratingVarargsArray:
 			IRDoAssignment(context, astFor->loc, elementVarValue, elementValue);
 		}
 
-		IRLabel *loopLabel     = NewLabel(context, "loop"_s);
-		IRLabel *breakLabel    = NewLabel(context, "break"_s);
-		IRLabel *continueLabel = NewLabel(context, "continue"_s);
-		IRLabel *continueSkipIncrementLabel = NewLabel(context, "continueSkipIncrement"_s);
+		IRLabel *loopLabel     = IRNewLabel(context, "loop"_s);
+		IRLabel *breakLabel    = IRNewLabel(context, "break"_s);
+		IRLabel *continueLabel = IRNewLabel(context, "continue"_s);
+		IRLabel *continueSkipIncrementLabel = IRNewLabel(context, "continueSkipIncrement"_s);
 
 		IRInsertLabelInstruction(context, astFor->loc, loopLabel);
 
-		IRLabel *oldBreakLabel    = jobData->currentBreakLabel;
-		IRLabel *oldContinueLabel = jobData->currentContinueLabel;
-		jobData->currentBreakLabel    = breakLabel;
-		jobData->currentContinueLabel = continueLabel;
-		jobData->currentContinueSkipIncrementLabel = continueSkipIncrementLabel;
+		IRLabel *oldBreakLabel    = context->currentBreakLabel;
+		IRLabel *oldContinueLabel = context->currentContinueLabel;
+		context->currentBreakLabel    = breakLabel;
+		context->currentContinueLabel = continueLabel;
+		context->currentContinueSkipIncrementLabel = continueSkipIncrementLabel;
 
-		IRInstruction *breakJump = AddInstruction(context);
+		IRInstruction *breakJump = IRAddInstruction(context);
 		breakJump->type = IRINSTRUCTIONTYPE_JUMP_IF_GREATER_THAN_OR_EQUALS;
 		breakJump->loc = astFor->loc;
 		breakJump->conditionalJump2.label = breakLabel;
 		breakJump->conditionalJump2.left  = indexValue;
 		breakJump->conditionalJump2.right = to;
 
-		IRValue oldArrayValue = jobData->irCurrentForLoopInfo.arrayValue;
-		IRValue oldIndexValue = jobData->irCurrentForLoopInfo.indexValue;
-		jobData->irCurrentForLoopInfo.arrayValue = arrayValue;
-		jobData->irCurrentForLoopInfo.indexValue = indexValue;
+		IRValue oldArrayValue = context->irCurrentForLoopInfo.arrayValue;
+		IRValue oldIndexValue = context->irCurrentForLoopInfo.indexValue;
+		context->irCurrentForLoopInfo.arrayValue = arrayValue;
+		context->irCurrentForLoopInfo.indexValue = indexValue;
 
 		IRGenFromExpression(context, astFor->body);
 
@@ -2553,10 +2497,9 @@ skipGeneratingVarargsArray:
 		incrementInst.binaryOperation.left = indexValue;
 		incrementInst.binaryOperation.right = IRValueImmediate(1);
 		incrementInst.binaryOperation.out = indexValue;
-		*AddInstruction(context) = incrementInst;
+		*IRAddInstruction(context) = incrementInst;
 
-		if (isThereItVariable)
-		{
+		if (isThereItVariable) {
 			// Update 'it'
 			u32 elementValueIdx = astFor->elementValueIdx;
 			IRValue elementVarValue = IRValueValue(context, elementValueIdx);
@@ -2568,34 +2511,34 @@ skipGeneratingVarargsArray:
 
 		IRInsertLabelInstruction(context, astFor->loc, continueSkipIncrementLabel);
 
-		IRInstruction *loopJump = AddInstruction(context);
+		IRInstruction *loopJump = IRAddInstruction(context);
 		IRInsertLabelInstruction(context, astFor->loc, breakLabel);
 
-		jobData->currentBreakLabel    = oldBreakLabel;
-		jobData->currentContinueLabel = oldContinueLabel;
+		context->currentBreakLabel    = oldBreakLabel;
+		context->currentContinueLabel = oldContinueLabel;
 
 		loopJump->type = IRINSTRUCTIONTYPE_JUMP;
 		loopJump->loc = astFor->loc;
 		loopJump->jump.label = loopLabel;
 
-		jobData->irCurrentForLoopInfo.arrayValue = oldArrayValue;
-		jobData->irCurrentForLoopInfo.indexValue = oldIndexValue;
+		context->irCurrentForLoopInfo.arrayValue = oldArrayValue;
+		context->irCurrentForLoopInfo.indexValue = oldIndexValue;
 
 		PopIRScope(context);
 	} break;
 	case ASTNODETYPE_CONTINUE:
 	{
-		*AddInstruction(context) = {
+		*IRAddInstruction(context) = {
 			.type = IRINSTRUCTIONTYPE_JUMP,
 			.loc = expression->any.loc,
-			.jump = { .label = jobData->currentContinueLabel }
+			.jump = { .label = context->currentContinueLabel }
 		};
 	} break;
 	case ASTNODETYPE_REMOVE:
 	{
 		SourceLocation loc = expression->any.loc;
-		IRValue arrayValue = jobData->irCurrentForLoopInfo.arrayValue;
-		IRValue indexValue = jobData->irCurrentForLoopInfo.indexValue;
+		IRValue arrayValue = context->irCurrentForLoopInfo.arrayValue;
+		IRValue indexValue = context->irCurrentForLoopInfo.indexValue;
 		IRValue sizeValue;
 
 		TypeInfo arrayType = GetTypeInfo(context, arrayValue.typeTableIdx);
@@ -2614,7 +2557,7 @@ skipGeneratingVarargsArray:
 		}
 
 		// Decrement size
-		*AddInstruction(context) = {
+		*IRAddInstruction(context) = {
 			.type = IRINSTRUCTIONTYPE_SUBTRACT,
 			.loc = loc,
 			.binaryOperation = {
@@ -2633,63 +2576,55 @@ skipGeneratingVarargsArray:
 		IRInstruction inst;
 		inst.type = IRINSTRUCTIONTYPE_JUMP;
 		inst.loc = loc;
-		inst.jump.label = jobData->currentContinueSkipIncrementLabel;
-		*AddInstruction(context) = inst;
+		inst.jump.label = context->currentContinueSkipIncrementLabel;
+		*IRAddInstruction(context) = inst;
 	} break;
 	case ASTNODETYPE_BREAK:
 	{
 		IRInstruction inst;
 		inst.type = IRINSTRUCTIONTYPE_JUMP;
 		inst.loc = expression->any.loc;
-		inst.jump.label = jobData->currentBreakLabel;
-		*AddInstruction(context) = inst;
+		inst.jump.label = context->currentBreakLabel;
+		*IRAddInstruction(context) = inst;
 	} break;
 	case ASTNODETYPE_RETURN:
 	{
 		bool isThereCleanUpToDo = false;
-		for (s64 stackIdx = jobData->irStack.size - 1; stackIdx >= 0; --stackIdx)
-		{
-			if (jobData->irStack[stackIdx].deferredStatements.size)
-			{
+		for (s64 stackIdx = context->irStack.size - 1; stackIdx >= 0; --stackIdx) {
+			if (context->irStack[stackIdx].deferredStatements.size) {
 				isThereCleanUpToDo = true;
 				break;
 			}
 		}
 
-		if (isThereCleanUpToDo)
-		{
-			if (jobData->shouldReturnValueIdx == U32_MAX)
-				jobData->shouldReturnValueIdx = IRNewValue(context, TYPETABLEIDX_U8, 0);
+		if (isThereCleanUpToDo) {
+			if (context->shouldReturnValueIdx == U32_MAX)
+				context->shouldReturnValueIdx = IRNewValue(context, TYPETABLEIDX_U8, 0);
 
 			// Set should return to one
-			IRValue shouldReturnRegister = IRValueValue(jobData->shouldReturnValueIdx,
+			IRValue shouldReturnRegister = IRValueValue(context->shouldReturnValueIdx,
 					TYPETABLEIDX_U8);
 			IRValue one = IRValueImmediate(1);
 			IRDoAssignment(context, expression->any.loc, shouldReturnRegister, one);
 		}
 
-		if (expression->returnNode.expression != nullptr)
-		{
+		if (expression->returnNode.expression != nullptr) {
 			ArrayView<ASTExpression *const> returnExps;
-			if (expression->returnNode.expression->nodeType == ASTNODETYPE_MULTIPLE_EXPRESSIONS)
-			{
+			if (expression->returnNode.expression->nodeType == ASTNODETYPE_MULTIPLE_EXPRESSIONS) {
 				returnExps.size = expression->returnNode.expression->multipleExpressions.array.size;
 				returnExps.data = expression->returnNode.expression->multipleExpressions.array.data;
 			}
-			else
-			{
+			else {
 				returnExps.size = 1;
 				returnExps.data = &expression->returnNode.expression;
 			}
 
-			for (int i = 0; i < returnExps.size; ++i)
-			{
+			for (int i = 0; i < returnExps.size; ++i) {
 				IRValue returnValue = IRGenFromExpression(context, returnExps[i]);
 				u32 returnTypeTableIdx = returnExps[i]->typeTableIdx;
 				ASSERT(returnTypeTableIdx >= TYPETABLEIDX_Begin);
 
-				if (IRShouldPassByCopy(context, returnTypeTableIdx))
-				{
+				if (IRShouldPassByCopy(context, returnTypeTableIdx)) {
 					u64 size = GetTypeInfo(context, returnTypeTableIdx).size;
 					IRValue sizeValue = IRValueImmediate(size);
 
@@ -2697,39 +2632,36 @@ skipGeneratingVarargsArray:
 					memcpyInst.type = IRINSTRUCTIONTYPE_COPY_MEMORY;
 					memcpyInst.copyMemory.src = IRPointerToValue(context, expression->any.loc, returnValue);
 					memcpyInst.copyMemory.dst = IRPointerToValue(context, expression->any.loc,
-							IRValueValue(jobData->returnValueIndices[i], returnTypeTableIdx));
+							IRValueValue(context->returnValueIndices[i], returnTypeTableIdx));
 					memcpyInst.copyMemory.size = sizeValue;
 
-					*AddInstruction(context) = memcpyInst;
+					*IRAddInstruction(context) = memcpyInst;
 				}
-				else
-				{
-					IRValue dst = IRValueValue(jobData->returnValueIndices[i], returnValue.typeTableIdx);
+				else {
+					IRValue dst = IRValueValue(context->returnValueIndices[i], returnValue.typeTableIdx);
 					IRDoAssignment(context, expression->any.loc, dst, returnValue);
 				}
 			}
 		}
 
-		if (isThereCleanUpToDo)
-		{
+		if (isThereCleanUpToDo) {
 			IRInstruction jumpInst;
 			jumpInst.type = IRINSTRUCTIONTYPE_JUMP;
 			jumpInst.loc = {};
-			jumpInst.jump.label = jobData->irStack[jobData->irStack.size - 1].closeLabel;
-			*AddInstruction(context) = jumpInst;
+			jumpInst.jump.label = context->irStack[context->irStack.size - 1].closeLabel;
+			*IRAddInstruction(context) = jumpInst;
 		}
-		else
-		{
+		else {
 			IRInstruction jumpInst;
 			jumpInst.type = IRINSTRUCTIONTYPE_JUMP;
 			jumpInst.loc = {};
-			jumpInst.jump.label = jobData->returnLabel;
-			*AddInstruction(context) = jumpInst;
+			jumpInst.jump.label = context->returnLabel;
+			*IRAddInstruction(context) = jumpInst;
 		}
 	} break;
 	case ASTNODETYPE_DEFER:
 	{
-		IRScope *stackTop = DynamicArrayBack(&jobData->irStack);
+		IRScope *stackTop = DynamicArrayBack(&context->irStack);
 		*DynamicArrayAdd(&stackTop->deferredStatements) = expression->deferNode.expression;
 	} break;
 	case ASTNODETYPE_TYPEOF:
@@ -2742,7 +2674,7 @@ skipGeneratingVarargsArray:
 		getPtrInst.type = IRINSTRUCTIONTYPE_LOAD_EFFECTIVE_ADDRESS;
 		getPtrInst.unaryOperation.in = typeInfoValue;
 		getPtrInst.unaryOperation.out = outValue;
-		*AddInstruction(context) = getPtrInst;
+		*IRAddInstruction(context) = getPtrInst;
 
 		result = outValue;
 	} break;
@@ -2777,7 +2709,7 @@ skipGeneratingVarargsArray:
 	} break;
 	case ASTNODETYPE_TYPE:
 	{
-		LogError(context, expression->any.loc, "COMPILER ERROR! Type found while generating IR."_s);
+		LogError(context->global, expression->any.loc, "COMPILER ERROR! Type found while generating IR."_s);
 	} break;
 	case ASTNODETYPE_COMPILER_BREAKPOINT:
 	{
@@ -2788,7 +2720,7 @@ skipGeneratingVarargsArray:
 				.type = IRINSTRUCTIONTYPE_COMPILER_BREAKPOINT,
 				.loc = expression->any.loc
 			};
-			*AddInstruction(context) = breakInstruction;
+			*IRAddInstruction(context) = breakInstruction;
 		}
 	} break;
 	default:
@@ -2798,9 +2730,10 @@ skipGeneratingVarargsArray:
 	return result;
 }
 
-void PrintJobIRInstructions(Context *context);
+void PrintJobIRInstructions(IRContext *context);
 void IRGenMain(Context *context)
 {
+	JobContext fakeJobContext = { context, U32_MAX };
 	{
 		auto externalVars = context->irExternalVariables.GetForWrite();
 		DynamicArrayInit(&externalVars, 32);
@@ -2809,13 +2742,13 @@ void IRGenMain(Context *context)
 		auto &stringLiterals = context->stringLiterals.unsafe;
 		BucketArrayInit(&stringLiterals);
 		// Empty string
-		IRValueImmediateString(context, {});
+		u32 globalValueIdx = NewGlobalValue(context, "_emptystr"_s,
+				GetTypeInfoPointerOf(&fakeJobContext, TYPETABLEIDX_U8), VALUEFLAGS_ON_STATIC_STORAGE);
+		*BucketArrayAdd(&stringLiterals) = { globalValueIdx, {} };
 	}
 	{
 		auto &cStringLiterals = context->cStringLiterals.unsafe;
 		BucketArrayInit(&cStringLiterals);
-		// Empty string
-		IRValueImmediateCStr(context, {});
 	}
 	{
 		auto &f32Literals = context->f32Literals.unsafe;
@@ -2831,41 +2764,40 @@ void IRGenMain(Context *context)
 	}
 }
 
-void IRJobProcedure(void *args)
+void IRJobProcedure(u32 jobIdx, void *args)
 {
 	IRJobArgs *argsStruct = (IRJobArgs *)args;
-	Context *context = argsStruct->context;
 	u32 procedureIdx = argsStruct->procedureIdx;
 
-	IRJobData jobData = {};
-	jobData.procedureIdx = procedureIdx;
-	jobData.returnValueIndices = GetProcedureRead(context, procedureIdx).returnValueIndices;
-	jobData.shouldReturnValueIdx = U32_MAX;
-	t_jobData = &jobData;
+	IRContext *context = ALLOC(LinearAllocator, IRContext);
+	context->global = argsStruct->context;
+	context->jobIdx = jobIdx;
+	context->procedureIdx = procedureIdx;
+	context->returnValueIndices = GetProcedureRead(context->global, procedureIdx).returnValueIndices;
+	context->shouldReturnValueIdx = U32_MAX;
 
 	Job *runningJob = GetCurrentJob(context);
-	runningJob->jobData = &jobData;
 	runningJob->state = JOBSTATE_RUNNING;
 #if DEBUG_BUILD
-	runningJob->description = SStringConcat("IR:"_s, GetProcedureRead(context, procedureIdx).name);
+	runningJob->description = SStringConcat("IR:"_s, GetProcedureRead(context->global, procedureIdx).name);
 #endif
 
-	ASSERT(GetProcedureRead(context, procedureIdx).astBody != nullptr);
+	ASSERT(GetProcedureRead(context->global, procedureIdx).astBody != nullptr);
 
-	DynamicArrayInit(&jobData.irStack, 64);
-	BucketArrayInit(&jobData.irLabels);
+	DynamicArrayInit(&context->irStack, 64);
+	BucketArrayInit(&context->irLabels);
 
 	IRGenProcedure(context, procedureIdx, {}, &argsStruct->localValues);
 
 	{
-		Procedure proc = GetProcedureRead(context, procedureIdx);
+		Procedure proc = GetProcedureRead(context->global, procedureIdx);
 		proc.isIRReady = true;
-		UpdateProcedure(context, procedureIdx, &proc);
+		UpdateProcedure(context->global, procedureIdx, &proc);
 	}
 	// Wake up any jobs that were waiting for this procedure's IR
-	WakeUpAllByIndex(context, YIELDREASON_PROC_IR_NOT_READY, procedureIdx);
+	WakeUpAllByIndex(context->global, YIELDREASON_PROC_IR_NOT_READY, procedureIdx);
 
-	if (context->config.logIR)
+	if (context->global->config.logIR)
 		PrintJobIRInstructions(context);
 
 	BackendJobProc(context, procedureIdx);
@@ -2873,16 +2805,15 @@ void IRJobProcedure(void *args)
 	FinishCurrentJob(context);
 }
 
-void IRJobExpression(void *args)
+void IRJobExpression(u32 jobIdx, void *args)
 {
 	IRJobArgs *argsStruct = (IRJobArgs *)args;
-	Context *context = argsStruct->context;
 
-	IRJobData jobData = {};
-	t_jobData = &jobData;
+	IRContext *context = ALLOC(LinearAllocator, IRContext);
+	context->global = argsStruct->context;
+	context->jobIdx = jobIdx;
 
 	Job *runningJob = GetCurrentJob(context);
-	runningJob->jobData = &jobData;
 	runningJob->state = JOBSTATE_RUNNING;
 #if DEBUG_BUILD
 	runningJob->description = "IR:Expression"_s;

@@ -257,6 +257,25 @@ struct FloatLiteral
 	};
 };
 
-IRValue IRGenFromExpression(Context *context, const ASTExpression *expression);
-void IRJobProcedure(void *args);
-void IRJobExpression(void *args);
+struct IRContext : JobContext
+{
+	u32 procedureIdx;
+	BucketArray<Value, LinearAllocator, 256> *localValues;
+	BucketArray<IRInstruction, LinearAllocator, 256> *irInstructions;
+	BucketArray<IRLabel, LinearAllocator, 256> irLabels;
+	DynamicArray<IRScope, ThreadAllocator> irStack;
+	IRLabel *returnLabel;
+	IRLabel *currentBreakLabel;
+	IRLabel *currentContinueLabel;
+	IRLabel *currentContinueSkipIncrementLabel;
+	struct {
+		IRValue arrayValue;
+		IRValue indexValue;
+	} irCurrentForLoopInfo;
+	ArrayView<u32> returnValueIndices;
+	u32 shouldReturnValueIdx;
+};
+
+IRValue IRGenFromExpression(IRContext *context, const ASTExpression *expression);
+void IRJobProcedure(u32 jobIdx, void *args);
+void IRJobExpression(u32 jobIdx, void *args);

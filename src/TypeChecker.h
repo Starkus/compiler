@@ -298,3 +298,15 @@ struct TCStructJobArgs
 };
 
 void GenerateTypeCheckJobs(Context *context, ASTExpression *expression);
+void TCStructJobProc(u32 jobIdx, void *args);
+
+struct TCContext : JobContext
+{
+	ASTExpression *expression;
+	bool onStaticContext;
+	u32 currentProcedureIdx;
+	DynamicArray<TCScope, ThreadAllocator> scopeStack;
+	ArrayView<u32> currentReturnTypes;
+	u32 currentForLoopArrayType;
+	BucketArray<Value, LinearAllocator, 256> localValues;
+};

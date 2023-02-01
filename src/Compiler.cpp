@@ -57,6 +57,12 @@ THREADLOCAL u64 t_threadMemSize;
 String TPrintF(const char *format, ...);
 struct Context;
 
+struct JobContext
+{
+	Context *global;
+	u32 jobIdx;
+};
+
 Context *g_context;
 Memory *g_memory;
 FileHandle g_hStdin;
@@ -171,8 +177,8 @@ u64 CycleCountEnd(u64 begin)
 #include "MemoryAlloc.cpp"
 #include "Strings.cpp"
 #include "Scheduler.h"
-#include "Parser.h"
 #include "AST.h"
+#include "Parser.h"
 #include "TypeChecker.h"
 #include "IRGen.h"
 #include "CompileTime.h"
@@ -263,60 +269,6 @@ struct ThreadArgs
 {
 	Context *context;
 	u32 threadIndex;
-};
-
-struct ParseJobData
-{
-	u32 fileIdx;
-	u64 currentTokenIdx;
-	Token *token;
-	BucketArray<Token, HeapAllocator, 1024> tokens;
-	ASTRoot astRoot;
-	BucketArray<ASTExpression, HeapAllocator, 1024> astTreeNodes;
-	BucketArray<ASTType, HeapAllocator, 1024> astTypes;
-};
-
-struct TCJobData
-{
-	ASTExpression *expression;
-	bool onStaticContext;
-	u32 currentProcedureIdx;
-	DynamicArray<TCScope, ThreadAllocator> scopeStack;
-	ArrayView<u32> currentReturnTypes;
-	u32 currentForLoopArrayType;
-	BucketArray<Value, LinearAllocator, 256> localValues;
-};
-
-struct IRJobData
-{
-	u32 procedureIdx;
-	BucketArray<Value, LinearAllocator, 256> *localValues;
-	BucketArray<IRInstruction, LinearAllocator, 256> *irInstructions;
-	BucketArray<IRLabel, LinearAllocator, 256> irLabels;
-	DynamicArray<IRScope, ThreadAllocator> irStack;
-	IRLabel *returnLabel;
-	IRLabel *currentBreakLabel;
-	IRLabel *currentContinueLabel;
-	IRLabel *currentContinueSkipIncrementLabel;
-	struct {
-		IRValue arrayValue;
-		IRValue indexValue;
-	} irCurrentForLoopInfo;
-	ArrayView<u32> returnValueIndices;
-	u32 shouldReturnValueIdx;
-
-	// Back end
-	BucketArray<BEInstruction, LinearAllocator, 1024> beInstructions;
-	u64 stackSize;
-	s64 allocatedParameterCount;
-	DynamicArray<u32, ThreadAllocator> spilledValues;
-	BucketArray<BasicBlock, ThreadAllocator, 512> beBasicBlocks;
-	BasicBlock *beLeafBasicBlock;
-	InterferenceGraph beInterferenceGraph;
-	BucketArray<BEInstruction, LinearAllocator, 128> bePatchedInstructions;
-	Array<u64, ThreadAllocator> valueIsXmmBits;
-	u32 x64SpilledParametersRead[32];
-	u32 x64SpilledParametersWrite[32];
 };
 
 #include "Log.cpp"
@@ -531,6 +483,9 @@ int main(int argc, char **argv)
 		}
 		waitingJobs->size = 0;
 	}
+
+	JobContext fakeJobContext = { context, U32_MAX };
+
 	{
 		auto waitingJobs = context->waitingJobsByReason[YIELDREASON_UNKNOWN_OVERLOAD].Get();
 		for (int i = 0; i < waitingJobs->size; ++i) {
@@ -541,8 +496,8 @@ int main(int argc, char **argv)
 				LogErrorNoCrash(context, yieldContext.loc, TPrintF("Operator '%S' not found for "
 							"types \"%S\" and \"%S\"",
 							OperatorToString(yieldContext.overload.op),
-							TypeInfoToString(context, yieldContext.overload.leftTypeIdx),
-							TypeInfoToString(context, yieldContext.overload.rightTypeIdx)));
+							TypeInfoToString(&fakeJobContext, yieldContext.overload.leftTypeIdx),
+							TypeInfoToString(&fakeJobContext, yieldContext.overload.rightTypeIdx)));
 #if DEBUG_BUILD
 				LogNote(context, job->loc, TPrintF("On job: \"%S\"", job->description));
 #endif
@@ -551,7 +506,7 @@ int main(int argc, char **argv)
 				LogErrorNoCrash(context, yieldContext.loc, TPrintF("Operator '%S' not found for "
 							"type \"%S\"",
 							OperatorToString(yieldContext.overload.op),
-							TypeInfoToString(context, yieldContext.overload.leftTypeIdx)));
+							TypeInfoToString(&fakeJobContext, yieldContext.overload.leftTypeIdx)));
 #if DEBUG_BUILD
 				LogNote(context, job->loc, TPrintF("On job: \"%S\"", job->description));
 #endif
@@ -566,7 +521,7 @@ int main(int argc, char **argv)
 			u32 jobIdx = waitingJobs[i];
 			const Job *job = &context->jobs.unsafe[jobIdx];
 			YieldContext yieldContext = job->context;
-			StaticDefinition staticDef = GetStaticDefinition(context, yieldContext.index);
+			StaticDefinition staticDef = GetStaticDefinition(&fakeJobContext, yieldContext.index);
 			LogErrorNoCrash(context, yieldContext.loc, TPrintF("Static definition '%S' never "
 						"type-checked", staticDef.name));
 #if DEBUG_BUILD
@@ -615,7 +570,7 @@ int main(int argc, char **argv)
 			const Job *job = &context->jobs.unsafe[jobIdx];
 			YieldContext yieldContext = job->context;
 			LogErrorNoCrash(context, yieldContext.loc, TPrintF("Type '%S' never finished "
-						"type-checking", TypeInfoToString(context, yieldContext.index)));
+						"type-checking", TypeInfoToString(&fakeJobContext, yieldContext.index)));
 #if DEBUG_BUILD
 			LogNote(context, job->loc, TPrintF("On job: \"%S\"", job->description));
 #endif

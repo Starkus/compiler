@@ -897,3 +897,21 @@ String x64LinuxSyscallNames[] =
 };
 #endif
 
+struct X64Context : JobContext
+{
+	u32 procedureIdx;
+	BucketArray<Value, LinearAllocator, 256> *localValues;
+	BucketArray<IRInstruction, LinearAllocator, 256> *irInstructions;
+	ArrayView<u32> returnValueIndices;
+	BucketArray<BEInstruction, LinearAllocator, 1024> beInstructions;
+	u64 stackSize;
+	s64 allocatedParameterCount;
+	DynamicArray<u32, ThreadAllocator> spilledValues;
+	BucketArray<BasicBlock, ThreadAllocator, 512> beBasicBlocks;
+	BasicBlock *beLeafBasicBlock;
+	InterferenceGraph beInterferenceGraph;
+	BucketArray<BEInstruction, LinearAllocator, 128> bePatchedInstructions;
+	Array<u64, ThreadAllocator> valueIsXmmBits;
+	u32 x64SpilledParametersRead[32];
+	u32 x64SpilledParametersWrite[32];
+};

@@ -13,4 +13,4 @@ struct InterferenceGraph
 	HashMap<u32, u32, ThreadAllocator> valueToNodeMap;
 };
 
-void BackendJobProc(Context *context, u32 procedureIdx);
+void BackendJobProc(IRContext *context, u32 procedureIdx);

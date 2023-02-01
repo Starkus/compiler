@@ -192,10 +192,10 @@ void __LogRange(Context *context, SourceLocation locBegin, SourceLocation locEnd
 #define LogError(context, loc, str) \
 	do { LogErrorNoCrash(context, loc, str); PANIC; } while(0)
 #define Log2Error(context, locBegin, locEnd, str) \
-	do { Log2ErrorNoCrash(context, locBegin, locEnd, str); SwitchJob(context, YIELDREASON_FAILED, {}); } while(0)
+	do { Log2ErrorNoCrash(context, locBegin, locEnd, str); PANIC; } while(0)
 #else
 #define LogError(context, loc, str) \
-	do { LogErrorNoCrash(context, loc, str); PANIC; } while(0)
+	do { LogErrorNoCrash(context, loc, str); SwitchJob(context, YIELDREASON_FAILED, {}); } while(0)
 #define Log2Error(context, locBegin, locEnd, str) \
 	do { Log2ErrorNoCrash(context, locBegin, locEnd, str); SwitchJob(context, YIELDREASON_FAILED, {}); } while(0)
 #endif
