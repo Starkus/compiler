@@ -82,38 +82,38 @@ X64Instruction *X64InstructionStreamAdvance(X64InstructionStream *iterator)
 	return result;
 }
 
-inline Value X64GetValue(X64Context *context, u32 valueIdx)
+inline Value X64GetValue(X64Context *x64Context, u32 valueIdx)
 {
 	ASSERT(valueIdx > 0);
 	if (valueIdx & VALUE_GLOBAL_BIT)
 		return GetGlobalValue(valueIdx);
 	else
-		return (*context->localValues)[valueIdx];
+		return (*x64Context->localValues)[valueIdx];
 }
 
-inline Value *X64GetLocalValue(X64Context *context, u32 valueIdx)
+inline Value *X64GetLocalValue(X64Context *x64Context, u32 valueIdx)
 {
 	ASSERT(valueIdx > 0);
 	ASSERT(!(valueIdx & VALUE_GLOBAL_BIT));
-	return &(*context->localValues)[valueIdx];
+	return &(*x64Context->localValues)[valueIdx];
 }
 
-inline IRValue X64IRValueValue(X64Context *context, u32 valueIdx)
+inline IRValue X64IRValueValue(X64Context *x64Context, u32 valueIdx)
 {
 	IRValue result;
 	result.valueType = IRVALUETYPE_VALUE;
 	result.valueIdx = valueIdx;
-	result.typeTableIdx = X64GetValue(context, valueIdx).typeTableIdx;
+	result.typeTableIdx = X64GetValue(x64Context, valueIdx).typeTableIdx;
 	return result;
 }
 
-u32 X64NewValue(X64Context *context, String name, u32 typeTableIdx, u32 flags, u32 immitateValueIdx = U32_MAX)
+u32 X64NewValue(X64Context *x64Context, String name, u32 typeTableIdx, u32 flags, u32 immitateValueIdx = U32_MAX)
 {
 	ASSERT(typeTableIdx != 0);
 	ASSERT(!(flags & VALUEFLAGS_TRY_IMMITATE) || immitateValueIdx != U32_MAX);
 
-	u64 idx = context->localValues->count;
-	Value *result = BucketArrayAdd(context->localValues);
+	u64 idx = x64Context->localValues->count;
+	Value *result = BucketArrayAdd(x64Context->localValues);
 #if DEBUG_BUILD
 	result->name = name;
 #endif
@@ -126,26 +126,26 @@ u32 X64NewValue(X64Context *context, String name, u32 typeTableIdx, u32 flags, u
 	return (u32)idx;
 }
 
-u32 X64NewValue(X64Context *context, Value value)
+u32 X64NewValue(X64Context *x64Context, Value value)
 {
 	ASSERT(value.typeTableIdx != 0);
 	ASSERT(!(value.flags & VALUEFLAGS_TRY_IMMITATE) || value.tryImmitateValueIdx != U32_MAX);
 
-	u64 idx = context->localValues->count;
-	Value *result = BucketArrayAdd(context->localValues);
+	u64 idx = x64Context->localValues->count;
+	Value *result = BucketArrayAdd(x64Context->localValues);
 	*result = value;
 
 	ASSERT(idx < U32_MAX);
 	return (u32)idx;
 }
 
-u32 X64NewValue(X64Context *context, u32 typeTableIdx, u32 flags, u32 immitateValueIdx = U32_MAX)
+u32 X64NewValue(X64Context *x64Context, u32 typeTableIdx, u32 flags, u32 immitateValueIdx = U32_MAX)
 {
 	ASSERT(typeTableIdx != 0);
 	ASSERT(!(flags & VALUEFLAGS_TRY_IMMITATE) || immitateValueIdx != U32_MAX);
 
-	u64 idx = context->localValues->count;
-	Value *result = BucketArrayAdd(context->localValues);
+	u64 idx = x64Context->localValues->count;
+	Value *result = BucketArrayAdd(x64Context->localValues);
 	result->typeTableIdx = typeTableIdx;
 	result->flags = flags;
 	result->tryImmitateValueIdx = immitateValueIdx;
@@ -155,10 +155,10 @@ u32 X64NewValue(X64Context *context, u32 typeTableIdx, u32 flags, u32 immitateVa
 	return (u32)idx;
 }
 
-inline IRValue X64IRValueNewValue(X64Context *context, String name, u32 typeTableIdx, u32 flags,
+inline IRValue X64IRValueNewValue(X64Context *x64Context, String name, u32 typeTableIdx, u32 flags,
 		u32 immitateValueIdx = 0)
 {
-	u32 newValueIdx = X64NewValue(context, name, typeTableIdx, flags, immitateValueIdx);
+	u32 newValueIdx = X64NewValue(x64Context, name, typeTableIdx, flags, immitateValueIdx);
 
 	IRValue result = {};
 	result.valueType = IRVALUETYPE_VALUE;
@@ -167,10 +167,10 @@ inline IRValue X64IRValueNewValue(X64Context *context, String name, u32 typeTabl
 	return result;
 }
 
-inline IRValue X64IRValueNewValue(X64Context *context, u32 typeTableIdx, u32 flags,
+inline IRValue X64IRValueNewValue(X64Context *x64Context, u32 typeTableIdx, u32 flags,
 		u32 immitateValueIdx = 0)
 {
-	u32 newValueIdx = X64NewValue(context, typeTableIdx, flags, immitateValueIdx);
+	u32 newValueIdx = X64NewValue(x64Context, typeTableIdx, flags, immitateValueIdx);
 
 	IRValue result = {};
 	result.valueType = IRVALUETYPE_VALUE;
@@ -179,17 +179,17 @@ inline IRValue X64IRValueNewValue(X64Context *context, u32 typeTableIdx, u32 fla
 	return result;
 }
 
-inline void X64SetValueFlags(X64Context *context, u32 valueIdx, u32 flags)
+inline void X64SetValueFlags(X64Context *x64Context, u32 valueIdx, u32 flags)
 {
 	if (valueIdx & VALUE_GLOBAL_BIT) {
 		auto globalValues = g_context->globalValues.GetForWrite();
 		globalValues[valueIdx & VALUE_GLOBAL_MASK].flags |= flags;
 	}
 	else
-		(*context->localValues)[valueIdx].flags |= flags;
+		(*x64Context->localValues)[valueIdx].flags |= flags;
 }
 
-String X64IRValueToStr(JobContext *context, IRValue value, BucketArrayView<Value> localValues)
+String X64IRValueToStr(IRValue value, BucketArrayView<Value> localValues)
 {
 	String result = "???VALUE"_s;
 
@@ -202,7 +202,7 @@ String X64IRValueToStr(JobContext *context, IRValue value, BucketArrayView<Value
 	}
 
 	u64 size = 0;
-	TypeInfo typeInfo = GetTypeInfo(context, StripAllAliases(value.typeTableIdx));
+	TypeInfo typeInfo = GetTypeInfo(StripAllAliases(value.typeTableIdx));
 	bool isXMM;
 	size = typeInfo.size;
 	Value v;
@@ -238,7 +238,7 @@ String X64IRValueToStr(JobContext *context, IRValue value, BucketArrayView<Value
 		// Array indexing
 		if (value.valueType == IRVALUETYPE_MEMORY && value.mem.elementSize > 0) {
 			u32 indexTypeIdx = PIRGetValue(localValues, value.mem.indexValueIdx).typeTableIdx;
-			String indexRegisterStr = X64IRValueToStr(context,
+			String indexRegisterStr = X64IRValueToStr(
 					IRValueValue(value.mem.indexValueIdx, indexTypeIdx), localValues);
 			result = TPrintF("%S+%S*%llu", result, indexRegisterStr, value.mem.elementSize);
 		}
@@ -315,7 +315,7 @@ String X64IRValueToStr(JobContext *context, IRValue value, BucketArrayView<Value
 		if (value.valueType == IRVALUETYPE_MEMORY && value.mem.elementSize > 0) {
 			u32 indexTypeIdx = PIRGetValue(localValues,
 					value.mem.indexValueIdx).typeTableIdx;
-			String indexRegisterStr = X64IRValueToStr(context,
+			String indexRegisterStr = X64IRValueToStr(
 					IRValueValue(value.mem.indexValueIdx, indexTypeIdx), localValues);
 			result = TPrintF("%S+%S*%llu", result, indexRegisterStr, value.mem.elementSize);
 		}
@@ -323,7 +323,7 @@ String X64IRValueToStr(JobContext *context, IRValue value, BucketArrayView<Value
 
 	// Array indexing
 	if (value.valueType == IRVALUETYPE_MEMORY && value.mem.elementSize > 0) {
-		String indexRegisterStr = X64IRValueToStr(context,
+		String indexRegisterStr = X64IRValueToStr(
 				IRValueValue(value.mem.indexValueIdx, TYPETABLEIDX_S64), localValues);
 		result = TPrintF("%S+%S*%llu", result, indexRegisterStr, value.mem.elementSize);
 	}
@@ -378,31 +378,31 @@ decoratePtr:
 	return result;
 }
 
-bool IsValueInMemory(X64Context *context, IRValue irValue)
+bool IsValueInMemory(X64Context *x64Context, IRValue irValue)
 {
 	if (irValue.valueType == IRVALUETYPE_MEMORY)
 		return true;
 	if (irValue.valueType != IRVALUETYPE_VALUE)
 		return false;
-	Value value = X64GetValue(context, irValue.valueIdx);
+	Value value = X64GetValue(x64Context, irValue.valueIdx);
 	if (value.flags & (VALUEFLAGS_FORCE_MEMORY | VALUEFLAGS_IS_MEMORY |
 				VALUEFLAGS_ON_STATIC_STORAGE))
 		return true;
 	return false;
 }
 
-bool FitsInOperand(X64Context *context, u8 acceptableOperands, IRValue value)
+bool FitsInOperand(X64Context *x64Context, u8 acceptableOperands, IRValue value)
 {
 	bool isImmediate = value.valueType == IRVALUETYPE_IMMEDIATE_INTEGER ||
 					   value.valueType == IRVALUETYPE_IMMEDIATE_FLOAT;
 	if (isImmediate)
 		return acceptableOperands & OPERANDTYPE_IMMEDIATE;
-	if (!IsValueInMemory(context, value))
+	if (!IsValueInMemory(x64Context, value))
 		return acceptableOperands & OPERANDTYPE_REGISTER;
 	return acceptableOperands & OPERANDTYPE_MEMORY;
 }
 
-bool CanValueBeMemory(X64Context *context, IRValue value)
+bool CanValueBeMemory(X64Context *x64Context, IRValue value)
 {
 	if (value.valueType == IRVALUETYPE_MEMORY)
 		return true;
@@ -410,36 +410,36 @@ bool CanValueBeMemory(X64Context *context, IRValue value)
 					   value.valueType == IRVALUETYPE_IMMEDIATE_FLOAT;
 	if (isImmediate)
 		return false;
-	if (X64GetValue(context, value.valueIdx).flags & VALUEFLAGS_FORCE_REGISTER)
+	if (X64GetValue(x64Context, value.valueIdx).flags & VALUEFLAGS_FORCE_REGISTER)
 		return false;
-	if ((X64GetValue(context, value.valueIdx).flags & (VALUEFLAGS_IS_ALLOCATED |
+	if ((X64GetValue(x64Context, value.valueIdx).flags & (VALUEFLAGS_IS_ALLOCATED |
 			VALUEFLAGS_IS_MEMORY)) == VALUEFLAGS_IS_ALLOCATED)
 		return false;
 	return true;
 }
 
-inline void X64AddInstruction0(X64Context *context, SourceLocation loc, X64InstructionType type)
+inline void X64AddInstruction0(X64Context *x64Context, SourceLocation loc, X64InstructionType type)
 {
-	*BucketArrayAdd(&context->beInstructions) = { loc, type };
+	*BucketArrayAdd(&x64Context->beInstructions) = { loc, type };
 }
 
-inline void X64AddInstruction1(X64Context *context, SourceLocation loc, X64InstructionType type, IRValue dst)
+inline void X64AddInstruction1(X64Context *x64Context, SourceLocation loc, X64InstructionType type, IRValue dst)
 {
-	*BucketArrayAdd(&context->beInstructions) = { loc, type, dst };
+	*BucketArrayAdd(&x64Context->beInstructions) = { loc, type, dst };
 }
 
-inline void X64AddInstruction2(X64Context *context, SourceLocation loc, X64InstructionType type, IRValue dst,
+inline void X64AddInstruction2(X64Context *x64Context, SourceLocation loc, X64InstructionType type, IRValue dst,
 		IRValue src)
 {
-	*BucketArrayAdd(&context->beInstructions) = { loc, type, dst, src };
+	*BucketArrayAdd(&x64Context->beInstructions) = { loc, type, dst, src };
 }
 
 void X64Mov(SourceLocation loc, IRValue dst, IRValue src);
-void X64MovNoTmp(X64Context *context, SourceLocation loc, IRValue dst, IRValue src)
+void X64MovNoTmp(X64Context *x64Context, SourceLocation loc, IRValue dst, IRValue src)
 {
 	X64Instruction result = { loc };
-	TypeInfo dstType = GetTypeInfo(context, StripAllAliases(dst.typeTableIdx));
-	TypeInfo srcType = GetTypeInfo(context, StripAllAliases(src.typeTableIdx));
+	TypeInfo dstType = GetTypeInfo(StripAllAliases(dst.typeTableIdx));
+	TypeInfo srcType = GetTypeInfo(StripAllAliases(src.typeTableIdx));
 
 	// MOVUPS
 	if (dstType.size == 16) {
@@ -447,7 +447,7 @@ void X64MovNoTmp(X64Context *context, SourceLocation loc, IRValue dst, IRValue s
 		result.type = X64_MOVUPS;
 		result.dst = dst;
 		result.src = src;
-		*BucketArrayAdd(&context->beInstructions) = result;
+		*BucketArrayAdd(&x64Context->beInstructions) = result;
 		return;
 	}
 
@@ -485,42 +485,42 @@ void X64MovNoTmp(X64Context *context, SourceLocation loc, IRValue dst, IRValue s
 		result.type = X64_MOV;
 	}
 
-	if (CanValueBeMemory(context, dst) && src.valueType == IRVALUETYPE_IMMEDIATE_INTEGER)
-		ASSERT(GetTypeInfo(context, src.typeTableIdx).size <= 4);
+	if (CanValueBeMemory(x64Context, dst) && src.valueType == IRVALUETYPE_IMMEDIATE_INTEGER)
+		ASSERT(GetTypeInfo(src.typeTableIdx).size <= 4);
 
 	result.dst = dst;
 	result.src = src;
-	*BucketArrayAdd(&context->beInstructions) = result;
+	*BucketArrayAdd(&x64Context->beInstructions) = result;
 }
 
-IRValue X64CopyToRegister(X64Context *context, SourceLocation loc, IRValue src)
+IRValue X64CopyToRegister(X64Context *x64Context, SourceLocation loc, IRValue src)
 {
-	if (src.valueType == IRVALUETYPE_VALUE && !CanValueBeMemory(context, src))
+	if (src.valueType == IRVALUETYPE_VALUE && !CanValueBeMemory(x64Context, src))
 		// Already in a register?
 		return src;
 
 	u32 flags = VALUEFLAGS_FORCE_REGISTER;
 	if (src.valueType != IRVALUETYPE_IMMEDIATE_INTEGER) {
-		Value srcValue = X64GetValue(context, src.valueIdx);
+		Value srcValue = X64GetValue(x64Context, src.valueIdx);
 		flags |= srcValue.flags & VALUEFLAGS_IS_USED;
 		flags |= src.valueType == IRVALUETYPE_VALUE ? VALUEFLAGS_TRY_IMMITATE : 0;
 	}
-	IRValue tmp = X64IRValueNewValue(context, "_movtmp"_s, src.typeTableIdx, flags,
+	IRValue tmp = X64IRValueNewValue(x64Context, "_movtmp"_s, src.typeTableIdx, flags,
 			src.valueIdx);
 
-	X64MovNoTmp(context, loc, tmp, src);
+	X64MovNoTmp(x64Context, loc, tmp, src);
 	return tmp;
 }
 
-void X64ReduceRM64BitImmediate(X64Context *context, SourceLocation loc, u32 leftTypeIdx, IRValue *right)
+void X64ReduceRM64BitImmediate(X64Context *x64Context, SourceLocation loc, u32 leftTypeIdx, IRValue *right)
 {
 	// Can't directly encode a 64 bit immediate
 	if (right->valueType == IRVALUETYPE_IMMEDIATE_INTEGER) {
 		right->typeTableIdx = leftTypeIdx;
 
-		TypeInfo typeInfo = GetTypeInfo(context, right->typeTableIdx);
+		TypeInfo typeInfo = GetTypeInfo(right->typeTableIdx);
 		if (typeInfo.typeCategory == TYPECATEGORY_ENUM)
-			typeInfo = GetTypeInfo(context, typeInfo.enumInfo.typeTableIdx);
+			typeInfo = GetTypeInfo(typeInfo.enumInfo.typeTableIdx);
 		bool isSigned = false;
 		if (typeInfo.typeCategory == TYPECATEGORY_INTEGER)
 			isSigned = typeInfo.integerInfo.isSigned;
@@ -529,9 +529,9 @@ void X64ReduceRM64BitImmediate(X64Context *context, SourceLocation loc, u32 left
 			(typeInfo.size > 4 && !isSigned))
 		{
 			if ((u32)right->immediate != right->immediate) {
-				IRValue tmp = X64IRValueNewValue(context, "_movimmtmp"_s, leftTypeIdx,
+				IRValue tmp = X64IRValueNewValue(x64Context, "_movimmtmp"_s, leftTypeIdx,
 						VALUEFLAGS_FORCE_REGISTER);
-				X64MovNoTmp(context, loc, tmp, *right);
+				X64MovNoTmp(x64Context, loc, tmp, *right);
 				*right = tmp;
 			}
 			else
@@ -540,9 +540,9 @@ void X64ReduceRM64BitImmediate(X64Context *context, SourceLocation loc, u32 left
 		// Signed
 		else if (typeInfo.size > 4 && isSigned) {
 			if ((s32)right->immediate != right->immediate) {
-				IRValue tmp = X64IRValueNewValue(context, "_movimmtmp"_s, leftTypeIdx,
+				IRValue tmp = X64IRValueNewValue(x64Context, "_movimmtmp"_s, leftTypeIdx,
 						VALUEFLAGS_FORCE_REGISTER);
-				X64MovNoTmp(context, loc, tmp, *right);
+				X64MovNoTmp(x64Context, loc, tmp, *right);
 				*right = tmp;
 			}
 			else
@@ -551,21 +551,21 @@ void X64ReduceRM64BitImmediate(X64Context *context, SourceLocation loc, u32 left
 	}
 }
 
-void X64Mov(X64Context *context, SourceLocation loc, IRValue dst, IRValue src)
+void X64Mov(X64Context *x64Context, SourceLocation loc, IRValue dst, IRValue src)
 {
 	if (src.valueType == IRVALUETYPE_IMMEDIATE_INTEGER)
 		src.typeTableIdx = dst.typeTableIdx;
 
-	if (CanValueBeMemory(context, dst))
-		src = X64CopyToRegister(context, loc, src);
+	if (CanValueBeMemory(x64Context, dst))
+		src = X64CopyToRegister(x64Context, loc, src);
 
-	X64MovNoTmp(context, loc, dst, src);
+	X64MovNoTmp(x64Context, loc, dst, src);
 }
 
-void X64Test(X64Context *context, SourceLocation loc, IRValue value)
+void X64Test(X64Context *x64Context, SourceLocation loc, IRValue value)
 {
 	X64FloatingType floatingType = X64FLOATINGTYPE_NONE;
-	TypeInfo typeInfo = GetTypeInfo(context, value.typeTableIdx);
+	TypeInfo typeInfo = GetTypeInfo(value.typeTableIdx);
 	if (typeInfo.typeCategory == TYPECATEGORY_FLOATING)
 		floatingType = (X64FloatingType)(X64FLOATINGTYPE_F32 + (typeInfo.size == 8));
 
@@ -581,15 +581,15 @@ void X64Test(X64Context *context, SourceLocation loc, IRValue value)
 	case X64FLOATINGTYPE_F32:
 	{
 		cmpInst.type = X64_COMISS;
-		IRValue zero = X64IRValueNewValue(context, "_zero"_s, TYPETABLEIDX_128, 0);
-		X64AddInstruction2(context, loc, X64_XORPS, zero, zero);
+		IRValue zero = X64IRValueNewValue(x64Context, "_zero"_s, TYPETABLEIDX_128, 0);
+		X64AddInstruction2(x64Context, loc, X64_XORPS, zero, zero);
 		cmpInst.src = zero;
 	} break;
 	case X64FLOATINGTYPE_F64:
 	{
 		cmpInst.type = X64_COMISD;
-		IRValue zero = X64IRValueNewValue(context, "_zero"_s, TYPETABLEIDX_128, 0);
-		X64AddInstruction2(context, loc, X64_XORPD, zero, zero);
+		IRValue zero = X64IRValueNewValue(x64Context, "_zero"_s, TYPETABLEIDX_128, 0);
+		X64AddInstruction2(x64Context, loc, X64_XORPD, zero, zero);
 		cmpInst.src = zero;
 	} break;
 	default:
@@ -597,15 +597,15 @@ void X64Test(X64Context *context, SourceLocation loc, IRValue value)
 	}
 
 	u8 accepted = x64InstructionInfos[cmpInst.type].operandTypesLeft;
-	if (!FitsInOperand(context, accepted, cmpInst.dst)) {
+	if (!FitsInOperand(x64Context, accepted, cmpInst.dst)) {
 		ASSERT(accepted & OPERANDTYPE_REGISTER);
-		IRValue newValue = X64IRValueNewValue(context, "_test_hlp"_s, cmpInst.dst.typeTableIdx,
+		IRValue newValue = X64IRValueNewValue(x64Context, "_test_hlp"_s, cmpInst.dst.typeTableIdx,
 				VALUEFLAGS_FORCE_REGISTER);
-		X64Mov(context, loc, newValue, cmpInst.dst);
+		X64Mov(x64Context, loc, newValue, cmpInst.dst);
 		cmpInst.dst = newValue;
 	}
 
-	*BucketArrayAdd(&context->beInstructions) = cmpInst;
+	*BucketArrayAdd(&x64Context->beInstructions) = cmpInst;
 }
 
 IRValue X64PushRegisterParameter(u32 typeTableIdx, s32 *numberOfGPR, s32 *numberOfXMM)
@@ -626,7 +626,7 @@ IRValue X64PushRegisterParameter(u32 typeTableIdx, s32 *numberOfGPR, s32 *number
 	return { IRVALUETYPE_INVALID };
 }
 
-void X64CopyMemory(X64Context *context, SourceLocation loc, IRValue dst, IRValue src, IRValue size)
+void X64CopyMemory(X64Context *x64Context, SourceLocation loc, IRValue dst, IRValue src, IRValue size)
 {
 	ASSERT(dst.valueType == IRVALUETYPE_VALUE ||
 		   dst.valueType == IRVALUETYPE_MEMORY);
@@ -637,31 +637,31 @@ void X64CopyMemory(X64Context *context, SourceLocation loc, IRValue dst, IRValue
 
 	// First attempt to copy manually
 	if (size.valueType == IRVALUETYPE_IMMEDIATE_INTEGER) {
-		TypeInfo dstTypeInfo = GetTypeInfo(context, X64GetValue(context, dstIdx).typeTableIdx);
-		TypeInfo srcTypeInfo = GetTypeInfo(context, X64GetValue(context, srcIdx).typeTableIdx);
+		TypeInfo dstTypeInfo = GetTypeInfo(X64GetValue(x64Context, dstIdx).typeTableIdx);
+		TypeInfo srcTypeInfo = GetTypeInfo(X64GetValue(x64Context, srcIdx).typeTableIdx);
 		s64 sizeImm = size.immediate;
 
 		s64 copiedBytes = 0;
 		while (sizeImm - copiedBytes >= 16) {
-			X64Mov(context, loc,
+			X64Mov(x64Context, loc,
 					IRValueMemory(dstIdx, TYPETABLEIDX_128, copiedBytes),
 					IRValueMemory(srcIdx, TYPETABLEIDX_128, copiedBytes));
 			copiedBytes += 16;
 		}
 		while (sizeImm - copiedBytes >= 8) {
-			X64Mov(context, loc,
+			X64Mov(x64Context, loc,
 					IRValueMemory(dstIdx, TYPETABLEIDX_U64, copiedBytes),
 					IRValueMemory(srcIdx, TYPETABLEIDX_U64, copiedBytes));
 			copiedBytes += 8;
 		}
 		while (sizeImm - copiedBytes >= 4) {
-			X64Mov(context, loc,
+			X64Mov(x64Context, loc,
 					IRValueMemory(dstIdx, TYPETABLEIDX_U32, copiedBytes),
 					IRValueMemory(srcIdx, TYPETABLEIDX_U32, copiedBytes));
 			copiedBytes += 4;
 		}
 		while (sizeImm - copiedBytes >= 1) {
-			X64Mov(context, loc,
+			X64Mov(x64Context, loc,
 					IRValueMemory(dstIdx, TYPETABLEIDX_U8, copiedBytes),
 					IRValueMemory(srcIdx, TYPETABLEIDX_U8, copiedBytes));
 			++copiedBytes;
@@ -669,22 +669,22 @@ void X64CopyMemory(X64Context *context, SourceLocation loc, IRValue dst, IRValue
 	}
 	else {
 		ASSERT(g_copyMemoryProcIdx != U32_MAX);
-		X64Mov(context, loc, RDI, dst);
-		X64Mov(context, loc, RSI, src);
-		X64Mov(context, loc, RDX,  size);
+		X64Mov(x64Context, loc, RDI, dst);
+		X64Mov(x64Context, loc, RSI, src);
+		X64Mov(x64Context, loc, RDX,  size);
 		X64Instruction result = { loc, X64_CALL };
 		result.procedureIdx = g_copyMemoryProcIdx;
 		ArrayInit(&result.parameterValues, 3);
 		*ArrayAdd(&result.parameterValues) = RDI.valueIdx;
 		*ArrayAdd(&result.parameterValues) = RSI.valueIdx;
 		*ArrayAdd(&result.parameterValues) = RDX.valueIdx;
-		*BucketArrayAdd(&context->beInstructions) = result;
+		*BucketArrayAdd(&x64Context->beInstructions) = result;
 	}
 }
 
-bool X64WinABIShouldPassByCopy(JobContext *context, u32 typeTableIdx)
+bool X64WinABIShouldPassByCopy(u32 typeTableIdx)
 {
-	TypeInfo typeInfo = GetTypeInfo(context, typeTableIdx);
+	TypeInfo typeInfo = GetTypeInfo(typeTableIdx);
 	// @Speed
 	return  typeInfo.typeCategory == TYPECATEGORY_ARRAY ||
 		  ((typeInfo.typeCategory == TYPECATEGORY_STRUCT ||
@@ -695,7 +695,7 @@ bool X64WinABIShouldPassByCopy(JobContext *context, u32 typeTableIdx)
 			typeInfo.size != 8);
 }
 
-Array<u32, ThreadAllocator> X64ReadyWin64Parameters(X64Context *context, SourceLocation loc,
+Array<u32, ThreadAllocator> X64ReadyWin64Parameters(X64Context *x64Context, SourceLocation loc,
 		ArrayView<IRValue> parameters, bool isCaller, bool includesReturnValue)
 {
 	int parameterCount = (int)parameters.size;
@@ -706,22 +706,22 @@ Array<u32, ThreadAllocator> X64ReadyWin64Parameters(X64Context *context, SourceL
 	for (int i = 0; i < parameterCount; ++i) {
 		IRValue param = parameters[i];
 		u32 paramTypeIdx = StripAllAliases(param.typeTableIdx);
-		TypeInfo paramType = GetTypeInfo(context, paramTypeIdx);
+		TypeInfo paramType = GetTypeInfo(paramTypeIdx);
 
-		if (isCaller && X64WinABIShouldPassByCopy(context, paramTypeIdx)) {
-			static u32 voidPtrTypeIdx = GetTypeInfoPointerOf(context, TYPETABLEIDX_VOID);
+		if (isCaller && X64WinABIShouldPassByCopy(paramTypeIdx)) {
+			static u32 voidPtrTypeIdx = GetTypeInfoPointerOf(TYPETABLEIDX_VOID);
 
-			u32 tmpValueIdx = X64NewValue(context, "paramcpy"_s, paramTypeIdx, 0);
+			u32 tmpValueIdx = X64NewValue(x64Context, "paramcpy"_s, paramTypeIdx, 0);
 			IRValue tmpValue = IRValueValue(tmpValueIdx, voidPtrTypeIdx);
 
 			X64Instruction pushInst = { loc, X64_Push_Value };
 			pushInst.valueIdx = tmpValueIdx;
-			*BucketArrayAdd(&context->beInstructions) = pushInst;
+			*BucketArrayAdd(&x64Context->beInstructions) = pushInst;
 
-			IRValue ptr = X64IRValueNewValue(context, "paramptr"_s, TYPETABLEIDX_S64, 0);
-			X64AddInstruction2(context, loc, X64_LEA, ptr, tmpValue);
+			IRValue ptr = X64IRValueNewValue(x64Context, "paramptr"_s, TYPETABLEIDX_S64, 0);
+			X64AddInstruction2(x64Context, loc, X64_LEA, ptr, tmpValue);
 
-			X64CopyMemory(context, loc, ptr, param, IRValueImmediate(paramType.size));
+			X64CopyMemory(x64Context, loc, ptr, param, IRValueImmediate(paramType.size));
 			param = ptr;
 			paramTypeIdx = TYPETABLEIDX_S64;
 		}
@@ -742,47 +742,46 @@ Array<u32, ThreadAllocator> X64ReadyWin64Parameters(X64Context *context, SourceL
 			slot = isXMM ? XMM3 : R9;  break;
 		default:
 			if (isCaller)
-				slot = IRValueValue(context->x64SpilledParametersWrite[i], TYPETABLEIDX_S64);
+				slot = IRValueValue(x64Context->x64SpilledParametersWrite[i], TYPETABLEIDX_S64);
 			else
-				slot = IRValueValue(context->x64SpilledParametersRead[i], TYPETABLEIDX_S64);
+				slot = IRValueValue(x64Context->x64SpilledParametersRead[i], TYPETABLEIDX_S64);
 		}
 		slot.typeTableIdx = paramTypeIdx;
 
 		if (isCaller)
-			X64Mov(context, loc, slot, param);
+			X64Mov(x64Context, loc, slot, param);
 		else {
-			if (X64WinABIShouldPassByCopy(context, paramTypeIdx)) {
-				u32 ptrTypeIdx = GetTypeInfoPointerOf(context, paramTypeIdx);
+			if (X64WinABIShouldPassByCopy(paramTypeIdx)) {
+				u32 ptrTypeIdx = GetTypeInfoPointerOf(paramTypeIdx);
 				param.typeTableIdx = ptrTypeIdx;
 				slot.typeTableIdx = ptrTypeIdx;
-				X64CopyMemory(context, loc, param, slot,
-						IRValueImmediate(paramType.size));
+				X64CopyMemory(x64Context, loc, param, slot, IRValueImmediate(paramType.size));
 			}
 			else
-				X64Mov(context, loc, param, slot);
+				X64Mov(x64Context, loc, param, slot);
 		}
 
 		*ArrayAdd(&parameterValues) = slot.valueIdx;
 	}
 
 	if (isCaller) {
-		if (context->allocatedParameterCount < parameterCount)
-			context->allocatedParameterCount = parameterCount;
+		if (x64Context->allocatedParameterCount < parameterCount)
+			x64Context->allocatedParameterCount = parameterCount;
 	}
 
 	return parameterValues;
 }
 
-Array<u32, ThreadAllocator> X64ReadyLinuxParameters(X64Context *context, SourceLocation loc,
+Array<u32, ThreadAllocator> X64ReadyLinuxParameters(X64Context *x64Context, SourceLocation loc,
 		ArrayView<IRValue> parameters, bool isCaller, bool includesReturnValue)
 {
 	if (includesReturnValue) {
 		// Pointer to return value is passed on RAX.
 		ASSERT(parameters.size > 0);
 		if (isCaller)
-			X64Mov(context, loc, RAX, parameters[0]);
+			X64Mov(x64Context, loc, RAX, parameters[0]);
 		else
-			X64Mov(context, loc, parameters[0], RAX);
+			X64Mov(x64Context, loc, parameters[0], RAX);
 		// Remove from array and pretend it wasn't there.
 		++parameters.data;
 		--parameters.size;
@@ -800,13 +799,13 @@ Array<u32, ThreadAllocator> X64ReadyLinuxParameters(X64Context *context, SourceL
 		IRValue param = parameters[i];
 		u32 paramTypeIdx = param.typeTableIdx;
 
-		TypeInfo paramTypeInfo = GetTypeInfo(context, paramTypeIdx);
+		TypeInfo paramTypeInfo = GetTypeInfo(paramTypeIdx);
 		bool isStruct = paramTypeInfo.typeCategory == TYPECATEGORY_STRUCT ||
 			(paramTypeInfo.typeCategory == TYPECATEGORY_ARRAY && paramTypeInfo.arrayInfo.count == 0);
 		if (isStruct && paramTypeInfo.size <= 16) {
 			ArrayView<StructMember> members;
 			if (paramTypeInfo.typeCategory == TYPECATEGORY_ARRAY)
-				members = GetTypeInfo(context, TYPETABLEIDX_ARRAY_STRUCT).structInfo.members;
+				members = GetTypeInfo(TYPETABLEIDX_ARRAY_STRUCT).structInfo.members;
 			else
 				members = paramTypeInfo.structInfo.members;
 
@@ -884,14 +883,14 @@ Array<u32, ThreadAllocator> X64ReadyLinuxParameters(X64Context *context, SourceL
 				if (firstSlot.valueType != IRVALUETYPE_INVALID &&
 				   (regCount < 2 || secondSlot.valueType != IRVALUETYPE_INVALID)) {
 					if (isCaller) {
-						X64Mov(context, loc, firstSlot,  first);
+						X64Mov(x64Context, loc, firstSlot,  first);
 						if (secondSlot.valueType != IRVALUETYPE_INVALID)
-							X64Mov(context, loc, secondSlot, second);
+							X64Mov(x64Context, loc, secondSlot, second);
 					}
 					else {
-						X64Mov(context, loc, first,  firstSlot);
+						X64Mov(x64Context, loc, first,  firstSlot);
 						if (secondSlot.valueType != IRVALUETYPE_INVALID)
-							X64Mov(context, loc, second, secondSlot);
+							X64Mov(x64Context, loc, second, secondSlot);
 					}
 
 					*ArrayAdd(&parameterValues) = firstSlot.valueIdx;
@@ -925,14 +924,14 @@ Array<u32, ThreadAllocator> X64ReadyLinuxParameters(X64Context *context, SourceL
 				paramPtr.typeTableIdx = typeTableIdx;
 
 				if (isCaller) {
-					IRValue slot = IRValueMemory(context->x64SpilledParametersWrite[numberOfSpilled++],
+					IRValue slot = IRValueMemory(x64Context->x64SpilledParametersWrite[numberOfSpilled++],
 							typeTableIdx);
-					X64Mov(context, loc, slot, paramPtr);
+					X64Mov(x64Context, loc, slot, paramPtr);
 				}
 				else {
-					IRValue slot = IRValueMemory(context->x64SpilledParametersRead[numberOfSpilled++],
+					IRValue slot = IRValueMemory(x64Context->x64SpilledParametersRead[numberOfSpilled++],
 							typeTableIdx);
-					X64Mov(context, loc, paramPtr, slot);
+					X64Mov(x64Context, loc, paramPtr, slot);
 				}
 				paramPtr.mem.offset += 8;
 				sizeLeft -= 8;
@@ -943,36 +942,35 @@ Array<u32, ThreadAllocator> X64ReadyLinuxParameters(X64Context *context, SourceL
 			if (isCaller) {
 				slot = X64PushRegisterParameter(param.typeTableIdx, &numberOfGPR, &numberOfXMM);
 				if (slot.valueType == IRVALUETYPE_INVALID)
-					slot = IRValueMemory(context->x64SpilledParametersWrite[numberOfSpilled++],
+					slot = IRValueMemory(x64Context->x64SpilledParametersWrite[numberOfSpilled++],
 							TYPETABLEIDX_S64);
 
 				slot.typeTableIdx = param.typeTableIdx;
-				X64Mov(context, loc, slot, param);
+				X64Mov(x64Context, loc, slot, param);
 			}
 			else {
 				slot = X64PushRegisterParameter(param.typeTableIdx, &numberOfGPR, &numberOfXMM);
 				if (slot.valueType == IRVALUETYPE_INVALID)
-					slot = IRValueMemory(context->x64SpilledParametersRead[numberOfSpilled++],
+					slot = IRValueMemory(x64Context->x64SpilledParametersRead[numberOfSpilled++],
 							TYPETABLEIDX_S64);
 
 				slot.typeTableIdx = param.typeTableIdx;
-				X64Mov(context, loc, param, slot);
+				X64Mov(x64Context, loc, param, slot);
 			}
 
 			*ArrayAdd(&parameterValues) = slot.valueIdx;
 		}
 	}
 
-	if (isCaller)
-	{
-		if (context->allocatedParameterCount < numberOfSpilled)
-			context->allocatedParameterCount = numberOfSpilled;
+	if (isCaller) {
+		if (x64Context->allocatedParameterCount < numberOfSpilled)
+			x64Context->allocatedParameterCount = numberOfSpilled;
 	}
 
 	return parameterValues;
 }
 
-void X64ConvertInstruction(X64Context *context, IRInstruction inst)
+void X64ConvertInstruction(X64Context *x64Context, IRInstruction inst)
 {
 	X64Instruction result = { inst.loc };
 
@@ -997,10 +995,9 @@ void X64ConvertInstruction(X64Context *context, IRInstruction inst)
 			typeTableIdx = inst.assignment.dst.typeTableIdx;
 
 		typeTableIdx = StripAllAliases(typeTableIdx);
-		TypeInfo typeInfo = GetTypeInfo(context, typeTableIdx);
+		TypeInfo typeInfo = GetTypeInfo(typeTableIdx);
 
-		if (typeInfo.typeCategory == TYPECATEGORY_FLOATING)
-		{
+		if (typeInfo.typeCategory == TYPECATEGORY_FLOATING) {
 			floatingType = (X64FloatingType)(X64FLOATINGTYPE_F32 + (typeInfo.size == 8));
 			isSigned = true;
 		}
@@ -1008,19 +1005,18 @@ void X64ConvertInstruction(X64Context *context, IRInstruction inst)
 			isSigned = typeInfo.integerInfo.isSigned;
 	}
 
-	switch (inst.type)
-	{
+	switch (inst.type) {
 	case IRINSTRUCTIONTYPE_ASSIGNMENT:
 	{
-		X64Mov(context, inst.loc, inst.assignment.dst, inst.assignment.src);
+		X64Mov(x64Context, inst.loc, inst.assignment.dst, inst.assignment.src);
 		return;
 	}
 	case IRINSTRUCTIONTYPE_CONVERT_INT_TO_FLOAT:
 	{
 		IRValue dst = inst.assignment.dst;
 		IRValue src = inst.assignment.src;
-		TypeInfo dstType = GetTypeInfo(context, StripAllAliases(dst.typeTableIdx));
-		TypeInfo srcType = GetTypeInfo(context, StripAllAliases(src.typeTableIdx));
+		TypeInfo dstType = GetTypeInfo(StripAllAliases(dst.typeTableIdx));
+		TypeInfo srcType = GetTypeInfo(StripAllAliases(src.typeTableIdx));
 		ASSERT(dstType.typeCategory == TYPECATEGORY_FLOATING);
 		ASSERT(srcType.typeCategory != TYPECATEGORY_FLOATING);
 		// Immediates should be converted to float in previous stages.
@@ -1030,18 +1026,18 @@ void X64ConvertInstruction(X64Context *context, IRInstruction inst)
 		if (srcType.size < 4) {
 			bool isSrcSigned = srcType.typeCategory == TYPECATEGORY_INTEGER &&
 				srcType.integerInfo.isSigned;
-			IRValue newValue = X64IRValueNewValue(context, "_cvt_tmp"_s, TYPETABLEIDX_U32,
+			IRValue newValue = X64IRValueNewValue(x64Context, "_cvt_tmp"_s, TYPETABLEIDX_U32,
 					VALUEFLAGS_FORCE_REGISTER);
 			X64InstructionType extendType = isSrcSigned ? X64_MOVSX : X64_MOVZX;
-			X64AddInstruction2(context, inst.loc, extendType, newValue, src);
+			X64AddInstruction2(x64Context, inst.loc, extendType, newValue, src);
 			src = newValue;
 		}
 
 		if (dstType.size == 4)
-			X64AddInstruction2(context, inst.loc, X64_CVTSI2SS, dst, src);
+			X64AddInstruction2(x64Context, inst.loc, X64_CVTSI2SS, dst, src);
 		else {
 			ASSERT(dstType.size == 8);
-			X64AddInstruction2(context, inst.loc, X64_CVTSI2SD, dst, src);
+			X64AddInstruction2(x64Context, inst.loc, X64_CVTSI2SD, dst, src);
 		}
 		return;
 	}
@@ -1049,14 +1045,14 @@ void X64ConvertInstruction(X64Context *context, IRInstruction inst)
 	{
 		IRValue dst = inst.assignment.dst;
 		IRValue src = inst.assignment.src;
-		TypeInfo dstType = GetTypeInfo(context, StripAllAliases(dst.typeTableIdx));
-		TypeInfo srcType = GetTypeInfo(context, StripAllAliases(src.typeTableIdx));
+		TypeInfo dstType = GetTypeInfo(StripAllAliases(dst.typeTableIdx));
+		TypeInfo srcType = GetTypeInfo(StripAllAliases(src.typeTableIdx));
 		ASSERT(dstType.typeCategory != TYPECATEGORY_FLOATING);
 		ASSERT(srcType.typeCategory == TYPECATEGORY_FLOATING);
 		// X64_CVTTSD2SI and CVTTSD2SI are R-RM
 		ASSERT(dst.valueType == IRVALUETYPE_VALUE ||
 			   dst.valueType == IRVALUETYPE_MEMORY);
-		IRValue newValue = X64IRValueNewValue(context, "_cvttsd2si_tmp"_s, dst.typeTableIdx,
+		IRValue newValue = X64IRValueNewValue(x64Context, "_cvttsd2si_tmp"_s, dst.typeTableIdx,
 				VALUEFLAGS_FORCE_REGISTER | VALUEFLAGS_TRY_IMMITATE, dst.valueIdx);
 
 		X64InstructionType type;
@@ -1066,49 +1062,49 @@ void X64ConvertInstruction(X64Context *context, IRInstruction inst)
 			ASSERT(srcType.size == 8);
 			type = X64_CVTTSD2SI;
 		}
-		X64AddInstruction2(context, inst.loc, type, newValue, src);
-		X64AddInstruction2(context, inst.loc, X64_MOV, dst, newValue);
+		X64AddInstruction2(x64Context, inst.loc, type, newValue, src);
+		X64AddInstruction2(x64Context, inst.loc, X64_MOV, dst, newValue);
 		return;
 	}
 	case IRINSTRUCTIONTYPE_CONVERT_PRECISION:
 	{
 		IRValue dst = inst.assignment.dst;
 		IRValue src = inst.assignment.src;
-		TypeInfo dstType = GetTypeInfo(context, StripAllAliases(dst.typeTableIdx));
-		TypeInfo srcType = GetTypeInfo(context, StripAllAliases(src.typeTableIdx));
+		TypeInfo dstType = GetTypeInfo(StripAllAliases(dst.typeTableIdx));
+		TypeInfo srcType = GetTypeInfo(StripAllAliases(src.typeTableIdx));
 		ASSERT(dstType.typeCategory == TYPECATEGORY_FLOATING);
 		ASSERT(srcType.typeCategory == TYPECATEGORY_FLOATING);
 
 		// X64_CVTSD2SS and X64_CVTSS2SD are R-RM
 		ASSERT(dst.valueType == IRVALUETYPE_VALUE ||
 			   dst.valueType == IRVALUETYPE_MEMORY);
-		IRValue newValue = X64IRValueNewValue(context, "_cvtsd2ss_tmp"_s, dst.typeTableIdx,
+		IRValue newValue = X64IRValueNewValue(x64Context, "_cvtsd2ss_tmp"_s, dst.typeTableIdx,
 				VALUEFLAGS_FORCE_REGISTER | VALUEFLAGS_TRY_IMMITATE, dst.valueIdx);
 
 		if (dstType.size == 4) {
 			ASSERT(srcType.size == 8);
-			X64AddInstruction2(context, inst.loc, X64_CVTSD2SS, newValue, src);
+			X64AddInstruction2(x64Context, inst.loc, X64_CVTSD2SS, newValue, src);
 		}
 		else {
 			ASSERT(dstType.size == 8);
 			ASSERT(srcType.size == 4);
-			X64AddInstruction2(context, inst.loc, X64_CVTSS2SD, newValue, src);
+			X64AddInstruction2(x64Context, inst.loc, X64_CVTSS2SD, newValue, src);
 		}
-		X64AddInstruction2(context, inst.loc, X64_MOVSS, dst, newValue);
+		X64AddInstruction2(x64Context, inst.loc, X64_MOVSS, dst, newValue);
 		return;
 	}
 	case IRINSTRUCTIONTYPE_SIGN_EXTEND:
 	{
 		IRValue dst = inst.assignment.dst;
 		IRValue src = inst.assignment.src;
-		TypeInfo dstType = GetTypeInfo(context, StripAllAliases(dst.typeTableIdx));
-		TypeInfo srcType = GetTypeInfo(context, StripAllAliases(src.typeTableIdx));
+		TypeInfo dstType = GetTypeInfo(StripAllAliases(dst.typeTableIdx));
+		TypeInfo srcType = GetTypeInfo(StripAllAliases(src.typeTableIdx));
 		ASSERT(dstType.typeCategory != TYPECATEGORY_FLOATING);
 		ASSERT(srcType.typeCategory != TYPECATEGORY_FLOATING);
 		ASSERT(dstType.size > srcType.size);
 
 		// MOVSXD and MOVSX are R-RM
-		IRValue tmp = X64IRValueNewValue(context, "_movsxd_tmp"_s, dst.typeTableIdx,
+		IRValue tmp = X64IRValueNewValue(x64Context, "_movsxd_tmp"_s, dst.typeTableIdx,
 				VALUEFLAGS_FORCE_REGISTER);
 
 		X64InstructionType type;
@@ -1118,16 +1114,16 @@ void X64ConvertInstruction(X64Context *context, IRInstruction inst)
 			ASSERT(srcType.size < 4);
 			type = X64_MOVSX;
 		}
-		X64AddInstruction2(context, inst.loc, type, tmp, src);
-		X64AddInstruction2(context, inst.loc, X64_MOV, dst, tmp);
+		X64AddInstruction2(x64Context, inst.loc, type, tmp, src);
+		X64AddInstruction2(x64Context, inst.loc, X64_MOV, dst, tmp);
 		return;
 	}
 	case IRINSTRUCTIONTYPE_ZERO_EXTEND:
 	{
 		IRValue dst = inst.assignment.dst;
 		IRValue src = inst.assignment.src;
-		TypeInfo dstType = GetTypeInfo(context, StripAllAliases(dst.typeTableIdx));
-		TypeInfo srcType = GetTypeInfo(context, StripAllAliases(src.typeTableIdx));
+		TypeInfo dstType = GetTypeInfo(StripAllAliases(dst.typeTableIdx));
+		TypeInfo srcType = GetTypeInfo(StripAllAliases(src.typeTableIdx));
 		ASSERT(dstType.typeCategory != TYPECATEGORY_FLOATING);
 		ASSERT(srcType.typeCategory != TYPECATEGORY_FLOATING);
 		ASSERT(dstType.size > srcType.size);
@@ -1136,20 +1132,20 @@ void X64ConvertInstruction(X64Context *context, IRInstruction inst)
 			// x86-64 automatically zero-extends 32 to 64 bits
 			// Since either operand could be memory, we first store the value in a 32-bit register
 			// then copy its 64-bit counterpart to dst.
-			IRValue tmp = X64IRValueNewValue(context, "_zero_ext_tmp"_s, dst.typeTableIdx,
+			IRValue tmp = X64IRValueNewValue(x64Context, "_zero_ext_tmp"_s, dst.typeTableIdx,
 					VALUEFLAGS_FORCE_REGISTER);
 			tmp.typeTableIdx = src.typeTableIdx;
-			X64AddInstruction2(context, inst.loc, X64_MOV, tmp, src);
+			X64AddInstruction2(x64Context, inst.loc, X64_MOV, tmp, src);
 			tmp.typeTableIdx = dst.typeTableIdx;
-			X64AddInstruction2(context, inst.loc, X64_MOV, dst, tmp);
+			X64AddInstruction2(x64Context, inst.loc, X64_MOV, dst, tmp);
 		}
 		else {
 			ASSERT(srcType.size < 4);
 			// MOVZXD is R-RM
-			IRValue tmp = X64IRValueNewValue(context, "_movzx_tmp"_s, dst.typeTableIdx,
+			IRValue tmp = X64IRValueNewValue(x64Context, "_movzx_tmp"_s, dst.typeTableIdx,
 					VALUEFLAGS_FORCE_REGISTER);
-			X64AddInstruction2(context, inst.loc, X64_MOVZX, tmp, src);
-			X64AddInstruction2(context, inst.loc, X64_MOV, dst, tmp);
+			X64AddInstruction2(x64Context, inst.loc, X64_MOVZX, tmp, src);
+			X64AddInstruction2(x64Context, inst.loc, X64_MOV, dst, tmp);
 		}
 		return;
 	}
@@ -1157,8 +1153,8 @@ void X64ConvertInstruction(X64Context *context, IRInstruction inst)
 	{
 		IRValue dst = inst.assignment.dst;
 		IRValue src = inst.assignment.src;
-		TypeInfo dstType = GetTypeInfo(context, StripAllAliases(dst.typeTableIdx));
-		TypeInfo srcType = GetTypeInfo(context, StripAllAliases(src.typeTableIdx));
+		TypeInfo dstType = GetTypeInfo(StripAllAliases(dst.typeTableIdx));
+		TypeInfo srcType = GetTypeInfo(StripAllAliases(src.typeTableIdx));
 		ASSERT(dstType.typeCategory != TYPECATEGORY_FLOATING);
 		ASSERT(srcType.typeCategory != TYPECATEGORY_FLOATING);
 		ASSERT(dstType.size < srcType.size);
@@ -1166,28 +1162,28 @@ void X64ConvertInstruction(X64Context *context, IRInstruction inst)
 		ASSERT(srcType.size <= 8);
 
 		src.typeTableIdx = dst.typeTableIdx;
-		X64AddInstruction2(context, inst.loc, X64_MOV, dst, src);
+		X64AddInstruction2(x64Context, inst.loc, X64_MOV, dst, src);
 		return;
 	}
 	case IRINSTRUCTIONTYPE_LOAD_EFFECTIVE_ADDRESS:
 	{
-		static u32 voidPtrTypeIdx = GetTypeInfoPointerOf(context, TYPETABLEIDX_VOID);
+		static u32 voidPtrTypeIdx = GetTypeInfoPointerOf(TYPETABLEIDX_VOID);
 
 		IRValue dst = inst.assignment.dst;
 		IRValue src = inst.assignment.src;
 		src.typeTableIdx = voidPtrTypeIdx;
 		if (src.valueType == IRVALUETYPE_IMMEDIATE_INTEGER) {
-			X64Mov(context, inst.loc, dst, src);
+			X64Mov(x64Context, inst.loc, dst, src);
 		}
-		else if (IsValueInMemory(context, dst)) {
-			IRValue tmp = X64IRValueNewValue(context, "_lea_mm_tmp"_s, dst.typeTableIdx,
+		else if (IsValueInMemory(x64Context, dst)) {
+			IRValue tmp = X64IRValueNewValue(x64Context, "_lea_mm_tmp"_s, dst.typeTableIdx,
 					VALUEFLAGS_FORCE_REGISTER);
-			X64AddInstruction2(context, inst.loc, X64_LEA, tmp, src);
-			X64Mov(context, inst.loc, dst, tmp);
+			X64AddInstruction2(x64Context, inst.loc, X64_LEA, tmp, src);
+			X64Mov(x64Context, inst.loc, dst, tmp);
 			src = tmp;
 		}
 		else
-			X64AddInstruction2(context, inst.loc, X64_LEA, dst, src);
+			X64AddInstruction2(x64Context, inst.loc, X64_LEA, dst, src);
 		return;
 	}
 	case IRINSTRUCTIONTYPE_ADD:
@@ -1221,24 +1217,24 @@ void X64ConvertInstruction(X64Context *context, IRInstruction inst)
 		switch (floatingType)
 		{
 		case X64FLOATINGTYPE_NONE:
-			X64Mov(context, inst.loc, inst.unaryOperation.out, inst.unaryOperation.in);
+			X64Mov(x64Context, inst.loc, inst.unaryOperation.out, inst.unaryOperation.in);
 			result.type = X64_NEG;
 			goto doRM;
 		case X64FLOATINGTYPE_F32:
 			result.type = X64_VXORPS;
-			result.src  = X64CopyToRegister(context, inst.loc, inst.unaryOperation.in);
+			result.src  = X64CopyToRegister(x64Context, inst.loc, inst.unaryOperation.in);
 			result.src2 = IRValueImmediateF32(-0.0);
 			result.src2.typeTableIdx = TYPETABLEIDX_128;
 			break;
 		case X64FLOATINGTYPE_F64:
 			result.type = X64_VXORPD;
-			result.src  = X64CopyToRegister(context, inst.loc, inst.unaryOperation.in);
+			result.src  = X64CopyToRegister(x64Context, inst.loc, inst.unaryOperation.in);
 			result.src2 = IRValueImmediateF64(-0.0);
 			result.src2.typeTableIdx = TYPETABLEIDX_128;
 			break;
 		}
 		result.dst = inst.unaryOperation.out;
-		*BucketArrayAdd(&context->beInstructions) = result;
+		*BucketArrayAdd(&x64Context->beInstructions) = result;
 		return;
 	}
 	case IRINSTRUCTIONTYPE_BITWISE_AND:
@@ -1274,13 +1270,13 @@ void X64ConvertInstruction(X64Context *context, IRInstruction inst)
 					IsPowerOf264(right.immediate))
 			{
 				u32 immitateFlag = left.valueType == IRVALUETYPE_VALUE ? VALUEFLAGS_TRY_IMMITATE : 0;
-				IRValue tmp = X64IRValueNewValue(context, "_mulshfttmp"_s, left.typeTableIdx,
+				IRValue tmp = X64IRValueNewValue(x64Context, "_mulshfttmp"_s, left.typeTableIdx,
 						immitateFlag, left.valueIdx);
 
-				X64Mov(context, inst.loc, tmp, left);
-				X64AddInstruction2(context, inst.loc, X64_SAL, tmp,
+				X64Mov(x64Context, inst.loc, tmp, left);
+				X64AddInstruction2(x64Context, inst.loc, X64_SAL, tmp,
 						IRValueImmediate(63 - Nlz64(right.immediate), TYPETABLEIDX_U8));
-				X64Mov(context, inst.loc, out, tmp);
+				X64Mov(x64Context, inst.loc, out, tmp);
 				return;
 			}
 			else {
@@ -1291,24 +1287,24 @@ void X64ConvertInstruction(X64Context *context, IRInstruction inst)
 				else {
 					IRValue typedRax = RAX;
 					typedRax.typeTableIdx = left.typeTableIdx;
-					X64Mov(context, inst.loc, typedRax, left);
+					X64Mov(x64Context, inst.loc, typedRax, left);
 
-					X64AddInstruction2(context, inst.loc, X64_XOR, EDX, EDX);
+					X64AddInstruction2(x64Context, inst.loc, X64_XOR, EDX, EDX);
 
 					IRValue multiplier = right;
 					u8 accepted = x64InstructionInfos[X64_MUL].operandTypesLeft;
-					if (!FitsInOperand(context, accepted, multiplier)) {
+					if (!FitsInOperand(x64Context, accepted, multiplier)) {
 						ASSERT(accepted & OPERANDTYPE_REGISTER);
-						IRValue newValue = X64IRValueNewValue(context, multiplier.typeTableIdx,
+						IRValue newValue = X64IRValueNewValue(x64Context, multiplier.typeTableIdx,
 								VALUEFLAGS_FORCE_REGISTER);
-						X64Mov(context, inst.loc, newValue, multiplier);
+						X64Mov(x64Context, inst.loc, newValue, multiplier);
 						multiplier = newValue;
 					}
 					result.type = X64_MUL;
 					result.dst = multiplier;
-					*BucketArrayAdd(&context->beInstructions) = result;
+					*BucketArrayAdd(&x64Context->beInstructions) = result;
 
-					X64Mov(context, inst.loc, out, typedRax);
+					X64Mov(x64Context, inst.loc, out, typedRax);
 					return;
 				}
 			}
@@ -1331,39 +1327,39 @@ void X64ConvertInstruction(X64Context *context, IRInstruction inst)
 
 			if (right.valueType == IRVALUETYPE_IMMEDIATE_INTEGER && IsPowerOf264(right.immediate)) {
 				u32 immitateFlag = left.valueType == IRVALUETYPE_VALUE ? VALUEFLAGS_TRY_IMMITATE : 0;
-				IRValue tmp = X64IRValueNewValue(context, "_mulshfttmp"_s, left.typeTableIdx,
+				IRValue tmp = X64IRValueNewValue(x64Context, "_mulshfttmp"_s, left.typeTableIdx,
 						immitateFlag, left.valueIdx);
 
-				TypeInfo leftType = GetTypeInfo(context, left.typeTableIdx);
+				TypeInfo leftType = GetTypeInfo(left.typeTableIdx);
 				X64InstructionType shiftType = isSigned ? X64_SAR : X64_SHR;
 
-				X64Mov(context, inst.loc, tmp, left);
-				X64AddInstruction2(context, inst.loc, shiftType, tmp,
+				X64Mov(x64Context, inst.loc, tmp, left);
+				X64AddInstruction2(x64Context, inst.loc, shiftType, tmp,
 						IRValueImmediate(63 - Nlz64(right.immediate), TYPETABLEIDX_U8));
-				X64Mov(context, inst.loc, out, tmp);
+				X64Mov(x64Context, inst.loc, out, tmp);
 			}
 			else {
-				X64Mov(context, inst.loc, RAX, left);
+				X64Mov(x64Context, inst.loc, RAX, left);
 
 				if (isSigned)
-					X64AddInstruction0(context, inst.loc, X64_CQO);
+					X64AddInstruction0(x64Context, inst.loc, X64_CQO);
 				else
-					X64AddInstruction2(context, inst.loc, X64_XOR, EDX, EDX);
+					X64AddInstruction2(x64Context, inst.loc, X64_XOR, EDX, EDX);
 
 				IRValue divisor = right;
 				u8 accepted = x64InstructionInfos[X64_DIV].operandTypesLeft;
-				if (!FitsInOperand(context, accepted, divisor)) {
+				if (!FitsInOperand(x64Context, accepted, divisor)) {
 					ASSERT(accepted & OPERANDTYPE_REGISTER);
-					IRValue newValue = X64IRValueNewValue(context, divisor.typeTableIdx,
+					IRValue newValue = X64IRValueNewValue(x64Context, divisor.typeTableIdx,
 							VALUEFLAGS_FORCE_REGISTER);
-					X64Mov(context, inst.loc, newValue, divisor);
+					X64Mov(x64Context, inst.loc, newValue, divisor);
 					divisor = newValue;
 				}
 				result.type = isSigned ? X64_IDIV : X64_DIV;
 				result.dst = divisor;
-				*BucketArrayAdd(&context->beInstructions) = result;
+				*BucketArrayAdd(&x64Context->beInstructions) = result;
 
-				X64Mov(context, inst.loc, out, RAX);
+				X64Mov(x64Context, inst.loc, out, RAX);
 			}
 			return;
 		}
@@ -1383,59 +1379,59 @@ void X64ConvertInstruction(X64Context *context, IRInstruction inst)
 		if (right.valueType == IRVALUETYPE_IMMEDIATE_INTEGER && IsPowerOf264(right.immediate))
 		{
 			u32 immitateFlag = left.valueType == IRVALUETYPE_VALUE ? VALUEFLAGS_TRY_IMMITATE : 0;
-			IRValue tmp = X64IRValueNewValue(context, "_mulshfttmp"_s, left.typeTableIdx, immitateFlag,
+			IRValue tmp = X64IRValueNewValue(x64Context, "_mulshfttmp"_s, left.typeTableIdx, immitateFlag,
 					left.valueIdx);
 
-			X64Mov(context, inst.loc, tmp, left);
-			X64AddInstruction2(context, inst.loc, X64_AND, tmp,
+			X64Mov(x64Context, inst.loc, tmp, left);
+			X64AddInstruction2(x64Context, inst.loc, X64_AND, tmp,
 					IRValueImmediate(right.immediate - 1, TYPETABLEIDX_U32));
-			X64Mov(context, inst.loc, out, tmp);
+			X64Mov(x64Context, inst.loc, out, tmp);
 		}
 		else {
-			X64Mov(context, inst.loc, RAX, left);
+			X64Mov(x64Context, inst.loc, RAX, left);
 			if (isSigned)
-				X64AddInstruction0(context, inst.loc, X64_CQO);
+				X64AddInstruction0(x64Context, inst.loc, X64_CQO);
 			else
-				X64AddInstruction2(context, inst.loc, X64_XOR, EDX, EDX);
+				X64AddInstruction2(x64Context, inst.loc, X64_XOR, EDX, EDX);
 
 			IRValue divisor = right;
 			u8 accepted = x64InstructionInfos[X64_DIV].operandTypesLeft;
-			if (!FitsInOperand(context, accepted, divisor)) {
+			if (!FitsInOperand(x64Context, accepted, divisor)) {
 				ASSERT(accepted & OPERANDTYPE_REGISTER);
-				IRValue newValue = X64IRValueNewValue(context, divisor.typeTableIdx,
+				IRValue newValue = X64IRValueNewValue(x64Context, divisor.typeTableIdx,
 						VALUEFLAGS_FORCE_REGISTER);
-				X64Mov(context, inst.loc, newValue, divisor);
+				X64Mov(x64Context, inst.loc, newValue, divisor);
 				divisor = newValue;
 			}
 			result.type = isSigned ? X64_IDIV : X64_DIV;
 			result.dst = divisor;
 
-			*BucketArrayAdd(&context->beInstructions) = result;
-			X64Mov(context, inst.loc, out, RDX);
+			*BucketArrayAdd(&x64Context->beInstructions) = result;
+			X64Mov(x64Context, inst.loc, out, RDX);
 		}
 		return;
 	}
 	case IRINSTRUCTIONTYPE_SHIFT_LEFT:
 	{
-		TypeInfo leftType = GetTypeInfo(context, inst.binaryOperation.left.typeTableIdx);
+		TypeInfo leftType = GetTypeInfo(inst.binaryOperation.left.typeTableIdx);
 		result.type = isSigned ? X64_SAL : X64_SHL;
 		goto doShift;
 	}
 	case IRINSTRUCTIONTYPE_SHIFT_RIGHT:
 	{
-		TypeInfo leftType = GetTypeInfo(context, inst.binaryOperation.left.typeTableIdx);
+		TypeInfo leftType = GetTypeInfo(inst.binaryOperation.left.typeTableIdx);
 		result.type = isSigned ? X64_SAR : X64_SHR;
 		goto doShift;
 	}
 	case IRINSTRUCTIONTYPE_LABEL:
 		result.type = X64_Label;
 		result.label = inst.label;
-		*BucketArrayAdd(&context->beInstructions) = result;
+		*BucketArrayAdd(&x64Context->beInstructions) = result;
 		return;
 	case IRINSTRUCTIONTYPE_JUMP:
 		result.type = X64_JMP;
 		result.label = inst.jump.label;
-		*BucketArrayAdd(&context->beInstructions) = result;
+		*BucketArrayAdd(&x64Context->beInstructions) = result;
 		return;
 	case IRINSTRUCTIONTYPE_JUMP_IF_ZERO:
 		result.type = X64_JE;
@@ -1505,17 +1501,17 @@ void X64ConvertInstruction(X64Context *context, IRInstruction inst)
 		goto doConditionalSet;
 	case IRINSTRUCTIONTYPE_NOT:
 	{
-		X64Test(context, inst.loc, inst.unaryOperation.in);
+		X64Test(x64Context, inst.loc, inst.unaryOperation.in);
 
 		result.type = X64_SETE;
 		result.dst = inst.unaryOperation.out;
-		if (GetTypeInfo(context, result.dst.typeTableIdx).size != 1)
+		if (GetTypeInfo(result.dst.typeTableIdx).size != 1)
 		{
-			X64Mov(context, inst.loc, result.dst, IRValueImmediate(0, TYPETABLEIDX_U8));
+			X64Mov(x64Context, inst.loc, result.dst, IRValueImmediate(0, TYPETABLEIDX_U8));
 			result.dst.typeTableIdx = TYPETABLEIDX_S8;
 		}
 
-		*BucketArrayAdd(&context->beInstructions) = result;
+		*BucketArrayAdd(&x64Context->beInstructions) = result;
 		return;
 	}
 	case IRINSTRUCTIONTYPE_PROCEDURE_CALL:
@@ -1533,7 +1529,7 @@ void X64ConvertInstruction(X64Context *context, IRInstruction inst)
 			result.procedureIdx = inst.procedureCall.procedureIdx;
 
 			u32 procTypeIdx = GetProcedureRead(result.procedureIdx).typeTableIdx;
-			callingConvention = GetTypeInfo(context, procTypeIdx).procedureInfo.callingConvention;
+			callingConvention = GetTypeInfo(procTypeIdx).procedureInfo.callingConvention;
 		}
 		else
 		{
@@ -1541,7 +1537,7 @@ void X64ConvertInstruction(X64Context *context, IRInstruction inst)
 			result.procedureIRValue = inst.procedureCall.procIRValue;
 
 			u32 procTypeIdx = inst.procedureCall.procIRValue.typeTableIdx;
-			callingConvention = GetTypeInfo(context, procTypeIdx).procedureInfo.callingConvention;
+			callingConvention = GetTypeInfo(procTypeIdx).procedureInfo.callingConvention;
 		}
 
 		// At worst each parameter should add 2 values to this array, this is why we multiply
@@ -1557,20 +1553,20 @@ void X64ConvertInstruction(X64Context *context, IRInstruction inst)
 		if (callingConvention != CC_DEFAULT && inst.procedureCall.returnValues.size)
 		{
 			IRValue returnValue = inst.procedureCall.returnValues[0];
-			isReturnByCopy = IRShouldPassByCopy(context, returnValue.typeTableIdx);
+			isReturnByCopy = IRShouldPassByCopy(returnValue.typeTableIdx);
 			if (isReturnByCopy)
 			{
-				static u32 voidPtrTypeIdx = GetTypeInfoPointerOf(context, TYPETABLEIDX_VOID);
+				static u32 voidPtrTypeIdx = GetTypeInfoPointerOf(TYPETABLEIDX_VOID);
 
-				u32 tmpValueIdx = X64NewValue(context, "returncpy"_s, returnValue.typeTableIdx, 0);
+				u32 tmpValueIdx = X64NewValue(x64Context, "returncpy"_s, returnValue.typeTableIdx, 0);
 				IRValue tmpValue = IRValueValue(tmpValueIdx, voidPtrTypeIdx);
 
 				X64Instruction pushInst = { inst.loc, X64_Push_Value };
 				pushInst.valueIdx = tmpValueIdx;
-				*BucketArrayAdd(&context->beInstructions) = pushInst;
+				*BucketArrayAdd(&x64Context->beInstructions) = pushInst;
 
-				IRValue ptr = X64IRValueNewValue(context, "returnptr"_s, TYPETABLEIDX_S64, 0);
-				X64AddInstruction2(context, inst.loc, X64_LEA, ptr, tmpValue);
+				IRValue ptr = X64IRValueNewValue(x64Context, "returnptr"_s, TYPETABLEIDX_S64, 0);
+				X64AddInstruction2(x64Context, inst.loc, X64_LEA, ptr, tmpValue);
 
 				*FixedArrayAdd(&paramSources) = ptr;
 			}
@@ -1583,13 +1579,13 @@ void X64ConvertInstruction(X64Context *context, IRInstruction inst)
 		switch (callingConvention) {
 			case CC_WIN64:
 				paramValues =
-					X64ReadyWin64Parameters(context, inst.loc, paramSources, true, isReturnByCopy);
+					X64ReadyWin64Parameters(x64Context, inst.loc, paramSources, true, isReturnByCopy);
 				break;
 			case CC_DEFAULT:
 			case CC_LINUX64:
 			default:
 				paramValues =
-					X64ReadyLinuxParameters(context, inst.loc, paramSources, true, isReturnByCopy);
+					X64ReadyLinuxParameters(x64Context, inst.loc, paramSources, true, isReturnByCopy);
 		}
 
 		result.parameterValues.data = paramValues.data;
@@ -1609,14 +1605,14 @@ void X64ConvertInstruction(X64Context *context, IRInstruction inst)
 				if (StringEquals(procName, x64LinuxSyscallNames[i]))
 				{
 					result.type = X64_SYSCALL;
-					X64Mov(context, inst.loc, RAX, IRValueImmediate(i, TYPETABLEIDX_U32));
+					X64Mov(x64Context, inst.loc, RAX, IRValueImmediate(i, TYPETABLEIDX_U32));
 					break;
 				}
 			}
 		}
 #endif
 
-		*BucketArrayAdd(&context->beInstructions) = result;
+		*BucketArrayAdd(&x64Context->beInstructions) = result;
 
 		u64 returnValueCount = inst.procedureCall.returnValues.size;
 		if (returnValueCount) {
@@ -1632,29 +1628,29 @@ void X64ConvertInstruction(X64Context *context, IRInstruction inst)
 					IRValue slot;
 					IRValue out = inst.procedureCall.returnValues[i];
 					u32 returnTypeIdx = out.typeTableIdx;
-					TypeInfo returnTypeInfo = GetTypeInfo(context, returnTypeIdx);
+					TypeInfo returnTypeInfo = GetTypeInfo(returnTypeIdx);
 					if (returnTypeInfo.typeCategory == TYPECATEGORY_FLOATING) {
 						slot = floatingReturnRegisters[floatingIdx++];
 						slot.typeTableIdx = out.typeTableIdx;
-						X64Mov(context, inst.loc, out, slot);
+						X64Mov(x64Context, inst.loc, out, slot);
 					}
 					else {
 						slot = integerReturnRegisters[integerIdx++];
 						slot.typeTableIdx = out.typeTableIdx;
 
-						if (IRShouldPassByCopy(context, returnTypeIdx) &&
+						if (IRShouldPassByCopy(returnTypeIdx) &&
 								out.valueType != IRVALUETYPE_IMMEDIATE_INTEGER)
 						{
-							IRValue ptr = X64IRValueNewValue(context, "retptr"_s, TYPETABLEIDX_S64, 0);
+							IRValue ptr = X64IRValueNewValue(x64Context, "retptr"_s, TYPETABLEIDX_S64, 0);
 							IRValue outButS64 = out;
 							outButS64.typeTableIdx = TYPETABLEIDX_S64;
-							X64AddInstruction2(context, inst.loc, X64_LEA, ptr, outButS64);
+							X64AddInstruction2(x64Context, inst.loc, X64_LEA, ptr, outButS64);
 
-							X64CopyMemory(context, inst.loc, ptr, slot,
+							X64CopyMemory(x64Context, inst.loc, ptr, slot,
 									IRValueImmediate(returnTypeInfo.size));
 						}
 						else
-							X64Mov(context, inst.loc, out, slot);
+							X64Mov(x64Context, inst.loc, out, slot);
 					}
 				}
 			}
@@ -1663,26 +1659,26 @@ void X64ConvertInstruction(X64Context *context, IRInstruction inst)
 				ASSERT(returnValueCount == 1);
 				IRValue out = inst.procedureCall.returnValues[0];
 				u32 returnTypeIdx = out.typeTableIdx;
-				if (IRShouldPassByCopy(context, returnTypeIdx) &&
+				if (IRShouldPassByCopy(returnTypeIdx) &&
 						out.valueType != IRVALUETYPE_IMMEDIATE_INTEGER) {
-					IRValue ptr = X64IRValueNewValue(context, "retptr"_s, TYPETABLEIDX_S64, 0);
+					IRValue ptr = X64IRValueNewValue(x64Context, "retptr"_s, TYPETABLEIDX_S64, 0);
 					IRValue outButS64 = out;
 					outButS64.typeTableIdx = TYPETABLEIDX_S64;
-					X64AddInstruction2(context, inst.loc, X64_LEA, ptr, outButS64);
+					X64AddInstruction2(x64Context, inst.loc, X64_LEA, ptr, outButS64);
 
-					TypeInfo returnTypeInfo = GetTypeInfo(context, returnTypeIdx);
-					X64CopyMemory(context, inst.loc, ptr, RAX,
+					TypeInfo returnTypeInfo = GetTypeInfo(returnTypeIdx);
+					X64CopyMemory(x64Context, inst.loc, ptr, RAX,
 							IRValueImmediate(returnTypeInfo.size));
 				}
-				else if (GetTypeInfo(context, returnTypeIdx).typeCategory == TYPECATEGORY_FLOATING) {
+				else if (GetTypeInfo(returnTypeIdx).typeCategory == TYPECATEGORY_FLOATING) {
 					IRValue typedXmm0 = XMM0;
 					typedXmm0.typeTableIdx = returnTypeIdx;
-					X64Mov(context, inst.loc, out, typedXmm0);
+					X64Mov(x64Context, inst.loc, out, typedXmm0);
 				}
 				else {
 					IRValue typedRax = RAX;
 					typedRax.typeTableIdx = returnTypeIdx;
-					X64Mov(context, inst.loc, out, typedRax);
+					X64Mov(x64Context, inst.loc, out, typedRax);
 				}
 			}
 		}
@@ -1692,7 +1688,7 @@ void X64ConvertInstruction(X64Context *context, IRInstruction inst)
 	{
 		switch (inst.intrinsic.type) {
 		case INTRINSIC_BREAKPOINT:
-			X64AddInstruction0(context, inst.loc, X64_INT3);
+			X64AddInstruction0(x64Context, inst.loc, X64_INT3);
 			return;
 		case INTRINSIC_SQRT32:
 			result.type = X64_SQRTSS;
@@ -1707,7 +1703,7 @@ void X64ConvertInstruction(X64Context *context, IRInstruction inst)
 	}
 	case IRINSTRUCTIONTYPE_COPY_MEMORY:
 	{
-		X64CopyMemory(context, inst.loc, inst.copyMemory.dst, inst.copyMemory.src,
+		X64CopyMemory(x64Context, inst.loc, inst.copyMemory.dst, inst.copyMemory.src,
 				inst.copyMemory.size);
 		return;
 	}
@@ -1720,39 +1716,39 @@ void X64ConvertInstruction(X64Context *context, IRInstruction inst)
 		// First attempt to zero manually
 		if (inst.zeroMemory.size.valueType == IRVALUETYPE_IMMEDIATE_INTEGER)
 		{
-			TypeInfo dstTypeInfo = GetTypeInfo(context, X64GetValue(context, dstIdx).typeTableIdx);
+			TypeInfo dstTypeInfo = GetTypeInfo(X64GetValue(x64Context, dstIdx).typeTableIdx);
 			s64 size = inst.zeroMemory.size.immediate;
 
 			s64 copiedBytes = 0;
 			if (size - copiedBytes >= 16) {
-				IRValue zeroXmmReg = X64IRValueNewValue(context, "_zeroxmm"_s, TYPETABLEIDX_128,
+				IRValue zeroXmmReg = X64IRValueNewValue(x64Context, "_zeroxmm"_s, TYPETABLEIDX_128,
 						VALUEFLAGS_FORCE_REGISTER);
-				X64AddInstruction2(context, inst.loc, X64_XORPS, zeroXmmReg, zeroXmmReg);
+				X64AddInstruction2(x64Context, inst.loc, X64_XORPS, zeroXmmReg, zeroXmmReg);
 				while (size - copiedBytes >= 16) {
-					X64Mov(context, inst.loc,
+					X64Mov(x64Context, inst.loc,
 							IRValueMemory(dstIdx, TYPETABLEIDX_128, copiedBytes), zeroXmmReg);
 					copiedBytes += 16;
 				}
 			}
 			if (size - copiedBytes >= 1) {
-				IRValue zeroReg = X64IRValueNewValue(context, "_zeroreg"_s, TYPETABLEIDX_U32,
+				IRValue zeroReg = X64IRValueNewValue(x64Context, "_zeroreg"_s, TYPETABLEIDX_U32,
 						VALUEFLAGS_FORCE_REGISTER);
-				X64AddInstruction2(context, inst.loc, X64_XOR, zeroReg, zeroReg);
+				X64AddInstruction2(x64Context, inst.loc, X64_XOR, zeroReg, zeroReg);
 				zeroReg.typeTableIdx = TYPETABLEIDX_U64;
 				while (size - copiedBytes >= 8) {
-					X64Mov(context, inst.loc,
+					X64Mov(x64Context, inst.loc,
 							IRValueMemory(dstIdx, TYPETABLEIDX_U64, copiedBytes), zeroReg);
 					copiedBytes += 8;
 				}
 				zeroReg.typeTableIdx = TYPETABLEIDX_U32;
 				while (size - copiedBytes >= 4) {
-					X64Mov(context, inst.loc,
+					X64Mov(x64Context, inst.loc,
 							IRValueMemory(dstIdx, TYPETABLEIDX_U32, copiedBytes), zeroReg);
 					copiedBytes += 4;
 				}
 				zeroReg.typeTableIdx = TYPETABLEIDX_U8;
 				while (size - copiedBytes >= 1) {
-					X64Mov(context, inst.loc,
+					X64Mov(x64Context, inst.loc,
 							IRValueMemory(dstIdx, TYPETABLEIDX_U8, copiedBytes), zeroReg);
 					++copiedBytes;
 				}
@@ -1760,33 +1756,33 @@ void X64ConvertInstruction(X64Context *context, IRInstruction inst)
 		}
 		else {
 			ASSERT(g_zeroMemoryProcIdx != U32_MAX);
-			X64Mov(context, inst.loc, RCX, inst.zeroMemory.dst);
-			X64Mov(context, inst.loc, RDX, inst.zeroMemory.size);
+			X64Mov(x64Context, inst.loc, RCX, inst.zeroMemory.dst);
+			X64Mov(x64Context, inst.loc, RDX, inst.zeroMemory.size);
 			result.type = X64_CALL;
 			result.procedureIdx = g_zeroMemoryProcIdx;
 			ArrayInit(&result.parameterValues, 2);
 			*ArrayAdd(&result.parameterValues) = RCX.valueIdx;
 			*ArrayAdd(&result.parameterValues) = RDX.valueIdx;
-			*BucketArrayAdd(&context->beInstructions) = result;
+			*BucketArrayAdd(&x64Context->beInstructions) = result;
 		}
 	}
 	case IRINSTRUCTIONTYPE_PUSH_SCOPE:
 		result.type = X64_Push_Scope;
-		*BucketArrayAdd(&context->beInstructions) = result;
+		*BucketArrayAdd(&x64Context->beInstructions) = result;
 		return;
 	case IRINSTRUCTIONTYPE_POP_SCOPE:
 		result.type = X64_Pop_Scope;
-		*BucketArrayAdd(&context->beInstructions) = result;
+		*BucketArrayAdd(&x64Context->beInstructions) = result;
 		return;
 	case IRINSTRUCTIONTYPE_PUSH_VALUE:
 		result.type = X64_Push_Value;
 		result.valueIdx = inst.pushValue.valueIdx;
-		*BucketArrayAdd(&context->beInstructions) = result;
+		*BucketArrayAdd(&x64Context->beInstructions) = result;
 		return;
 	case IRINSTRUCTIONTYPE_COMMENT:
 		result.type = X64_Comment;
 		result.comment = inst.comment;
-		*BucketArrayAdd(&context->beInstructions) = result;
+		*BucketArrayAdd(&x64Context->beInstructions) = result;
 		return;
 	case IRINSTRUCTIONTYPE_RETURN:
 		return;
@@ -1805,15 +1801,15 @@ doRM:
 		if (operand.valueType == IRVALUETYPE_IMMEDIATE_INTEGER &&
 			(operand.immediate & 0xFFFFFFFF00000000))
 		{
-			IRValue tmp = X64IRValueNewValue(context, operand.typeTableIdx, 0);
-			X64Mov(context, inst.loc, tmp, operand);
+			IRValue tmp = X64IRValueNewValue(x64Context, operand.typeTableIdx, 0);
+			X64Mov(x64Context, inst.loc, tmp, operand);
 			operand = tmp;
 		}
 
-		X64Mov(context, inst.loc, operand, inst.unaryOperation.in);
+		X64Mov(x64Context, inst.loc, operand, inst.unaryOperation.in);
 
 		result.dst = operand;
-		*BucketArrayAdd(&context->beInstructions) = result;
+		*BucketArrayAdd(&x64Context->beInstructions) = result;
 
 		return;
 	}
@@ -1824,27 +1820,27 @@ doRM_RMI:
 		IRValue out   = inst.binaryOperation.out;
 
 		u32 immitateFlag = left.valueType == IRVALUETYPE_VALUE ? VALUEFLAGS_TRY_IMMITATE : 0;
-		IRValue tmp = X64IRValueNewValue(context, "_rmrmitmp"_s, left.typeTableIdx,
+		IRValue tmp = X64IRValueNewValue(x64Context, "_rmrmitmp"_s, left.typeTableIdx,
 				VALUEFLAGS_FORCE_REGISTER | immitateFlag, left.valueIdx);
 
-		X64MovNoTmp(context, inst.loc, tmp, left);
+		X64MovNoTmp(x64Context, inst.loc, tmp, left);
 
 		u8 accepted = x64InstructionInfos[result.type].operandTypesRight;
-		if (!FitsInOperand(context, accepted, right)) {
+		if (!FitsInOperand(x64Context, accepted, right)) {
 			ASSERT(accepted & OPERANDTYPE_REGISTER);
-			right = X64CopyToRegister(context, inst.loc, right);
+			right = X64CopyToRegister(x64Context, inst.loc, right);
 		}
 
-		X64ReduceRM64BitImmediate(context, inst.loc, left.typeTableIdx, &right);
+		X64ReduceRM64BitImmediate(x64Context, inst.loc, left.typeTableIdx, &right);
 
 		if (result.type == X64_IMUL)
-			ASSERT(GetTypeInfo(context, left.typeTableIdx).size == GetTypeInfo(context, right.typeTableIdx).size);
+			ASSERT(GetTypeInfo(left.typeTableIdx).size == GetTypeInfo(right.typeTableIdx).size);
 
 		result.dst = tmp;
 		result.src = right;
-		*BucketArrayAdd(&context->beInstructions) = result;
+		*BucketArrayAdd(&x64Context->beInstructions) = result;
 
-		X64Mov(context, inst.loc, out, tmp);
+		X64Mov(x64Context, inst.loc, out, tmp);
 
 		return;
 	}
@@ -1855,28 +1851,28 @@ doX_XM:
 		IRValue out = inst.binaryOperation.out;
 
 		u32 immitateFlagLeft = out.valueType == IRVALUETYPE_VALUE ? VALUEFLAGS_TRY_IMMITATE : 0;
-		IRValue tmp = X64IRValueNewValue(context, left.typeTableIdx,
+		IRValue tmp = X64IRValueNewValue(x64Context, left.typeTableIdx,
 				VALUEFLAGS_FORCE_REGISTER | immitateFlagLeft, out.valueIdx);
 
-		X64MovNoTmp(context, inst.loc, tmp, left);
+		X64MovNoTmp(x64Context, inst.loc, tmp, left);
 
 		u8 accepted = x64InstructionInfos[result.type].operandTypesRight;
-		if (!FitsInOperand(context, accepted, right) ||
+		if (!FitsInOperand(x64Context, accepted, right) ||
 			right.typeTableIdx != left.typeTableIdx)
 		{
 			ASSERT(accepted & OPERANDTYPE_REGISTER);
 			u32 immitateFlagRight = right.valueType == IRVALUETYPE_VALUE ? VALUEFLAGS_TRY_IMMITATE : 0;
-			IRValue newValue = X64IRValueNewValue(context, out.typeTableIdx,
+			IRValue newValue = X64IRValueNewValue(x64Context, out.typeTableIdx,
 					VALUEFLAGS_FORCE_REGISTER | immitateFlagRight, right.valueIdx);
-			X64Mov(context, inst.loc, newValue, right);
+			X64Mov(x64Context, inst.loc, newValue, right);
 			right = newValue;
 		}
 
 		result.dst = tmp;
 		result.src = right;
-		*BucketArrayAdd(&context->beInstructions) = result;
+		*BucketArrayAdd(&x64Context->beInstructions) = result;
 
-		X64Mov(context, inst.loc, out, tmp);
+		X64Mov(x64Context, inst.loc, out, tmp);
 
 		return;
 	}
@@ -1886,33 +1882,33 @@ doShift:
 		IRValue right = inst.binaryOperation.right;
 		IRValue out   = inst.binaryOperation.out;
 
-		IRValue tmp = X64IRValueNewValue(context, left.typeTableIdx, 0);
+		IRValue tmp = X64IRValueNewValue(x64Context, left.typeTableIdx, 0);
 
-		X64Mov(context, inst.loc, tmp, left);
+		X64Mov(x64Context, inst.loc, tmp, left);
 
 		if (right.valueType == IRVALUETYPE_IMMEDIATE_INTEGER)
 			right.typeTableIdx = TYPETABLEIDX_U8;
 		else {
 			IRValue typedRcx = RCX;
 			typedRcx.typeTableIdx = right.typeTableIdx;
-			X64Mov(context, inst.loc, typedRcx, right);
+			X64Mov(x64Context, inst.loc, typedRcx, right);
 			right = CL;
 		}
 
 		result.dst = tmp;
 		result.src = right;
-		*BucketArrayAdd(&context->beInstructions) = result;
+		*BucketArrayAdd(&x64Context->beInstructions) = result;
 
-		X64Mov(context, inst.loc, out, tmp);
+		X64Mov(x64Context, inst.loc, out, tmp);
 
 		return;
 	}
 doConditionalJump:
 	{
-		X64Test(context, inst.loc, inst.conditionalJump.condition);
+		X64Test(x64Context, inst.loc, inst.conditionalJump.condition);
 
 		result.label = inst.conditionalJump.label;
-		*BucketArrayAdd(&context->beInstructions) = result;
+		*BucketArrayAdd(&x64Context->beInstructions) = result;
 		return;
 	}
 doConditionalJump2:
@@ -1937,28 +1933,28 @@ doConditionalJump2:
 
 		IRValue left  = inst.conditionalJump2.left;
 		u8 accepted = x64InstructionInfos[cmpInst.type].operandTypesLeft;
-		if (!FitsInOperand(context, accepted, left))
+		if (!FitsInOperand(x64Context, accepted, left))
 		{
 			ASSERT(accepted & OPERANDTYPE_REGISTER);
 			u32 immitateFlagLeft = left.valueType == IRVALUETYPE_VALUE ? VALUEFLAGS_TRY_IMMITATE : 0;
-			IRValue newValue = X64IRValueNewValue(context, "_jump_hlp"_s, left.typeTableIdx,
+			IRValue newValue = X64IRValueNewValue(x64Context, "_jump_hlp"_s, left.typeTableIdx,
 					VALUEFLAGS_FORCE_REGISTER | immitateFlagLeft, left.valueIdx);
-			X64Mov(context, inst.loc, newValue, left);
+			X64Mov(x64Context, inst.loc, newValue, left);
 			left = newValue;
 		}
 
 		IRValue right = inst.conditionalJump2.right;
-		X64ReduceRM64BitImmediate(context, inst.loc, left.typeTableIdx, &right);
+		X64ReduceRM64BitImmediate(x64Context, inst.loc, left.typeTableIdx, &right);
 		accepted = x64InstructionInfos[cmpInst.type].operandTypesRight;
-		if (!FitsInOperand(context, accepted, right) ||
+		if (!FitsInOperand(x64Context, accepted, right) ||
 			right.typeTableIdx != left.typeTableIdx ||
-			(IsValueInMemory(context, left) && IsValueInMemory(context, right)))
+			(IsValueInMemory(x64Context, left) && IsValueInMemory(x64Context, right)))
 		{
 			ASSERT(accepted & OPERANDTYPE_REGISTER);
 			u32 immitateFlagRight = right.valueType == IRVALUETYPE_VALUE ? VALUEFLAGS_TRY_IMMITATE : 0;
-			IRValue newValue = X64IRValueNewValue(context, "_jump_hlp"_s, left.typeTableIdx,
+			IRValue newValue = X64IRValueNewValue(x64Context, "_jump_hlp"_s, left.typeTableIdx,
 					VALUEFLAGS_FORCE_REGISTER | immitateFlagRight, right.valueIdx);
-			X64Mov(context, inst.loc, newValue, right);
+			X64Mov(x64Context, inst.loc, newValue, right);
 			right = newValue;
 		}
 		cmpInst.dst = left;
@@ -1966,8 +1962,8 @@ doConditionalJump2:
 
 		result.label = inst.conditionalJump2.label;
 
-		*BucketArrayAdd(&context->beInstructions) = cmpInst;
-		*BucketArrayAdd(&context->beInstructions) = result;
+		*BucketArrayAdd(&x64Context->beInstructions) = cmpInst;
+		*BucketArrayAdd(&x64Context->beInstructions) = result;
 		return;
 	}
 doConditionalSet:
@@ -1992,28 +1988,28 @@ doConditionalSet:
 		cmpInst.dst = inst.binaryOperation.left;
 		cmpInst.src = inst.binaryOperation.right;
 
-		X64ReduceRM64BitImmediate(context, inst.loc, cmpInst.dst.typeTableIdx, &cmpInst.src);
+		X64ReduceRM64BitImmediate(x64Context, inst.loc, cmpInst.dst.typeTableIdx, &cmpInst.src);
 
 		u8 accepted = x64InstructionInfos[cmpInst.type].operandTypesLeft;
-		if (!FitsInOperand(context, accepted, cmpInst.dst) ||
-			(IsValueInMemory(context, cmpInst.dst) && IsValueInMemory(context, cmpInst.src)))
+		if (!FitsInOperand(x64Context, accepted, cmpInst.dst) ||
+			(IsValueInMemory(x64Context, cmpInst.dst) && IsValueInMemory(x64Context, cmpInst.src)))
 		{
 			ASSERT(accepted & OPERANDTYPE_REGISTER);
-			IRValue newValue = X64IRValueNewValue(context, "_setcc_hlp"_s, cmpInst.dst.typeTableIdx,
+			IRValue newValue = X64IRValueNewValue(x64Context, "_setcc_hlp"_s, cmpInst.dst.typeTableIdx,
 					VALUEFLAGS_FORCE_REGISTER);
-			X64Mov(context, inst.loc, newValue, cmpInst.dst);
+			X64Mov(x64Context, inst.loc, newValue, cmpInst.dst);
 			cmpInst.dst = newValue;
 		}
 
-		*BucketArrayAdd(&context->beInstructions) = cmpInst;
+		*BucketArrayAdd(&x64Context->beInstructions) = cmpInst;
 
 		result.dst = inst.binaryOperation.out;
-		if (GetTypeInfo(context, result.dst.typeTableIdx).size != 1)
+		if (GetTypeInfo(result.dst.typeTableIdx).size != 1)
 		{
-			X64Mov(context, inst.loc, result.dst, IRValueImmediate(0, TYPETABLEIDX_U8));
+			X64Mov(x64Context, inst.loc, result.dst, IRValueImmediate(0, TYPETABLEIDX_U8));
 			result.dst.typeTableIdx = TYPETABLEIDX_S8;
 		}
-		*BucketArrayAdd(&context->beInstructions) = result;
+		*BucketArrayAdd(&x64Context->beInstructions) = result;
 		return;
 	}
 doTwoArgIntrinsic:
@@ -2022,28 +2018,26 @@ doTwoArgIntrinsic:
 		IRValue right = inst.intrinsic.parameters[1];
 		IRValue out   = inst.intrinsic.parameters[0];
 
-		IRValue tmp = X64IRValueNewValue(context, left.typeTableIdx, 0);
+		IRValue tmp = X64IRValueNewValue(x64Context, left.typeTableIdx, 0);
 
 		result.dst = tmp;
 		result.src = right;
-		*BucketArrayAdd(&context->beInstructions) = result;
+		*BucketArrayAdd(&x64Context->beInstructions) = result;
 
-		X64Mov(context, inst.loc, out, tmp);
+		X64Mov(x64Context, inst.loc, out, tmp);
 		return;
 	}
 }
 
-String X64InstructionToStr(JobContext *context, X64Instruction inst,
-		BucketArrayView<Value> localValues)
+String X64InstructionToStr(X64Instruction inst, BucketArrayView<Value> localValues)
 {
 	String mnemonic = x64InstructionInfos[inst.type].mnemonic;
-	switch (inst.type)
-	{
+	switch (inst.type) {
 	case X64_CALL:
 		return TPrintF("call %S", GetProcedureRead(inst.procedureIdx).name);
 	case X64_CALL_Indirect:
 	{
-		String proc = X64IRValueToStr(context, inst.procedureIRValue, localValues);
+		String proc = X64IRValueToStr(inst.procedureIRValue, localValues);
 		return TPrintF("call %S", proc);
 	}
 	case X64_JMP:
@@ -2087,20 +2081,20 @@ String X64InstructionToStr(JobContext *context, X64Instruction inst,
 
 printDst:
 	{
-		String dst = X64IRValueToStr(context, inst.dst, localValues);
+		String dst = X64IRValueToStr(inst.dst, localValues);
 		return TPrintF("%S %S", mnemonic, dst);
 	}
 printDstSrc:
 	{
-		String dst = X64IRValueToStr(context, inst.dst, localValues);
-		String src = X64IRValueToStr(context, inst.src, localValues);
+		String dst = X64IRValueToStr(inst.dst, localValues);
+		String src = X64IRValueToStr(inst.src, localValues);
 		return TPrintF("%S %S, %S", mnemonic, dst, src);
 	}
 printDstSrcSrc2:
 	{
-		String dst  = X64IRValueToStr(context, inst.dst,  localValues);
-		String src  = X64IRValueToStr(context, inst.src,  localValues);
-		String src2 = X64IRValueToStr(context, inst.src2, localValues);
+		String dst  = X64IRValueToStr(inst.dst,  localValues);
+		String src  = X64IRValueToStr(inst.src,  localValues);
+		String src2 = X64IRValueToStr(inst.src2, localValues);
 		return TPrintF("%S %S, %S, %S", mnemonic, dst, src, src2);
 	}
 printLabel:
@@ -2109,16 +2103,15 @@ printLabel:
 	}
 }
 
-inline s64 X64PrintInstruction(JobContext *context, X64Instruction inst,
-	BucketArrayView<Value> localValues)
+inline s64 X64PrintInstruction(X64Instruction inst, BucketArrayView<Value> localValues)
 {
-	String instructionStr = X64InstructionToStr(context, inst, localValues);
+	String instructionStr = X64InstructionToStr(inst, localValues);
 	return OutputBufferPut(instructionStr.size, instructionStr.data);
 }
 
 #include "X64RegisterAllocation.cpp"
 
-void X64PrintInstructions(JobContext *context)
+void X64PrintInstructions()
 {
 	auto beFinalProcedureData = g_context->beFinalProcedureData.GetForRead();
 	int procCount = (int)beFinalProcedureData->size;
@@ -2141,7 +2134,7 @@ void X64PrintInstructions(JobContext *context)
 		X64InstructionStream stream = X64InstructionStreamBegin(&finalProc.instructions);
 		X64Instruction *inst = X64InstructionStreamAdvance(&stream);
 		while (inst) {
-			if (X64PrintInstruction(context, *inst, finalProc.localValues))
+			if (X64PrintInstruction(*inst, finalProc.localValues))
 				OutputBufferPrint("\n");
 			inst = X64InstructionStreamAdvance(&stream);
 		}
@@ -2156,7 +2149,7 @@ void X64PrintInstructions(JobContext *context)
 }
 
 #if USE_OWN_ASSEMBLER
-xed_encoder_operand_t X64IRValueToXEDOperand(JobContext *context, SourceLocation loc, IRValue value,
+xed_encoder_operand_t X64IRValueToXEDOperand(SourceLocation loc, IRValue value,
 		Relocation *displacementRelocation, BucketArrayView<Value> localValues)
 {
 	ASSERT(value.valueType != IRVALUETYPE_IMMEDIATE_FLOAT);
@@ -2165,7 +2158,7 @@ xed_encoder_operand_t X64IRValueToXEDOperand(JobContext *context, SourceLocation
 	xed_encoder_operand_t result = {};
 
 	u64 size = 0;
-	TypeInfo typeInfo = GetTypeInfo(context, StripAllAliases(value.typeTableIdx));
+	TypeInfo typeInfo = GetTypeInfo(StripAllAliases(value.typeTableIdx));
 	bool isXMM;
 	size = typeInfo.size;
 	Value v;
@@ -2293,8 +2286,7 @@ doIndexScale:
 	return result;
 }
 
-int X64InstructionToBytes(JobContext *context, X64Instruction x64Inst,
-	BucketArrayView<Value> localValues, u8 *buffer)
+int X64InstructionToBytes(X64Instruction x64Inst, BucketArrayView<Value> localValues, u8 *buffer)
 {
 	Relocation displacementRelocation = {};
 
@@ -2306,8 +2298,7 @@ int X64InstructionToBytes(JobContext *context, X64Instruction x64Inst,
 
 	xed_encoder_instruction_t inst;
 
-	switch (x64Inst.type)
-	{
+	switch (x64Inst.type) {
 	case X64_CALL:
 	{
 		if (!(x64Inst.procedureIdx & PROCEDURE_EXTERNAL_BIT)) {
@@ -2332,7 +2323,7 @@ int X64InstructionToBytes(JobContext *context, X64Instruction x64Inst,
 	}
 	case X64_CALL_Indirect:
 	{
-		xed_encoder_operand_t dst = X64IRValueToXEDOperand(context, x64Inst.loc,
+		xed_encoder_operand_t dst = X64IRValueToXEDOperand(x64Inst.loc,
 				x64Inst.procedureIRValue, &displacementRelocation, localValues);
 		xed_inst1(&inst, dstate64, xedIClass, 64, dst);
 		goto encode;
@@ -2415,30 +2406,30 @@ inst0:
 	}
 inst1:
 	{
-		int bitWidth = (int)GetTypeInfo(context, x64Inst.dst.typeTableIdx).size * 8;
-		xed_encoder_operand_t dst = X64IRValueToXEDOperand(context, x64Inst.loc, x64Inst.dst,
+		int bitWidth = (int)GetTypeInfo(x64Inst.dst.typeTableIdx).size * 8;
+		xed_encoder_operand_t dst = X64IRValueToXEDOperand(x64Inst.loc, x64Inst.dst,
 				&displacementRelocation, localValues);
 		xed_inst1(&inst, dstate64, xedIClass, bitWidth, dst);
 		goto encode;
 	}
 inst2:
 	{
-		int bitWidth = (int)GetTypeInfo(context, x64Inst.dst.typeTableIdx).size * 8;
-		xed_encoder_operand_t dst = X64IRValueToXEDOperand(context, x64Inst.loc, x64Inst.dst,
+		int bitWidth = (int)GetTypeInfo(x64Inst.dst.typeTableIdx).size * 8;
+		xed_encoder_operand_t dst = X64IRValueToXEDOperand(x64Inst.loc, x64Inst.dst,
 				&displacementRelocation, localValues);
-		xed_encoder_operand_t src = X64IRValueToXEDOperand(context, x64Inst.loc, x64Inst.src,
+		xed_encoder_operand_t src = X64IRValueToXEDOperand(x64Inst.loc, x64Inst.src,
 				&displacementRelocation, localValues);
 		xed_inst2(&inst, dstate64, xedIClass, bitWidth, dst, src);
 		goto encode;
 	}
 inst3:
 	{
-		int bitWidth = (int)GetTypeInfo(context, x64Inst.dst.typeTableIdx).size * 8;
-		xed_encoder_operand_t dst  = X64IRValueToXEDOperand(context, x64Inst.loc, x64Inst.dst,
+		int bitWidth = (int)GetTypeInfo(x64Inst.dst.typeTableIdx).size * 8;
+		xed_encoder_operand_t dst  = X64IRValueToXEDOperand(x64Inst.loc, x64Inst.dst,
 				&displacementRelocation, localValues);
-		xed_encoder_operand_t src  = X64IRValueToXEDOperand(context, x64Inst.loc, x64Inst.src,
+		xed_encoder_operand_t src  = X64IRValueToXEDOperand(x64Inst.loc, x64Inst.src,
 				&displacementRelocation, localValues);
-		xed_encoder_operand_t src2 = X64IRValueToXEDOperand(context, x64Inst.loc, x64Inst.src2,
+		xed_encoder_operand_t src2 = X64IRValueToXEDOperand(x64Inst.loc, x64Inst.src2,
 				&displacementRelocation, localValues);
 		xed_inst3(&inst, dstate64, xedIClass, bitWidth, dst, src, src2);
 		goto encode;
@@ -2466,12 +2457,11 @@ encode:
 	}
 }
 
-void X64EncodeInstructions(JobContext *context)
+void X64EncodeInstructions()
 {
 	auto beFinalProcedureData = g_context->beFinalProcedureData.GetForRead();
 	int procCount = (int)beFinalProcedureData->size;
-	for (int finalProcIdx = 0; finalProcIdx < procCount; ++finalProcIdx)
-	{
+	for (int finalProcIdx = 0; finalProcIdx < procCount; ++finalProcIdx) {
 		X64FinalProcedure finalProc = beFinalProcedureData[finalProcIdx];
 		Procedure proc = GetProcedureRead(finalProc.procedureIdx);
 
@@ -2481,14 +2471,14 @@ void X64EncodeInstructions(JobContext *context)
 		int bytes;
 
 		// push rbp
-		bytes = X64InstructionToBytes(context, { {}, X64_PUSH, RBP }, {}, buffer);
+		bytes = X64InstructionToBytes({ {}, X64_PUSH, RBP }, {}, buffer);
 		OutputBufferPut(bytes, buffer);
 		// mov rbp, rsp
-		bytes = X64InstructionToBytes(context, { {}, X64_MOV, RBP, RSP }, {}, buffer);
+		bytes = X64InstructionToBytes({ {}, X64_MOV, RBP, RSP }, {}, buffer);
 		OutputBufferPut(bytes, buffer);
 		if (finalProc.stackSize > 0) {
 			// sub rsp, $stack_size
-			bytes = X64InstructionToBytes(context, { {}, X64_SUB, RSP,
+			bytes = X64InstructionToBytes({ {}, X64_SUB, RSP,
 					IRValueImmediate(finalProc.stackSize, TYPETABLEIDX_U32) }, {}, buffer);
 			OutputBufferPut(bytes, buffer);
 		}
@@ -2497,16 +2487,16 @@ void X64EncodeInstructions(JobContext *context)
 		X64Instruction *inst = X64InstructionStreamAdvance(&stream);
 		while (inst)
 		{
-			bytes = X64InstructionToBytes(context, *inst, finalProc.localValues, buffer);
+			bytes = X64InstructionToBytes(*inst, finalProc.localValues, buffer);
 			OutputBufferPut(bytes, buffer);
 			inst = X64InstructionStreamAdvance(&stream);
 		}
 
 		// leave
-		bytes = X64InstructionToBytes(context, { {}, X64_LEAVE }, {}, buffer);
+		bytes = X64InstructionToBytes({ {}, X64_LEAVE }, {}, buffer);
 		OutputBufferPut(bytes, buffer);
 		// ret
-		bytes = X64InstructionToBytes(context, { {}, X64_RET }, {}, buffer);
+		bytes = X64InstructionToBytes({ {}, X64_RET }, {}, buffer);
 		OutputBufferPut(bytes, buffer);
 	}
 }
@@ -3000,8 +2990,6 @@ void GetOutputInfo(String *outputFilename, String *outputPath,
 
 void BackendGenerateOutputFile()
 {
-	JobContext fakeJobContext = { U32_MAX };
-
 	OutputBufferReset();
 
 #if IS_WINDOWS
@@ -3103,7 +3091,7 @@ void BackendGenerateOutputFile()
 		auto externalVars = g_context->irExternalVariables.GetForRead();
 		for (int varIdx = 0; varIdx < externalVars->size; ++varIdx) {
 			Value v = GetGlobalValue(externalVars[varIdx]);
-			s64 size = GetTypeInfo(&fakeJobContext, v.typeTableIdx).size;
+			s64 size = GetTypeInfo(v.typeTableIdx).size;
 			String type;
 			switch (size) {
 				case 1: type = "BYTE"_s; break;
@@ -3143,7 +3131,7 @@ void BackendGenerateOutputFile()
 #endif
 
 	// Code
-	X64PrintInstructions(&fakeJobContext);
+	X64PrintInstructions();
 
 #if IS_WINDOWS
 	OutputBufferPrint("_TEXT ENDS\n");
@@ -3181,8 +3169,6 @@ void BackendGenerateOutputFile()
 #if USE_OWN_ASSEMBLER
 void BackendGenerateWindowsObj()
 {
-	JobContext fakeJobContext = { U32_MAX };
-
 	ProfilerBegin("Generating output image");
 	const int dataSectionIdx = 0;
 	const int codeSectionIdx = 1;
@@ -3304,7 +3290,7 @@ void BackendGenerateWindowsObj()
 	OutputBufferAlign(16);
 	u64 codeSectionOffset = g_context->outputBufferOffset;
 	xed_tables_init();
-	X64EncodeInstructions(&fakeJobContext);
+	X64EncodeInstructions();
 	u64 codeSectionSize = g_context->outputBufferOffset - codeSectionOffset;
 
 	// Add procedures to symbol table
@@ -3546,24 +3532,23 @@ void BackendJobProc(IRContext *irContext, u32 procedureIdx)
 		"_param31"_s,
 	};
 
-	X64Context *context = ALLOC(LinearAllocator, X64Context);
-	context->jobIdx = irContext->jobIdx;
-	context->procedureIdx = irContext->procedureIdx;
-	context->localValues = irContext->localValues;
-	context->irInstructions = irContext->irInstructions;
-	context->returnValueIndices = irContext->returnValueIndices;
+	X64Context *x64Context = ALLOC(LinearAllocator, X64Context);
+	x64Context->procedureIdx = irContext->procedureIdx;
+	x64Context->localValues = irContext->localValues;
+	x64Context->irInstructions = irContext->irInstructions;
+	x64Context->returnValueIndices = irContext->returnValueIndices;
 
 	// We need these builtin procedures to be declared
 	{
-		TCScopeName name = FindGlobalName(context, {}, "CopyMemory"_s);
+		TCScopeName name = FindGlobalName({}, "CopyMemory"_s);
 		ASSERT(name.type == NAMETYPE_STATIC_DEFINITION);
-		StaticDefinition staticDef = GetStaticDefinition(context, name.staticDefinitionIdx);
+		StaticDefinition staticDef = GetStaticDefinition(name.staticDefinitionIdx);
 		ASSERT(staticDef.definitionType == STATICDEFINITIONTYPE_PROCEDURE);
 		g_copyMemoryProcIdx = staticDef.procedureIdx;
 
-		name = FindGlobalName(context, {}, "ZeroMemory"_s);
+		name = FindGlobalName({}, "ZeroMemory"_s);
 		ASSERT(name.type == NAMETYPE_STATIC_DEFINITION);
-		staticDef = GetStaticDefinition(context, name.staticDefinitionIdx);
+		staticDef = GetStaticDefinition(name.staticDefinitionIdx);
 		ASSERT(staticDef.definitionType == STATICDEFINITIONTYPE_PROCEDURE);
 		g_zeroMemoryProcIdx = staticDef.procedureIdx;
 	}
@@ -3577,8 +3562,8 @@ void BackendJobProc(IRContext *irContext, u32 procedureIdx)
 		newValue.typeTableIdx = TYPETABLEIDX_S64;
 		newValue.flags = VALUEFLAGS_IS_ALLOCATED | VALUEFLAGS_IS_MEMORY | VALUEFLAGS_BASE_RELATIVE;
 		newValue.stackOffset = 16 + paramIdx * 8; // Add 16, 8 for return address, and 8 because we push RBP
-		u32 newValueIdx = X64NewValue(context, newValue);
-		context->x64SpilledParametersRead[paramIdx] = newValueIdx;
+		u32 newValueIdx = X64NewValue(x64Context, newValue);
+		x64Context->x64SpilledParametersRead[paramIdx] = newValueIdx;
 	}
 
 	for (int paramIdx = 0; paramIdx < 32; ++paramIdx) {
@@ -3589,21 +3574,21 @@ void BackendJobProc(IRContext *irContext, u32 procedureIdx)
 		newValue.typeTableIdx = TYPETABLEIDX_S64;
 		newValue.flags = VALUEFLAGS_IS_ALLOCATED | VALUEFLAGS_IS_MEMORY;
 		newValue.stackOffset = paramIdx * 8; // Add 16, 8 for return address, and 8 because we push RBP
-		u32 newValueIdx = X64NewValue(context, newValue);
-		context->x64SpilledParametersWrite[paramIdx] = newValueIdx;
+		u32 newValueIdx = X64NewValue(x64Context, newValue);
+		x64Context->x64SpilledParametersWrite[paramIdx] = newValueIdx;
 	}
 
 	Procedure proc = GetProcedureRead(procedureIdx);
 	ASSERT(proc.astBody);
-	ASSERT(GetTypeInfo(context, proc.typeTableIdx).typeCategory == TYPECATEGORY_PROCEDURE);
-	TypeInfoProcedure procTypeInfo = GetTypeInfo(context, proc.typeTableIdx).procedureInfo;
+	ASSERT(GetTypeInfo(proc.typeTableIdx).typeCategory == TYPECATEGORY_PROCEDURE);
+	TypeInfoProcedure procTypeInfo = GetTypeInfo(proc.typeTableIdx).procedureInfo;
 
-	BucketArrayInit(&context->beInstructions);
-	context->allocatedParameterCount = 0;
-	context->returnValueIndices = proc.returnValueIndices;
-	context->stackSize = 0;
-	DynamicArrayInit(&context->spilledValues, 8);
-	BucketArrayInit(&context->bePatchedInstructions);
+	BucketArrayInit(&x64Context->beInstructions);
+	x64Context->allocatedParameterCount = 0;
+	x64Context->returnValueIndices = proc.returnValueIndices;
+	x64Context->stackSize = 0;
+	DynamicArrayInit(&x64Context->spilledValues, 8);
+	BucketArrayInit(&x64Context->bePatchedInstructions);
 
 	// Allocate parameters
 	int paramCount = (int)proc.parameterValues.size;
@@ -3613,7 +3598,7 @@ void BackendJobProc(IRContext *irContext, u32 procedureIdx)
 	bool returnByCopy = false;
 	if (procTypeInfo.callingConvention != CC_DEFAULT) {
 		returnByCopy = procTypeInfo.returnTypeIndices.size &&
-				IRShouldPassByCopy(context, procTypeInfo.returnTypeIndices[0]);
+				IRShouldPassByCopy(procTypeInfo.returnTypeIndices[0]);
 
 		// Pointer to return value
 		if (returnByCopy)
@@ -3621,15 +3606,15 @@ void BackendJobProc(IRContext *irContext, u32 procedureIdx)
 	}
 
 	for (int paramIdx = 0; paramIdx < paramCount; ++paramIdx)
-		*ArrayAdd(&params) = X64IRValueValue(context, proc.parameterValues[paramIdx]);
+		*ArrayAdd(&params) = X64IRValueValue(x64Context, proc.parameterValues[paramIdx]);
 
 	switch (procTypeInfo.callingConvention) {
 		case CC_WIN64:
-			X64ReadyWin64Parameters(context, {}, params, false, returnByCopy);
+			X64ReadyWin64Parameters(x64Context, {}, params, false, returnByCopy);
 			break;
 		case CC_DEFAULT:
 		case CC_LINUX64:
-			X64ReadyLinuxParameters(context, {}, params, false, returnByCopy);
+			X64ReadyLinuxParameters(x64Context, {}, params, false, returnByCopy);
 	}
 
 #if DEBUG_BUILD
@@ -3646,7 +3631,7 @@ void BackendJobProc(IRContext *irContext, u32 procedureIdx)
 		if (inst.loc.fileIdx != 0) {
 			FatSourceLocation fatLoc = ExpandSourceLocation(inst.loc);
 			if (inst.loc.fileIdx != lastFileIdx || fatLoc.line != lastLine)
-				*BucketArrayAdd(&context->beInstructions) = {
+				*BucketArrayAdd(&x64Context->beInstructions) = {
 					.loc = inst.loc,
 					.type = X64_Comment,
 					.comment = { fatLoc.lineSize, fatLoc.beginingOfLine }
@@ -3657,7 +3642,7 @@ void BackendJobProc(IRContext *irContext, u32 procedureIdx)
 		}
 #endif
 
-		X64ConvertInstruction(context, inst);
+		X64ConvertInstruction(x64Context, inst);
 	}
 
 	u64 returnValueCount = procTypeInfo.returnTypeIndices.size;
@@ -3675,23 +3660,23 @@ void BackendJobProc(IRContext *irContext, u32 procedureIdx)
 				IRValue slot;
 				u32 returnTypeIdx = procTypeInfo.returnTypeIndices[i];
 				IRValue out = IRValueValue(proc.returnValueIndices[i], returnTypeIdx);
-				TypeInfo returnTypeInfo = GetTypeInfo(context, returnTypeIdx);
+				TypeInfo returnTypeInfo = GetTypeInfo(returnTypeIdx);
 				if (returnTypeInfo.typeCategory == TYPECATEGORY_FLOATING) {
 					slot = floatingReturnRegisters[floatingIdx++];
 					slot.typeTableIdx = out.typeTableIdx;
-					X64Mov(context, {}, slot, out);
+					X64Mov(x64Context, {}, slot, out);
 				}
 				else {
 					slot = integerReturnRegisters[integerIdx++];
 
-					if (IRShouldPassByCopy(context, returnTypeIdx)) {
+					if (IRShouldPassByCopy(returnTypeIdx)) {
 						IRValue outButS64 = out;
 						outButS64.typeTableIdx = TYPETABLEIDX_S64;
-						X64AddInstruction2(context, {}, X64_LEA, slot, outButS64);
+						X64AddInstruction2(x64Context, {}, X64_LEA, slot, outButS64);
 					}
 					else {
 						slot.typeTableIdx = out.typeTableIdx;
-						X64Mov(context, {}, slot, out);
+						X64Mov(x64Context, {}, slot, out);
 					}
 				}
 			}
@@ -3701,26 +3686,26 @@ void BackendJobProc(IRContext *irContext, u32 procedureIdx)
 			u32 returnTypeIdx = procTypeInfo.returnTypeIndices[0];
 			IRValue returnValue = IRValueValue(proc.returnValueIndices[0], returnTypeIdx);
 			if (returnByCopy && procTypeInfo.callingConvention != CC_DEFAULT)
-				X64AddInstruction2(context, {}, X64_LEA, RAX, returnValue);
+				X64AddInstruction2(x64Context, {}, X64_LEA, RAX, returnValue);
 			else if (!returnByCopy) {
-				if (GetTypeInfo(context, returnTypeIdx).typeCategory == TYPECATEGORY_FLOATING) {
+				if (GetTypeInfo(returnTypeIdx).typeCategory == TYPECATEGORY_FLOATING) {
 					IRValue typedXmm0 = XMM0;
 					typedXmm0.typeTableIdx = returnTypeIdx;
-					X64Mov(context, {}, typedXmm0, returnValue);
+					X64Mov(x64Context, {}, typedXmm0, returnValue);
 				}
 				else {
 					IRValue typedRax = RAX;
 					typedRax.typeTableIdx = returnTypeIdx;
-					X64Mov(context, {}, typedRax, returnValue);
+					X64Mov(x64Context, {}, typedRax, returnValue);
 				}
 			}
 		}
 	}
 
-	X64AllocateRegisters(context);
+	X64AllocateRegisters(x64Context);
 
 	// Remove instructions that reference unused values
-	X64InstructionStream stream = X64InstructionStreamBegin(&context->beInstructions);
+	X64InstructionStream stream = X64InstructionStreamBegin(&x64Context->beInstructions);
 	X64Instruction *inst = X64InstructionStreamAdvance(&stream);
 	X64Instruction *nextInst  = X64InstructionStreamAdvance(&stream);
 	X64Instruction *nextInst2 = X64InstructionStreamAdvance(&stream);
@@ -3734,7 +3719,7 @@ void BackendJobProc(IRContext *irContext, u32 procedureIdx)
 			{
 				if (inst->src.valueType != IRVALUETYPE_MEMORY ||
 						(inst->src.mem.offset == 0 && inst->src.mem.elementSize == 0)) {
-					Value v = X64GetValue(context, inst->src.valueIdx);
+					Value v = X64GetValue(x64Context, inst->src.valueIdx);
 					if ((v.flags & VALUEFLAGS_IS_ALLOCATED) && !(v.flags & VALUEFLAGS_IS_MEMORY)) {
 						inst->type = X64_MOV;
 						inst->src.valueType = IRVALUETYPE_VALUE;
@@ -3753,8 +3738,8 @@ void BackendJobProc(IRContext *irContext, u32 procedureIdx)
 				(inst->src.valueType == IRVALUETYPE_VALUE ||
 				 inst->src.valueType == IRVALUETYPE_MEMORY));
 
-			Value dst = X64GetValue(context, inst->dst.valueIdx);
-			Value src = X64GetValue(context, inst->src.valueIdx);
+			Value dst = X64GetValue(x64Context, inst->dst.valueIdx);
+			Value src = X64GetValue(x64Context, inst->src.valueIdx);
 			if (dst.flags & VALUEFLAGS_IS_ALLOCATED && src.flags & VALUEFLAGS_IS_ALLOCATED) {
 				if (!(dst.flags & VALUEFLAGS_IS_MEMORY) ||
 					(dst.stackOffset & 15))
@@ -3776,8 +3761,8 @@ unalignedMovups:;
 			if (inst->dst.valueType == IRVALUETYPE_VALUE &&
 				inst->src.valueType == IRVALUETYPE_VALUE)
 			{
-				Value dst = X64GetValue(context, inst->dst.valueIdx);
-				Value src = X64GetValue(context, inst->src.valueIdx);
+				Value dst = X64GetValue(x64Context, inst->dst.valueIdx);
+				Value src = X64GetValue(x64Context, inst->src.valueIdx);
 				if (dst.flags & VALUEFLAGS_IS_ALLOCATED && src.flags & VALUEFLAGS_IS_ALLOCATED) {
 					// Value::stackOffset is alias of Value::allocatedRegister
 					if (dst.allocatedRegister == src.allocatedRegister) {
@@ -3811,7 +3796,7 @@ unalignedMovups:;
 			if (inst->dst.valueType == IRVALUETYPE_VALUE ||
 				inst->dst.valueType == IRVALUETYPE_MEMORY)
 			{
-				Value v = X64GetValue(context, inst->dst.valueIdx);
+				Value v = X64GetValue(x64Context, inst->dst.valueIdx);
 				if (!(v.flags & (VALUEFLAGS_IS_USED | VALUEFLAGS_ON_STATIC_STORAGE)))
 					inst->type = X64_Ignore;
 			}
@@ -3823,7 +3808,7 @@ unalignedMovups:;
 			if (inst->src.valueType == IRVALUETYPE_IMMEDIATE_INTEGER &&
 				inst->src.immediate == 0)
 			{
-				if (IsValueInMemory(context, inst->dst))
+				if (IsValueInMemory(x64Context, inst->dst))
 					inst->type = X64_MOV;
 				else
 					*inst = { inst->loc, inst->type == X64_MOVSS ? X64_XORPS : X64_XORPD,
@@ -3834,7 +3819,7 @@ unalignedMovups:;
 			if (inst->src.valueType == IRVALUETYPE_IMMEDIATE_INTEGER &&
 				inst->src.immediate == 0)
 			{
-				if (!IsValueInMemory(context, inst->dst))
+				if (!IsValueInMemory(x64Context, inst->dst))
 					*inst = { inst->loc, X64_XOR, inst->dst, inst->dst };
 			}
 		}
@@ -3850,13 +3835,13 @@ unalignedMovups:;
 		// Replace CMP 0 with TEST
 		if (nextInst2 && nextInst2->type == X64_CMP) {
 			if (nextInst2->src.valueType == IRVALUETYPE_IMMEDIATE_INTEGER &&
-				nextInst2->src.immediate == 0 && !IsValueInMemory(context, nextInst2->dst))
+				nextInst2->src.immediate == 0 && !IsValueInMemory(x64Context, nextInst2->dst))
 			{
 				nextInst2->type = X64_TEST;
 				nextInst2->src = nextInst2->dst;
 			}
 			else if (nextInst2->dst.valueType == IRVALUETYPE_IMMEDIATE_INTEGER &&
-				nextInst2->dst.immediate == 0 && !IsValueInMemory(context, nextInst2->src))
+				nextInst2->dst.immediate == 0 && !IsValueInMemory(x64Context, nextInst2->src))
 			{
 				nextInst2->type = X64_TEST;
 				nextInst2->dst = nextInst2->src;
@@ -3885,9 +3870,9 @@ unalignedMovups:;
 
 	X64FinalProcedure finalProc;
 	finalProc.procedureIdx = procedureIdx;
-	finalProc.localValues = *context->localValues;
-	finalProc.instructions = context->beInstructions;
-	finalProc.stackSize = context->stackSize;
+	finalProc.localValues = *x64Context->localValues;
+	finalProc.instructions = x64Context->beInstructions;
+	finalProc.stackSize = x64Context->stackSize;
 	auto finalProcs = g_context->beFinalProcedureData.GetForWrite();
 	*DynamicArrayAdd(&finalProcs) = finalProc;
 }

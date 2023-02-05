@@ -256,7 +256,7 @@ struct FloatLiteral
 	};
 };
 
-struct IRContext : JobContext
+struct IRContext
 {
 	u32 procedureIdx;
 	BucketArray<Value, LinearAllocator, 256> *localValues;

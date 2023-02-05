@@ -34,7 +34,7 @@ CTRegister *CTGetValueContent(CTContext *context, u32 valueIdx)
 		auto globalValues = g_context->globalValueContents;
 		void **ptr = HashMapGet(globalValues, valueIdx & VALUE_GLOBAL_MASK);
 		if  (!ptr) {
-			SwitchJob(context, YIELDREASON_GLOBAL_VALUE_NOT_ALLOCATED,
+			SwitchJob(YIELDREASON_GLOBAL_VALUE_NOT_ALLOCATED,
 					{ .index = valueIdx });
 			SpinlockLock(&g_context->globalValuesLock);
 			ptr = HashMapGet(globalValues, valueIdx & VALUE_GLOBAL_MASK);
@@ -51,7 +51,7 @@ CTRegister *CTGetValueContent(CTContext *context, u32 valueIdx)
 		if (!value) {
 			value = HashMapGetOrAdd(&context->values, valueIdx);
 			u32 typeTableIdx = v.typeTableIdx;
-			u64 size = GetTypeInfo(context, typeTableIdx).size;
+			u64 size = GetTypeInfo(typeTableIdx).size;
 			*value = (CTRegister *)LinearAllocator::Alloc(Max(8, size), 8);
 		}
 		ASSERT(*value);
@@ -104,10 +104,9 @@ CTRegister CTGetIRValueContentRead(CTContext *context, IRValue irValue)
 	}
 
 	// Clip
-	TypeInfo typeInfo = GetTypeInfo(context,
-			StripAllAliases(irValue.typeTableIdx));
+	TypeInfo typeInfo = GetTypeInfo(StripAllAliases(irValue.typeTableIdx));
 	if (typeInfo.typeCategory == TYPECATEGORY_ENUM)
-		typeInfo = GetTypeInfo(context, typeInfo.enumInfo.typeTableIdx);
+		typeInfo = GetTypeInfo(typeInfo.enumInfo.typeTableIdx);
 
 	if (typeInfo.typeCategory == TYPECATEGORY_INTEGER) {
 		if (typeInfo.integerInfo.isSigned) {
@@ -139,7 +138,7 @@ CTRegister CTGetIRValueContentRead(CTContext *context, IRValue irValue)
 
 void CTStore(CTContext *context, CTRegister *dst, const CTRegister *src, u32 typeTableIdx)
 {
-	TypeInfo typeInfo = GetTypeInfo(context, StripAllAliases(typeTableIdx));
+	TypeInfo typeInfo = GetTypeInfo(StripAllAliases(typeTableIdx));
 	memcpy(dst, src, typeInfo.size);
 }
 
@@ -189,7 +188,7 @@ void CTCopyIRValue(CTContext *context, CTRegister *dst, IRValue irValue)
 
 void PrintIRInstruction(BucketArrayView<Value> localValues, IRInstruction inst);
 
-void *GetExternalProcedureAddress(JobContext *context, String name)
+void *GetExternalProcedureAddress(String name)
 {
 	const char *procCStr = StringToCStr(name, ThreadAllocator::Alloc);
 	auto ctLibs = g_context->ctExternalLibraries.Get();
@@ -206,7 +205,7 @@ void *GetExternalProcedureAddress(JobContext *context, String name)
 			if (procStart)
 				return procStart;
 		}
-		SwitchJob(context, YIELDREASON_NEED_DYNAMIC_LIBRARY, { .identifier = name });
+		SwitchJob(YIELDREASON_NEED_DYNAMIC_LIBRARY, { .identifier = name });
 		// Lock again!
 		SYSMutexLock(g_context->ctExternalLibraries.lock);
 	}
@@ -252,7 +251,7 @@ ArrayView<const CTRegister *> CTInternalRunInstructions(CTContext *context,
 			CTRegister result;
 
 			u32 typeTableIdx = lhs.typeTableIdx;
-			TypeInfo typeInfo = GetTypeInfo(context, typeTableIdx);
+			TypeInfo typeInfo = GetTypeInfo(typeTableIdx);
 			switch (typeInfo.typeCategory) {
 			case TYPECATEGORY_POINTER:
 				typeTableIdx = TYPETABLEIDX_U64; break;
@@ -444,7 +443,7 @@ ArrayView<const CTRegister *> CTInternalRunInstructions(CTContext *context,
 			CTRegister result;
 
 			u32 typeTableIdx = in.typeTableIdx;
-			TypeInfo typeInfo = GetTypeInfo(context, typeTableIdx);
+			TypeInfo typeInfo = GetTypeInfo(typeTableIdx);
 			switch (typeInfo.typeCategory) {
 			case TYPECATEGORY_POINTER:
 				typeTableIdx = TYPETABLEIDX_U64; break;
@@ -542,7 +541,7 @@ ArrayView<const CTRegister *> CTInternalRunInstructions(CTContext *context,
 			bool doJump;
 
 			u32 typeTableIdx = condition.typeTableIdx;
-			TypeInfo typeInfo = GetTypeInfo(context, typeTableIdx);
+			TypeInfo typeInfo = GetTypeInfo(typeTableIdx);
 			switch (typeInfo.typeCategory) {
 			case TYPECATEGORY_POINTER:
 				typeTableIdx = TYPETABLEIDX_U64; break;
@@ -622,7 +621,7 @@ ArrayView<const CTRegister *> CTInternalRunInstructions(CTContext *context,
 			bool doJump;
 
 			u32 typeTableIdx = lhs.typeTableIdx;
-			TypeInfo typeInfo = GetTypeInfo(context, typeTableIdx);
+			TypeInfo typeInfo = GetTypeInfo(typeTableIdx);
 			switch (typeInfo.typeCategory) {
 			case TYPECATEGORY_POINTER:
 				typeTableIdx = TYPETABLEIDX_U64; break;
@@ -778,7 +777,7 @@ ArrayView<const CTRegister *> CTInternalRunInstructions(CTContext *context,
 
 			u32 dstTypeIdx = StripAllAliases(dst.typeTableIdx);
 			u32 srcTypeIdx = StripAllAliases(src.typeTableIdx);
-			TypeInfo srcTypeInfo = GetTypeInfo(context, srcTypeIdx);
+			TypeInfo srcTypeInfo = GetTypeInfo(srcTypeIdx);
 			if (srcTypeInfo.typeCategory != TYPECATEGORY_INTEGER)
 				LogCompilerError(inst.loc, "CONVERT_INT_TO_FLOAT does not have an "
 						"int as source"_s);
@@ -812,7 +811,7 @@ ArrayView<const CTRegister *> CTInternalRunInstructions(CTContext *context,
 
 			u32 dstTypeIdx = StripAllAliases(dst.typeTableIdx);
 			u32 srcTypeIdx = StripAllAliases(src.typeTableIdx);
-			TypeInfo dstTypeInfo = GetTypeInfo(context, dstTypeIdx);
+			TypeInfo dstTypeInfo = GetTypeInfo(dstTypeIdx);
 			if (dstTypeInfo.typeCategory != TYPECATEGORY_INTEGER)
 				LogCompilerError(inst.loc, "CONVERT_INT_TO_FLOAT does not have an "
 						"integer as destination"_s);
@@ -876,7 +875,7 @@ ArrayView<const CTRegister *> CTInternalRunInstructions(CTContext *context,
 			CTVerboseLog(inst.loc, TPrintF("Sign extending: 0x%llX, to 0x%llX",
 						srcContent.asU64, dstContent));
 
-			TypeInfo srcTypeInfo = GetTypeInfo(context, src.typeTableIdx);
+			TypeInfo srcTypeInfo = GetTypeInfo(src.typeTableIdx);
 
 			CTRegister result;
 			switch (srcTypeInfo.size) {
@@ -906,7 +905,7 @@ ArrayView<const CTRegister *> CTInternalRunInstructions(CTContext *context,
 			CTVerboseLog(inst.loc, TPrintF("Zero extending: 0x%llX, to 0x%llX",
 						srcContent.asU64, dstContent));
 
-			TypeInfo srcTypeInfo = GetTypeInfo(context, src.typeTableIdx);
+			TypeInfo srcTypeInfo = GetTypeInfo(src.typeTableIdx);
 
 			CTRegister result;
 			switch (srcTypeInfo.size) {
@@ -1022,7 +1021,7 @@ ArrayView<const CTRegister *> CTInternalRunInstructions(CTContext *context,
 
 			for (int paramIdx = 0; paramIdx < paramCount; ++paramIdx) {
 				IRValue irValue = inst.procedureCall.parameters[paramIdx];
-				TypeInfo typeInfo = GetTypeInfo(context, irValue.typeTableIdx);
+				TypeInfo typeInfo = GetTypeInfo(irValue.typeTableIdx);
 				CTRegister *copy = (CTRegister *)ThreadAllocator::Alloc(typeInfo.size, 8);
 				CTCopyIRValue(context, copy, irValue);
 				*ArrayAdd(&arguments) = copy;
@@ -1030,10 +1029,10 @@ ArrayView<const CTRegister *> CTInternalRunInstructions(CTContext *context,
 
 			u32 procIdx = inst.procedureCall.procedureIdx;
 			if (!(procIdx & PROCEDURE_EXTERNAL_BIT))
-				CTRunProcedure(context, procIdx, arguments);
+				CTRunProcedure(procIdx, arguments);
 			else {
 				Procedure calleeProc = GetProcedureRead(procIdx);
-				void *procStart = GetExternalProcedureAddress(context, calleeProc.name);
+				void *procStart = GetExternalProcedureAddress(calleeProc.name);
 				ASSERT(procStart);
 
 				u64 returnValue = SYSCallProcedureDynamically(procStart, arguments.size, arguments.data);
@@ -1095,13 +1094,10 @@ ArrayView<const CTRegister *> CTInternalRunInstructions(CTContext *context,
 	return returnValues;
 }
 
-CTRegister CTRunInstructions(JobContext *jobContext,
-		BucketArrayView<Value> localValues,
-		BucketArrayView<IRInstruction> irInstructions,
-		IRValue resultIRValue)
+CTRegister CTRunInstructions(BucketArrayView<Value> localValues,
+		BucketArrayView<IRInstruction> irInstructions, IRValue resultIRValue)
 {
 	CTContext *context = ALLOC(LinearAllocator, CTContext);
-	context->jobIdx = jobContext->jobIdx;
 	context->localValues = localValues;
 	HashMapInit(&context->values, 32);
 	CTInternalRunInstructions(context, irInstructions);
@@ -1112,8 +1108,7 @@ CTRegister CTRunInstructions(JobContext *jobContext,
 		return {};
 }
 
-ArrayView<const CTRegister *> CTRunProcedure(JobContext *jobContext, u32 procedureIdx,
-		ArrayView<CTRegister *> parameters)
+ArrayView<const CTRegister *> CTRunProcedure(u32 procedureIdx, ArrayView<CTRegister *> parameters)
 {
 	ASSERT(!(procedureIdx & PROCEDURE_EXTERNAL_BIT));
 	Procedure proc = GetProcedureRead(procedureIdx);
@@ -1121,7 +1116,7 @@ ArrayView<const CTRegister *> CTRunProcedure(JobContext *jobContext, u32 procedu
 		auto procedures = g_context->procedures.GetForRead();
 		proc = procedures[procedureIdx];
 		if (!proc.isIRReady) {
-			SwitchJob(jobContext, YIELDREASON_PROC_IR_NOT_READY, { .index = procedureIdx });
+			SwitchJob(YIELDREASON_PROC_IR_NOT_READY, { .index = procedureIdx });
 			// Lock again!
 			SYSLockForRead(&g_context->procedures.rwLock);
 			proc = procedures[procedureIdx];
@@ -1131,7 +1126,6 @@ ArrayView<const CTRegister *> CTRunProcedure(JobContext *jobContext, u32 procedu
 	}
 
 	CTContext *context = ALLOC(LinearAllocator, CTContext);
-	context->jobIdx = jobContext->jobIdx;
 	context->procedureIdx = procedureIdx;
 	context->localValues = proc.localValues;
 	HashMapInit(&context->values, Max(32, NextPowerOf2((u32)proc.localValues.count)));

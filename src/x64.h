@@ -897,7 +897,7 @@ String x64LinuxSyscallNames[] =
 };
 #endif
 
-struct X64Context : JobContext
+struct X64Context
 {
 	u32 procedureIdx;
 	BucketArray<Value, LinearAllocator, 256> *localValues;

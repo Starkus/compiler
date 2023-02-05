@@ -11,11 +11,11 @@ struct BasicBlock
 	DynamicArray<u32, ThreadAllocator> liveValuesAtOutput;
 };
 
-void X64Patch(X64Context *context, X64Instruction *original, X64Instruction newInst)
+void X64Patch(X64Context *x64Context, X64Instruction *original, X64Instruction newInst)
 {
-	X64Instruction *patch1 = BucketArrayAdd(&context->bePatchedInstructions);
+	X64Instruction *patch1 = BucketArrayAdd(&x64Context->bePatchedInstructions);
 	*patch1 = newInst;
-	X64Instruction *patch2 = BucketArrayAdd(&context->bePatchedInstructions);
+	X64Instruction *patch2 = BucketArrayAdd(&x64Context->bePatchedInstructions);
 	*patch2 = *original;
 
 	X64Instruction patchInst = { {}, X64_Patch };
@@ -24,7 +24,7 @@ void X64Patch(X64Context *context, X64Instruction *original, X64Instruction newI
 	*original = patchInst;
 }
 
-BasicBlock *PushBasicBlock(X64Context *context, BasicBlock *currentBasicBlock)
+BasicBlock *PushBasicBlock(X64Context *x64Context, BasicBlock *currentBasicBlock)
 {
 	s64 endOfLastBlock = -1;
 	if (currentBasicBlock) {
@@ -32,7 +32,7 @@ BasicBlock *PushBasicBlock(X64Context *context, BasicBlock *currentBasicBlock)
 		ASSERT(currentBasicBlock->beginIdx <= currentBasicBlock->endIdx);
 	}
 
-	BasicBlock *result = BucketArrayAdd(&context->beBasicBlocks);
+	BasicBlock *result = BucketArrayAdd(&x64Context->beBasicBlocks);
 	*result = {};
 
 	result->beginIdx = endOfLastBlock + 1;
@@ -44,9 +44,9 @@ BasicBlock *PushBasicBlock(X64Context *context, BasicBlock *currentBasicBlock)
 	return result;
 }
 
-bool CanBeRegister(X64Context *context, u32 valueIdx)
+bool CanBeRegister(X64Context *x64Context, u32 valueIdx)
 {
-	Value v = X64GetValue(context, valueIdx);
+	Value v = X64GetValue(x64Context, valueIdx);
 	if ((v.flags & (VALUEFLAGS_IS_MEMORY | VALUEFLAGS_IS_ALLOCATED)) == VALUEFLAGS_IS_ALLOCATED)
 		// Allocated on register
 		return true;
@@ -57,7 +57,7 @@ bool CanBeRegister(X64Context *context, u32 valueIdx)
 		return false;
 	if (v.typeTableIdx == TYPETABLEIDX_128)
 		return true;
-	TypeInfo typeInfo = GetTypeInfo(context, v.typeTableIdx);
+	TypeInfo typeInfo = GetTypeInfo(v.typeTableIdx);
 	if (typeInfo.typeCategory == TYPECATEGORY_STRUCT ||
 		typeInfo.typeCategory == TYPECATEGORY_UNION)
 		return false;
@@ -68,17 +68,16 @@ bool CanBeRegister(X64Context *context, u32 valueIdx)
 	return true;
 }
 
-inline bool AddValue(X64Context *context, u32 valueIdx, DynamicArray<u32, ThreadAllocator> *array)
+inline bool AddValue(X64Context *x64Context, u32 valueIdx, DynamicArray<u32, ThreadAllocator> *array)
 {
-	X64SetValueFlags(context, valueIdx, VALUEFLAGS_IS_USED);
+	X64SetValueFlags(x64Context, valueIdx, VALUEFLAGS_IS_USED);
 
 	// Nonsense to take these into account
-	if (!CanBeRegister(context, valueIdx))
-	{
-		u32 valueFlags = X64GetValue(context, valueIdx).flags;
+	if (!CanBeRegister(x64Context, valueIdx)) {
+		u32 valueFlags = X64GetValue(x64Context, valueIdx).flags;
 		if (!(valueFlags & VALUEFLAGS_ON_STATIC_STORAGE |
 					VALUEFLAGS_IS_EXTERNAL))
-			DynamicArrayAddUnique(&context->spilledValues, valueIdx);
+			DynamicArrayAddUnique(&x64Context->spilledValues, valueIdx);
 
 		return false;
 	}
@@ -87,21 +86,21 @@ inline bool AddValue(X64Context *context, u32 valueIdx, DynamicArray<u32, Thread
 }
 
 // @Speed: delete? this will most likely get inlined anyways
-inline bool AddIfValue(X64Context *context, IRValue irValue, DynamicArray<u32, ThreadAllocator> *array)
+inline bool AddIfValue(X64Context *x64Context, IRValue irValue, DynamicArray<u32, ThreadAllocator> *array)
 {
 	if (irValue.valueType != IRVALUETYPE_VALUE && irValue.valueType != IRVALUETYPE_MEMORY)
 		return false;
 
-	bool mainValueAdded = AddValue(context, irValue.valueIdx, array);
+	bool mainValueAdded = AddValue(x64Context, irValue.valueIdx, array);
 	bool indexValueAdded = false;
 
 	if (irValue.valueType == IRVALUETYPE_MEMORY && irValue.mem.elementSize > 0)
-		indexValueAdded = AddValue(context, irValue.mem.indexValueIdx, array);
+		indexValueAdded = AddValue(x64Context, irValue.mem.indexValueIdx, array);
 
 	return mainValueAdded || indexValueAdded;
 }
 
-inline void RemoveIfValue(X64Context *context, IRValue irValue,
+inline void RemoveIfValue(X64Context *x64Context, IRValue irValue,
 		DynamicArray<u32, ThreadAllocator> *array)
 {
 	if (irValue.valueType == IRVALUETYPE_VALUE) {
@@ -114,30 +113,30 @@ inline void RemoveIfValue(X64Context *context, IRValue irValue,
 	}
 	else if (irValue.valueType == IRVALUETYPE_MEMORY) {
 		// The value is actually _used_ here, and not written to. Add instead.
-		AddValue(context, irValue.valueIdx, array);
+		AddValue(x64Context, irValue.valueIdx, array);
 		if (irValue.valueType == IRVALUETYPE_MEMORY && irValue.mem.elementSize > 0)
-			AddValue(context, irValue.mem.indexValueIdx, array);
+			AddValue(x64Context, irValue.mem.indexValueIdx, array);
 	}
 }
 
-inline bool IsXMMFast(X64Context *context, u32 valueIdx)
+inline bool IsXMMFast(X64Context *x64Context, u32 valueIdx)
 {
 	if (valueIdx >= RAX.valueIdx && valueIdx <= R15.valueIdx)
 		return false;
 	if (valueIdx >= XMM0.valueIdx && valueIdx <= XMM15.valueIdx)
 		return true;
-	return BitfieldGetBit(context->valueIsXmmBits, valueIdx);
+	return BitfieldGetBit(x64Context->valueIsXmmBits, valueIdx);
 }
 
-void DoLivenessAnalisisOnInstruction(X64Context *context, BasicBlock *basicBlock, X64Instruction *inst,
+void DoLivenessAnalisisOnInstruction(X64Context *x64Context, BasicBlock *basicBlock, X64Instruction *inst,
 		DynamicArray<u32, ThreadAllocator> *liveValues)
 {
-	Procedure *proc = &g_context->procedures.unsafe[context->procedureIdx];
+	Procedure *proc = &g_context->procedures.unsafe[x64Context->procedureIdx];
 
 	if (g_context->config.logAllocationInfo) {
 		if (inst->type != X64_Patch && inst->type != X64_Patch_Many) {
 			Print("\t");
-			s64 s = Print("%S", X64InstructionToStr(context, *inst, proc->localValues));
+			s64 s = Print("%S", X64InstructionToStr(*inst, proc->localValues));
 			if (s < 40) {
 				char buffer[40];
 				memset(buffer, ' ', sizeof(buffer));
@@ -145,7 +144,7 @@ void DoLivenessAnalisisOnInstruction(X64Context *context, BasicBlock *basicBlock
 				Print("%s", buffer + s);
 			}
 			for (int i = 0; i < liveValues->size; ++i)
-				Print("%S, ", X64IRValueToStr(context, X64IRValueValue(context, (*liveValues)[i]),
+				Print("%S, ", X64IRValueToStr(X64IRValueValue(x64Context, (*liveValues)[i]),
 							proc->localValues));
 			Print("\n");
 		}
@@ -162,7 +161,7 @@ void DoLivenessAnalisisOnInstruction(X64Context *context, BasicBlock *basicBlock
 
 		u64 totalParameters = inst->parameterValues.size;
 		for (int paramIdx = 0; paramIdx < totalParameters; ++paramIdx)
-			AddValue(context, inst->parameterValues[paramIdx], liveValues);
+			AddValue(x64Context, inst->parameterValues[paramIdx], liveValues);
 	} break;
 	case X64_CALL_Indirect:
 	{
@@ -171,19 +170,19 @@ void DoLivenessAnalisisOnInstruction(X64Context *context, BasicBlock *basicBlock
 		for (int i = 0; i < liveValues->size; ++i)
 			inst->liveValues[i] = (*liveValues)[i];
 
-		AddIfValue(context, inst->dst, liveValues);
+		AddIfValue(x64Context, inst->dst, liveValues);
 
 		u64 totalParameters = inst->parameterValues.size;
 		for (int paramIdx = 0; paramIdx < totalParameters; ++paramIdx)
-			AddValue(context, inst->parameterValues[paramIdx], liveValues);
+			AddValue(x64Context, inst->parameterValues[paramIdx], liveValues);
 	} break;
 	case X64_DIV:
 	case X64_IDIV:
 	case X64_MUL:
 	{
-		AddValue(context, RAX.valueIdx, liveValues);
-		AddValue(context, RDX.valueIdx, liveValues);
-		AddIfValue(context, inst->dst, liveValues);
+		AddValue(x64Context, RAX.valueIdx, liveValues);
+		AddValue(x64Context, RDX.valueIdx, liveValues);
+		AddIfValue(x64Context, inst->dst, liveValues);
 	} break;
 	case X64_CQO:
 	{
@@ -200,16 +199,16 @@ void DoLivenessAnalisisOnInstruction(X64Context *context, BasicBlock *basicBlock
 	{
 		// Detect xors of same thing (zero-ing)
 		if (inst->src.valueType == IRVALUETYPE_VALUE && inst->dst.valueIdx == inst->src.valueIdx)
-			RemoveIfValue(context, inst->dst, liveValues);
+			RemoveIfValue(x64Context, inst->dst, liveValues);
 		else {
-			AddIfValue(context, inst->dst, liveValues);
-			AddIfValue(context, inst->src, liveValues);
+			AddIfValue(x64Context, inst->dst, liveValues);
+			AddIfValue(x64Context, inst->src, liveValues);
 		}
 	} break;
 	case X64_Push_Value:
 	{
 		// @Improve: This sucks a little bit.
-		X64SetValueFlags(context, inst->valueIdx, VALUEFLAGS_HAS_PUSH_INSTRUCTION);
+		X64SetValueFlags(x64Context, inst->valueIdx, VALUEFLAGS_HAS_PUSH_INSTRUCTION);
 	} break;
 	case X64_Patch:
 	case X64_Patch_Many:
@@ -220,14 +219,14 @@ void DoLivenessAnalisisOnInstruction(X64Context *context, BasicBlock *basicBlock
 	{
 		X64InstructionInfo instInfo = x64InstructionInfos[inst->type];
 		if (instInfo.operandAccessLeft & OPERANDACCESS_READ)
-			AddIfValue   (context, inst->dst, liveValues);
+			AddIfValue   (x64Context, inst->dst, liveValues);
 		else if (instInfo.operandAccessLeft & OPERANDACCESS_WRITE)
-			RemoveIfValue(context, inst->dst, liveValues);
+			RemoveIfValue(x64Context, inst->dst, liveValues);
 
 		if (instInfo.operandAccessRight & OPERANDACCESS_READ)
-			AddIfValue   (context, inst->src, liveValues);
+			AddIfValue   (x64Context, inst->src, liveValues);
 		else if (instInfo.operandAccessRight & OPERANDACCESS_WRITE)
-			RemoveIfValue(context, inst->src, liveValues);
+			RemoveIfValue(x64Context, inst->src, liveValues);
 	}
 	}
 
@@ -240,47 +239,47 @@ void DoLivenessAnalisisOnInstruction(X64Context *context, BasicBlock *basicBlock
 		u32 nodeIdx;
 
 		// Find a node in the graph with this value, or create it if there isn't one
-		u32 *found = HashMapGet(context->beInterferenceGraph.valueToNodeMap, valueIdx);
+		u32 *found = HashMapGet(x64Context->beInterferenceGraph.valueToNodeMap, valueIdx);
 		if (found)
 			nodeIdx = *found;
 		else
 		{
 			// No node found, create one
-			nodeIdx = context->beInterferenceGraph.count++;
-			if (nodeIdx >= context->beInterferenceGraph.capacity)
+			nodeIdx = x64Context->beInterferenceGraph.count++;
+			if (nodeIdx >= x64Context->beInterferenceGraph.capacity)
 			{
-				u64 oldCapacity = context->beInterferenceGraph.capacity;
-				context->beInterferenceGraph.capacity *= 2;
-				context->beInterferenceGraph.valueIndices = (u32 *)
-						ThreadAllocator::Realloc(context->beInterferenceGraph.valueIndices,
-						sizeof(context->beInterferenceGraph.valueIndices[0]) * oldCapacity,
-						sizeof(context->beInterferenceGraph.valueIndices[0]) *
-						context->beInterferenceGraph.capacity, alignof(u32));
-				context->beInterferenceGraph.removed = (u8 *)
-						ThreadAllocator::Realloc(context->beInterferenceGraph.removed,
-						sizeof(context->beInterferenceGraph.removed[0]) * oldCapacity,
-						sizeof(context->beInterferenceGraph.removed[0]) *
-						context->beInterferenceGraph.capacity, alignof(u8));
-				context->beInterferenceGraph.edges = (HashSet<u32, ThreadAllocator> *)
-						ThreadAllocator::Realloc(context->beInterferenceGraph.edges,
-						sizeof(context->beInterferenceGraph.edges[0]) * oldCapacity,
-						sizeof(context->beInterferenceGraph.edges[0]) *
-						context->beInterferenceGraph.capacity, alignof(HashSet<u32, ThreadAllocator>));
+				u64 oldCapacity = x64Context->beInterferenceGraph.capacity;
+				x64Context->beInterferenceGraph.capacity *= 2;
+				x64Context->beInterferenceGraph.valueIndices = (u32 *)
+						ThreadAllocator::Realloc(x64Context->beInterferenceGraph.valueIndices,
+						sizeof(x64Context->beInterferenceGraph.valueIndices[0]) * oldCapacity,
+						sizeof(x64Context->beInterferenceGraph.valueIndices[0]) *
+						x64Context->beInterferenceGraph.capacity, alignof(u32));
+				x64Context->beInterferenceGraph.removed = (u8 *)
+						ThreadAllocator::Realloc(x64Context->beInterferenceGraph.removed,
+						sizeof(x64Context->beInterferenceGraph.removed[0]) * oldCapacity,
+						sizeof(x64Context->beInterferenceGraph.removed[0]) *
+						x64Context->beInterferenceGraph.capacity, alignof(u8));
+				x64Context->beInterferenceGraph.edges = (HashSet<u32, ThreadAllocator> *)
+						ThreadAllocator::Realloc(x64Context->beInterferenceGraph.edges,
+						sizeof(x64Context->beInterferenceGraph.edges[0]) * oldCapacity,
+						sizeof(x64Context->beInterferenceGraph.edges[0]) *
+						x64Context->beInterferenceGraph.capacity, alignof(HashSet<u32, ThreadAllocator>));
 			}
-			context->beInterferenceGraph.valueIndices[nodeIdx] = valueIdx;
-			context->beInterferenceGraph.removed[nodeIdx]      = false;
-			HashSetInit(&context->beInterferenceGraph.edges[nodeIdx], 32);
+			x64Context->beInterferenceGraph.valueIndices[nodeIdx] = valueIdx;
+			x64Context->beInterferenceGraph.removed[nodeIdx]      = false;
+			HashSetInit(&x64Context->beInterferenceGraph.edges[nodeIdx], 32);
 
-			*HashMapGetOrAdd(&context->beInterferenceGraph.valueToNodeMap, valueIdx) = nodeIdx;
+			*HashMapGetOrAdd(&x64Context->beInterferenceGraph.valueToNodeMap, valueIdx) = nodeIdx;
 		}
 
-		HashSet<u32, ThreadAllocator> *edges = &context->beInterferenceGraph.edges[nodeIdx];
-		bool isXMM = IsXMMFast(context, valueIdx);
+		HashSet<u32, ThreadAllocator> *edges = &x64Context->beInterferenceGraph.edges[nodeIdx];
+		bool isXMM = IsXMMFast(x64Context, valueIdx);
 		for (int j = 0; j < liveValuesCount; ++j)
 		{
 			if (liveValueIdx == j) continue;
 			u32 edgeValueIdx = (*liveValues)[j];
-			bool edgeIsXMM = IsXMMFast(context, edgeValueIdx);
+			bool edgeIsXMM = IsXMMFast(x64Context, edgeValueIdx);
 			// Add only other values that compete for the same pool of registers.
 			// Floating point values use a different set of registers (xmmX).
 			if (isXMM == edgeIsXMM)
@@ -297,12 +296,12 @@ void DoLivenessAnalisisOnInstruction(X64Context *context, BasicBlock *basicBlock
 	}
 }
 
-void DoLivenessAnalisis(X64Context *context, BasicBlock *basicBlock,
+void DoLivenessAnalisis(X64Context *x64Context, BasicBlock *basicBlock,
 		DynamicArray<u32, ThreadAllocator> *liveValues)
 {
 	if (g_context->config.logAllocationInfo)
 		Print("Doing liveness analisis on block %S %d-%d\n",
-				GetProcedureRead(context->procedureIdx).name,
+				GetProcedureRead(x64Context->procedureIdx).name,
 				basicBlock->beginIdx, basicBlock->endIdx);
 
 	for (int i = 0; i < basicBlock->liveValuesAtOutput.size; ++i)
@@ -311,14 +310,14 @@ void DoLivenessAnalisis(X64Context *context, BasicBlock *basicBlock,
 	for (int i = 0; i < liveValues->size; ++i)
 		DynamicArrayAddUnique(&basicBlock->liveValuesAtOutput, (*liveValues)[i]);
 
-	for (int i = 0; i < context->returnValueIndices.size; ++i)
-		AddValue(context, context->returnValueIndices[i], liveValues);
+	for (int i = 0; i < x64Context->returnValueIndices.size; ++i)
+		AddValue(x64Context, x64Context->returnValueIndices[i], liveValues);
 
 	// Check all basic block instructions
 	for (s64 instructionIdx = basicBlock->endIdx; instructionIdx >= basicBlock->beginIdx;
 			--instructionIdx) {
-		X64Instruction *inst = &context->beInstructions[instructionIdx];
-		DoLivenessAnalisisOnInstruction(context, basicBlock, inst, liveValues);
+		X64Instruction *inst = &x64Context->beInstructions[instructionIdx];
+		DoLivenessAnalisisOnInstruction(x64Context, basicBlock, inst, liveValues);
 	}
 
 	bool somethingChanged = false;
@@ -338,26 +337,26 @@ void DoLivenessAnalisis(X64Context *context, BasicBlock *basicBlock,
 		DynamicArrayInit(&liveValuesCopy, liveValues->capacity);
 		DynamicArrayCopy(&liveValuesCopy, liveValues);
 
-		DoLivenessAnalisis(context, inputBlock, &liveValuesCopy);
+		DoLivenessAnalisis(x64Context, inputBlock, &liveValuesCopy);
 	}
 }
 
-void GenerateBasicBlocks(X64Context *context)
+void GenerateBasicBlocks(X64Context *x64Context)
 {
-	Procedure *proc = &g_context->procedures.unsafe[context->procedureIdx];
+	Procedure *proc = &g_context->procedures.unsafe[x64Context->procedureIdx];
 
 	if (g_context->config.logAllocationInfo)
 		Print("GENERATING BASIC BLOCKS FOR %S\n",
-				GetProcedureRead(context->procedureIdx).name);
+				GetProcedureRead(x64Context->procedureIdx).name);
 
-	BasicBlock *currentBasicBlock = PushBasicBlock(context, nullptr);
+	BasicBlock *currentBasicBlock = PushBasicBlock(x64Context, nullptr);
 
-	u64 instructionCount = context->beInstructions.count;
+	u64 instructionCount = x64Context->beInstructions.count;
 	for (int instructionIdx = 0; instructionIdx < instructionCount; ++instructionIdx) {
-		X64Instruction inst = context->beInstructions[instructionIdx];
+		X64Instruction inst = x64Context->beInstructions[instructionIdx];
 
 		if (g_context->config.logAllocationInfo)
-			Print("\t%S\n", X64InstructionToStr(context, inst, proc->localValues));
+			Print("\t%S\n", X64InstructionToStr(inst, proc->localValues));
 
 		if (inst.type >= X64_Jump_Begin && inst.type <= X64_Jump_End) {
 			if (g_context->config.logAllocationInfo)
@@ -365,7 +364,7 @@ void GenerateBasicBlocks(X64Context *context)
 
 			currentBasicBlock->endIdx = instructionIdx;
 			BasicBlock *previousBlock = currentBasicBlock;
-			currentBasicBlock = PushBasicBlock(context, currentBasicBlock);
+			currentBasicBlock = PushBasicBlock(x64Context, currentBasicBlock);
 
 			// Only on conditional jumps, add previous block as input too.
 			if (inst.type != X64_JMP) {
@@ -383,7 +382,7 @@ void GenerateBasicBlocks(X64Context *context)
 
 				currentBasicBlock->endIdx = instructionIdx - 1;
 				BasicBlock *previousBlock = currentBasicBlock;
-				currentBasicBlock = PushBasicBlock(context, currentBasicBlock);
+				currentBasicBlock = PushBasicBlock(x64Context, currentBasicBlock);
 				*DynamicArrayAdd(&currentBasicBlock->inputs) = previousBlock;
 				*DynamicArrayAdd(&previousBlock->outputs) = currentBasicBlock;
 			}
@@ -395,27 +394,27 @@ void GenerateBasicBlocks(X64Context *context)
 	}
 
 	currentBasicBlock->endIdx = instructionCount - 1;
-	context->beLeafBasicBlock = currentBasicBlock;
+	x64Context->beLeafBasicBlock = currentBasicBlock;
 
 	if (g_context->config.logAllocationInfo)
 		Print("- End\n\n");
 
 	// Link basic blocks together
-	const u64 basicBlockCount = context->beBasicBlocks.count;
+	const u64 basicBlockCount = x64Context->beBasicBlocks.count;
 	for (int i = 0; i < basicBlockCount; ++i) {
-		BasicBlock *jumpBlock = &context->beBasicBlocks[i];
+		BasicBlock *jumpBlock = &x64Context->beBasicBlocks[i];
 
 		IRLabel *label = nullptr;
-		X64Instruction endInstruction = context->beInstructions[jumpBlock->endIdx];
+		X64Instruction endInstruction = x64Context->beInstructions[jumpBlock->endIdx];
 		if (endInstruction.type >= X64_Jump_Begin && endInstruction.type <= X64_Jump_End)
 			label = endInstruction.label;
 		else
 			continue;
 
 		for (int j = 0; j < basicBlockCount; ++j) {
-			BasicBlock *labelBlock = &context->beBasicBlocks[j];
+			BasicBlock *labelBlock = &x64Context->beBasicBlocks[j];
 			X64Instruction beginInstruction =
-				context->beInstructions[labelBlock->beginIdx];
+				x64Context->beInstructions[labelBlock->beginIdx];
 
 			if (beginInstruction.type == X64_Label && beginInstruction.label == label) {
 				*DynamicArrayAdd(&jumpBlock->outputs) = labelBlock;
@@ -429,7 +428,7 @@ foundBlock:
 	}
 }
 
-void ResolveStackOffsets(X64Context *context)
+void ResolveStackOffsets(X64Context *x64Context)
 {
 	DynamicArray<s64, ThreadAllocator> stack;
 	DynamicArrayInit(&stack, 16);
@@ -437,24 +436,24 @@ void ResolveStackOffsets(X64Context *context)
 	s64 stackCursor = 0;
 
 	// Allocate space for the parameters we pass on the stack to procedures we call.
-	s64 allocParameters = context->allocatedParameterCount;
+	s64 allocParameters = x64Context->allocatedParameterCount;
 	if (allocParameters & 1) ++allocParameters;
 	stackCursor += allocParameters * 8;
 	if (stackCursor & 15)
 		stackCursor = (stackCursor + 16) & (~15);
 
 	// Allocate spilled values
-	for (int spillIdx = 0; spillIdx < context->spilledValues.size; ++spillIdx) {
-		u32 valueIdx = context->spilledValues[spillIdx];
-		Value *value = X64GetLocalValue(context, valueIdx);
+	for (int spillIdx = 0; spillIdx < x64Context->spilledValues.size; ++spillIdx) {
+		u32 valueIdx = x64Context->spilledValues[spillIdx];
+		Value *value = X64GetLocalValue(x64Context, valueIdx);
 		ASSERT(!(value->flags & VALUEFLAGS_IS_ALLOCATED));
 
 		// If the value has properly scoped allocation don't dumbly spill into stack.
 		if (value->flags & VALUEFLAGS_HAS_PUSH_INSTRUCTION)
 			continue;
 
-		u64 size = GetTypeInfo(context, value->typeTableIdx).size;
-		int alignment = GetTypeAlignment(context, value->typeTableIdx);
+		u64 size = GetTypeInfo(value->typeTableIdx).size;
+		int alignment = GetTypeAlignment(value->typeTableIdx);
 		if (stackCursor & (alignment - 1))
 			stackCursor = (stackCursor + alignment) & ~(alignment - 1);
 		ASSERT(stackCursor < S32_MAX);
@@ -463,15 +462,15 @@ void ResolveStackOffsets(X64Context *context)
 		stackCursor += size;
 	}
 
-	context->stackSize = stackCursor;
+	x64Context->stackSize = stackCursor;
 
-	X64InstructionStream stream = X64InstructionStreamBegin(&context->beInstructions);
+	X64InstructionStream stream = X64InstructionStreamBegin(&x64Context->beInstructions);
 	X64Instruction *inst = X64InstructionStreamAdvance(&stream);
 	while (inst) {
 		switch (inst->type) {
 		case X64_Push_Value:
 		{
-			Value *value = X64GetLocalValue(context, inst->valueIdx);
+			Value *value = X64GetLocalValue(x64Context, inst->valueIdx);
 			ASSERT(value->flags & VALUEFLAGS_HAS_PUSH_INSTRUCTION);
 			if (value->flags & VALUEFLAGS_IS_ALLOCATED) {
 				ASSERT(!(value->flags & VALUEFLAGS_IS_MEMORY));
@@ -481,8 +480,8 @@ void ResolveStackOffsets(X64Context *context)
 			ASSERT(!(value->flags & VALUEFLAGS_ON_STATIC_STORAGE));
 			ASSERT(!(value->flags & VALUEFLAGS_IS_EXTERNAL));
 
-			u64 size = GetTypeInfo(context, value->typeTableIdx).size;
-			int alignment = GetTypeAlignment(context, value->typeTableIdx);
+			u64 size = GetTypeInfo(value->typeTableIdx).size;
+			int alignment = GetTypeAlignment(value->typeTableIdx);
 			if (stackCursor & (alignment - 1))
 				stackCursor = (stackCursor + alignment) & ~(alignment - 1);
 			ASSERT(stackCursor < S32_MAX);
@@ -496,26 +495,26 @@ void ResolveStackOffsets(X64Context *context)
 		} break;
 		case X64_Pop_Scope:
 		{
-			if (stackCursor > (s64)context->stackSize)
-				context->stackSize = stackCursor;
+			if (stackCursor > (s64)x64Context->stackSize)
+				x64Context->stackSize = stackCursor;
 			stackCursor = stack[--stack.size];
 		} break;
 		}
 next:
 		inst = X64InstructionStreamAdvance(&stream);
 	}
-	if (stackCursor > (s64)context->stackSize)
-		context->stackSize = stackCursor;
+	if (stackCursor > (s64)x64Context->stackSize)
+		x64Context->stackSize = stackCursor;
 
 	// Align stack to 16 bytes.
-	if (context->stackSize & 15)
-		context->stackSize = (context->stackSize & ~15) + 16;
+	if (x64Context->stackSize & 15)
+		x64Context->stackSize = (x64Context->stackSize & ~15) + 16;
 }
 
-inline u64 BitIfRegister(X64Context *context, IRValue irValue)
+inline u64 BitIfRegister(X64Context *x64Context, IRValue irValue)
 {
 	if (irValue.valueType == IRVALUETYPE_VALUE || irValue.valueType == IRVALUETYPE_MEMORY) {
-		Value value = X64GetValue(context, irValue.valueIdx);
+		Value value = X64GetValue(x64Context, irValue.valueIdx);
 		if ((value.flags & (VALUEFLAGS_IS_USED | VALUEFLAGS_IS_ALLOCATED | VALUEFLAGS_IS_MEMORY)) ==
 				(VALUEFLAGS_IS_USED | VALUEFLAGS_IS_ALLOCATED)) {
 			ASSERT(value.allocatedRegister < 64);
@@ -525,7 +524,7 @@ inline u64 BitIfRegister(X64Context *context, IRValue irValue)
 	return 0;
 }
 
-inline u64 RegisterSavingInstruction(X64Context *context, X64Instruction *inst, u64 usedRegisters)
+inline u64 RegisterSavingInstruction(X64Context *x64Context, X64Instruction *inst, u64 usedRegisters)
 {
 	switch(inst->type) {
 	case X64_CALL:
@@ -534,7 +533,7 @@ inline u64 RegisterSavingInstruction(X64Context *context, X64Instruction *inst, 
 		// Caller save registers
 		u64 liveRegisterBits = 0;
 		for (int i = 0; i < inst->liveValues.size; ++i) {
-			Value v = X64GetValue(context, inst->liveValues[i]);
+			Value v = X64GetValue(x64Context, inst->liveValues[i]);
 			if ((v.flags & (VALUEFLAGS_IS_USED | VALUEFLAGS_IS_ALLOCATED | VALUEFLAGS_IS_MEMORY)) ==
 					(VALUEFLAGS_IS_USED | VALUEFLAGS_IS_ALLOCATED))
 				liveRegisterBits |= (1ull << v.allocatedRegister);
@@ -548,7 +547,7 @@ inline u64 RegisterSavingInstruction(X64Context *context, X64Instruction *inst, 
 		int count = 0;
 		for (int i = 0; i < 64; ++i) {
 			if (usedCalleeSaveRegisters & (1ull << i)) {
-				u32 newValueIdx = X64NewValue(context, "_save_reg"_s, TYPETABLEIDX_S64,
+				u32 newValueIdx = X64NewValue(x64Context, "_save_reg"_s, TYPETABLEIDX_S64,
 						VALUEFLAGS_IS_USED | VALUEFLAGS_FORCE_MEMORY |
 						VALUEFLAGS_HAS_PUSH_INSTRUCTION);
 
@@ -575,31 +574,31 @@ inline u64 RegisterSavingInstruction(X64Context *context, X64Instruction *inst, 
 	{
 		X64InstructionInfo instInfo = x64InstructionInfos[inst->type];
 		if (instInfo.operandAccessLeft  != OPERANDACCESS_NONE)
-			usedRegisters |= BitIfRegister(context, inst->dst);
+			usedRegisters |= BitIfRegister(x64Context, inst->dst);
 		if (instInfo.operandAccessRight != OPERANDACCESS_NONE)
-			usedRegisters |= BitIfRegister(context, inst->src);
+			usedRegisters |= BitIfRegister(x64Context, inst->src);
 	}
 	}
 	return usedRegisters;
 }
 
-void X64AllocateRegisters(X64Context *context)
+void X64AllocateRegisters(X64Context *x64Context)
 {
-	Procedure *proc = &g_context->procedures.unsafe[context->procedureIdx];
+	Procedure *proc = &g_context->procedures.unsafe[x64Context->procedureIdx];
 
-	BucketArrayInit(&context->beBasicBlocks);
+	BucketArrayInit(&x64Context->beBasicBlocks);
 
-	context->beInterferenceGraph = {};
-	context->beInterferenceGraph.capacity = 128;
-	context->beInterferenceGraph.valueIndices = (u32 *)
+	x64Context->beInterferenceGraph = {};
+	x64Context->beInterferenceGraph.capacity = 128;
+	x64Context->beInterferenceGraph.valueIndices = (u32 *)
 		ThreadAllocator::Alloc(sizeof(u32) * 128, alignof(u32));
-	context->beInterferenceGraph.removed = (u8 *)
+	x64Context->beInterferenceGraph.removed = (u8 *)
 		ThreadAllocator::Alloc(sizeof(u8) * 128, alignof(u8));
-	context->beInterferenceGraph.edges = (HashSet<u32, ThreadAllocator> *)
+	x64Context->beInterferenceGraph.edges = (HashSet<u32, ThreadAllocator> *)
 		ThreadAllocator::Alloc(sizeof(HashSet<u32, ThreadAllocator>) * 128, alignof(HashSet<u32,
 					ThreadAllocator>));
 
-	HashMapInit(&context->beInterferenceGraph.valueToNodeMap, 256);
+	HashMapInit(&x64Context->beInterferenceGraph.valueToNodeMap, 256);
 
 	// Cache what values are to be stored in XMM registers
 	// The main reasoning behind this is to avoid so many queries into cold type table data just to
@@ -609,65 +608,65 @@ void X64AllocateRegisters(X64Context *context)
 
 		u64 qwordCount = valueCount >> 6;
 		if (valueCount & 63) ++qwordCount;
-		ArrayInit(&context->valueIsXmmBits, qwordCount);
-		memset(context->valueIsXmmBits.data, 0, qwordCount * 8);
-		context->valueIsXmmBits.size = qwordCount;
+		ArrayInit(&x64Context->valueIsXmmBits, qwordCount);
+		memset(x64Context->valueIsXmmBits.data, 0, qwordCount * 8);
+		x64Context->valueIsXmmBits.size = qwordCount;
 
 		for (int valueIdx = 1; valueIdx < valueCount; ++valueIdx) {
-			u32 typeTableIdx = X64GetValue(context, valueIdx).typeTableIdx;
+			u32 typeTableIdx = X64GetValue(x64Context, valueIdx).typeTableIdx;
 			if (typeTableIdx >= 0) {
-				TypeInfo typeInfo = GetTypeInfo(context, StripAllAliases(typeTableIdx));
+				TypeInfo typeInfo = GetTypeInfo(StripAllAliases(typeTableIdx));
 				bool isXMM = typeInfo.size > 8 || typeInfo.typeCategory == TYPECATEGORY_FLOATING;
 				if (isXMM)
-					BitfieldSetBit(context->valueIsXmmBits, valueIdx);
+					BitfieldSetBit(x64Context->valueIsXmmBits, valueIdx);
 			}
 		}
 	}
 
-	GenerateBasicBlocks(context);
+	GenerateBasicBlocks(x64Context);
 
 	int availableRegisters = sizeof(x64ScratchRegisters) / sizeof(x64ScratchRegisters[0]);
 	int availableRegistersFP = 16;
 
 	// Do liveness analisis, starting from all leaf blocks
-	BasicBlock *currentLeafBlock = context->beLeafBasicBlock;
+	BasicBlock *currentLeafBlock = x64Context->beLeafBasicBlock;
 
 #if USE_PROFILER_API
-	String procName = GetProcedureRead(context->procedureIdx).name;
+	String procName = GetProcedureRead(x64Context->procedureIdx).name;
 	ProfilerBegin("Liveness analisis", StringToCStr(procName, ThreadAllocator::Alloc), PERFORMANCEAPI_DEFAULT_COLOR);
 #endif
 
-	context->beInterferenceGraph.count = 0;
-	HashMapClear(context->beInterferenceGraph.valueToNodeMap);
+	x64Context->beInterferenceGraph.count = 0;
+	HashMapClear(x64Context->beInterferenceGraph.valueToNodeMap);
 
 	// @Todo: iterative instead of recursive?
 	DynamicArray<u32, ThreadAllocator> liveValues;
 	DynamicArrayInit(&liveValues, 32);
-	DoLivenessAnalisis(context, currentLeafBlock, &liveValues);
+	DoLivenessAnalisis(x64Context, currentLeafBlock, &liveValues);
 
 	// Find any missed nodes (infinite loops)
-	for (int blockIdx = 0; blockIdx < context->beBasicBlocks.count; ++blockIdx) {
-		BasicBlock *block = &context->beBasicBlocks[blockIdx];
+	for (int blockIdx = 0; blockIdx < x64Context->beBasicBlocks.count; ++blockIdx) {
+		BasicBlock *block = &x64Context->beBasicBlocks[blockIdx];
 		if (!block->livenessAnalizedOnce)
-			DoLivenessAnalisis(context, block, &liveValues);
+			DoLivenessAnalisis(x64Context, block, &liveValues);
 	}
 
 	ProfilerEnd();
 
-	InterferenceGraph interferenceGraph = context->beInterferenceGraph;
+	InterferenceGraph interferenceGraph = x64Context->beInterferenceGraph;
 
 	if (g_context->config.logAllocationInfo) {
 		for (u32 nodeIdx = 0; nodeIdx < interferenceGraph.count; ++nodeIdx) {
 			u32 currentNodeValueIdx = interferenceGraph.valueIndices[nodeIdx];
 			HashSet<u32, ThreadAllocator> currentNodeEdges = interferenceGraph.edges[nodeIdx];
-			Print("Value %S coexists with: ", X64IRValueToStr(context,
-						X64IRValueValue(context, currentNodeValueIdx), proc->localValues));
+			Print("Value %S coexists with: ", X64IRValueToStr(
+						X64IRValueValue(x64Context, currentNodeValueIdx), proc->localValues));
 
 			u32 *keys = HashSetKeys(currentNodeEdges);
 			for (u32 slotIdx = 0; slotIdx < currentNodeEdges.capacity; ++slotIdx)
 				if (HashSetSlotOccupied(currentNodeEdges, slotIdx))
-					Print("%S, ", X64IRValueToStr(context,
-								X64IRValueValue(context, keys[slotIdx]), proc->localValues));
+					Print("%S, ", X64IRValueToStr(
+								X64IRValueValue(x64Context, keys[slotIdx]), proc->localValues));
 			Print("\n");
 		}
 	}
@@ -700,7 +699,7 @@ void X64AllocateRegisters(X64Context *context)
 			// Skip physical register values
 			if (valueIdx >= RAX.valueIdx && valueIdx <= XMM15.valueIdx)
 				continue;
-			u32 vFlags = X64GetLocalValue(context, valueIdx)->flags;
+			u32 vFlags = X64GetLocalValue(x64Context, valueIdx)->flags;
 			if (vFlags & VALUEFLAGS_FORCE_REGISTER)
 				continue;
 
@@ -724,10 +723,10 @@ void X64AllocateRegisters(X64Context *context)
 gotNodeToRemove:
 
 		u32 nodeCount = interferenceGraph.count;
-		u32 parameterValuesBegin = context->x64SpilledParametersRead[0];
-		u32 parameterValuesEnd = context->x64SpilledParametersWrite[31];
+		u32 parameterValuesBegin = x64Context->x64SpilledParametersRead[0];
+		u32 parameterValuesEnd = x64Context->x64SpilledParametersWrite[31];
 		// We assume we allocated the read parameter values first...
-		ASSERT(context->x64SpilledParametersRead[0] < context->x64SpilledParametersWrite[0]);
+		ASSERT(x64Context->x64SpilledParametersRead[0] < x64Context->x64SpilledParametersWrite[0]);
 		for (u32 nodeIdx = 0; nodeIdx < nodeCount; ++nodeIdx) {
 			if (interferenceGraph.removed[nodeIdx])
 				continue;
@@ -739,7 +738,7 @@ gotNodeToRemove:
 				HashSetHas(*edges, valueIdx)) {
 				// The only allocated things thus far should be physical register values and stack
 				// parameter values.
-				ASSERT(!(X64GetLocalValue(context, valueIdx)->flags & VALUEFLAGS_IS_ALLOCATED));
+				ASSERT(!(X64GetLocalValue(x64Context, valueIdx)->flags & VALUEFLAGS_IS_ALLOCATED));
 				HashSetRemove(edges, valueIdx);
 			}
 		}
@@ -755,7 +754,7 @@ gotNodeToRemove:
 		if (valueIdx >= RAX.valueIdx && valueIdx <= XMM15.valueIdx)
 			continue;
 
-		Value *v = X64GetLocalValue(context, valueIdx);
+		Value *v = X64GetLocalValue(x64Context, valueIdx);
 		const HashSet<u32, ThreadAllocator> edges = interferenceGraph.edges[currentNodeIdx];
 		const u32 *edgesKeys = HashSetKeys(edges);
 
@@ -766,7 +765,7 @@ gotNodeToRemove:
 		if (v->flags & VALUEFLAGS_IS_ALLOCATED)
 			continue;
 
-		bool isXMM = BitfieldGetBit(context->valueIsXmmBits, valueIdx);
+		bool isXMM = BitfieldGetBit(x64Context->valueIsXmmBits, valueIdx);
 
 		if (v->flags & VALUEFLAGS_TRY_IMMITATE) {
 			u32 immitateValueIdx = v->tryImmitateValueIdx;
@@ -775,19 +774,19 @@ gotNodeToRemove:
 			if (immitateValueIdx & VALUE_GLOBAL_BIT)
 				goto skipImmitate;
 
-			Value *immitateValue = X64GetLocalValue(context, immitateValueIdx);
+			Value *immitateValue = X64GetLocalValue(x64Context, immitateValueIdx);
 #if 0
 			while (immitateValue->flags & VALUEFLAGS_TRY_IMMITATE &&
 				   immitateValueIdx != immitateValue->tryImmitateValueIdx)
 			{
 				immitateValueIdx = immitateValue->tryImmitateValueIdx;
-				immitateValue = X64GetLocalValue(context, immitateValueIdx);
+				immitateValue = X64GetLocalValue(x64Context, immitateValueIdx);
 			}
 #endif
 
 			if ((immitateValue->flags & VALUEFLAGS_IS_ALLOCATED) &&
 			  !(immitateValue->flags & VALUEFLAGS_IS_MEMORY)) {
-				bool isOtherXMM = BitfieldGetBit(context->valueIsXmmBits, immitateValueIdx);
+				bool isOtherXMM = BitfieldGetBit(x64Context->valueIsXmmBits, immitateValueIdx);
 				if (isXMM != isOtherXMM)
 					goto skipImmitate;
 
@@ -800,7 +799,7 @@ gotNodeToRemove:
 				for (u32 slotIdx = 0; slotIdx < edges.capacity; ++slotIdx) {
 					if (!HashSetSlotOccupied(edges, slotIdx))
 						continue;
-					Value edgeValue = X64GetValue(context, edgesKeys[slotIdx]);
+					Value edgeValue = X64GetValue(x64Context, edgesKeys[slotIdx]);
 					if (!(edgeValue.flags & VALUEFLAGS_IS_ALLOCATED) ||
 						  edgeValue.flags & VALUEFLAGS_IS_MEMORY)
 						continue;
@@ -815,7 +814,7 @@ gotNodeToRemove:
 			}
 			else if (!(immitateValue->flags & VALUEFLAGS_IS_ALLOCATED) &&
 					 !(immitateValue->flags & VALUEFLAGS_TRY_IMMITATE) &&
-					 CanBeRegister(context, immitateValueIdx)) {
+					 CanBeRegister(x64Context, immitateValueIdx)) {
 				immitateValue->flags |= VALUEFLAGS_TRY_IMMITATE;
 				immitateValue->tryImmitateValueIdx = valueIdx;
 			}
@@ -827,7 +826,7 @@ skipImmitate:
 		for (u32 slotIdx = 0; slotIdx < edges.capacity; ++slotIdx) {
 			if (!HashSetSlotOccupied(edges, slotIdx))
 				continue;
-			Value edgeValue = X64GetValue(context, edgesKeys[slotIdx]);
+			Value edgeValue = X64GetValue(x64Context, edgesKeys[slotIdx]);
 			if ((edgeValue.flags & VALUEFLAGS_IS_ALLOCATED) &&
 			   !(edgeValue.flags & VALUEFLAGS_IS_MEMORY))
 				usedRegisters |= 1ull << edgeValue.allocatedRegister;
@@ -838,7 +837,7 @@ skipImmitate:
 			u64 registerBit = 1ull << candidate;
 			if (!(usedRegisters & registerBit)) {
 #if DEBUG_BUILD
-				TypeInfo t = GetTypeInfo(context, StripAllAliases(v->typeTableIdx));
+				TypeInfo t = GetTypeInfo(StripAllAliases(v->typeTableIdx));
 				if (t.typeCategory == TYPECATEGORY_FLOATING || t.size > 8)
 					ASSERT(candidate >= XMM0_idx);
 				else
@@ -857,22 +856,22 @@ skipImmitate:
 			}
 
 			// Spill!
-			*DynamicArrayAdd(&context->spilledValues) = valueIdx;
+			*DynamicArrayAdd(&x64Context->spilledValues) = valueIdx;
 		}
 	}
 
 	// Do register saving
 	u64 usedRegisters = 0;
-	X64InstructionStream stream = X64InstructionStreamBegin(&context->beInstructions);
+	X64InstructionStream stream = X64InstructionStreamBegin(&x64Context->beInstructions);
 	X64Instruction *inst = X64InstructionStreamAdvance(&stream);
 	while (inst) {
-		usedRegisters = RegisterSavingInstruction(context, inst, usedRegisters);
+		usedRegisters = RegisterSavingInstruction(x64Context, inst, usedRegisters);
 		inst = X64InstructionStreamAdvance(&stream);
 	}
 
 	// Don't save registers used to return values
-	u32 procTypeIdx = GetProcedureRead(context->procedureIdx).typeTableIdx;
-	TypeInfoProcedure procTypeInfo = GetTypeInfo(context, procTypeIdx).procedureInfo;
+	u32 procTypeIdx = GetProcedureRead(x64Context->procedureIdx).typeTableIdx;
+	TypeInfoProcedure procTypeInfo = GetTypeInfo(procTypeIdx).procedureInfo;
 	u64 returnValueCount = procTypeInfo.returnTypeIndices.size;
 	for (int i = 1; i < returnValueCount; ++i) {
 		static u64 returnRegisters[] = {
@@ -906,7 +905,7 @@ skipImmitate:
 			XMM12,	XMM13,	XMM14,	XMM15
 		};*/
 		u32 typeIdx = procTypeInfo.returnTypeIndices[i];
-		if (GetTypeInfo(context, typeIdx).typeCategory == TYPECATEGORY_FLOATING) {
+		if (GetTypeInfo(typeIdx).typeCategory == TYPECATEGORY_FLOATING) {
 			if (i < ArrayCount(returnRegistersXMM))
 				usedRegisters &= ~returnRegistersXMM[i];
 		}
@@ -924,14 +923,14 @@ skipImmitate:
 	ArrayInit(&patchTop.patchInstructions, 1 + calleeSaveRegCount);
 	ArrayInit(&patchBottom.patchInstructions, 1 + calleeSaveRegCount);
 
-	u64 instructionCount = context->beInstructions.count;
-	*ArrayAdd(&patchBottom.patchInstructions) = context->beInstructions[instructionCount - 1];
+	u64 instructionCount = x64Context->beInstructions.count;
+	*ArrayAdd(&patchBottom.patchInstructions) = x64Context->beInstructions[instructionCount - 1];
 
 	for (int i = 0; i < 64; ++i) {
 		if (usedCallerSaveRegisters & (1ull << i)) {
-			u32 newValueIdx = X64NewValue(context, "_save_reg"_s, TYPETABLEIDX_S64,
+			u32 newValueIdx = X64NewValue(x64Context, "_save_reg"_s, TYPETABLEIDX_S64,
 					VALUEFLAGS_IS_USED | VALUEFLAGS_FORCE_MEMORY);
-			*DynamicArrayAdd(&context->spilledValues) = newValueIdx;
+			*DynamicArrayAdd(&x64Context->spilledValues) = newValueIdx;
 
 			IRValue reg = x64Registers[i];
 
@@ -946,9 +945,9 @@ skipImmitate:
 		}
 	}
 
-	*ArrayAdd(&patchTop.patchInstructions) = context->beInstructions[0];
-	context->beInstructions[0] = patchTop;
-	context->beInstructions[instructionCount - 1] = patchBottom;
+	*ArrayAdd(&patchTop.patchInstructions) = x64Context->beInstructions[0];
+	x64Context->beInstructions[0] = patchTop;
+	x64Context->beInstructions[instructionCount - 1] = patchBottom;
 
-	ResolveStackOffsets(context);
+	ResolveStackOffsets(x64Context);
 }

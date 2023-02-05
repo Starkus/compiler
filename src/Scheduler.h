@@ -80,5 +80,5 @@ struct Job
 	YieldContext yieldContext;
 };
 
-void SwitchJob(JobContext *context, YieldReason yieldReason, YieldContext yieldContext);
+void SwitchJob(YieldReason yieldReason, YieldContext yieldContext);
 u32 RequestNewJob(JobType type, void (*proc)(u32, void *), void *args);

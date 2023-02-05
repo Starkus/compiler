@@ -20,7 +20,7 @@ struct CTLibrary
 	void *address;
 };
 
-struct CTContext : JobContext
+struct CTContext
 {
 	u32 procedureIdx;
 	BucketArrayView<Value> localValues;
@@ -28,10 +28,7 @@ struct CTContext : JobContext
 	HashMap<u32, CTRegister *, ThreadAllocator> values;
 };
 
-CTRegister CTRunInstructions(JobContext *context,
-		BucketArrayView<Value> localValues,
-		BucketArrayView<IRInstruction> irInstructions,
-		IRValue resultIRValue);
+CTRegister CTRunInstructions(BucketArrayView<Value> localValues,
+		BucketArrayView<IRInstruction> irInstructions, IRValue resultIRValue);
 
-ArrayView<const CTRegister *> CTRunProcedure(JobContext *context, u32 procedureIdx,
-		ArrayView<CTRegister *> parameters);
+ArrayView<const CTRegister *> CTRunProcedure(u32 procedureIdx, ArrayView<CTRegister *> parameters);

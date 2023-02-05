@@ -343,7 +343,7 @@ void PrintJobIRInstructions(IRContext *context)
 
 	const int padding = 20;
 	Procedure proc = GetProcedureRead(context->procedureIdx);
-	TypeInfoProcedure procTypeInfo = GetTypeInfo(context, proc.typeTableIdx).procedureInfo;
+	TypeInfoProcedure procTypeInfo = GetTypeInfo(proc.typeTableIdx).procedureInfo;
 
 	SYSMutexLock(printIRMutex);
 
@@ -356,7 +356,7 @@ void PrintJobIRInstructions(IRContext *context)
 		if (paramIdx) PIRPrintOut(", ");
 		u32 paramValueIdx = proc.parameterValues[paramIdx];
 		Value paramValue = IRGetValue(context, paramValueIdx);
-		String typeStr = TypeInfoToString(context, paramValue.typeTableIdx);
+		String typeStr = TypeInfoToString(paramValue.typeTableIdx);
 		PIRPrintOut("%S", PIRValueToStr(proc.localValues, paramValueIdx));
 #if PRINTIR_PRINT_TYPES
 		PIRPrintOut(" : %S", typeStr);
@@ -367,8 +367,7 @@ void PrintJobIRInstructions(IRContext *context)
 		PIRPrintOut(" -> ");
 		for (int returnIdx = 0; returnIdx < procTypeInfo.returnTypeIndices.size; ++returnIdx) {
 			if (returnIdx) PIRPrintOut(", ");
-			String returnTypeStr = TypeInfoToString(context,
-					procTypeInfo.returnTypeIndices[returnIdx]);
+			String returnTypeStr = TypeInfoToString(procTypeInfo.returnTypeIndices[returnIdx]);
 			PIRPrintOut("%S", returnTypeStr);
 		}
 	}

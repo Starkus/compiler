@@ -1,8 +1,9 @@
+THREADLOCAL u32 t_currentJobIdx;
 THREADLOCAL Fiber t_fiberToDelete = SYS_INVALID_FIBER_HANDLE;
 
-inline Job *GetCurrentJob(JobContext *context)
+inline Job *GetCurrentJob()
 {
-	return &g_context->jobs.unsafe[context->jobIdx];
+	return &g_context->jobs.unsafe[t_currentJobIdx];
 }
 
 inline void EnqueueReadyJob(u32 jobIdx)
@@ -244,6 +245,7 @@ switchFiber:
 		}
 		SpinlockUnlock(&g_context->threadStatesLock);
 
+		t_currentJobIdx = nextJobIdx;
 		Job *nextJob = &g_context->jobs.unsafe[nextJobIdx];
 		if (nextJob->state == JOBSTATE_INIT) {
 			nextJob->state = JOBSTATE_RUNNING;
@@ -276,11 +278,15 @@ finish:
 
 // Procedure to switch to a different job.
 // We leave the information in thread local storage for the scheduler fiber.
-inline void SwitchJob(JobContext *context, YieldReason yieldReason, YieldContext yieldContext)
+inline void SwitchJob(YieldReason yieldReason, YieldContext yieldContext)
 {
 	ASSERT(yieldReason != YIELDREASON_DONE); // Call FinishCurrentJob instead.
 
-	Job *previousJob = GetCurrentJob(context);
+	// Can't yield from an invalid job! (This is probably the main thread and the multithread phase
+	// hasn't started/is over, where there is no good reason to yield.)
+	ASSERT(t_currentJobIdx != U32_MAX);
+
+	Job *previousJob = GetCurrentJob();
 	ASSERT(previousJob->state == JOBSTATE_RUNNING);
 
 	previousJob->fiber = GetCurrentFiber();
@@ -288,7 +294,7 @@ inline void SwitchJob(JobContext *context, YieldReason yieldReason, YieldContext
 
 	SchedulerArgs *args = ALLOC(LinearAllocator, SchedulerArgs);
 	*args = {
-		.previousJobIdx = context->jobIdx,
+		.previousJobIdx = t_currentJobIdx,
 		.yieldReason = yieldReason,
 		.yieldContext = yieldContext
 	};
@@ -303,9 +309,9 @@ inline void SwitchJob(JobContext *context, YieldReason yieldReason, YieldContext
 	}
 }
 
-inline void FinishCurrentJob(JobContext *context)
+inline void FinishCurrentJob()
 {
-	Job *previousJob = GetCurrentJob(context);
+	Job *previousJob = GetCurrentJob();
 	ASSERT(previousJob->state == JOBSTATE_RUNNING);
 	previousJob->state = JOBSTATE_FINISHED;
 	previousJob->fiber = SYS_INVALID_FIBER_HANDLE;

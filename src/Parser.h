@@ -47,7 +47,7 @@ struct Token
 
 void ParseJobProc(u32, void *);
 
-struct PContext : JobContext
+struct PContext
 {
 	u32 fileIdx;
 	u64 currentTokenIdx;

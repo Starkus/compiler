@@ -57,11 +57,6 @@ THREADLOCAL u64 t_threadMemSize;
 String TPrintF(const char *format, ...);
 struct Context;
 
-struct JobContext
-{
-	u32 jobIdx;
-};
-
 Context *g_context;
 Memory *g_memory;
 FileHandle g_hStdin;
@@ -477,8 +472,6 @@ int main(int argc, char **argv)
 		waitingJobs->size = 0;
 	}
 
-	JobContext fakeJobContext = { U32_MAX };
-
 	{
 		auto waitingJobs = context->waitingJobsByReason[YIELDREASON_UNKNOWN_OVERLOAD].Get();
 		for (int i = 0; i < waitingJobs->size; ++i) {
@@ -489,8 +482,8 @@ int main(int argc, char **argv)
 				LogErrorNoCrash(yieldContext.loc, TPrintF("Operator '%S' not found for "
 							"types \"%S\" and \"%S\"",
 							OperatorToString(yieldContext.overload.op),
-							TypeInfoToString(&fakeJobContext, yieldContext.overload.leftTypeIdx),
-							TypeInfoToString(&fakeJobContext, yieldContext.overload.rightTypeIdx)));
+							TypeInfoToString(yieldContext.overload.leftTypeIdx),
+							TypeInfoToString(yieldContext.overload.rightTypeIdx)));
 #if DEBUG_BUILD
 				LogNote(job->loc, TPrintF("On job: \"%S\"", job->description));
 #endif
@@ -499,7 +492,7 @@ int main(int argc, char **argv)
 				LogErrorNoCrash(yieldContext.loc, TPrintF("Operator '%S' not found for "
 							"type \"%S\"",
 							OperatorToString(yieldContext.overload.op),
-							TypeInfoToString(&fakeJobContext, yieldContext.overload.leftTypeIdx)));
+							TypeInfoToString(yieldContext.overload.leftTypeIdx)));
 #if DEBUG_BUILD
 				LogNote(job->loc, TPrintF("On job: \"%S\"", job->description));
 #endif
@@ -514,7 +507,7 @@ int main(int argc, char **argv)
 			u32 jobIdx = waitingJobs[i];
 			const Job *job = &context->jobs.unsafe[jobIdx];
 			YieldContext yieldContext = job->yieldContext;
-			StaticDefinition staticDef = GetStaticDefinition(&fakeJobContext, yieldContext.index);
+			StaticDefinition staticDef = GetStaticDefinition(yieldContext.index);
 			LogErrorNoCrash(yieldContext.loc, TPrintF("Static definition '%S' never "
 						"type-checked", staticDef.name));
 #if DEBUG_BUILD
@@ -563,7 +556,7 @@ int main(int argc, char **argv)
 			const Job *job = &context->jobs.unsafe[jobIdx];
 			YieldContext yieldContext = job->yieldContext;
 			LogErrorNoCrash(yieldContext.loc, TPrintF("Type '%S' never finished "
-						"type-checking", TypeInfoToString(&fakeJobContext, yieldContext.index)));
+						"type-checking", TypeInfoToString(yieldContext.index)));
 #if DEBUG_BUILD
 			LogNote(job->loc, TPrintF("On job: \"%S\"", job->description));
 #endif

@@ -1,5 +1,5 @@
-ASTExpression ParseExpression(PContext *context, s32 precedence, bool isStatement);
-ASTExpression ParseStatement(PContext *context);
+ASTExpression ParseExpression(PContext *pContext, s32 precedence, bool isStatement);
+ASTExpression ParseStatement(PContext *pContext);
 
 void AssertToken(Token *token, int type)
 {
@@ -18,24 +18,24 @@ void AssertToken(Token *token, int type)
 	LogError(TOKEN->loc, TPrintF("Unexpected token of type %S", tokenString)); \
 	} while (0)
 
-void Advance(PContext *context)
+void Advance(PContext *pContext)
 {
-	ASSERT(context->token == &context->tokens[context->currentTokenIdx]);
+	ASSERT(pContext->token == &pContext->tokens[pContext->currentTokenIdx]);
 
-	++context->currentTokenIdx;
-	if (context->currentTokenIdx > context->tokens.count)
-		LogError(context->token->loc, "Unexpected end of file"_s);
-	context->token = &context->tokens[context->currentTokenIdx];
+	++pContext->currentTokenIdx;
+	if (pContext->currentTokenIdx > pContext->tokens.count)
+		LogError(pContext->token->loc, "Unexpected end of file"_s);
+	pContext->token = &pContext->tokens[pContext->currentTokenIdx];
 }
 
-inline ASTExpression *PNewTreeNode(PContext *context)
+inline ASTExpression *PNewTreeNode(PContext *pContext)
 {
-	return BucketArrayAdd(&context->astTreeNodes);
+	return BucketArrayAdd(&pContext->astTreeNodes);
 }
 
-inline ASTType *NewASTType(PContext *context)
+inline ASTType *NewASTType(PContext *pContext)
 {
-	return BucketArrayAdd(&context->astTypes);
+	return BucketArrayAdd(&pContext->astTypes);
 }
 
 inline String *GetVariableName(ASTVariableDeclaration *astVarDecl, u32 idx)
@@ -74,7 +74,7 @@ inline String *GetVariableName(ASTStaticDefinition *astStaticDef, u32 idx)
 		return &astStaticDef->arrayOfNames[idx];
 }
 
-inline s64 ParseInt(PContext *context, String str)
+inline s64 ParseInt(PContext *pContext, String str)
 {
 	bool isHex = false;
 	if (str.data[0] == '0') {
@@ -93,13 +93,13 @@ inline s64 ParseInt(PContext *context, String str)
 	if (parseResult.error) {
 		switch (parseResult.error) {
 		case PARSENUMBERRROR_OVERFLOW:
-			LogError(context->token->loc, "Integer literal too big!"_s);
+			LogError(pContext->token->loc, "Integer literal too big!"_s);
 			break;
 		case PARSENUMBERRROR_UNDERFLOW:
-			LogError(context->token->loc, "Integer literal too negative!"_s);
+			LogError(pContext->token->loc, "Integer literal too negative!"_s);
 			break;
 		case PARSENUMBERRROR_INVALID_CHARACTER:
-			LogError(context->token->loc,
+			LogError(pContext->token->loc,
 					"Integer literal contains invalid characters"_s);
 			break;
 		}
@@ -107,22 +107,22 @@ inline s64 ParseInt(PContext *context, String str)
 	return parseResult.number;
 }
 
-inline f64 ParseFloat(PContext *context, String str)
+inline f64 ParseFloat(PContext *pContext, String str)
 {
 	ParseFloatResult parseResult = F64FromString(str);
 	if (parseResult.error) {
 		switch (parseResult.error) {
 		case PARSENUMBERRROR_OVERFLOW:
-			LogError(context->token->loc, "Floating point literal too big!"_s);
+			LogError(pContext->token->loc, "Floating point literal too big!"_s);
 			break;
 		case PARSENUMBERRROR_UNDERFLOW:
-			LogError(context->token->loc, "Floating point literal too small!"_s);
+			LogError(pContext->token->loc, "Floating point literal too small!"_s);
 			break;
 		case PARSENUMBERRROR_INVALID_CHARACTER:
-			LogError(context->token->loc,
+			LogError(pContext->token->loc,
 					"Floating point literal contains invalid characters"_s);
 		case PARSENUMBERRROR_INVALID_EXPONENT:
-			LogError(context->token->loc,
+			LogError(pContext->token->loc,
 					"Could not parse exponent in scientific notation"_s);
 			break;
 		}
@@ -130,69 +130,69 @@ inline f64 ParseFloat(PContext *context, String str)
 	return parseResult.number;
 }
 
-ASTStructDeclaration ParseStructOrUnion(PContext *context);
-ASTEnumDeclaration ParseEnumDeclaration(PContext *context);
-ASTProcedurePrototype ParseProcedurePrototype(PContext *context);
-ASTType ParseType(PContext *context)
+ASTStructDeclaration ParseStructOrUnion(PContext *pContext);
+ASTEnumDeclaration ParseEnumDeclaration(PContext *pContext);
+ASTProcedurePrototype ParseProcedurePrototype(PContext *pContext);
+ASTType ParseType(PContext *pContext)
 {
 	ASTType astType;
-	astType.loc = context->token->loc;
+	astType.loc = pContext->token->loc;
 
-	switch (context->token->type) {
+	switch (pContext->token->type) {
 	case TOKEN_OP_ARRAY_ACCESS:
 	{
-		Advance(context);
+		Advance(pContext);
 		astType.nodeType = ASTTYPENODETYPE_ARRAY;
 
 		astType.arrayCountExp = nullptr;
-		if (context->token->type != ']') {
-			astType.arrayCountExp = PNewTreeNode(context);
-			*astType.arrayCountExp = ParseExpression(context, -1, false);
+		if (pContext->token->type != ']') {
+			astType.arrayCountExp = PNewTreeNode(pContext);
+			*astType.arrayCountExp = ParseExpression(pContext, -1, false);
 		}
-		AssertToken(context->token, ']');
-		Advance(context);
+		AssertToken(pContext->token, ']');
+		Advance(pContext);
 
-		astType.arrayType = NewASTType(context);
-		*astType.arrayType = ParseType(context);
+		astType.arrayType = NewASTType(pContext);
+		*astType.arrayType = ParseType(pContext);
 	} break;
 	case TOKEN_OP_POINTER_TO:
 	{
-		Advance(context);
+		Advance(pContext);
 		astType.nodeType = ASTTYPENODETYPE_POINTER;
-		astType.pointedType = NewASTType(context);
-		*astType.pointedType = ParseType(context);
+		astType.pointedType = NewASTType(pContext);
+		*astType.pointedType = ParseType(pContext);
 	} break;
 	case TOKEN_KEYWORD_STRUCT:
 	{
 		astType.nodeType = ASTTYPENODETYPE_STRUCT_DECLARATION;
-		astType.structDeclaration = ParseStructOrUnion(context);
+		astType.structDeclaration = ParseStructOrUnion(pContext);
 	} break;
 	case TOKEN_KEYWORD_UNION:
 	{
 		astType.nodeType = ASTTYPENODETYPE_UNION_DECLARATION;
-		astType.structDeclaration = ParseStructOrUnion(context);
+		astType.structDeclaration = ParseStructOrUnion(pContext);
 	} break;
 	case TOKEN_KEYWORD_ENUM:
 	{
 		astType.nodeType = ASTTYPENODETYPE_ENUM_DECLARATION;
-		astType.enumDeclaration = ParseEnumDeclaration(context);
+		astType.enumDeclaration = ParseEnumDeclaration(pContext);
 	} break;
 	case TOKEN_IDENTIFIER:
 	{
 		astType.nodeType = ASTTYPENODETYPE_IDENTIFIER;
-		astType.name = TokenToString(*context->token);
-		Advance(context);
+		astType.name = TokenToString(*pContext->token);
+		Advance(pContext);
 	} break;
 	case '(':
 	case TOKEN_DIRECTIVE_CALLING_CONVENTION:
 	{
 		astType.nodeType = ASTTYPENODETYPE_PROCEDURE;
-		astType.procedurePrototype = ParseProcedurePrototype(context);
+		astType.procedurePrototype = ParseProcedurePrototype(pContext);
 	} break;
 	default:
 	{
 		astType.nodeType = ASTTYPENODETYPE_INVALID;
-		LogError(context->token->loc, "Failed to parse type"_s);
+		LogError(pContext->token->loc, "Failed to parse type"_s);
 	}
 	}
 
@@ -258,10 +258,10 @@ constexpr int GetOperatorPrecedence(s32 op)
 	}
 }
 
-ASTStaticDefinition ParseStaticDefinition(PContext *context, ArrayView<String> names)
+ASTStaticDefinition ParseStaticDefinition(PContext *pContext, ArrayView<String> names)
 {
 	ASTStaticDefinition astStaticDef = {};
-	astStaticDef.loc = context->token->loc;
+	astStaticDef.loc = pContext->token->loc;
 
 	astStaticDef.nameCount = (u32)names.size;
 	if (names.size == 1)
@@ -278,56 +278,56 @@ ASTStaticDefinition ParseStaticDefinition(PContext *context, ArrayView<String> n
 
 	ASTExpression expression = {};
 	expression.typeTableIdx = TYPETABLEIDX_Unset;
-	expression.any.loc = context->token->loc;
+	expression.any.loc = pContext->token->loc;
 
 	bool isInline = false;
 	bool isExternal = false;
 	bool isExported = false;
 	SourceLocation isInlineLoc = {}, isExternalLoc = {}, isExportedLoc = {};
 	while (true) {
-		if (context->token->type == TOKEN_DIRECTIVE_INLINE) {
-			if (isInline) LogError(context->token->loc, "'inline' used twice"_s);
+		if (pContext->token->type == TOKEN_DIRECTIVE_INLINE) {
+			if (isInline) LogError(pContext->token->loc, "'inline' used twice"_s);
 			isInline = true;
-			isInlineLoc = context->token->loc;
-			Advance(context);
+			isInlineLoc = pContext->token->loc;
+			Advance(pContext);
 		}
-		else if (context->token->type == TOKEN_DIRECTIVE_EXTERNAL) {
-			if (isExternal) LogError(context->token->loc, "'external' used twice"_s);
+		else if (pContext->token->type == TOKEN_DIRECTIVE_EXTERNAL) {
+			if (isExternal) LogError(pContext->token->loc, "'external' used twice"_s);
 			isExternal = true;
-			isExternalLoc = context->token->loc;
-			Advance(context);
+			isExternalLoc = pContext->token->loc;
+			Advance(pContext);
 		}
-		else if (context->token->type == TOKEN_DIRECTIVE_EXPORT) {
-			if (isExported) LogError(context->token->loc, "'export' used twice"_s);
+		else if (pContext->token->type == TOKEN_DIRECTIVE_EXPORT) {
+			if (isExported) LogError(pContext->token->loc, "'export' used twice"_s);
 			isExported = true;
-			isExportedLoc = context->token->loc;
-			Advance(context);
+			isExportedLoc = pContext->token->loc;
+			Advance(pContext);
 		}
 		else
 			break;
 	}
 
 	// Procedures!
-	if (context->token->type == '(' ||
-		context->token->type == TOKEN_DIRECTIVE_CALLING_CONVENTION)
+	if (pContext->token->type == '(' ||
+		pContext->token->type == TOKEN_DIRECTIVE_CALLING_CONVENTION)
 	{
 		expression.nodeType = ASTNODETYPE_PROCEDURE_DECLARATION;
 
 		ASTProcedureDeclaration procDecl = {};
-		procDecl.loc = context->token->loc;
+		procDecl.loc = pContext->token->loc;
 		procDecl.name = *GetVariableName(&astStaticDef, 0);
 		procDecl.isInline = isInline;
 		procDecl.isExternal = isExternal;
 		procDecl.isExported = isExported;
-		procDecl.prototype = ParseProcedurePrototype(context);
+		procDecl.prototype = ParseProcedurePrototype(pContext);
 
-		if (context->token->type == ';')
-			Advance(context);
+		if (pContext->token->type == ';')
+			Advance(pContext);
 		else {
 			if (isExternal)
-				LogError(context->token->loc, "External procedure declaration can't have a body"_s);
-			procDecl.astBody = PNewTreeNode(context);
-			*procDecl.astBody = ParseExpression(context, -1, true);
+				LogError(pContext->token->loc, "External procedure declaration can't have a body"_s);
+			procDecl.astBody = PNewTreeNode(pContext);
+			*procDecl.astBody = ParseExpression(pContext, -1, true);
 		}
 
 		expression.procedureDeclaration = procDecl;
@@ -340,40 +340,40 @@ ASTStaticDefinition ParseStaticDefinition(PContext *context, ArrayView<String> n
 		if (isExported)
 			LogError(isExportedLoc, "'external' specified for a non-procedure!"_s);
 
-		switch (context->token->type) {
+		switch (pContext->token->type) {
 		case TOKEN_KEYWORD_STRUCT:
 		case TOKEN_KEYWORD_UNION:
 		case TOKEN_KEYWORD_ENUM:
 			expression.nodeType = ASTNODETYPE_TYPE;
-			expression.astType = ParseType(context);
+			expression.astType = ParseType(pContext);
 			break;
 		case TOKEN_DIRECTIVE_TYPE:
-			Advance(context);
+			Advance(pContext);
 			expression.nodeType = ASTNODETYPE_TYPE;
-			expression.astType = ParseType(context);
+			expression.astType = ParseType(pContext);
 			break;
 		case TOKEN_DIRECTIVE_ALIAS:
-			Advance(context);
+			Advance(pContext);
 			expression.nodeType = ASTNODETYPE_ALIAS;
-			expression.astType = ParseType(context);
+			expression.astType = ParseType(pContext);
 			break;
 		default:
-			expression = ParseExpression(context, -1, false);
+			expression = ParseExpression(pContext, -1, false);
 		}
-		AssertToken(context->token, ';');
-		Advance(context);
+		AssertToken(pContext->token, ';');
+		Advance(pContext);
 	}
 
-	astStaticDef.expression = PNewTreeNode(context);
+	astStaticDef.expression = PNewTreeNode(pContext);
 	*astStaticDef.expression = expression;
 
 	return astStaticDef;
 }
 
-ASTVariableDeclaration ParseVariableDeclaration(PContext *context, ArrayView<String> names)
+ASTVariableDeclaration ParseVariableDeclaration(PContext *pContext, ArrayView<String> names)
 {
 	ASTVariableDeclaration varDecl = {};
-	varDecl.loc = context->token->loc;
+	varDecl.loc = pContext->token->loc;
 
 	varDecl.nameCount = (u32)names.size;
 	if (names.size == 1)
@@ -388,42 +388,42 @@ ASTVariableDeclaration ParseVariableDeclaration(PContext *context, ArrayView<Str
 		varDecl.arrayOfNames = arrayOfNames;
 	}
 
-	if (context->token->type == TOKEN_DIRECTIVE_EXTERNAL) {
+	if (pContext->token->type == TOKEN_DIRECTIVE_EXTERNAL) {
 		varDecl.isExternal = true;
-		Advance(context);
+		Advance(pContext);
 	}
 
-	if (context->token->type != TOKEN_OP_ASSIGNMENT) {
-		varDecl.astType = NewASTType(context);
-		*varDecl.astType = ParseType(context);
+	if (pContext->token->type != TOKEN_OP_ASSIGNMENT) {
+		varDecl.astType = NewASTType(pContext);
+		*varDecl.astType = ParseType(pContext);
 	}
 
-	if (context->token->type == TOKEN_OP_ASSIGNMENT) {
+	if (pContext->token->type == TOKEN_OP_ASSIGNMENT) {
 		if (varDecl.isExternal)
-			LogError(context->token->loc, "Can't assign value to external variable"_s);
+			LogError(pContext->token->loc, "Can't assign value to external variable"_s);
 
-		Advance(context);
-		varDecl.astInitialValue = PNewTreeNode(context);
-		*varDecl.astInitialValue = ParseExpression(context, -1, false);
+		Advance(pContext);
+		varDecl.astInitialValue = PNewTreeNode(pContext);
+		*varDecl.astInitialValue = ParseExpression(pContext, -1, false);
 	}
 
-	AssertToken(context->token, ';');
-	Advance(context);
+	AssertToken(pContext->token, ';');
+	Advance(pContext);
 
 	return varDecl;
 }
 
-bool TryParseUnaryOperation(PContext *context, s32 prevPrecedence, ASTUnaryOperation *result)
+bool TryParseUnaryOperation(PContext *pContext, s32 prevPrecedence, ASTUnaryOperation *result)
 {
-	if (!IsOperatorToken(context->token->type))
+	if (!IsOperatorToken(pContext->token->type))
 		return false;
 
-	Token *oldToken = context->token;
-	s64 oldTokenIdx = context->currentTokenIdx;
+	Token *oldToken = pContext->token;
+	s64 oldTokenIdx = pContext->currentTokenIdx;
 
-	result->loc = context->token->loc;
+	result->loc = pContext->token->loc;
 
-	switch (context->token->type)
+	switch (pContext->token->type)
 	{
 	case TOKEN_OP_POINTER_TO:
 	case TOKEN_OP_DEREFERENCE:
@@ -431,37 +431,37 @@ bool TryParseUnaryOperation(PContext *context, s32 prevPrecedence, ASTUnaryOpera
 	case TOKEN_OP_BITWISE_NOT:
 	case TOKEN_OP_MINUS:
 	{
-		enum TokenType op = context->token->type;
+		enum TokenType op = pContext->token->type;
 		result->op = op;
-		Advance(context);
+		Advance(pContext);
 
 		int precedenceOf = op == TOKEN_OP_MINUS ? PRECEDENCE_UNARY_SUBTRACT : op;
 		s32 precedence = GetOperatorPrecedence(precedenceOf);
-		result->expression = PNewTreeNode(context);
-		*result->expression = ParseExpression(context, precedence, false);
+		result->expression = PNewTreeNode(pContext);
+		*result->expression = ParseExpression(pContext, precedence, false);
 
 		return true;
 	} break;
 	}
 
-	context->token = oldToken;
-	context->currentTokenIdx = oldTokenIdx;
+	pContext->token = oldToken;
+	pContext->currentTokenIdx = oldTokenIdx;
 	return false;
 }
 
-bool TryParseBinaryOperation(PContext *context, ASTExpression leftHand, s32 prevPrecedence,
+bool TryParseBinaryOperation(PContext *pContext, ASTExpression leftHand, s32 prevPrecedence,
 		ASTExpression *result)
 {
-	result->any.loc = context->token->loc;
+	result->any.loc = pContext->token->loc;
 	result->typeTableIdx = TYPETABLEIDX_Unset;
 
-	Token *oldToken = context->token;
-	s64 oldTokenIdx = context->currentTokenIdx;
+	Token *oldToken = pContext->token;
+	s64 oldTokenIdx = pContext->currentTokenIdx;
 
-	enum TokenType op = context->token->type;
+	enum TokenType op = pContext->token->type;
 	if (op == TOKEN_END_OF_FILE)
-		LogError(context->tokens[oldTokenIdx - 1].loc, "Unexpected end of file"_s);
-	Advance(context);
+		LogError(pContext->tokens[oldTokenIdx - 1].loc, "Unexpected end of file"_s);
+	Advance(pContext);
 
 	if (op == '(') {
 		// Procedure calls
@@ -474,39 +474,39 @@ bool TryParseBinaryOperation(PContext *context, ASTExpression leftHand, s32 prev
 		result->procedureCall.inlineType = CALLINLINETYPE_DONT_CARE;
 		DynamicArrayInit(&result->procedureCall.arguments, 4);
 
-		result->procedureCall.procedureExpression = PNewTreeNode(context);
+		result->procedureCall.procedureExpression = PNewTreeNode(pContext);
 		*result->procedureCall.procedureExpression = leftHand;
 
 		// Parse arguments
-		while (context->token->type != ')') {
-			ASTExpression *arg = PNewTreeNode(context);
-			*arg = ParseExpression(context, GetOperatorPrecedence(',') + 1, false);
+		while (pContext->token->type != ')') {
+			ASTExpression *arg = PNewTreeNode(pContext);
+			*arg = ParseExpression(pContext, GetOperatorPrecedence(',') + 1, false);
 			*DynamicArrayAdd(&result->procedureCall.arguments) = arg;
 
-			if (context->token->type != ')') {
-				if (context->token->type != ',') {
-					String tokenTypeGot = TokenToStringOrType(*context->token);
+			if (pContext->token->type != ')') {
+				if (pContext->token->type != ',') {
+					String tokenTypeGot = TokenToStringOrType(*pContext->token);
 					String errorStr = TPrintF("Expected ')' or ',' but got %S",
 							tokenTypeGot);
-					LogError(context->token->loc, errorStr);
+					LogError(pContext->token->loc, errorStr);
 				}
-				Advance(context);
+				Advance(pContext);
 			}
 		}
-		Advance(context);
+		Advance(pContext);
 
-		if (context->token->type == TOKEN_DIRECTIVE_INLINE) {
+		if (pContext->token->type == TOKEN_DIRECTIVE_INLINE) {
 			result->procedureCall.inlineType = CALLINLINETYPE_ALWAYS_INLINE;
-			Advance(context);
+			Advance(pContext);
 		}
-		else if (context->token->type == TOKEN_DIRECTIVE_NOINLINE) {
+		else if (pContext->token->type == TOKEN_DIRECTIVE_NOINLINE) {
 			result->procedureCall.inlineType = CALLINLINETYPE_NEVER_INLINE;
-			Advance(context);
+			Advance(pContext);
 		}
 
-		if (context->token->type == TOKEN_DIRECTIVE_INLINE ||
-			context->token->type == TOKEN_DIRECTIVE_NOINLINE)
-			LogError(context->token->loc, "Multiple inline directives"_s);
+		if (pContext->token->type == TOKEN_DIRECTIVE_INLINE ||
+			pContext->token->type == TOKEN_DIRECTIVE_NOINLINE)
+			LogError(pContext->token->loc, "Multiple inline directives"_s);
 
 		return true;
 	}
@@ -517,7 +517,7 @@ bool TryParseBinaryOperation(PContext *context, ASTExpression leftHand, s32 prev
 
 	result->nodeType = ASTNODETYPE_BINARY_OPERATION;
 	result->binaryOperation.op = op;
-	result->binaryOperation.leftHand = PNewTreeNode(context);
+	result->binaryOperation.leftHand = PNewTreeNode(pContext);
 	*result->binaryOperation.leftHand = leftHand;
 
 	switch (op) {
@@ -546,7 +546,7 @@ bool TryParseBinaryOperation(PContext *context, ASTExpression leftHand, s32 prev
 						"static definition, separated by commas"_s);
 
 			result->nodeType = ASTNODETYPE_STATIC_DEFINITION;
-			result->staticDefinition = ParseStaticDefinition(context, names);
+			result->staticDefinition = ParseStaticDefinition(pContext, names);
 			return true;
 		}
 	} break;
@@ -576,7 +576,7 @@ bool TryParseBinaryOperation(PContext *context, ASTExpression leftHand, s32 prev
 						"variable declaration, separated by commas"_s);
 
 			result->nodeType = ASTNODETYPE_VARIABLE_DECLARATION;
-			result->variableDeclaration = ParseVariableDeclaration(context, names);
+			result->variableDeclaration = ParseVariableDeclaration(pContext, names);
 			if (op == TOKEN_OP_VARIABLE_DECLARATION_STATIC)
 				result->variableDeclaration.isStatic = true;
 			return true;
@@ -586,11 +586,11 @@ bool TryParseBinaryOperation(PContext *context, ASTExpression leftHand, s32 prev
 	{
 		s32 precedence = GetOperatorPrecedence(TOKEN_OP_ARRAY_ACCESS);
 		if (precedence > (prevPrecedence & (~1))) {
-			result->binaryOperation.rightHand = PNewTreeNode(context);
-			*result->binaryOperation.rightHand = ParseExpression(context, -1, false);
+			result->binaryOperation.rightHand = PNewTreeNode(pContext);
+			*result->binaryOperation.rightHand = ParseExpression(pContext, -1, false);
 
-			AssertToken(context->token, ']');
-			Advance(context);
+			AssertToken(pContext->token, ']');
+			Advance(pContext);
 
 			return true;
 		}
@@ -631,12 +631,12 @@ bool TryParseBinaryOperation(PContext *context, ASTExpression leftHand, s32 prev
 	{
 		s32 precedence = GetOperatorPrecedence(op);
 		if (precedence > (prevPrecedence & (~1))) {
-			result->binaryOperation.rightHand = PNewTreeNode(context);
-			*result->binaryOperation.rightHand = ParseExpression(context, precedence, false);
+			result->binaryOperation.rightHand = PNewTreeNode(pContext);
+			*result->binaryOperation.rightHand = ParseExpression(pContext, precedence, false);
 
 			if (op >= TOKEN_OP_Statement_Begin && op <= TOKEN_OP_Statement_End) {
-				AssertToken(context->token, ';');
-				Advance(context);
+				AssertToken(pContext->token, ';');
+				Advance(pContext);
 			}
 
 			return true;
@@ -656,110 +656,110 @@ bool TryParseBinaryOperation(PContext *context, ASTExpression leftHand, s32 prev
 	}
 
 abort:
-	context->token = oldToken;
-	context->currentTokenIdx = oldTokenIdx;
+	pContext->token = oldToken;
+	pContext->currentTokenIdx = oldTokenIdx;
 	return false;
 }
 
-ASTIf ParseIf(PContext *context)
+ASTIf ParseIf(PContext *pContext)
 {
-	ASSERT(context->token->type == TOKEN_KEYWORD_IF ||
-		   context->token->type == TOKEN_DIRECTIVE_IF);
-	Advance(context);
+	ASSERT(pContext->token->type == TOKEN_KEYWORD_IF ||
+		   pContext->token->type == TOKEN_DIRECTIVE_IF);
+	Advance(pContext);
 
 	ASTIf ifNode = {};
-	ifNode.loc = context->token->loc;
+	ifNode.loc = pContext->token->loc;
 
-	ifNode.condition = PNewTreeNode(context);
-	if (context->token->type == '(') {
+	ifNode.condition = PNewTreeNode(pContext);
+	if (pContext->token->type == '(') {
 		// If there are parenthesis, grab _only_ the expression inside.
-		Advance(context);
-		*ifNode.condition = ParseExpression(context, -1, false);
-		AssertToken(context->token, ')');
-		Advance(context);
+		Advance(pContext);
+		*ifNode.condition = ParseExpression(pContext, -1, false);
+		AssertToken(pContext->token, ')');
+		Advance(pContext);
 	}
 	else
-		*ifNode.condition = ParseExpression(context, -1, false);
+		*ifNode.condition = ParseExpression(pContext, -1, false);
 
-	ifNode.body = PNewTreeNode(context);
-	*ifNode.body = ParseExpression(context, -1, true);
+	ifNode.body = PNewTreeNode(pContext);
+	*ifNode.body = ParseExpression(pContext, -1, true);
 
-	if (context->token->type == TOKEN_KEYWORD_ELSE) {
-		ifNode.elseLoc = context->token->loc;
-		Advance(context);
-		ifNode.elseBody = PNewTreeNode(context);
-		*ifNode.elseBody = ParseExpression(context, -1, true);
+	if (pContext->token->type == TOKEN_KEYWORD_ELSE) {
+		ifNode.elseLoc = pContext->token->loc;
+		Advance(pContext);
+		ifNode.elseBody = PNewTreeNode(pContext);
+		*ifNode.elseBody = ParseExpression(pContext, -1, true);
 	}
 	return ifNode;
 }
 
-ASTWhile ParseWhile(PContext *context)
+ASTWhile ParseWhile(PContext *pContext)
 {
-	ASSERT(context->token->type == TOKEN_KEYWORD_WHILE);
+	ASSERT(pContext->token->type == TOKEN_KEYWORD_WHILE);
 
 	ASTWhile whileNode = {};
-	whileNode.loc = context->token->loc;
-	Advance(context);
+	whileNode.loc = pContext->token->loc;
+	Advance(pContext);
 
-	whileNode.condition = PNewTreeNode(context);
-	if (context->token->type == '(') {
+	whileNode.condition = PNewTreeNode(pContext);
+	if (pContext->token->type == '(') {
 		// If there are parenthesis, grab _only_ the expression inside.
-		Advance(context);
-		*whileNode.condition = ParseExpression(context, -1, false);
-		AssertToken(context->token, ')');
-		Advance(context);
+		Advance(pContext);
+		*whileNode.condition = ParseExpression(pContext, -1, false);
+		AssertToken(pContext->token, ')');
+		Advance(pContext);
 	}
 	else
-		*whileNode.condition = ParseExpression(context, -1, false);
+		*whileNode.condition = ParseExpression(pContext, -1, false);
 
-	whileNode.body = PNewTreeNode(context);
-	*whileNode.body = ParseExpression(context, -1, true);
+	whileNode.body = PNewTreeNode(pContext);
+	*whileNode.body = ParseExpression(pContext, -1, true);
 
 	return whileNode;
 }
 
-ASTFor ParseFor(PContext *context)
+ASTFor ParseFor(PContext *pContext)
 {
-	ASSERT(context->token->type == TOKEN_KEYWORD_FOR);
+	ASSERT(pContext->token->type == TOKEN_KEYWORD_FOR);
 
 	ASTFor forNode = {};
-	forNode.loc = context->token->loc;
+	forNode.loc = pContext->token->loc;
 	forNode.indexVariableName = "i"_s;
 	forNode.itemVariableName = "it"_s;
-	Advance(context);
+	Advance(pContext);
 
 	bool closeParenthesis = false;
-	forNode.range = PNewTreeNode(context);
-	if (context->token->type == '(') {
+	forNode.range = PNewTreeNode(pContext);
+	if (pContext->token->type == '(') {
 		// If there are parenthesis, grab _only_ the expression inside.
-		Advance(context);
+		Advance(pContext);
 		closeParenthesis = true;
 	}
 
-	Token *oldToken = context->token;
-	u64 oldTokenIdx = context->currentTokenIdx;
+	Token *oldToken = pContext->token;
+	u64 oldTokenIdx = pContext->currentTokenIdx;
 
-	Token first = *context->token;
-	Advance(context);
+	Token first = *pContext->token;
+	Advance(pContext);
 
-	if (context->token->type == TOKEN_OP_VARIABLE_DECLARATION) {
-		Advance(context);
+	if (pContext->token->type == TOKEN_OP_VARIABLE_DECLARATION) {
+		Advance(pContext);
 		if (first.type != TOKEN_IDENTIFIER)
 			LogError(first.loc, "Expected name of index variable before ':' "
 					"inside for loop range"_s);
-		Advance(context);
+		Advance(pContext);
 
 		forNode.indexVariableName = TokenToString(first);
 	}
-	else if (context->token->type == ',') {
-		Advance(context);
-		Token second = *context->token;
-		Advance(context);
-		if (context->token->type == ',')
-			LogError(context->token->loc, "Too many names in for loop condition, "
+	else if (pContext->token->type == ',') {
+		Advance(pContext);
+		Token second = *pContext->token;
+		Advance(pContext);
+		if (pContext->token->type == ',')
+			LogError(pContext->token->loc, "Too many names in for loop condition, "
 					"only up to 2 allowed (indexVar, itemVar : expr)"_s);
-		AssertToken(context->token, TOKEN_OP_VARIABLE_DECLARATION);
-		Advance(context);
+		AssertToken(pContext->token, TOKEN_OP_VARIABLE_DECLARATION);
+		Advance(pContext);
 
 		if (first.type != TOKEN_IDENTIFIER)
 			LogError(first.loc, "Expected name of index variable before ',' "
@@ -772,175 +772,175 @@ ASTFor ParseFor(PContext *context)
 		forNode.itemVariableName  = TokenToString(second);
 	}
 	else {
-		context->token = oldToken;
-		context->currentTokenIdx = oldTokenIdx;
+		pContext->token = oldToken;
+		pContext->currentTokenIdx = oldTokenIdx;
 	}
 
-	*forNode.range = ParseExpression(context, -1, false);
+	*forNode.range = ParseExpression(pContext, -1, false);
 
 	if (closeParenthesis) {
-		AssertToken(context->token, ')');
-		Advance(context);
+		AssertToken(pContext->token, ')');
+		Advance(pContext);
 	}
 
-	forNode.body = PNewTreeNode(context);
-	*forNode.body = ParseExpression(context, -1, true);
+	forNode.body = PNewTreeNode(pContext);
+	*forNode.body = ParseExpression(pContext, -1, true);
 
 	return forNode;
 }
 
-ASTStructMemberDeclaration ParseStructMemberDeclaration(PContext *context)
+ASTStructMemberDeclaration ParseStructMemberDeclaration(PContext *pContext)
 {
 	ASTStructMemberDeclaration structMem = {};
-	structMem.loc = context->token->loc;
+	structMem.loc = pContext->token->loc;
 
-	if (context->token->type == TOKEN_KEYWORD_USING)
+	if (pContext->token->type == TOKEN_KEYWORD_USING)
 	{
 		structMem.isUsing = true;
-		Advance(context);
+		Advance(pContext);
 	}
 
 	// Anonymous structs/unions
-	if (context->token->type != TOKEN_KEYWORD_STRUCT && 
-		context->token->type != TOKEN_KEYWORD_UNION)
+	if (pContext->token->type != TOKEN_KEYWORD_STRUCT && 
+		pContext->token->type != TOKEN_KEYWORD_UNION)
 	{
-		AssertToken(context->token, TOKEN_IDENTIFIER);
-		structMem.name = TokenToString(*context->token);
-		Advance(context);
+		AssertToken(pContext->token, TOKEN_IDENTIFIER);
+		structMem.name = TokenToString(*pContext->token);
+		Advance(pContext);
 
-		AssertToken(context->token, TOKEN_OP_VARIABLE_DECLARATION);
-		Advance(context);
+		AssertToken(pContext->token, TOKEN_OP_VARIABLE_DECLARATION);
+		Advance(pContext);
 	}
 
-	if (context->token->type != TOKEN_OP_ASSIGNMENT) {
-		structMem.astType = NewASTType(context);
-		*structMem.astType = ParseType(context);
+	if (pContext->token->type != TOKEN_OP_ASSIGNMENT) {
+		structMem.astType = NewASTType(pContext);
+		*structMem.astType = ParseType(pContext);
 		if (structMem.astType->nodeType == ASTTYPENODETYPE_INVALID)
-			LogError(context->token->loc, "Expected type"_s);
+			LogError(pContext->token->loc, "Expected type"_s);
 	}
 
-	if (context->token->type == TOKEN_OP_ASSIGNMENT) {
-		Advance(context);
-		structMem.value = PNewTreeNode(context);
-		*structMem.value = ParseExpression(context, -1, false);
+	if (pContext->token->type == TOKEN_OP_ASSIGNMENT) {
+		Advance(pContext);
+		structMem.value = PNewTreeNode(pContext);
+		*structMem.value = ParseExpression(pContext, -1, false);
 	}
 
 	return structMem;
 }
 
-ASTEnumDeclaration ParseEnumDeclaration(PContext *context)
+ASTEnumDeclaration ParseEnumDeclaration(PContext *pContext)
 {
-	SourceLocation loc = context->token->loc;
+	SourceLocation loc = pContext->token->loc;
 
-	AssertToken(context->token, TOKEN_KEYWORD_ENUM);
-	Advance(context);
+	AssertToken(pContext->token, TOKEN_KEYWORD_ENUM);
+	Advance(pContext);
 
 	ASTEnumDeclaration enumNode = {};
 	enumNode.loc = loc;
 	DynamicArrayInit(&enumNode.members, 16);
 
-	if (context->token->type == TOKEN_OP_VARIABLE_DECLARATION) {
-		Advance(context);
-		enumNode.astType = NewASTType(context);
-		*enumNode.astType = ParseType(context);
+	if (pContext->token->type == TOKEN_OP_VARIABLE_DECLARATION) {
+		Advance(pContext);
+		enumNode.astType = NewASTType(pContext);
+		*enumNode.astType = ParseType(pContext);
 	}
 
-	AssertToken(context->token, '{');
-	Advance(context);
-	while (context->token->type != '}') {
+	AssertToken(pContext->token, '{');
+	Advance(pContext);
+	while (pContext->token->type != '}') {
 		ASTEnumMember enumMember = {};
 
-		AssertToken(context->token, TOKEN_IDENTIFIER);
-		enumMember.name = TokenToString(*context->token);
-		enumMember.loc = context->token->loc;
-		Advance(context);
+		AssertToken(pContext->token, TOKEN_IDENTIFIER);
+		enumMember.name = TokenToString(*pContext->token);
+		enumMember.loc = pContext->token->loc;
+		Advance(pContext);
 
-		if (context->token->type == TOKEN_OP_ASSIGNMENT) {
-			Advance(context);
-			enumMember.value = PNewTreeNode(context);
-			*enumMember.value = ParseExpression(context, GetOperatorPrecedence(',') + 1, false);
+		if (pContext->token->type == TOKEN_OP_ASSIGNMENT) {
+			Advance(pContext);
+			enumMember.value = PNewTreeNode(pContext);
+			*enumMember.value = ParseExpression(pContext, GetOperatorPrecedence(',') + 1, false);
 		}
 
-		if (context->token->type != '}') {
-			AssertToken(context->token, ',');
-			Advance(context);
+		if (pContext->token->type != '}') {
+			AssertToken(pContext->token, ',');
+			Advance(pContext);
 		}
 
 		*DynamicArrayAdd(&enumNode.members) = enumMember;
 	}
-	Advance(context);
+	Advance(pContext);
 
 	return enumNode;
 }
 
-ASTStructDeclaration ParseStructOrUnion(PContext *context)
+ASTStructDeclaration ParseStructOrUnion(PContext *pContext)
 {
-	SourceLocation loc = context->token->loc;
+	SourceLocation loc = pContext->token->loc;
 
-	ASSERT(context->token->type == TOKEN_KEYWORD_STRUCT ||
-			context->token->type == TOKEN_KEYWORD_UNION);
-	Advance(context);
+	ASSERT(pContext->token->type == TOKEN_KEYWORD_STRUCT ||
+			pContext->token->type == TOKEN_KEYWORD_UNION);
+	Advance(pContext);
 
 	ASTStructDeclaration structDeclaration = {};
 	structDeclaration.loc = loc;
 	DynamicArrayInit(&structDeclaration.members, 16);
 
-	if (context->token->type == TOKEN_DIRECTIVE_ALIGN) {
-		Advance(context);
-		AssertToken(context->token, '(');
-		Advance(context);
+	if (pContext->token->type == TOKEN_DIRECTIVE_ALIGN) {
+		Advance(pContext);
+		AssertToken(pContext->token, '(');
+		Advance(pContext);
 
-		structDeclaration.alignExp = PNewTreeNode(context);
-		*structDeclaration.alignExp = ParseExpression(context, -1, false);
+		structDeclaration.alignExp = PNewTreeNode(pContext);
+		*structDeclaration.alignExp = ParseExpression(pContext, -1, false);
 
-		AssertToken(context->token, ')');
-		Advance(context);
+		AssertToken(pContext->token, ')');
+		Advance(pContext);
 	}
 
-	AssertToken(context->token, '{');
-	Advance(context);
-	while (context->token->type != '}') {
-		ASTStructMemberDeclaration member = ParseStructMemberDeclaration(context);
+	AssertToken(pContext->token, '{');
+	Advance(pContext);
+	while (pContext->token->type != '}') {
+		ASTStructMemberDeclaration member = ParseStructMemberDeclaration(pContext);
 		*DynamicArrayAdd(&structDeclaration.members) = member;
 
-		AssertToken(context->token, ';');
-		Advance(context);
+		AssertToken(pContext->token, ';');
+		Advance(pContext);
 	}
-	Advance(context);
+	Advance(pContext);
 
 	return structDeclaration;
 }
 
-Array<ASTExpression *, LinearAllocator> ParseGroupLiteral(PContext *context)
+Array<ASTExpression *, LinearAllocator> ParseGroupLiteral(PContext *pContext)
 {
 	DynamicArray<ASTExpression *, LinearAllocator> members;
 	DynamicArrayInit(&members, 8);
 
-	while (context->token->type != '}') {
-		ASTExpression *newTreeNode = PNewTreeNode(context);
-		*newTreeNode = ParseExpression(context, GetOperatorPrecedence(',') + 1, false);
+	while (pContext->token->type != '}') {
+		ASTExpression *newTreeNode = PNewTreeNode(pContext);
+		*newTreeNode = ParseExpression(pContext, GetOperatorPrecedence(',') + 1, false);
 		*DynamicArrayAdd(&members) = newTreeNode;
 
-		if (context->token->type == TOKEN_OP_ASSIGNMENT) {
-			Advance(context);
+		if (pContext->token->type == TOKEN_OP_ASSIGNMENT) {
+			Advance(pContext);
 			ASTExpression assignment = { ASTNODETYPE_BINARY_OPERATION };
 			assignment.typeTableIdx = TYPETABLEIDX_Unset;
 			assignment.binaryOperation.op = TOKEN_OP_ASSIGNMENT;
-			assignment.binaryOperation.leftHand = PNewTreeNode(context);
+			assignment.binaryOperation.leftHand = PNewTreeNode(pContext);
 			*assignment.binaryOperation.leftHand = *newTreeNode;
-			assignment.binaryOperation.rightHand = PNewTreeNode(context);
-			*assignment.binaryOperation.rightHand = ParseExpression(context,
+			assignment.binaryOperation.rightHand = PNewTreeNode(pContext);
+			*assignment.binaryOperation.rightHand = ParseExpression(pContext,
 					GetOperatorPrecedence(TOKEN_OP_ASSIGNMENT), false);
 			*newTreeNode = assignment;
 		}
 
-		if (context->token->type == ',') {
-			Advance(context);
+		if (pContext->token->type == ',') {
+			Advance(pContext);
 			continue;
 		}
-		else if (context->token->type != '}') {
-			String tokenStr = TokenTypeToString(context->token->type);
-			LogError(context->token->loc, TPrintF("Parsing struct literal. "
+		else if (pContext->token->type != '}') {
+			String tokenStr = TokenTypeToString(pContext->token->type);
+			LogError(pContext->token->loc, TPrintF("Parsing struct literal. "
 						"Expected ',' or '}' but got %S", tokenStr));
 		}
 	}
@@ -954,115 +954,115 @@ Array<ASTExpression *, LinearAllocator> ParseGroupLiteral(PContext *context)
 	return result;
 }
 
-ASTProcedureParameter ParseProcedureParameter(PContext *context)
+ASTProcedureParameter ParseProcedureParameter(PContext *pContext)
 {
 	ASTProcedureParameter astParameter = {};
-	astParameter.loc = context->token->loc;
+	astParameter.loc = pContext->token->loc;
 
-	if (context->token->type == TOKEN_KEYWORD_USING) {
+	if (pContext->token->type == TOKEN_KEYWORD_USING) {
 		astParameter.isUsing = true;
-		Advance(context);
+		Advance(pContext);
 	}
 
-	u64 startTokenIdx = context->currentTokenIdx;
+	u64 startTokenIdx = pContext->currentTokenIdx;
 
-	AssertToken(context->token, TOKEN_IDENTIFIER);
-	astParameter.name = TokenToString(*context->token);
-	Advance(context);
+	AssertToken(pContext->token, TOKEN_IDENTIFIER);
+	astParameter.name = TokenToString(*pContext->token);
+	Advance(pContext);
 
-	if (context->token->type == TOKEN_OP_VARIABLE_DECLARATION)
-		Advance(context);
+	if (pContext->token->type == TOKEN_OP_VARIABLE_DECLARATION)
+		Advance(pContext);
 	else {
 		// Nameless parameter, rewind
-		context->currentTokenIdx = startTokenIdx;
-		context->token = &context->tokens[startTokenIdx];
+		pContext->currentTokenIdx = startTokenIdx;
+		pContext->token = &pContext->tokens[startTokenIdx];
 		astParameter.name = {};
 	}
 
-	if (context->token->type != TOKEN_OP_ASSIGNMENT) {
-		astParameter.astType = NewASTType(context);
-		*astParameter.astType = ParseType(context);
+	if (pContext->token->type != TOKEN_OP_ASSIGNMENT) {
+		astParameter.astType = NewASTType(pContext);
+		*astParameter.astType = ParseType(pContext);
 	}
 
-	if (context->token->type == TOKEN_OP_ASSIGNMENT) {
-		Advance(context);
-		astParameter.astInitialValue = PNewTreeNode(context);
-		*astParameter.astInitialValue = ParseExpression(context, GetOperatorPrecedence(',') + 1,
+	if (pContext->token->type == TOKEN_OP_ASSIGNMENT) {
+		Advance(pContext);
+		astParameter.astInitialValue = PNewTreeNode(pContext);
+		*astParameter.astInitialValue = ParseExpression(pContext, GetOperatorPrecedence(',') + 1,
 				false);
 	}
 
 	return astParameter;
 }
 
-ASTProcedurePrototype ParseProcedurePrototype(PContext *context)
+ASTProcedurePrototype ParseProcedurePrototype(PContext *pContext)
 {
 	ASTProcedurePrototype astPrototype = {};
-	astPrototype.loc = context->token->loc;
+	astPrototype.loc = pContext->token->loc;
 	astPrototype.callingConvention = CC_DEFAULT;
 
-	if (context->token->type == TOKEN_DIRECTIVE_CALLING_CONVENTION) {
-		Advance(context);
-		AssertToken(context->token, '(');
-		Advance(context);
+	if (pContext->token->type == TOKEN_DIRECTIVE_CALLING_CONVENTION) {
+		Advance(pContext);
+		AssertToken(pContext->token, '(');
+		Advance(pContext);
 
-		AssertToken(context->token, TOKEN_IDENTIFIER);
-		String tokenStr = TokenToString(*context->token);
+		AssertToken(pContext->token, TOKEN_IDENTIFIER);
+		String tokenStr = TokenToString(*pContext->token);
 		if (StringEquals(tokenStr, "win64"_s))
 			astPrototype.callingConvention = CC_WIN64;
 		else if (StringEquals(tokenStr, "linux64"_s))
 			astPrototype.callingConvention = CC_LINUX64;
 		else {
-			LogErrorNoCrash(context->token->loc, TPrintF("Invalid calling "
+			LogErrorNoCrash(pContext->token->loc, TPrintF("Invalid calling "
 						"convention specified (\"%S\")", tokenStr));
 			LogNote({}, "Could be one of:\n"
 					"    * win64\n"
 					"    * linux64"_s);
 		}
-		Advance(context);
+		Advance(pContext);
 
-		AssertToken(context->token, ')');
-		Advance(context);
+		AssertToken(pContext->token, ')');
+		Advance(pContext);
 	}
 
 	DynamicArrayInit(&astPrototype.astParameters, 4);
 
-	AssertToken(context->token, '(');
-	Advance(context);
-	while (context->token->type != ')') {
-		if (context->token->type == TOKEN_OP_RANGE) {
-			Advance(context);
+	AssertToken(pContext->token, '(');
+	Advance(pContext);
+	while (pContext->token->type != ')') {
+		if (pContext->token->type == TOKEN_OP_RANGE) {
+			Advance(pContext);
 			astPrototype.isVarargs = true;
-			astPrototype.varargsLoc = context->token->loc;
+			astPrototype.varargsLoc = pContext->token->loc;
 
-			if (context->token->type == TOKEN_IDENTIFIER) {
-				astPrototype.varargsName = TokenToString(*context->token);
-				Advance(context);
+			if (pContext->token->type == TOKEN_IDENTIFIER) {
+				astPrototype.varargsName = TokenToString(*pContext->token);
+				Advance(pContext);
 			}
 			break;
 		}
 
-		ASTProcedureParameter astParam = ParseProcedureParameter(context);
+		ASTProcedureParameter astParam = ParseProcedureParameter(pContext);
 		ASSERT(astPrototype.astParameters.size <= S8_MAX);
 
 		*DynamicArrayAdd(&astPrototype.astParameters) = astParam;
 
-		if (context->token->type != ')') {
-			AssertToken(context->token, ',');
-			Advance(context);
+		if (pContext->token->type != ')') {
+			AssertToken(pContext->token, ',');
+			Advance(pContext);
 		}
 	}
-	Advance(context);
+	Advance(pContext);
 
-	if (context->token->type == TOKEN_OP_ARROW) {
-		Advance(context);
+	if (pContext->token->type == TOKEN_OP_ARROW) {
+		Advance(pContext);
 		DynamicArrayInit(&astPrototype.astReturnTypes, 4);
 
 loop:
-		ASTType *newASTType = NewASTType(context);
-		*newASTType = ParseType(context);
+		ASTType *newASTType = NewASTType(pContext);
+		*newASTType = ParseType(pContext);
 		*DynamicArrayAdd(&astPrototype.astReturnTypes) = newASTType;
-		if (context->token->type == ',') {
-			Advance(context);
+		if (pContext->token->type == ',') {
+			Advance(pContext);
 			goto loop;
 		}
 	}
@@ -1152,73 +1152,73 @@ inline bool IsASTExpressionAStatement(ASTExpression *expression)
 	return false;
 }
 
-ASTExpression ParseExpression(PContext *context, s32 precedence, bool isStatement)
+ASTExpression ParseExpression(PContext *pContext, s32 precedence, bool isStatement)
 {
 	ASTExpression result = {};
 	result.typeTableIdx = TYPETABLEIDX_Unset;
-	result.any.loc = context->token->loc;
+	result.any.loc = pContext->token->loc;
 
-	switch (context->token->type) {
+	switch (pContext->token->type) {
 	// Parenthesis
 	case '(':
 	{
-		Advance(context);
+		Advance(pContext);
 
-		result = ParseExpression(context, -1, false);
+		result = ParseExpression(pContext, -1, false);
 
-		AssertToken(context->token, ')');
-		Advance(context);
+		AssertToken(pContext->token, ')');
+		Advance(pContext);
 	} break;
 	case '{':
 	{
 		if (isStatement) {
 			// Statement block/scope
-			Advance(context);
+			Advance(pContext);
 
 			result.nodeType = ASTNODETYPE_BLOCK;
 
 			DynamicArrayInit(&result.block.statements, 512);
-			while (context->token->type != '}')
-				*DynamicArrayAdd(&result.block.statements) = ParseExpression(context, -1, true);
+			while (pContext->token->type != '}')
+				*DynamicArrayAdd(&result.block.statements) = ParseExpression(pContext, -1, true);
 
-			Advance(context);
+			Advance(pContext);
 			// Return because we don't need a semicolon after a scope
 			return result;
 		}
 		else {
 			// Group literal
-			Advance(context);
+			Advance(pContext);
 
 			result.nodeType = ASTNODETYPE_LITERAL;
 
 			result.literal.type = LITERALTYPE_GROUP;
-			result.literal.members = ParseGroupLiteral(context);
+			result.literal.members = ParseGroupLiteral(pContext);
 
-			AssertToken(context->token, '}');
-			Advance(context);
+			AssertToken(pContext->token, '}');
+			Advance(pContext);
 		}
 	} break;
 	case '?':
 	{
-		result.any.loc = context->token->loc;
+		result.any.loc = pContext->token->loc;
 		result.nodeType = ASTNODETYPE_GARBAGE;
-		Advance(context);
+		Advance(pContext);
 	} break;
 	case TOKEN_IDENTIFIER:
 	{
-		result.any.loc = context->token->loc;
-		String identifier = TokenToString(*context->token);
-		Advance(context);
+		result.any.loc = pContext->token->loc;
+		String identifier = TokenToString(*pContext->token);
+		Advance(pContext);
 
 		result.nodeType = ASTNODETYPE_IDENTIFIER;
 		result.identifier.string = identifier;
 	} break;
 	case TOKEN_LITERAL_NUMBER:
 	{
-		result.any.loc = context->token->loc;
+		result.any.loc = pContext->token->loc;
 		result.nodeType = ASTNODETYPE_LITERAL;
 
-		String tokenStr = TokenToString(*context->token);
+		String tokenStr = TokenToString(*pContext->token);
 
 		bool isHex = false;
 		bool isFloating = false;
@@ -1227,7 +1227,7 @@ ASTExpression ParseExpression(PContext *context, s32 precedence, bool isStatemen
 				isHex = true;
 		}
 
-		for (u32 i = 0; i < context->token->size; ++i) {
+		for (u32 i = 0; i < pContext->token->size; ++i) {
 			if (tokenStr.data[i] == '.') {
 				isFloating = true;
 				break;
@@ -1235,21 +1235,21 @@ ASTExpression ParseExpression(PContext *context, s32 precedence, bool isStatemen
 		}
 		if (!isFloating) {
 			result.literal.type = LITERALTYPE_INTEGER;
-			result.literal.integer = ParseInt(context, tokenStr);
+			result.literal.integer = ParseInt(pContext, tokenStr);
 		}
 		else {
 			result.literal.type = LITERALTYPE_FLOATING;
-			result.literal.floating = ParseFloat(context, tokenStr);
+			result.literal.floating = ParseFloat(pContext, tokenStr);
 		}
-		Advance(context);
+		Advance(pContext);
 	} break;
 	case TOKEN_LITERAL_CHARACTER:
 	{
-		result.any.loc = context->token->loc;
+		result.any.loc = pContext->token->loc;
 		result.nodeType = ASTNODETYPE_LITERAL;
 		result.literal.type = LITERALTYPE_CHARACTER;
 
-		String str = TokenToString(*context->token);
+		String str = TokenToString(*pContext->token);
 		if (str.size == 1)
 			result.literal.character = str.data[0];
 		else {
@@ -1272,300 +1272,300 @@ ASTExpression ParseExpression(PContext *context, s32 precedence, bool isStatemen
 				LogError(result.any.loc, "Invalid escape character"_s);
 			}
 		}
-		Advance(context);
+		Advance(pContext);
 	} break;
 	case TOKEN_LITERAL_STRING:
 	{
-		String str = TokenToString(*context->token);
-		str = EscapeString(str, context->token->loc);
-		result.any.loc = context->token->loc;
+		String str = TokenToString(*pContext->token);
+		str = EscapeString(str, pContext->token->loc);
+		result.any.loc = pContext->token->loc;
 		result.nodeType = ASTNODETYPE_LITERAL;
 		result.literal.type = LITERALTYPE_STRING;
 		result.literal.string = str;
-		Advance(context);
+		Advance(pContext);
 	} break;
 	case TOKEN_DIRECTIVE_CSTR:
 	{
-		Advance(context);
-		AssertToken(context->token, TOKEN_LITERAL_STRING);
+		Advance(pContext);
+		AssertToken(pContext->token, TOKEN_LITERAL_STRING);
 
-		String str = TokenToString(*context->token);
-		str = EscapeString(str, context->token->loc);
+		String str = TokenToString(*pContext->token);
+		str = EscapeString(str, pContext->token->loc);
 
-		result.any.loc = context->token->loc;
+		result.any.loc = pContext->token->loc;
 		result.nodeType = ASTNODETYPE_LITERAL;
 		result.literal.type = LITERALTYPE_CSTR;
 		result.literal.string = str;
-		Advance(context);
+		Advance(pContext);
 	} break;
 	case TOKEN_KEYWORD_TYPEOF:
 	{
-		result.any.loc = context->token->loc;
-		Advance(context);
+		result.any.loc = pContext->token->loc;
+		Advance(pContext);
 
 		result.nodeType = ASTNODETYPE_TYPEOF;
-		result.typeOfNode.expression = PNewTreeNode(context);
-		*result.typeOfNode.expression = ParseExpression(context, precedence, false);
+		result.typeOfNode.expression = PNewTreeNode(pContext);
+		*result.typeOfNode.expression = ParseExpression(pContext, precedence, false);
 	} break;
 	case TOKEN_KEYWORD_SIZEOF:
 	{
-		result.any.loc = context->token->loc;
-		Advance(context);
+		result.any.loc = pContext->token->loc;
+		Advance(pContext);
 
 		result.nodeType = ASTNODETYPE_SIZEOF;
-		result.sizeOfNode.expression = PNewTreeNode(context);
-		*result.sizeOfNode.expression = ParseExpression(context, precedence, false);
+		result.sizeOfNode.expression = PNewTreeNode(pContext);
+		*result.sizeOfNode.expression = ParseExpression(pContext, precedence, false);
 	} break;
 	case TOKEN_DIRECTIVE_DEFINED:
 	{
-		result.any.loc = context->token->loc;
-		Advance(context);
+		result.any.loc = pContext->token->loc;
+		Advance(pContext);
 
-		AssertToken(context->token, '(');
-		Advance(context);
+		AssertToken(pContext->token, '(');
+		Advance(pContext);
 
 		result.nodeType = ASTNODETYPE_DEFINED;
-		AssertToken(context->token, TOKEN_IDENTIFIER);
-		result.definedNode.identifier = TokenToString(*context->token);
-		Advance(context);
+		AssertToken(pContext->token, TOKEN_IDENTIFIER);
+		result.definedNode.identifier = TokenToString(*pContext->token);
+		Advance(pContext);
 
-		AssertToken(context->token, ')');
-		Advance(context);
+		AssertToken(pContext->token, ')');
+		Advance(pContext);
 	} break;
 	case TOKEN_KEYWORD_CAST:
 	{
-		Advance(context);
-		result.any.loc = context->token->loc;
+		Advance(pContext);
+		result.any.loc = pContext->token->loc;
 		result.nodeType = ASTNODETYPE_CAST;
 
-		AssertToken(context->token, '(');
-		Advance(context);
+		AssertToken(pContext->token, '(');
+		Advance(pContext);
 
-		result.castNode.astType = ParseType(context);
+		result.castNode.astType = ParseType(pContext);
 
-		AssertToken(context->token, ')');
-		Advance(context);
+		AssertToken(pContext->token, ')');
+		Advance(pContext);
 
-		result.castNode.expression = PNewTreeNode(context);
+		result.castNode.expression = PNewTreeNode(pContext);
 		int castPrecedence = GetOperatorPrecedence(TOKEN_KEYWORD_CAST);
-		*result.castNode.expression = ParseExpression(context, castPrecedence, false);
+		*result.castNode.expression = ParseExpression(pContext, castPrecedence, false);
 	} break;
 	case TOKEN_DIRECTIVE_INTRINSIC:
 	{
-		Advance(context);
-		result.any.loc = context->token->loc;
+		Advance(pContext);
+		result.any.loc = pContext->token->loc;
 		result.nodeType = ASTNODETYPE_INTRINSIC;
 
-		AssertToken(context->token, '(');
-		Advance(context);
+		AssertToken(pContext->token, '(');
+		Advance(pContext);
 
-		AssertToken(context->token, TOKEN_IDENTIFIER);
-		result.intrinsic.name = TokenToString(*context->token);
-		Advance(context);
+		AssertToken(pContext->token, TOKEN_IDENTIFIER);
+		result.intrinsic.name = TokenToString(*pContext->token);
+		Advance(pContext);
 
-		if (context->token->type == ',')
+		if (pContext->token->type == ',')
 		{
 			// Parse arguments
-			Advance(context);
+			Advance(pContext);
 			DynamicArrayInit(&result.intrinsic.arguments, 4);
-			while (context->token->type != ')')
+			while (pContext->token->type != ')')
 			{
-				ASTExpression arg = ParseExpression(context, GetOperatorPrecedence(',') + 1, false);
+				ASTExpression arg = ParseExpression(pContext, GetOperatorPrecedence(',') + 1, false);
 				*DynamicArrayAdd(&result.intrinsic.arguments) = arg;
 
-				if (context->token->type != ')')
+				if (pContext->token->type != ')')
 				{
-					if (context->token->type != ',')
+					if (pContext->token->type != ',')
 					{
-						String tokenTypeGot = TokenToStringOrType(*context->token);
+						String tokenTypeGot = TokenToStringOrType(*pContext->token);
 						String errorStr = TPrintF("Expected ')' or ',' but got %S",
 								tokenTypeGot);
-						LogError(context->token->loc, errorStr);
+						LogError(pContext->token->loc, errorStr);
 					}
-					Advance(context);
+					Advance(pContext);
 				}
 			}
 		}
 
-		AssertToken(context->token, ')');
-		Advance(context);
+		AssertToken(pContext->token, ')');
+		Advance(pContext);
 	} break;
 	case TOKEN_DIRECTIVE_TYPE:
 	{
-		Advance(context);
+		Advance(pContext);
 		result.nodeType = ASTNODETYPE_TYPE;
-		result.astType = ParseType(context);
+		result.astType = ParseType(pContext);
 	} break;
 	case TOKEN_DIRECTIVE_RUN:
 	{
-		Advance(context);
+		Advance(pContext);
 		result.nodeType = ASTNODETYPE_RUN;
-		result.runNode.expression = PNewTreeNode(context);
-		*result.runNode.expression = ParseExpression(context, precedence, false);
+		result.runNode.expression = PNewTreeNode(pContext);
+		*result.runNode.expression = ParseExpression(pContext, precedence, false);
 	} break;
 	case TOKEN_KEYWORD_UNION:
 		if (!isStatement)
-			LogError(context->token->loc, "'union' not valid on this context!"_s);
+			LogError(pContext->token->loc, "'union' not valid on this pContext!"_s);
 		// Fall through
 	case TOKEN_KEYWORD_STRUCT:
 	{
 		if (!isStatement)
-			LogError(context->token->loc, "'struct' not valid on this context!"_s);
+			LogError(pContext->token->loc, "'struct' not valid on this pContext!"_s);
 
 		// Structs/unions out of the blue are considered anonymous and are treated as variable
 		// declarations.
 
 		ASTVariableDeclaration varDecl = {};
-		varDecl.loc = context->token->loc;
+		varDecl.loc = pContext->token->loc;
 
-		varDecl.astType = NewASTType(context);
-		*varDecl.astType = ParseType(context); // This will parse the struct/union declaration.
+		varDecl.astType = NewASTType(pContext);
+		*varDecl.astType = ParseType(pContext); // This will parse the struct/union declaration.
 
-		if (context->token->type == TOKEN_OP_ASSIGNMENT) {
-			Advance(context);
-			varDecl.astInitialValue = PNewTreeNode(context);
-			*varDecl.astInitialValue = ParseExpression(context, -1, false);
+		if (pContext->token->type == TOKEN_OP_ASSIGNMENT) {
+			Advance(pContext);
+			varDecl.astInitialValue = PNewTreeNode(pContext);
+			*varDecl.astInitialValue = ParseExpression(pContext, -1, false);
 		}
 
 		result.nodeType = ASTNODETYPE_VARIABLE_DECLARATION;
 		result.variableDeclaration = varDecl;
 
-		AssertToken(context->token, ';');
-		Advance(context);
+		AssertToken(pContext->token, ';');
+		Advance(pContext);
 	} break;
 	// Statements! They are in charge of parsing their own ';' at the end if necessary, and don't
 	// fall down to the operator parsing, but return here instead.
 	case TOKEN_KEYWORD_IF:
 	{
 		if (!isStatement)
-			LogError(context->token->loc, "'if' only valid at statement level!"_s);
+			LogError(pContext->token->loc, "'if' only valid at statement level!"_s);
 
 		result.nodeType = ASTNODETYPE_IF;
-		result.ifNode = ParseIf(context);
+		result.ifNode = ParseIf(pContext);
 	} return result;
 	case TOKEN_DIRECTIVE_IF:
 	{
 		result.nodeType = ASTNODETYPE_IF_STATIC;
-		result.ifNode = ParseIf(context);
+		result.ifNode = ParseIf(pContext);
 	} return result;
 	case TOKEN_KEYWORD_ELSE:
 	{
 		if (!isStatement)
-			LogError(context->token->loc, "'else' only valid at statement level!"_s);
+			LogError(pContext->token->loc, "'else' only valid at statement level!"_s);
 
-		LogError(context->token->loc, "Invalid 'else' without matching 'if'"_s);
+		LogError(pContext->token->loc, "Invalid 'else' without matching 'if'"_s);
 	}
 	case TOKEN_KEYWORD_WHILE:
 	{
 		if (!isStatement)
-			LogError(context->token->loc, "'while' only valid at statement level!"_s);
+			LogError(pContext->token->loc, "'while' only valid at statement level!"_s);
 
 		result.nodeType = ASTNODETYPE_WHILE;
-		result.whileNode = ParseWhile(context);
+		result.whileNode = ParseWhile(pContext);
 	} return result;
 	case TOKEN_KEYWORD_FOR:
 	{
 		if (!isStatement)
-			LogError(context->token->loc, "'for' only valid at statement level!"_s);
+			LogError(pContext->token->loc, "'for' only valid at statement level!"_s);
 
 		result.nodeType = ASTNODETYPE_FOR;
-		result.forNode = ParseFor(context);
+		result.forNode = ParseFor(pContext);
 	} return result;
 	case TOKEN_KEYWORD_CONTINUE:
 	{
 		if (!isStatement)
-			LogError(context->token->loc, "'continue' only valid at statement level!"_s);
+			LogError(pContext->token->loc, "'continue' only valid at statement level!"_s);
 
 		result.nodeType = ASTNODETYPE_CONTINUE;
-		Advance(context);
+		Advance(pContext);
 
-		AssertToken(context->token, ';');
-		Advance(context);
+		AssertToken(pContext->token, ';');
+		Advance(pContext);
 	} return result;
 	case TOKEN_KEYWORD_REMOVE:
 	{
 		if (!isStatement)
-			LogError(context->token->loc, "'remove' only valid at statement level!"_s);
+			LogError(pContext->token->loc, "'remove' only valid at statement level!"_s);
 
 		result.nodeType = ASTNODETYPE_REMOVE;
-		Advance(context);
+		Advance(pContext);
 
-		AssertToken(context->token, ';');
-		Advance(context);
+		AssertToken(pContext->token, ';');
+		Advance(pContext);
 	} return result;
 	case TOKEN_KEYWORD_BREAK:
 	{
 		if (!isStatement)
-			LogError(context->token->loc, "'break' only valid at statement level!"_s);
+			LogError(pContext->token->loc, "'break' only valid at statement level!"_s);
 
 		result.nodeType = ASTNODETYPE_BREAK;
-		Advance(context);
+		Advance(pContext);
 
-		AssertToken(context->token, ';');
-		Advance(context);
+		AssertToken(pContext->token, ';');
+		Advance(pContext);
 	} return result;
 	case TOKEN_KEYWORD_RETURN:
 	{
 		if (!isStatement)
-			LogError(context->token->loc, "'return' only valid at statement level!"_s);
+			LogError(pContext->token->loc, "'return' only valid at statement level!"_s);
 
-		Advance(context);
+		Advance(pContext);
 
-		result.any.loc = context->token->loc;
+		result.any.loc = pContext->token->loc;
 		result.nodeType = ASTNODETYPE_RETURN;
-		if (context->token->type == ';')
+		if (pContext->token->type == ';')
 			result.returnNode.expression = nullptr;
 		else {
-			result.returnNode.expression = PNewTreeNode(context);
-			*result.returnNode.expression = ParseExpression(context, -1, false);
+			result.returnNode.expression = PNewTreeNode(pContext);
+			*result.returnNode.expression = ParseExpression(pContext, -1, false);
 		}
 
-		AssertToken(context->token, ';');
-		Advance(context);
+		AssertToken(pContext->token, ';');
+		Advance(pContext);
 	} return result;
 	case TOKEN_KEYWORD_DEFER:
 	{
 		if (!isStatement)
-			LogError(context->token->loc, "'defer' only valid at statement level!"_s);
+			LogError(pContext->token->loc, "'defer' only valid at statement level!"_s);
 
-		Advance(context);
+		Advance(pContext);
 
-		result.any.loc = context->token->loc;
+		result.any.loc = pContext->token->loc;
 		result.nodeType = ASTNODETYPE_DEFER;
-		result.deferNode.expression = PNewTreeNode(context);
-		*result.deferNode.expression = ParseExpression(context, -1, true);
+		result.deferNode.expression = PNewTreeNode(pContext);
+		*result.deferNode.expression = ParseExpression(pContext, -1, true);
 	} return result;
 	case TOKEN_KEYWORD_USING:
 	{
 		if (!isStatement)
-			LogError(context->token->loc, "'union' not valid on this context!"_s);
+			LogError(pContext->token->loc, "'union' not valid on this pContext!"_s);
 
-		Advance(context);
+		Advance(pContext);
 
-		result.any.loc = context->token->loc;
+		result.any.loc = pContext->token->loc;
 		result.nodeType = ASTNODETYPE_USING;
-		result.usingNode.expression = PNewTreeNode(context);
-		*result.usingNode.expression = ParseExpression(context, -1, true);
+		result.usingNode.expression = PNewTreeNode(pContext);
+		*result.usingNode.expression = ParseExpression(pContext, -1, true);
 	} return result;
 	case TOKEN_DIRECTIVE_BREAK:
 	{
 		if (!isStatement)
-			LogError(context->token->loc, "Compiler breakpoint only valid at statement level"_s);
+			LogError(pContext->token->loc, "Compiler breakpoint only valid at statement level"_s);
 
-		Advance(context);
-		result.any.loc = context->token->loc;
+		Advance(pContext);
+		result.any.loc = pContext->token->loc;
 		result.nodeType = ASTNODETYPE_COMPILER_BREAKPOINT;
 
-		AssertToken(context->token, '(');
-		Advance(context);
+		AssertToken(pContext->token, '(');
+		Advance(pContext);
 
-		AssertToken(context->token, TOKEN_IDENTIFIER);
-		String breakpointTypeStr = TokenToString(*context->token);
-		SourceLocation stringLoc = context->token->loc;
-		Advance(context);
+		AssertToken(pContext->token, TOKEN_IDENTIFIER);
+		String breakpointTypeStr = TokenToString(*pContext->token);
+		SourceLocation stringLoc = pContext->token->loc;
+		Advance(pContext);
 
-		AssertToken(context->token, ')');
-		Advance(context);
+		AssertToken(pContext->token, ')');
+		Advance(pContext);
 
 		result.compilerBreakpointType = COMPILERBREAKPOINT_Invalid;
 		for (int i = 0; i < COMPILERBREAKPOINT_Count; ++i) {
@@ -1587,39 +1587,39 @@ ASTExpression ParseExpression(PContext *context, s32 precedence, bool isStatemen
 		if (result.compilerBreakpointType == COMPILERBREAKPOINT_PARSER)
 			BREAK;
 
-		AssertToken(context->token, ';');
-		Advance(context);
+		AssertToken(pContext->token, ';');
+		Advance(pContext);
 	} return result;
 	case TOKEN_DIRECTIVE_OPERATOR:
 	{
 		if (!isStatement)
-			LogError(context->token->loc, "operator declaration is only valid at statement level"_s);
+			LogError(pContext->token->loc, "operator declaration is only valid at statement level"_s);
 
-		Advance(context);
+		Advance(pContext);
 
-		enum TokenType op = context->token->type;
+		enum TokenType op = pContext->token->type;
 		if (op < TOKEN_OP_Begin || op > TOKEN_OP_End)
-			UNEXPECTED_TOKEN_ERROR(context->token);
-		Advance(context);
+			UNEXPECTED_TOKEN_ERROR(pContext->token);
+		Advance(pContext);
 
-		AssertToken(context->token, TOKEN_OP_STATIC_DEF);
-		Advance(context);
+		AssertToken(pContext->token, TOKEN_OP_STATIC_DEF);
+		Advance(pContext);
 
 		bool isInline = false;
-		if (context->token->type == TOKEN_DIRECTIVE_INLINE)
+		if (pContext->token->type == TOKEN_DIRECTIVE_INLINE)
 		{
 			isInline = true;
-			Advance(context);
+			Advance(pContext);
 		}
 
 		ASTOperatorOverload overload = {};
 		overload.loc = result.any.loc;
 		overload.op = op;
 		overload.isInline = isInline;
-		overload.prototype = ParseProcedurePrototype(context);
+		overload.prototype = ParseProcedurePrototype(pContext);
 
-		overload.astBody = PNewTreeNode(context);
-		*overload.astBody = ParseExpression(context, -1, true);
+		overload.astBody = PNewTreeNode(pContext);
+		*overload.astBody = ParseExpression(pContext, -1, true);
 
 		result.nodeType = ASTNODETYPE_OPERATOR_OVERLOAD;
 		result.operatorOverload = overload;
@@ -1627,37 +1627,37 @@ ASTExpression ParseExpression(PContext *context, s32 precedence, bool isStatemen
 	case TOKEN_DIRECTIVE_INCLUDE:
 	{
 		if (!isStatement)
-			LogError(context->token->loc, "include directive is only valid at statement level"_s);
+			LogError(pContext->token->loc, "include directive is only valid at statement level"_s);
 
 		result.nodeType = ASTNODETYPE_INCLUDE;
-		Advance(context);
+		Advance(pContext);
 
-		AssertToken(context->token, TOKEN_LITERAL_STRING);
-		result.include.filename = TokenToString(*context->token);
-		Advance(context);
+		AssertToken(pContext->token, TOKEN_LITERAL_STRING);
+		result.include.filename = TokenToString(*pContext->token);
+		Advance(pContext);
 
-		AssertToken(context->token, ';');
-		Advance(context);
+		AssertToken(pContext->token, ';');
+		Advance(pContext);
 	} return result;
 	case TOKEN_DIRECTIVE_LINKLIB:
 	{
 		if (!isStatement)
-			LogError(context->token->loc, "linklib directive is only valid at statement level"_s);
+			LogError(pContext->token->loc, "linklib directive is only valid at statement level"_s);
 
 		result.nodeType = ASTNODETYPE_LINKLIB;
-		Advance(context);
+		Advance(pContext);
 
-		AssertToken(context->token, TOKEN_LITERAL_STRING);
-		result.linklib.filename = TokenToString(*context->token);
-		Advance(context);
+		AssertToken(pContext->token, TOKEN_LITERAL_STRING);
+		result.linklib.filename = TokenToString(*pContext->token);
+		Advance(pContext);
 
-		AssertToken(context->token, ';');
-		Advance(context);
+		AssertToken(pContext->token, ';');
+		Advance(pContext);
 	} return result;
 	default:
 	{
-		if (!IsOperatorToken(context->token->type))
-			UNEXPECTED_TOKEN_ERROR(context->token);
+		if (!IsOperatorToken(pContext->token->type))
+			UNEXPECTED_TOKEN_ERROR(pContext->token);
 		// Operators are handled in the loop below.
 	}
 	}
@@ -1667,9 +1667,9 @@ ASTExpression ParseExpression(PContext *context, s32 precedence, bool isStatemen
 		if (result.nodeType == ASTNODETYPE_INVALID) {
 			// If we have no left hand, try unary operation
 			ASTUnaryOperation unaryOp = result.unaryOperation;
-			bool success = TryParseUnaryOperation(context, precedence, &unaryOp);
+			bool success = TryParseUnaryOperation(pContext, precedence, &unaryOp);
 			if (!success)
-				LogError(context->token->loc, "Invalid expression!"_s);
+				LogError(pContext->token->loc, "Invalid expression!"_s);
 			result.nodeType = ASTNODETYPE_UNARY_OPERATION;
 			result.unaryOperation = unaryOp;
 
@@ -1698,7 +1698,7 @@ ASTExpression ParseExpression(PContext *context, s32 precedence, bool isStatemen
 		}
 		else {
 			ASTExpression exp;
-			bool success = TryParseBinaryOperation(context, result, precedence, &exp);
+			bool success = TryParseBinaryOperation(pContext, result, precedence, &exp);
 			if (success) {
 				result = exp;
 				if (IsASTExpressionAStatement(&result))
@@ -1708,18 +1708,18 @@ ASTExpression ParseExpression(PContext *context, s32 precedence, bool isStatemen
 			}
 		}
 
-		if (context->token->type == ',' && GetOperatorPrecedence(',') >= precedence) {
-			Advance(context);
+		if (pContext->token->type == ',' && GetOperatorPrecedence(',') >= precedence) {
+			Advance(pContext);
 
 			ASTExpression mux;
 			mux.any.loc = result.any.loc;
 			mux.typeTableIdx = TYPETABLEIDX_Unset;
 			mux.nodeType = ASTNODETYPE_MULTIPLE_EXPRESSIONS;
 
-			ASTExpression *first = PNewTreeNode(context);
+			ASTExpression *first = PNewTreeNode(pContext);
 			*first = result;
 
-			ASTExpression second = ParseExpression(context, GetOperatorPrecedence(','), false);
+			ASTExpression second = ParseExpression(pContext, GetOperatorPrecedence(','), false);
 			if (second.nodeType == ASTNODETYPE_MULTIPLE_EXPRESSIONS) {
 				DynamicArrayInit(&mux.multipleExpressions.array, second.multipleExpressions.array.size + 1);
 				*DynamicArrayAdd(&mux.multipleExpressions.array) = first;
@@ -1728,7 +1728,7 @@ ASTExpression ParseExpression(PContext *context, s32 precedence, bool isStatemen
 			}
 			else {
 				DynamicArrayInit(&mux.multipleExpressions.array, 2);
-				ASTExpression *sec = PNewTreeNode(context);
+				ASTExpression *sec = PNewTreeNode(pContext);
 				*sec = second;
 				*DynamicArrayAdd(&mux.multipleExpressions.array) = first;
 				*DynamicArrayAdd(&mux.multipleExpressions.array) = sec;
@@ -1748,8 +1748,8 @@ ASTExpression ParseExpression(PContext *context, s32 precedence, bool isStatemen
 	if (isStatement && !IsASTExpressionAStatement(&result)) {
 		// Look for semicolon only if we are parsing a statement, and the binary expression we
 		// parsed was not an statement itself (e.g. a variable declaration).
-		AssertToken(context->token, ';');
-		Advance(context);
+		AssertToken(pContext->token, ';');
+		Advance(pContext);
 	}
 
 	return result;
@@ -1760,38 +1760,37 @@ void ParseJobProc(u32 jobIdx, void *args)
 	ParseJobArgs *argsStruct = (ParseJobArgs *)args;
 	u32 fileIdx = argsStruct->fileIdx;
 
-	PContext *context = ALLOC(LinearAllocator, PContext);
-	context->jobIdx = jobIdx;
-	context->fileIdx = fileIdx;
-	context->token = nullptr;
-	context->currentTokenIdx = 0;
-	BucketArrayInit(&context->tokens);
-	DynamicArrayInit(&context->astRoot.block.statements, 4096);
-	BucketArrayInit(&context->astTreeNodes);
-	BucketArrayInit(&context->astTypes);
+	PContext *pContext = ALLOC(LinearAllocator, PContext);
+	pContext->fileIdx = fileIdx;
+	pContext->token = nullptr;
+	pContext->currentTokenIdx = 0;
+	BucketArrayInit(&pContext->tokens);
+	DynamicArrayInit(&pContext->astRoot.block.statements, 4096);
+	BucketArrayInit(&pContext->astTreeNodes);
+	BucketArrayInit(&pContext->astTypes);
 
-	Job *runningJob = GetCurrentJob(context);
+	Job *runningJob = GetCurrentJob();
 	runningJob->state = JOBSTATE_RUNNING;
 #if DEBUG_BUILD
 	runningJob->description = SStringConcat("P:"_s, g_context->sourceFiles[fileIdx].name);
 #endif
 
-	TokenizeFile(context, fileIdx);
+	TokenizeFile(pContext, fileIdx);
 
-	context->token = &context->tokens[context->currentTokenIdx];
+	pContext->token = &pContext->tokens[pContext->currentTokenIdx];
 
 	DynamicArray<ASTExpression, LinearAllocator> *statements =
-		&context->astRoot.block.statements;
-	while (context->token->type != TOKEN_END_OF_FILE) {
+		&pContext->astRoot.block.statements;
+	while (pContext->token->type != TOKEN_END_OF_FILE) {
 		ASTExpression *statement = DynamicArrayAdd(statements);
-		*statement = ParseExpression(context, -1, true);
+		*statement = ParseExpression(pContext, -1, true);
 		GenerateTypeCheckJobs(statement);
 	}
 
 	if (g_context->config.logAST)
-		PrintAST(context);
+		PrintAST(pContext);
 
-	FinishCurrentJob(context);
+	FinishCurrentJob();
 }
 
 void ParserMain()
