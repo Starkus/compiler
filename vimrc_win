@@ -37,8 +37,9 @@ function! ConvertSyntax()
 	silent exec a:firstline.','a:lastline+1.'g/\/\* \[annot/d _'
 endfunction
 
-command! Build :call Make("")
+command! Build  :call Make("")
 command! BuildR :call Make("-r")
+command! BuildP :call Make("-p")
 command! -nargs=* -complete=file Run :call RunCompiler("<args>")
 command! Test :silent !output\out.exe & pause
 
@@ -48,9 +49,9 @@ nnoremap <F7> :silent !output\out.exe & pause<CR>
 compiler msvc
 set makeprg=build.bat
 
-let msvc_path = 'C:\Program Files (x86)\Microsoft Visual Studio\2019\BuildTools\VC\Tools\MSVC\14.26.28801\'
+let msvc_path = 'C:\Program Files (x86)\Microsoft Visual Studio\2022\BuildTools\VC\Tools\MSVC\14.34.31933\'
 let winsdk_path = 'C:\Program Files (x86)\Windows Kits\10\'
-let winsdk_version = '10.0.18362.0'
+let winsdk_version = '10.0.20348.0'
 
 let $Path .= ';' . msvc_path . 'bin\HostX64\x64'
 let $INCLUDE = msvc_path . 'include;' .
