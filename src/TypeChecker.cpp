@@ -4840,38 +4840,38 @@ void TCJobProc(u32 jobIdx, void *args)
 #if DEBUG_BUILD
 	runningJob->loc = expression->any.loc;
 
-	String threadName = "TC:???"_s;
+	String jobDescription = "TC:???"_s;
 	switch (expression->nodeType) {
 	case ASTNODETYPE_STATIC_DEFINITION:
 		switch (expression->staticDefinition.expression->nodeType) {
 		case ASTNODETYPE_PROCEDURE_DECLARATION:
-			threadName = SNPrintF(96, "TC:%S - Procedure declaration",
+			jobDescription = SNPrintF(96, "TC:%S - Procedure declaration",
 					expression->staticDefinition.name);
 			break;
 		case ASTNODETYPE_TYPE:
 		case ASTNODETYPE_ALIAS:
-			threadName = SNPrintF(96, "TC:%S - Type declaration",
+			jobDescription = SNPrintF(96, "TC:%S - Type declaration",
 					expression->staticDefinition.name);
 			break;
 		case ASTNODETYPE_IDENTIFIER:
-			threadName = SNPrintF(96, "TC:%S - Constant declaration",
+			jobDescription = SNPrintF(96, "TC:%S - Constant declaration",
 					expression->staticDefinition.name);
 			break;
 		default:
-			threadName = SNPrintF(96, "TC:%S - Static definition",
+			jobDescription = SNPrintF(96, "TC:%S - Static definition",
 					expression->staticDefinition.name);
 			break;
 		}
 		break;
 	case ASTNODETYPE_VARIABLE_DECLARATION:
-		threadName = SNPrintF(96, "TC:%S - Variable declaration",
+		jobDescription = SNPrintF(96, "TC:%S - Variable declaration",
 				expression->staticDefinition.name);
 		break;
 	case ASTNODETYPE_IF_STATIC:
-		threadName = "TC:Static if"_s;
+		jobDescription = "TC:Static if"_s;
 		break;
 	}
-	runningJob->description = threadName;
+	runningJob->description = jobDescription;
 #endif
 
 	switch (expression->nodeType) {

@@ -63,78 +63,29 @@ void WakeUpAllByName(Context *context, YieldReason reason, String name)
 	}
 }
 
-void SchedulerProc(Context *context, u32 previousJobIdx, YieldReason yieldReason,
-		YieldContext yieldContext);
-
-struct AuxiliaryFiberArgs
+struct SchedulerArgs
 {
 	Context *context;
 	u32 previousJobIdx;
 	YieldReason yieldReason;
 	YieldContext yieldContext;
 };
-void AuxiliaryFiberProc(void *arg)
-{
-	AuxiliaryFiberArgs *args = (AuxiliaryFiberArgs *)arg;
-	Context *context = args->context;
-	SchedulerProc(context, args->previousJobIdx, args->yieldReason, args->yieldContext);
-
-	t_fiberToDelete = GetCurrentFiber();
-
-	Fiber mainFiber = g_mainFibers[t_threadIndex];
-	//Print("Switching to main fiber of thread %d (%p)\n", t_threadIndex, mainFiber);
-	if (GetCurrentFiber() != mainFiber)
-		SYSSwitchToFiber(mainFiber);
-}
-
-// Procedure to switch to a different job.
-// We leave the information in thread local storage for the scheduler fiber.
-inline void SwitchJob(JobContext *context, YieldReason yieldReason, YieldContext yieldContext)
-{
-	ASSERT(yieldReason != YIELDREASON_DONE); // Call FinishCurrentJob instead.
-
-	Job *previousJob = GetCurrentJob(context);
-	ASSERT(previousJob->state == JOBSTATE_RUNNING);
-
-	previousJob->fiber = GetCurrentFiber();
-	previousJob->context = yieldContext;
-
-	AuxiliaryFiberArgs *args = ALLOC(LinearAllocator, AuxiliaryFiberArgs);
-	*args = {
-		.context = context->global,
-		.previousJobIdx = context->jobIdx,
-		.yieldReason = yieldReason,
-		.yieldContext = yieldContext
-	};
-	Fiber newFiber = SYSCreateFiber(AuxiliaryFiberProc, args);
-	SYSSwitchToFiber(newFiber);
-
-	// If we come back from a fiber that switched jobs because theirs was done, no need to keep it
-	// around.
-	if (t_fiberToDelete != SYS_INVALID_FIBER_HANDLE) {
-		SYSDeleteFiber(t_fiberToDelete);
-		t_fiberToDelete = SYS_INVALID_FIBER_HANDLE;
-	}
-}
-
-inline void FinishCurrentJob(JobContext *context)
-{
-	Job *previousJob = GetCurrentJob(context);
-	ASSERT(previousJob->state == JOBSTATE_RUNNING);
-	previousJob->state = JOBSTATE_FINISHED;
-	previousJob->fiber = SYS_INVALID_FIBER_HANDLE;
-}
 
 // Fiber that swaps jobs around.
 // The reason to have a separate scheduler fiber is so we can queue the caller fiber right away,
 // without risking another thread picking it up while it's still running on this one (since all this
 // logic would be running in the fiber that wants to yield).
-void SchedulerProc(Context *context, u32 previousJobIdx, YieldReason yieldReason,
-		YieldContext yieldContext)
+void SchedulerProc(void *args)
 {
+	SchedulerArgs *argsStruct = (SchedulerArgs *)args;
+	Context *context = argsStruct->context;
+	u32 previousJobIdx = argsStruct->previousJobIdx;
+
 	// Queue previous job now that its fiber is not running
 	if (previousJobIdx != U32_MAX) {
 		Job *previousJob = &context->jobs.unsafe[previousJobIdx];
+		YieldReason yieldReason = argsStruct->yieldReason;
+		YieldContext yieldContext = argsStruct->yieldContext;
 
 		ASSERT(previousJob->state == JOBSTATE_RUNNING);
 		previousJob->state = JOBSTATE_SUSPENDED;
@@ -271,48 +222,96 @@ okWontStop:
 
 				// Give up!
 				context->done = true;
-				return;
+				goto finish;
 			}
 stillBelieve:
 			// @Improve: This is silly but shouldn't happen too often...
 			Sleep(0);
 		}
 	}
-	return;
+	goto finish;
 
 switchFiber:
-	ASSERT(nextJobIdx != U32_MAX);
+	{
+		ASSERT(nextJobIdx != U32_MAX);
 
-	SpinlockLock(&context->threadStatesLock);
-	context->threadStates[t_threadIndex] = THREADSTATE_WORKING;
+		SpinlockLock(&context->threadStatesLock);
+		context->threadStates[t_threadIndex] = THREADSTATE_WORKING;
 
-	// Restore hope to jobs
-	for (int threadIdx = t_threadIndex; threadIdx < context->threadStates.size; ++threadIdx) {
-		// If we triggered a deadstop everyone should have given up.
-		if (context->threadStates[threadIdx] == THREADSTATE_GIVING_UP)
-			context->threadStates[threadIdx] = THREADSTATE_LOOKING_FOR_JOBS;
+		// Restore hope to jobs
+		for (int threadIdx = t_threadIndex; threadIdx < context->threadStates.size; ++threadIdx) {
+			// If we triggered a deadstop everyone should have given up.
+			if (context->threadStates[threadIdx] == THREADSTATE_GIVING_UP)
+				context->threadStates[threadIdx] = THREADSTATE_LOOKING_FOR_JOBS;
+		}
+		SpinlockUnlock(&context->threadStatesLock);
+
+		Job *nextJob = &context->jobs.unsafe[nextJobIdx];
+		if (nextJob->state == JOBSTATE_INIT) {
+			nextJob->state = JOBSTATE_RUNNING;
+			nextJob->startProcedure(nextJobIdx, nextJob->args);
+			// If we come back here afterwards, this job should be finished
+			ASSERT(nextJob->state == JOBSTATE_FINISHED);
+		}
+		else {
+			nextJob->state = JOBSTATE_RUNNING;
+			t_fiberToDelete = GetCurrentFiber();
+
+			Fiber fiber = nextJob->fiber;
+			ASSERT(fiber != SYS_INVALID_FIBER_HANDLE);
+			nextJob->fiber = SYS_INVALID_FIBER_HANDLE;
+
+			SYSSwitchToFiber(fiber);
+		}
+
+		goto loop;
 	}
-	SpinlockUnlock(&context->threadStatesLock);
 
-	Job *nextJob = &context->jobs.unsafe[nextJobIdx];
-	if (nextJob->state == JOBSTATE_INIT) {
-		nextJob->state = JOBSTATE_RUNNING;
-		nextJob->startProcedure(nextJobIdx, nextJob->args);
-		// If we come back here afterwards, this job should be finished
-		ASSERT(nextJob->state == JOBSTATE_FINISHED);
+finish:
+	t_fiberToDelete = GetCurrentFiber();
+
+	Fiber mainFiber = g_mainFibers[t_threadIndex];
+	//Print("Switching to main fiber of thread %d (%p)\n", t_threadIndex, mainFiber);
+	ASSERT(GetCurrentFiber() != mainFiber);
+	SYSSwitchToFiber(mainFiber);
+}
+
+// Procedure to switch to a different job.
+// We leave the information in thread local storage for the scheduler fiber.
+inline void SwitchJob(JobContext *context, YieldReason yieldReason, YieldContext yieldContext)
+{
+	ASSERT(yieldReason != YIELDREASON_DONE); // Call FinishCurrentJob instead.
+
+	Job *previousJob = GetCurrentJob(context);
+	ASSERT(previousJob->state == JOBSTATE_RUNNING);
+
+	previousJob->fiber = GetCurrentFiber();
+	previousJob->context = yieldContext;
+
+	SchedulerArgs *args = ALLOC(LinearAllocator, SchedulerArgs);
+	*args = {
+		.context = context->global,
+		.previousJobIdx = context->jobIdx,
+		.yieldReason = yieldReason,
+		.yieldContext = yieldContext
+	};
+	Fiber newFiber = SYSCreateFiber(SchedulerProc, args);
+	SYSSwitchToFiber(newFiber);
+
+	// If we come back from a fiber that switched jobs because theirs was done, no need to keep it
+	// around.
+	if (t_fiberToDelete != SYS_INVALID_FIBER_HANDLE) {
+		SYSDeleteFiber(t_fiberToDelete);
+		t_fiberToDelete = SYS_INVALID_FIBER_HANDLE;
 	}
-	else {
-		nextJob->state = JOBSTATE_RUNNING;
-		t_fiberToDelete = GetCurrentFiber();
+}
 
-		Fiber fiber = nextJob->fiber;
-		ASSERT(fiber != SYS_INVALID_FIBER_HANDLE);
-		nextJob->fiber = SYS_INVALID_FIBER_HANDLE;
-
-		SYSSwitchToFiber(fiber);
-	}
-
-	goto loop;
+inline void FinishCurrentJob(JobContext *context)
+{
+	Job *previousJob = GetCurrentJob(context);
+	ASSERT(previousJob->state == JOBSTATE_RUNNING);
+	previousJob->state = JOBSTATE_FINISHED;
+	previousJob->fiber = SYS_INVALID_FIBER_HANDLE;
 }
 
 // Procedure where worker threads begin executing
@@ -330,12 +329,12 @@ int WorkerThreadProc(void *args)
 
 	g_mainFibers[threadIdx] = SYSConvertThreadToFiber();
 
-	AuxiliaryFiberArgs *auxArgs = ALLOC(LinearAllocator, AuxiliaryFiberArgs);
+	SchedulerArgs *auxArgs = ALLOC(LinearAllocator, SchedulerArgs);
 	*auxArgs = {
 		.context = context,
 		.previousJobIdx = U32_MAX
 	};
-	Fiber newFiber = SYSCreateFiber(AuxiliaryFiberProc, auxArgs);
+	Fiber newFiber = SYSCreateFiber(SchedulerProc, auxArgs);
 	SYSSwitchToFiber(newFiber);
 
 	if (t_fiberToDelete != SYS_INVALID_FIBER_HANDLE)
