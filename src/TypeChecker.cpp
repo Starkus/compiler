@@ -3630,13 +3630,15 @@ void TypeCheckExpression(TCContext *context, ASTExpression *expression)
 				astStaticDef->expression->astType.nodeType == ASTTYPENODETYPE_ENUM_DECLARATION)
 				newTypeIdx = result;
 			else {
-				TypeInfo t;
-				t.typeCategory = TYPECATEGORY_ALIAS;
-				t.size = GetTypeInfo(context, result).size;
-				t.aliasInfo.name = *GetVariableName(astStaticDef, 0);
-				t.aliasInfo.aliasedTypeIdx = result;
-				t.aliasInfo.doesImplicitlyCast = astStaticDef->expression->nodeType ==
-					ASTNODETYPE_ALIAS;
+				TypeInfo t = {
+					.typeCategory = TYPECATEGORY_ALIAS,
+					.size = GetTypeInfo(context, result).size,
+					.aliasInfo = {
+						.name = *GetVariableName(astStaticDef, 0),
+						.aliasedTypeIdx = result,
+						.doesImplicitlyCast = astStaticDef->expression->nodeType == ASTNODETYPE_ALIAS
+					}
+				};
 				newTypeIdx = FindOrAddTypeTableIdx(context, t);
 			}
 

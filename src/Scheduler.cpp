@@ -79,19 +79,16 @@ void AuxiliaryFiberProc(void *arg)
 	Context *context = args->context;
 	SchedulerProc(context, args->previousJobIdx, args->yieldReason, args->yieldContext);
 
-	// If SchedulerProc ever returns it's because this thread is done.
-	SpinlockLock(&context->threadStatesLock);
-	ASSERT(context->threadStates[t_threadIndex] == THREADSTATE_GIVING_UP);
-	context->threadStates[t_threadIndex] = THREADSTATE_TERMINATED;
-	SpinlockUnlock(&context->threadStatesLock);
+	t_fiberToDelete = GetCurrentFiber();
 
-	SYSPrepareFiberForExit();
-	ExitThread(0);
+	Fiber mainFiber = g_mainFibers[t_threadIndex];
+	//Print("Switching to main fiber of thread %d (%p)\n", t_threadIndex, mainFiber);
+	if (GetCurrentFiber() != mainFiber)
+		SYSSwitchToFiber(mainFiber);
 }
 
 // Procedure to switch to a different job.
 // We leave the information in thread local storage for the scheduler fiber.
-// Call this when a job finishes too, the scheduler will delete the fiber and free resources.
 inline void SwitchJob(JobContext *context, YieldReason yieldReason, YieldContext yieldContext)
 {
 	ASSERT(yieldReason != YIELDREASON_DONE); // Call FinishCurrentJob instead.
@@ -102,19 +99,22 @@ inline void SwitchJob(JobContext *context, YieldReason yieldReason, YieldContext
 	previousJob->fiber = GetCurrentFiber();
 	previousJob->context = yieldContext;
 
-	AuxiliaryFiberArgs args = {
+	AuxiliaryFiberArgs *args = ALLOC(LinearAllocator, AuxiliaryFiberArgs);
+	*args = {
 		.context = context->global,
 		.previousJobIdx = context->jobIdx,
 		.yieldReason = yieldReason,
 		.yieldContext = yieldContext
 	};
-	Fiber newFiber = SYSCreateFiber(AuxiliaryFiberProc, &args);
+	Fiber newFiber = SYSCreateFiber(AuxiliaryFiberProc, args);
 	SYSSwitchToFiber(newFiber);
 
 	// If we come back from a fiber that switched jobs because theirs was done, no need to keep it
 	// around.
-	if (t_fiberToDelete != SYS_INVALID_FIBER_HANDLE)
+	if (t_fiberToDelete != SYS_INVALID_FIBER_HANDLE) {
 		SYSDeleteFiber(t_fiberToDelete);
+		t_fiberToDelete = SYS_INVALID_FIBER_HANDLE;
+	}
 }
 
 inline void FinishCurrentJob(JobContext *context)
@@ -132,7 +132,6 @@ inline void FinishCurrentJob(JobContext *context)
 void SchedulerProc(Context *context, u32 previousJobIdx, YieldReason yieldReason,
 		YieldContext yieldContext)
 {
-loop:
 	// Queue previous job now that its fiber is not running
 	if (previousJobIdx != U32_MAX) {
 		Job *previousJob = &context->jobs.unsafe[previousJobIdx];
@@ -209,6 +208,7 @@ loop:
 	}
 	previousJobIdx = U32_MAX;
 
+loop:
 	SpinlockLock(&context->threadStatesLock);
 	context->threadStates[t_threadIndex] = THREADSTATE_LOOKING_FOR_JOBS;
 	SpinlockUnlock(&context->threadStatesLock);
@@ -219,7 +219,7 @@ loop:
 		u32 dequeue;
 		if (MTQueueDequeue(&context->readyJobs, &dequeue)) {
 			nextJobIdx = dequeue;
-			break;
+			goto switchFiber;
 		}
 		else {
 			bool triggerStop = true;
@@ -256,6 +256,7 @@ okWontStop:
 					}
 				}
 
+				// If no one was waiting for dead stop...
 				SpinlockLock(&context->threadStatesLock);
 				context->threadStates[t_threadIndex] = THREADSTATE_GIVING_UP;
 
@@ -270,16 +271,17 @@ okWontStop:
 
 				// Give up!
 				context->done = true;
+				return;
 			}
 stillBelieve:
 			// @Improve: This is silly but shouldn't happen too often...
 			Sleep(0);
 		}
 	}
+	return;
 
 switchFiber:
-	if (nextJobIdx == U32_MAX)
-		return;
+	ASSERT(nextJobIdx != U32_MAX);
 
 	SpinlockLock(&context->threadStatesLock);
 	context->threadStates[t_threadIndex] = THREADSTATE_WORKING;
@@ -296,14 +298,17 @@ switchFiber:
 	if (nextJob->state == JOBSTATE_INIT) {
 		nextJob->state = JOBSTATE_RUNNING;
 		nextJob->startProcedure(nextJobIdx, nextJob->args);
+		// If we come back here afterwards, this job should be finished
+		ASSERT(nextJob->state == JOBSTATE_FINISHED);
 	}
 	else {
+		nextJob->state = JOBSTATE_RUNNING;
 		t_fiberToDelete = GetCurrentFiber();
 
 		Fiber fiber = nextJob->fiber;
-		nextJob->fiber = SYS_INVALID_FIBER_HANDLE;
 		ASSERT(fiber != SYS_INVALID_FIBER_HANDLE);
-		nextJob->state = JOBSTATE_RUNNING;
+		nextJob->fiber = SYS_INVALID_FIBER_HANDLE;
+
 		SYSSwitchToFiber(fiber);
 	}
 
@@ -315,23 +320,32 @@ int WorkerThreadProc(void *args)
 {
 	ThreadArgs *threadArgs = (ThreadArgs *)args;
 	Context *context = threadArgs->context;
+	u32 threadIdx = threadArgs->threadIndex;
 
-	t_threadIndex = threadArgs->threadIndex;
+	t_threadIndex = threadIdx;
 
-	SYSSetThreadDescription(SYSGetCurrentThread(), SNPrintF(16, "Worker #%d", threadArgs->threadIndex));
+	SYSSetThreadDescription(SYSGetCurrentThread(), SNPrintF(16, "Worker #%d", threadIdx));
 
 	MemoryInitThread(512 * 1024 * 1024);
 
-	SYSConvertThreadToFiber();
+	g_mainFibers[threadIdx] = SYSConvertThreadToFiber();
 
-	SchedulerProc(context, U32_MAX, YIELDREASON_Count, {});
+	AuxiliaryFiberArgs *auxArgs = ALLOC(LinearAllocator, AuxiliaryFiberArgs);
+	*auxArgs = {
+		.context = context,
+		.previousJobIdx = U32_MAX
+	};
+	Fiber newFiber = SYSCreateFiber(AuxiliaryFiberProc, auxArgs);
+	SYSSwitchToFiber(newFiber);
+
+	if (t_fiberToDelete != SYS_INVALID_FIBER_HANDLE)
+		SYSDeleteFiber(t_fiberToDelete);
 
 	SpinlockLock(&context->threadStatesLock);
-	ASSERT(context->threadStates[t_threadIndex] == THREADSTATE_GIVING_UP);
-	context->threadStates[t_threadIndex] = THREADSTATE_TERMINATED;
+	ASSERT(context->threadStates[threadIdx] == THREADSTATE_GIVING_UP);
+	context->threadStates[threadIdx] = THREADSTATE_TERMINATED;
 	SpinlockUnlock(&context->threadStatesLock);
 
 	SYSPrepareFiberForExit();
-
 	ExitThread(0);
 }

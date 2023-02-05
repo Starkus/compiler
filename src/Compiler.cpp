@@ -69,7 +69,8 @@ FileHandle g_hStdin;
 FileHandle g_hStdout;
 FileHandle g_hStderr;
 FileHandle g_logFileHandle;
-u32 g_numberOfThreads;
+Array<ThreadHandle, LinearAllocator> g_threads;
+Array<Fiber, LinearAllocator> g_mainFibers;
 
 #if _MSC_VER
 #include "PlatformWindows.cpp"
@@ -426,23 +427,24 @@ int main(int argc, char **argv)
 	SYSTEM_INFO win32SystemInfo;
 	GetSystemInfo(&win32SystemInfo);
 	int threadCount = win32SystemInfo.dwNumberOfProcessors;
-	g_numberOfThreads = threadCount;
 
-	Array<ThreadHandle, LinearAllocator> threads;
-	Array<ThreadArgs,   LinearAllocator> threadArgs;
-	ArrayInit(&threads,    threadCount);
+	Array<ThreadArgs, LinearAllocator> threadArgs;
+	ArrayInit(&g_threads, threadCount);
+	ArrayInit(&g_mainFibers, threadCount);
 	ArrayInit(&threadArgs, threadCount);
 	ArrayInit(&context->threadStates, threadCount);
-	threads.size    = threadCount;
-	threadArgs.size = threadCount;
+	g_threads.size    = threadCount;
+	g_mainFibers.size = threadCount;
+	threadArgs.size   = threadCount;
 	context->threadStates.size = threadCount;
 	for (int i = 0; i < threadCount; ++i) {
 		context->threadStates[i] = THREADSTATE_WORKING;
+		g_mainFibers[i] = SYS_INVALID_FIBER_HANDLE;
 		threadArgs[i] = { context, (u32)i };
-		threads[i] = SYSCreateThread(WorkerThreadProc, &threadArgs[i]);
+		g_threads[i] = SYSCreateThread(WorkerThreadProc, &threadArgs[i]);
 	}
 
-	SYSWaitForThreads(threadCount, threads.data);
+	SYSWaitForThreads(threadCount, g_threads.data);
 
 	if (!context->config.silent)
 		TimerSplit("Multithreaded parse/analyze/codegen phase"_s);
