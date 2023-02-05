@@ -59,7 +59,6 @@ struct Context;
 
 struct JobContext
 {
-	Context *global;
 	u32 jobIdx;
 };
 
@@ -266,27 +265,25 @@ struct Context
 
 struct ThreadArgs
 {
-	Context *context;
 	u32 threadIndex;
 };
 
 #include "Log.cpp"
 
-bool CompilerAddSourceFile(Context *context, String filename, SourceLocation loc)
+bool CompilerAddSourceFile(String filename, SourceLocation loc)
 {
 	FileHandle file = SYSOpenFileRead(filename);
 	if (file == SYS_INVALID_FILE_HANDLE)
-		LogError(context, loc,
-				TPrintF("Included source file \"%S\" doesn't exist!", filename));
+		LogError(loc, TPrintF("Included source file \"%S\" doesn't exist!", filename));
 
-	for (int i = 0; i < context->sourceFiles.size; ++i) {
-		String currentFilename = context->sourceFiles[i].name;
+	for (int i = 0; i < g_context->sourceFiles.size; ++i) {
+		String currentFilename = g_context->sourceFiles[i].name;
 		FileHandle currentFile = SYSOpenFileRead(currentFilename);
 
 		if (SYSAreSameFile(file, currentFile)) {
 			// Don't think we should to warn this...
-			//LogWarning(context, loc, TPrintF("File included twice: \"%S\"", filename));
-			//LogNote(context, context->sourceFiles[i].includeLoc, "First included here"_s);
+			//LogWarning(loc, TPrintF("File included twice: \"%S\"", filename));
+			//LogNote(g_context->sourceFiles[i].includeLoc, "First included here"_s);
 			return false;
 		}
 	}
@@ -296,16 +293,14 @@ bool CompilerAddSourceFile(Context *context, String filename, SourceLocation loc
 
 	u32 fileIdx;
 	{
-		ScopedLockSpin sourceFilesLock(&context->filesLock);
-		fileIdx = (u32)context->sourceFiles.size;
-		*DynamicArrayAdd(&context->sourceFiles) = newSourceFile;
+		ScopedLockSpin sourceFilesLock(&g_context->filesLock);
+		fileIdx = (u32)g_context->sourceFiles.size;
+		*DynamicArrayAdd(&g_context->sourceFiles) = newSourceFile;
 	}
 
 	ParseJobArgs *args = ALLOC(LinearAllocator, ParseJobArgs);
-	*args = {
-		.context = context,
-		.fileIdx = fileIdx };
-	RequestNewJob(context, JOBTYPE_PARSE, ParseJobProc, (void *)args);
+	*args = { .fileIdx = fileIdx };
+	RequestNewJob(JOBTYPE_PARSE, ParseJobProc, (void *)args);
 
 	return true;
 }
@@ -411,15 +406,15 @@ int main(int argc, char **argv)
 	if (!context->config.silent)
 		TimerSplit("Initialization"_s);
 
-	OutputBufferInit(context);
+	OutputBufferInit();
 
-	ParserMain(context);
-	TypeCheckMain(context);
-	IRGenMain(context);
-	BackendMain(context);
+	ParserMain();
+	TypeCheckMain();
+	IRGenMain();
+	BackendMain();
 
 	for (int i = 0; i < inputFiles.size; ++i)
-		CompilerAddSourceFile(context, inputFiles[i], {});
+		CompilerAddSourceFile(inputFiles[i], {});
 
 	if (!context->config.silent)
 		TimerSplit("Create starting jobs"_s);
@@ -440,7 +435,7 @@ int main(int argc, char **argv)
 	for (int i = 0; i < threadCount; ++i) {
 		context->threadStates[i] = THREADSTATE_WORKING;
 		g_mainFibers[i] = SYS_INVALID_FIBER_HANDLE;
-		threadArgs[i] = { context, (u32)i };
+		threadArgs[i] = { (u32)i };
 		g_threads[i] = SYSCreateThread(WorkerThreadProc, &threadArgs[i]);
 	}
 
@@ -465,16 +460,16 @@ int main(int argc, char **argv)
 		for (int i = 0; i < waitingJobs->size; ++i) {
 			u32 jobIdx = waitingJobs[i];
 			const Job *job = &context->jobs.unsafe[jobIdx];
-			YieldContext yieldContext = job->context;
-			LogErrorNoCrash(context, yieldContext.loc, TPrintF("Identifier \"%S\" never found",
+			YieldContext yieldContext = job->yieldContext;
+			LogErrorNoCrash(yieldContext.loc, TPrintF("Identifier \"%S\" never found",
 						yieldContext.identifier));
 #if DEBUG_BUILD
-			LogNote(context, job->loc, TPrintF("On job: \"%S\"", job->description));
+			LogNote(job->loc, TPrintF("On job: \"%S\"", job->description));
 			auto &globalNames = context->tcGlobalNames.unsafe;
 			for (int nameIdx = 0; nameIdx < globalNames.size; ++nameIdx) {
 				const TCScopeName *currentName = &globalNames[nameIdx];
 				if (StringEquals(yieldContext.identifier, currentName->name))
-					LogCompilerError(context, currentName->loc, "Identifier is there!"_s);
+					LogCompilerError(currentName->loc, "Identifier is there!"_s);
 			}
 #endif
 			errorsFound = true;
@@ -482,31 +477,31 @@ int main(int argc, char **argv)
 		waitingJobs->size = 0;
 	}
 
-	JobContext fakeJobContext = { context, U32_MAX };
+	JobContext fakeJobContext = { U32_MAX };
 
 	{
 		auto waitingJobs = context->waitingJobsByReason[YIELDREASON_UNKNOWN_OVERLOAD].Get();
 		for (int i = 0; i < waitingJobs->size; ++i) {
 			u32 jobIdx = waitingJobs[i];
 			const Job *job = &context->jobs.unsafe[jobIdx];
-			YieldContext yieldContext = job->context;
+			YieldContext yieldContext = job->yieldContext;
 			if (yieldContext.overload.rightTypeIdx != U32_MAX) {
-				LogErrorNoCrash(context, yieldContext.loc, TPrintF("Operator '%S' not found for "
+				LogErrorNoCrash(yieldContext.loc, TPrintF("Operator '%S' not found for "
 							"types \"%S\" and \"%S\"",
 							OperatorToString(yieldContext.overload.op),
 							TypeInfoToString(&fakeJobContext, yieldContext.overload.leftTypeIdx),
 							TypeInfoToString(&fakeJobContext, yieldContext.overload.rightTypeIdx)));
 #if DEBUG_BUILD
-				LogNote(context, job->loc, TPrintF("On job: \"%S\"", job->description));
+				LogNote(job->loc, TPrintF("On job: \"%S\"", job->description));
 #endif
 			}
 			else {
-				LogErrorNoCrash(context, yieldContext.loc, TPrintF("Operator '%S' not found for "
+				LogErrorNoCrash(yieldContext.loc, TPrintF("Operator '%S' not found for "
 							"type \"%S\"",
 							OperatorToString(yieldContext.overload.op),
 							TypeInfoToString(&fakeJobContext, yieldContext.overload.leftTypeIdx)));
 #if DEBUG_BUILD
-				LogNote(context, job->loc, TPrintF("On job: \"%S\"", job->description));
+				LogNote(job->loc, TPrintF("On job: \"%S\"", job->description));
 #endif
 			}
 			errorsFound = true;
@@ -518,12 +513,12 @@ int main(int argc, char **argv)
 		for (int i = 0; i < waitingJobs->size; ++i) {
 			u32 jobIdx = waitingJobs[i];
 			const Job *job = &context->jobs.unsafe[jobIdx];
-			YieldContext yieldContext = job->context;
+			YieldContext yieldContext = job->yieldContext;
 			StaticDefinition staticDef = GetStaticDefinition(&fakeJobContext, yieldContext.index);
-			LogErrorNoCrash(context, yieldContext.loc, TPrintF("Static definition '%S' never "
+			LogErrorNoCrash(yieldContext.loc, TPrintF("Static definition '%S' never "
 						"type-checked", staticDef.name));
 #if DEBUG_BUILD
-			LogNote(context, job->loc, TPrintF("On job: \"%S\"", job->description));
+			LogNote(job->loc, TPrintF("On job: \"%S\"", job->description));
 #endif
 			errorsFound = true;
 		}
@@ -534,12 +529,12 @@ int main(int argc, char **argv)
 		for (int i = 0; i < waitingJobs->size; ++i) {
 			u32 jobIdx = waitingJobs[i];
 			const Job *job = &context->jobs.unsafe[jobIdx];
-			YieldContext yieldContext = job->context;
-			Procedure proc = GetProcedureRead(context, yieldContext.index);
-			LogErrorNoCrash(context, yieldContext.loc, TPrintF("Body of procedure '%S' never "
+			YieldContext yieldContext = job->yieldContext;
+			Procedure proc = GetProcedureRead(yieldContext.index);
+			LogErrorNoCrash(yieldContext.loc, TPrintF("Body of procedure '%S' never "
 						"type-checked", proc.name));
 #if DEBUG_BUILD
-			LogNote(context, job->loc, TPrintF("On job: \"%S\"", job->description));
+			LogNote(job->loc, TPrintF("On job: \"%S\"", job->description));
 #endif
 			errorsFound = true;
 		}
@@ -550,12 +545,12 @@ int main(int argc, char **argv)
 		for (int i = 0; i < waitingJobs->size; ++i) {
 			u32 jobIdx = waitingJobs[i];
 			const Job *job = &context->jobs.unsafe[jobIdx];
-			YieldContext yieldContext = job->context;
-			Procedure proc = GetProcedureRead(context, yieldContext.index);
-			LogErrorNoCrash(context, yieldContext.loc, TPrintF("Code of procedure '%S' never "
+			YieldContext yieldContext = job->yieldContext;
+			Procedure proc = GetProcedureRead(yieldContext.index);
+			LogErrorNoCrash(yieldContext.loc, TPrintF("Code of procedure '%S' never "
 						"generated", proc.name));
 #if DEBUG_BUILD
-			LogNote(context, job->loc, TPrintF("On job: \"%S\"", job->description));
+			LogNote(job->loc, TPrintF("On job: \"%S\"", job->description));
 #endif
 			errorsFound = true;
 		}
@@ -566,11 +561,11 @@ int main(int argc, char **argv)
 		for (int i = 0; i < waitingJobs->size; ++i) {
 			u32 jobIdx = waitingJobs[i];
 			const Job *job = &context->jobs.unsafe[jobIdx];
-			YieldContext yieldContext = job->context;
-			LogErrorNoCrash(context, yieldContext.loc, TPrintF("Type '%S' never finished "
+			YieldContext yieldContext = job->yieldContext;
+			LogErrorNoCrash(yieldContext.loc, TPrintF("Type '%S' never finished "
 						"type-checking", TypeInfoToString(&fakeJobContext, yieldContext.index)));
 #if DEBUG_BUILD
-			LogNote(context, job->loc, TPrintF("On job: \"%S\"", job->description));
+			LogNote(job->loc, TPrintF("On job: \"%S\"", job->description));
 #endif
 			errorsFound = true;
 		}
@@ -581,12 +576,12 @@ int main(int argc, char **argv)
 		for (int i = 0; i < waitingJobs->size; ++i) {
 			u32 jobIdx = waitingJobs[i];
 			const Job *job = &context->jobs.unsafe[jobIdx];
-			YieldContext yieldContext = job->context;
+			YieldContext yieldContext = job->yieldContext;
 			Value v = context->globalValues.unsafe[yieldContext.index & VALUE_GLOBAL_MASK];
-			LogErrorNoCrash(context, yieldContext.loc, TPrintF("Value of static variable '%S' "
+			LogErrorNoCrash(yieldContext.loc, TPrintF("Value of static variable '%S' "
 						"never computed", GetValueName(v)));
 #if DEBUG_BUILD
-			LogNote(context, job->loc, TPrintF("On job: \"%S\"", job->description));
+			LogNote(job->loc, TPrintF("On job: \"%S\"", job->description));
 #endif
 			errorsFound = true;
 		}
@@ -597,11 +592,11 @@ int main(int argc, char **argv)
 		for (int i = 0; i < waitingJobs->size; ++i) {
 			u32 jobIdx = waitingJobs[i];
 			const Job *job = &context->jobs.unsafe[jobIdx];
-			YieldContext yieldContext = job->context;
-			LogErrorNoCrash(context, yieldContext.loc, TPrintF("Could not find external procedure "
+			YieldContext yieldContext = job->yieldContext;
+			LogErrorNoCrash(yieldContext.loc, TPrintF("Could not find external procedure "
 						"\"%S\" at compile time", yieldContext.identifier));
 #if DEBUG_BUILD
-			LogNote(context, job->loc, TPrintF("On job: \"%S\"", job->description));
+			LogNote(job->loc, TPrintF("On job: \"%S\"", job->description));
 #endif
 			errorsFound = true;
 		}
@@ -612,33 +607,33 @@ int main(int argc, char **argv)
 		for (int i = 0; i < waitingJobs->size; ++i) {
 			u32 jobIdx = waitingJobs[i];
 			const Job *job = &context->jobs.unsafe[jobIdx];
-			YieldContext yieldContext = job->context;
-			LogErrorNoCrash(context, yieldContext.loc, "Job waiting for dead-stop never resumed "
+			YieldContext yieldContext = job->yieldContext;
+			LogErrorNoCrash(yieldContext.loc, "Job waiting for dead-stop never resumed "
 						"for some reason"_s);
 #if DEBUG_BUILD
-			LogNote(context, job->loc, TPrintF("On job: \"%S\"", job->description));
+			LogNote(job->loc, TPrintF("On job: \"%S\"", job->description));
 #endif
 			errorsFound = true;
 		}
 		waitingJobs->size = 0;
 	}
 	if (errorsFound)
-		LogError(context, {}, "Errors were found. Aborting"_s);
+		LogError({}, "Errors were found. Aborting"_s);
 
-	ASSERT(MTQueueIsEmpty(&context->readyJobs));
+	ASSERT(MTQueueIsEmpty(&g_context->readyJobs));
 
-	for (int i = 0; i < context->jobs.unsafe.count; ++i) {
-		Job job = context->jobs.unsafe[i];
+	for (int i = 0; i < g_context->jobs.unsafe.count; ++i) {
+		Job job = g_context->jobs.unsafe[i];
 		ASSERT(job.state == JOBSTATE_FINISHED);
 	}
 
 #if USE_OWN_ASSEMBLER
-	BackendGenerateWindowsObj(context);
+	BackendGenerateWindowsObj();
 #else
-	BackendGenerateOutputFile(context);
+	BackendGenerateOutputFile();
 #endif
 
-	if (!context->config.silent) {
+	if (!g_context->config.silent) {
 		TimerSplit("Done"_s);
 		ConsoleSetColor(CONSOLE_GREEN_TXT);
 		Print("Compilation success\n");

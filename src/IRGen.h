@@ -234,7 +234,6 @@ struct IRScope
 
 struct IRJobArgs
 {
-	Context *context;
 	u32 procedureIdx;
 	BucketArray<Value, LinearAllocator, 256> localValues;
 	const ASTExpression *expression;

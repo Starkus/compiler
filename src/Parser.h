@@ -10,7 +10,6 @@ struct Tokenizer
 struct Context;
 struct ParseJobArgs
 {
-	Context *context;
 	u32 fileIdx;
 };
 

@@ -86,7 +86,7 @@ inline Value X64GetValue(X64Context *context, u32 valueIdx)
 {
 	ASSERT(valueIdx > 0);
 	if (valueIdx & VALUE_GLOBAL_BIT)
-		return GetGlobalValue(context->global, valueIdx);
+		return GetGlobalValue(valueIdx);
 	else
 		return (*context->localValues)[valueIdx];
 }
@@ -182,7 +182,7 @@ inline IRValue X64IRValueNewValue(X64Context *context, u32 typeTableIdx, u32 fla
 inline void X64SetValueFlags(X64Context *context, u32 valueIdx, u32 flags)
 {
 	if (valueIdx & VALUE_GLOBAL_BIT) {
-		auto globalValues = context->global->globalValues.GetForWrite();
+		auto globalValues = g_context->globalValues.GetForWrite();
 		globalValues[valueIdx & VALUE_GLOBAL_MASK].flags |= flags;
 	}
 	else
@@ -202,27 +202,27 @@ String X64IRValueToStr(JobContext *context, IRValue value, BucketArrayView<Value
 	}
 
 	u64 size = 0;
-	TypeInfo typeInfo = GetTypeInfo(context, StripAllAliases(context->global, value.typeTableIdx));
+	TypeInfo typeInfo = GetTypeInfo(context, StripAllAliases(value.typeTableIdx));
 	bool isXMM;
 	size = typeInfo.size;
 	Value v;
 	s64 offset = 0;
 
 	if (value.valueType == IRVALUETYPE_PROCEDURE) {
-		result = GetProcedureRead(context->global, value.procedureIdx).name;
+		result = GetProcedureRead(value.procedureIdx).name;
 		goto decoratePtr;
 	}
 
 	if (value.valueType == IRVALUETYPE_MEMORY)
 		offset = value.mem.offset;
 
-	v = PIRGetValue(context->global, localValues, value.valueIdx);
+	v = PIRGetValue(localValues, value.valueIdx);
 
 	if (v.flags & (VALUEFLAGS_ON_STATIC_STORAGE | VALUEFLAGS_IS_EXTERNAL)) {
 		if (v.flags & VALUEFLAGS_IS_EXTERNAL)
 			result = StringExpand(v.externalSymbolName);
 		else {
-			u8 *ptrToStaticData = *(u8 **)HashMapGet(context->global->globalValueContents,
+			u8 *ptrToStaticData = *(u8 **)HashMapGet(g_context->globalValueContents,
 					value.valueIdx & VALUE_GLOBAL_MASK);
 			ASSERT(ptrToStaticData >= STATIC_DATA_VIRTUAL_ADDRESS &&
 					ptrToStaticData < STATIC_DATA_VIRTUAL_ADDRESS_END);
@@ -237,7 +237,7 @@ String X64IRValueToStr(JobContext *context, IRValue value, BucketArrayView<Value
 
 		// Array indexing
 		if (value.valueType == IRVALUETYPE_MEMORY && value.mem.elementSize > 0) {
-			u32 indexTypeIdx = PIRGetValue(context->global, localValues, value.mem.indexValueIdx).typeTableIdx;
+			u32 indexTypeIdx = PIRGetValue(localValues, value.mem.indexValueIdx).typeTableIdx;
 			String indexRegisterStr = X64IRValueToStr(context,
 					IRValueValue(value.mem.indexValueIdx, indexTypeIdx), localValues);
 			result = TPrintF("%S+%S*%llu", result, indexRegisterStr, value.mem.elementSize);
@@ -313,7 +313,7 @@ String X64IRValueToStr(JobContext *context, IRValue value, BucketArrayView<Value
 
 		// Array indexing
 		if (value.valueType == IRVALUETYPE_MEMORY && value.mem.elementSize > 0) {
-			u32 indexTypeIdx = PIRGetValue(context->global, localValues,
+			u32 indexTypeIdx = PIRGetValue(localValues,
 					value.mem.indexValueIdx).typeTableIdx;
 			String indexRegisterStr = X64IRValueToStr(context,
 					IRValueValue(value.mem.indexValueIdx, indexTypeIdx), localValues);
@@ -434,12 +434,12 @@ inline void X64AddInstruction2(X64Context *context, SourceLocation loc, X64Instr
 	*BucketArrayAdd(&context->beInstructions) = { loc, type, dst, src };
 }
 
-void X64Mov(Context *context, SourceLocation loc, IRValue dst, IRValue src);
+void X64Mov(SourceLocation loc, IRValue dst, IRValue src);
 void X64MovNoTmp(X64Context *context, SourceLocation loc, IRValue dst, IRValue src)
 {
 	X64Instruction result = { loc };
-	TypeInfo dstType = GetTypeInfo(context, StripAllAliases(context->global, dst.typeTableIdx));
-	TypeInfo srcType = GetTypeInfo(context, StripAllAliases(context->global, src.typeTableIdx));
+	TypeInfo dstType = GetTypeInfo(context, StripAllAliases(dst.typeTableIdx));
+	TypeInfo srcType = GetTypeInfo(context, StripAllAliases(src.typeTableIdx));
 
 	// MOVUPS
 	if (dstType.size == 16) {
@@ -455,7 +455,7 @@ void X64MovNoTmp(X64Context *context, SourceLocation loc, IRValue dst, IRValue s
 	ASSERT(srcType.size <= 8);
 
 	if (dstType.size != srcType.size)
-		LogCompilerError(context->global, loc, TPrintF("Different sizes on MOV instruction: %d and %d",
+		LogCompilerError(loc, TPrintF("Different sizes on MOV instruction: %d and %d",
 					dstType.size, srcType.size));
 	if (srcType.typeCategory == TYPECATEGORY_PROCEDURE) {
 		// LEA
@@ -466,7 +466,7 @@ void X64MovNoTmp(X64Context *context, SourceLocation loc, IRValue dst, IRValue s
 	else if (dstType.typeCategory == TYPECATEGORY_FLOATING) {
 		// MOVSS and MOVSD
 		if (srcType.typeCategory != TYPECATEGORY_FLOATING)
-			LogCompilerError(context->global, loc, "Conversion of integer to float requires special"
+			LogCompilerError(loc, "Conversion of integer to float requires special"
 					" instruction"_s);
 
 		if (srcType.size == 4)
@@ -479,7 +479,7 @@ void X64MovNoTmp(X64Context *context, SourceLocation loc, IRValue dst, IRValue s
 	else {
 		// MOV
 		if (srcType.typeCategory == TYPECATEGORY_FLOATING)
-			LogCompilerError(context->global, loc, "Conversion of float to integer requires special"
+			LogCompilerError(loc, "Conversion of float to integer requires special"
 					" instruction"_s);
 
 		result.type = X64_MOV;
@@ -705,7 +705,7 @@ Array<u32, ThreadAllocator> X64ReadyWin64Parameters(X64Context *context, SourceL
 
 	for (int i = 0; i < parameterCount; ++i) {
 		IRValue param = parameters[i];
-		u32 paramTypeIdx = StripAllAliases(context->global, param.typeTableIdx);
+		u32 paramTypeIdx = StripAllAliases(param.typeTableIdx);
 		TypeInfo paramType = GetTypeInfo(context, paramTypeIdx);
 
 		if (isCaller && X64WinABIShouldPassByCopy(context, paramTypeIdx)) {
@@ -996,7 +996,7 @@ void X64ConvertInstruction(X64Context *context, IRInstruction inst)
 				 inst.type <= IRINSTRUCTIONTYPE_AssignmentEnd)
 			typeTableIdx = inst.assignment.dst.typeTableIdx;
 
-		typeTableIdx = StripAllAliases(context->global, typeTableIdx);
+		typeTableIdx = StripAllAliases(typeTableIdx);
 		TypeInfo typeInfo = GetTypeInfo(context, typeTableIdx);
 
 		if (typeInfo.typeCategory == TYPECATEGORY_FLOATING)
@@ -1019,8 +1019,8 @@ void X64ConvertInstruction(X64Context *context, IRInstruction inst)
 	{
 		IRValue dst = inst.assignment.dst;
 		IRValue src = inst.assignment.src;
-		TypeInfo dstType = GetTypeInfo(context, StripAllAliases(context->global, dst.typeTableIdx));
-		TypeInfo srcType = GetTypeInfo(context, StripAllAliases(context->global, src.typeTableIdx));
+		TypeInfo dstType = GetTypeInfo(context, StripAllAliases(dst.typeTableIdx));
+		TypeInfo srcType = GetTypeInfo(context, StripAllAliases(src.typeTableIdx));
 		ASSERT(dstType.typeCategory == TYPECATEGORY_FLOATING);
 		ASSERT(srcType.typeCategory != TYPECATEGORY_FLOATING);
 		// Immediates should be converted to float in previous stages.
@@ -1049,8 +1049,8 @@ void X64ConvertInstruction(X64Context *context, IRInstruction inst)
 	{
 		IRValue dst = inst.assignment.dst;
 		IRValue src = inst.assignment.src;
-		TypeInfo dstType = GetTypeInfo(context, StripAllAliases(context->global, dst.typeTableIdx));
-		TypeInfo srcType = GetTypeInfo(context, StripAllAliases(context->global, src.typeTableIdx));
+		TypeInfo dstType = GetTypeInfo(context, StripAllAliases(dst.typeTableIdx));
+		TypeInfo srcType = GetTypeInfo(context, StripAllAliases(src.typeTableIdx));
 		ASSERT(dstType.typeCategory != TYPECATEGORY_FLOATING);
 		ASSERT(srcType.typeCategory == TYPECATEGORY_FLOATING);
 		// X64_CVTTSD2SI and CVTTSD2SI are R-RM
@@ -1074,8 +1074,8 @@ void X64ConvertInstruction(X64Context *context, IRInstruction inst)
 	{
 		IRValue dst = inst.assignment.dst;
 		IRValue src = inst.assignment.src;
-		TypeInfo dstType = GetTypeInfo(context, StripAllAliases(context->global, dst.typeTableIdx));
-		TypeInfo srcType = GetTypeInfo(context, StripAllAliases(context->global, src.typeTableIdx));
+		TypeInfo dstType = GetTypeInfo(context, StripAllAliases(dst.typeTableIdx));
+		TypeInfo srcType = GetTypeInfo(context, StripAllAliases(src.typeTableIdx));
 		ASSERT(dstType.typeCategory == TYPECATEGORY_FLOATING);
 		ASSERT(srcType.typeCategory == TYPECATEGORY_FLOATING);
 
@@ -1101,8 +1101,8 @@ void X64ConvertInstruction(X64Context *context, IRInstruction inst)
 	{
 		IRValue dst = inst.assignment.dst;
 		IRValue src = inst.assignment.src;
-		TypeInfo dstType = GetTypeInfo(context, StripAllAliases(context->global, dst.typeTableIdx));
-		TypeInfo srcType = GetTypeInfo(context, StripAllAliases(context->global, src.typeTableIdx));
+		TypeInfo dstType = GetTypeInfo(context, StripAllAliases(dst.typeTableIdx));
+		TypeInfo srcType = GetTypeInfo(context, StripAllAliases(src.typeTableIdx));
 		ASSERT(dstType.typeCategory != TYPECATEGORY_FLOATING);
 		ASSERT(srcType.typeCategory != TYPECATEGORY_FLOATING);
 		ASSERT(dstType.size > srcType.size);
@@ -1126,8 +1126,8 @@ void X64ConvertInstruction(X64Context *context, IRInstruction inst)
 	{
 		IRValue dst = inst.assignment.dst;
 		IRValue src = inst.assignment.src;
-		TypeInfo dstType = GetTypeInfo(context, StripAllAliases(context->global, dst.typeTableIdx));
-		TypeInfo srcType = GetTypeInfo(context, StripAllAliases(context->global, src.typeTableIdx));
+		TypeInfo dstType = GetTypeInfo(context, StripAllAliases(dst.typeTableIdx));
+		TypeInfo srcType = GetTypeInfo(context, StripAllAliases(src.typeTableIdx));
 		ASSERT(dstType.typeCategory != TYPECATEGORY_FLOATING);
 		ASSERT(srcType.typeCategory != TYPECATEGORY_FLOATING);
 		ASSERT(dstType.size > srcType.size);
@@ -1157,8 +1157,8 @@ void X64ConvertInstruction(X64Context *context, IRInstruction inst)
 	{
 		IRValue dst = inst.assignment.dst;
 		IRValue src = inst.assignment.src;
-		TypeInfo dstType = GetTypeInfo(context, StripAllAliases(context->global, dst.typeTableIdx));
-		TypeInfo srcType = GetTypeInfo(context, StripAllAliases(context->global, src.typeTableIdx));
+		TypeInfo dstType = GetTypeInfo(context, StripAllAliases(dst.typeTableIdx));
+		TypeInfo srcType = GetTypeInfo(context, StripAllAliases(src.typeTableIdx));
 		ASSERT(dstType.typeCategory != TYPECATEGORY_FLOATING);
 		ASSERT(srcType.typeCategory != TYPECATEGORY_FLOATING);
 		ASSERT(dstType.size < srcType.size);
@@ -1227,13 +1227,13 @@ void X64ConvertInstruction(X64Context *context, IRInstruction inst)
 		case X64FLOATINGTYPE_F32:
 			result.type = X64_VXORPS;
 			result.src  = X64CopyToRegister(context, inst.loc, inst.unaryOperation.in);
-			result.src2 = IRValueImmediateF32(context->global, -0.0);
+			result.src2 = IRValueImmediateF32(-0.0);
 			result.src2.typeTableIdx = TYPETABLEIDX_128;
 			break;
 		case X64FLOATINGTYPE_F64:
 			result.type = X64_VXORPD;
 			result.src  = X64CopyToRegister(context, inst.loc, inst.unaryOperation.in);
-			result.src2 = IRValueImmediateF64(context->global, -0.0);
+			result.src2 = IRValueImmediateF64(-0.0);
 			result.src2.typeTableIdx = TYPETABLEIDX_128;
 			break;
 		}
@@ -1532,7 +1532,7 @@ void X64ConvertInstruction(X64Context *context, IRInstruction inst)
 			result.type = X64_CALL;
 			result.procedureIdx = inst.procedureCall.procedureIdx;
 
-			u32 procTypeIdx = GetProcedureRead(context->global, result.procedureIdx).typeTableIdx;
+			u32 procTypeIdx = GetProcedureRead(result.procedureIdx).typeTableIdx;
 			callingConvention = GetTypeInfo(context, procTypeIdx).procedureInfo.callingConvention;
 		}
 		else
@@ -1602,7 +1602,7 @@ void X64ConvertInstruction(X64Context *context, IRInstruction inst)
 		// Check syscalls
 		if (inst.type == IRINSTRUCTIONTYPE_PROCEDURE_CALL)
 		{
-			String procName = GetProcedureRead(context->global, inst.procedureCall.procedureIdx).name;
+			String procName = GetProcedureRead(inst.procedureCall.procedureIdx).name;
 			int syscallCount = ArrayCount(x64LinuxSyscallNames);
 			for (int i = 0; i < syscallCount; ++i)
 			{
@@ -2040,7 +2040,7 @@ String X64InstructionToStr(JobContext *context, X64Instruction inst,
 	switch (inst.type)
 	{
 	case X64_CALL:
-		return TPrintF("call %S", GetProcedureRead(context->global, inst.procedureIdx).name);
+		return TPrintF("call %S", GetProcedureRead(inst.procedureIdx).name);
 	case X64_CALL_Indirect:
 	{
 		String proc = X64IRValueToStr(context, inst.procedureIRValue, localValues);
@@ -2113,44 +2113,44 @@ inline s64 X64PrintInstruction(JobContext *context, X64Instruction inst,
 	BucketArrayView<Value> localValues)
 {
 	String instructionStr = X64InstructionToStr(context, inst, localValues);
-	return OutputBufferPut(context->global, instructionStr.size, instructionStr.data);
+	return OutputBufferPut(instructionStr.size, instructionStr.data);
 }
 
 #include "X64RegisterAllocation.cpp"
 
 void X64PrintInstructions(JobContext *context)
 {
-	auto beFinalProcedureData = context->global->beFinalProcedureData.GetForRead();
+	auto beFinalProcedureData = g_context->beFinalProcedureData.GetForRead();
 	int procCount = (int)beFinalProcedureData->size;
 	for (int finalProcIdx = 0; finalProcIdx < procCount; ++finalProcIdx) {
 		X64FinalProcedure finalProc = beFinalProcedureData[finalProcIdx];
-		Procedure proc = GetProcedureRead(context->global, finalProc.procedureIdx);
+		Procedure proc = GetProcedureRead(finalProc.procedureIdx);
 #if IS_WINDOWS
 		if (proc.isExported)
-			OutputBufferPrint(context->global, "\n%S PROC PUBLIC\n", proc.name);
+			OutputBufferPrint("\n%S PROC PUBLIC\n", proc.name);
 		else
-			OutputBufferPrint(context->global, "\n%S PROC PRIVATE\n", proc.name);
+			OutputBufferPrint("\n%S PROC PRIVATE\n", proc.name);
 #else
-		OutputBufferPrint(context->global, "\n%S:\n", proc.name);
+		OutputBufferPrint("\n%S:\n", proc.name);
 #endif
-		OutputBufferPrint(context->global, "push rbp\n");
-		OutputBufferPrint(context->global, "mov rbp, rsp\n");
+		OutputBufferPrint("push rbp\n");
+		OutputBufferPrint("mov rbp, rsp\n");
 		if (finalProc.stackSize > 0)
-			OutputBufferPrint(context->global, "sub rsp, 0%llxh\n", finalProc.stackSize);
+			OutputBufferPrint("sub rsp, 0%llxh\n", finalProc.stackSize);
 
 		X64InstructionStream stream = X64InstructionStreamBegin(&finalProc.instructions);
 		X64Instruction *inst = X64InstructionStreamAdvance(&stream);
 		while (inst) {
 			if (X64PrintInstruction(context, *inst, finalProc.localValues))
-				OutputBufferPrint(context->global, "\n");
+				OutputBufferPrint("\n");
 			inst = X64InstructionStreamAdvance(&stream);
 		}
 
-		OutputBufferPrint(context->global, "leave\n");
-		OutputBufferPrint(context->global, "ret\n");
+		OutputBufferPrint("leave\n");
+		OutputBufferPrint("ret\n");
 #if IS_WINDOWS
-		OutputBufferPut(context->global, proc.name.size, proc.name.data);
-		OutputBufferPrint(context->global, " ENDP\n");
+		OutputBufferPut(proc.name.size, proc.name.data);
+		OutputBufferPrint(" ENDP\n");
 #endif
 	}
 }
@@ -2165,7 +2165,7 @@ xed_encoder_operand_t X64IRValueToXEDOperand(JobContext *context, SourceLocation
 	xed_encoder_operand_t result = {};
 
 	u64 size = 0;
-	TypeInfo typeInfo = GetTypeInfo(context, StripAllAliases(context->global, value.typeTableIdx));
+	TypeInfo typeInfo = GetTypeInfo(context, StripAllAliases(value.typeTableIdx));
 	bool isXMM;
 	size = typeInfo.size;
 	Value v;
@@ -2191,7 +2191,7 @@ xed_encoder_operand_t X64IRValueToXEDOperand(JobContext *context, SourceLocation
 		offset = value.mem.offset;
 
 	if (value.valueIdx & VALUE_GLOBAL_BIT)
-		v = GetGlobalValue(context->global, value.valueIdx);
+		v = GetGlobalValue(value.valueIdx);
 	else
 		v = localValues[value.valueIdx];
 
@@ -2201,7 +2201,7 @@ xed_encoder_operand_t X64IRValueToXEDOperand(JobContext *context, SourceLocation
 			ASSERT(displacementRelocation->type == RELOCATIONTYPE_INVALID);
 			displacementRelocation->type = RELOCATIONTYPE_STATIC_DATA;
 
-			u8 *ptrToStaticData = *(u8 **)HashMapGet(context->global->globalValueContents,
+			u8 *ptrToStaticData = *(u8 **)HashMapGet(g_context->globalValueContents,
 					value.valueIdx & VALUE_GLOBAL_MASK);
 			ASSERT(ptrToStaticData >= STATIC_DATA_VIRTUAL_ADDRESS &&
 					ptrToStaticData < STATIC_DATA_VIRTUAL_ADDRESS_END);
@@ -2243,10 +2243,10 @@ xed_encoder_operand_t X64IRValueToXEDOperand(JobContext *context, SourceLocation
 	else if (!isXMM) {
 		if (v.allocatedRegister >= XMM0_idx)
 #if DEBUG_BUILD
-			LogCompilerError(context->global, loc, TPrintF("Value \"%S\" not allocated to GP register!",
+			LogCompilerError(loc, TPrintF("Value \"%S\" not allocated to GP register!",
 						v.name));
 #else
-			LogCompilerError(context->global, loc, "Value not allocated to GP register!"_s);
+			LogCompilerError(loc, "Value not allocated to GP register!"_s);
 #endif
 		xed_reg_enum_t reg;
 		switch (size) {
@@ -2315,14 +2315,14 @@ int X64InstructionToBytes(JobContext *context, X64Instruction x64Inst,
 			*DynamicArrayAdd(&g_relocations) = {
 				.type = RELOCATIONTYPE_PROCEDURE,
 				.procedureIdx = x64Inst.procedureIdx,
-				.destOffset = context->global->outputBufferOffset + 1
+				.destOffset = g_context->outputBufferOffset + 1
 			};
 		}
 		else {
 			*DynamicArrayAdd(&g_relocations) = {
 				.type = RELOCATIONTYPE_EXTERNAL_PROCEDURE,
 				.procedureIdx = x64Inst.procedureIdx & PROCEDURE_EXTERNAL_MASK,
-				.destOffset = context->global->outputBufferOffset + 1
+				.destOffset = g_context->outputBufferOffset + 1
 			};
 		}
 
@@ -2344,7 +2344,7 @@ int X64InstructionToBytes(JobContext *context, X64Instruction x64Inst,
 		*DynamicArrayAdd(&g_relocations) = {
 			.type = RELOCATIONTYPE_LABEL,
 			.label = x64Inst.label,
-			.destOffset = context->global->outputBufferOffset + 1
+			.destOffset = g_context->outputBufferOffset + 1
 		};
 		// @Todo: smaller displacement bitwidth when possible
 		xed_encoder_operand_t disp = xed_relbr(0xCCCCCCCC, 32);
@@ -2368,7 +2368,7 @@ int X64InstructionToBytes(JobContext *context, X64Instruction x64Inst,
 		*DynamicArrayAdd(&g_relocations) = {
 			.type = RELOCATIONTYPE_LABEL,
 			.label = x64Inst.label,
-			.destOffset = context->global->outputBufferOffset + 2
+			.destOffset = g_context->outputBufferOffset + 2
 		};
 		// @Todo: smaller displacement bitwidth when possible
 		xed_encoder_operand_t disp = xed_relbr(0xCCCCCCCC, 32);
@@ -2376,7 +2376,7 @@ int X64InstructionToBytes(JobContext *context, X64Instruction x64Inst,
 		goto encode;
 	}
 	case X64_Label:
-		x64Inst.label->address = context->global->outputBufferOffset;
+		x64Inst.label->address = g_context->outputBufferOffset;
 		return 0;
 	case X64_Comment:
 	case X64_Ignore:
@@ -2450,12 +2450,12 @@ encode:
 		unsigned int len;
 		xed_error_enum_t error = xed_encode(&req, buffer, 16, &len);
 		if (error != XED_ERROR_NONE)
-			LogCompilerError(context->global, x64Inst.loc, "Could not encode instruction"_s);
+			LogCompilerError(x64Inst.loc, "Could not encode instruction"_s);
 		ASSERT(len > 0 && len < 16);
 
 		if (displacementRelocation.type != RELOCATIONTYPE_INVALID) {
 			s32 sizeOfImmediate = xed_decoded_inst_get_immediate_width(&req);
-			displacementRelocation.destOffset = context->global->outputBufferOffset + len;
+			displacementRelocation.destOffset = g_context->outputBufferOffset + len;
 			displacementRelocation.destOffset -= sizeOfImmediate;
 			displacementRelocation.destOffset -= 4; // Size of displacement
 			displacementRelocation.offsetShift = sizeOfImmediate;
@@ -2468,29 +2468,29 @@ encode:
 
 void X64EncodeInstructions(JobContext *context)
 {
-	auto beFinalProcedureData = context->global->beFinalProcedureData.GetForRead();
+	auto beFinalProcedureData = g_context->beFinalProcedureData.GetForRead();
 	int procCount = (int)beFinalProcedureData->size;
 	for (int finalProcIdx = 0; finalProcIdx < procCount; ++finalProcIdx)
 	{
 		X64FinalProcedure finalProc = beFinalProcedureData[finalProcIdx];
-		Procedure proc = GetProcedureRead(context->global, finalProc.procedureIdx);
+		Procedure proc = GetProcedureRead(finalProc.procedureIdx);
 
-		g_procedureAddresses[finalProc.procedureIdx] = context->global->outputBufferOffset;
+		g_procedureAddresses[finalProc.procedureIdx] = g_context->outputBufferOffset;
 
 		u8 buffer[16];
 		int bytes;
 
 		// push rbp
 		bytes = X64InstructionToBytes(context, { {}, X64_PUSH, RBP }, {}, buffer);
-		OutputBufferPut(context->global, bytes, buffer);
+		OutputBufferPut(bytes, buffer);
 		// mov rbp, rsp
 		bytes = X64InstructionToBytes(context, { {}, X64_MOV, RBP, RSP }, {}, buffer);
-		OutputBufferPut(context->global, bytes, buffer);
+		OutputBufferPut(bytes, buffer);
 		if (finalProc.stackSize > 0) {
 			// sub rsp, $stack_size
 			bytes = X64InstructionToBytes(context, { {}, X64_SUB, RSP,
 					IRValueImmediate(finalProc.stackSize, TYPETABLEIDX_U32) }, {}, buffer);
-			OutputBufferPut(context->global, bytes, buffer);
+			OutputBufferPut(bytes, buffer);
 		}
 
 		X64InstructionStream stream = X64InstructionStreamBegin(&finalProc.instructions);
@@ -2498,21 +2498,21 @@ void X64EncodeInstructions(JobContext *context)
 		while (inst)
 		{
 			bytes = X64InstructionToBytes(context, *inst, finalProc.localValues, buffer);
-			OutputBufferPut(context->global, bytes, buffer);
+			OutputBufferPut(bytes, buffer);
 			inst = X64InstructionStreamAdvance(&stream);
 		}
 
 		// leave
 		bytes = X64InstructionToBytes(context, { {}, X64_LEAVE }, {}, buffer);
-		OutputBufferPut(context->global, bytes, buffer);
+		OutputBufferPut(bytes, buffer);
 		// ret
 		bytes = X64InstructionToBytes(context, { {}, X64_RET }, {}, buffer);
-		OutputBufferPut(context->global, bytes, buffer);
+		OutputBufferPut(bytes, buffer);
 	}
 }
 #endif
 
-void PrintOutEscapedString(Context *context, String str)
+void PrintOutEscapedString(String str)
 {
 	bool first = true;
 	char *buffer = (char *)t_threadMemPtr;
@@ -2521,7 +2521,7 @@ void PrintOutEscapedString(Context *context, String str)
 	for (int i = 0; i < str.size; ++i) {
 		// MASM uses ' as string delimiters, so we escape them
 		if (*in < 32 || *in == '\'') {
-			if (!first) OutputBufferPrint(context, ", ");
+			if (!first) OutputBufferPrint(", ");
 
 			char number[3];
 			char digit0 = (*in >> 4) & 0xF;
@@ -2529,7 +2529,7 @@ void PrintOutEscapedString(Context *context, String str)
 			char digit1 = *in & 0xF;
 			number[1] = digit1 > 0x9 ? 'A'-0xA+digit1 : '0'+digit1;
 			number[2] = 'h';
-			OutputBufferPut(context, 3, number);
+			OutputBufferPut(3, number);
 			++in;
 			first = false;
 		}
@@ -2539,8 +2539,8 @@ void PrintOutEscapedString(Context *context, String str)
 				*out++ = 0;
 				t_threadMemPtr = out;
 
-				if (!first) OutputBufferPrint(context, ", ");
-				OutputBufferPrint(context, "'%s'", buffer);
+				if (!first) OutputBufferPrint(", ");
+				OutputBufferPrint("'%s'", buffer);
 				out = buffer;
 
 				first = false;
@@ -2554,10 +2554,10 @@ void PrintOutEscapedString(Context *context, String str)
 	t_threadMemPtr = buffer;
 }
 
-void BackendMain(Context *context)
+void BackendMain()
 {
 	{
-		auto finalProcs = context->beFinalProcedureData.GetForWrite();
+		auto finalProcs = g_context->beFinalProcedureData.GetForWrite();
 		DynamicArrayInit(&finalProcs, 256);
 	}
 
@@ -2728,45 +2728,45 @@ void BackendMain(Context *context)
 #endif
 
 	const u8 regValueFlags = VALUEFLAGS_IS_USED | VALUEFLAGS_IS_ALLOCATED;
-	u32 RAX_valueIdx = NewGlobalValue(context, "RAX"_s, TYPETABLEIDX_S64, regValueFlags);
-	u32 RCX_valueIdx = NewGlobalValue(context, "RCX"_s, TYPETABLEIDX_S64, regValueFlags);
-	u32 RDX_valueIdx = NewGlobalValue(context, "RDX"_s, TYPETABLEIDX_S64, regValueFlags);
-	u32 RBX_valueIdx = NewGlobalValue(context, "RBX"_s, TYPETABLEIDX_S64, regValueFlags);
-	u32 RSI_valueIdx = NewGlobalValue(context, "RSI"_s, TYPETABLEIDX_S64, regValueFlags);
-	u32 RDI_valueIdx = NewGlobalValue(context, "RDI"_s, TYPETABLEIDX_S64, regValueFlags);
-	u32 RSP_valueIdx = NewGlobalValue(context, "RSP"_s, TYPETABLEIDX_S64, regValueFlags);
-	u32 RBP_valueIdx = NewGlobalValue(context, "RBP"_s, TYPETABLEIDX_S64, regValueFlags);
-	u32 R8_valueIdx  = NewGlobalValue(context, "R8"_s,  TYPETABLEIDX_S64, regValueFlags);
-	u32 R9_valueIdx  = NewGlobalValue(context, "R9"_s,  TYPETABLEIDX_S64, regValueFlags);
-	u32 R10_valueIdx = NewGlobalValue(context, "R10"_s, TYPETABLEIDX_S64, regValueFlags);
-	u32 R11_valueIdx = NewGlobalValue(context, "R11"_s, TYPETABLEIDX_S64, regValueFlags);
-	u32 R12_valueIdx = NewGlobalValue(context, "R12"_s, TYPETABLEIDX_S64, regValueFlags);
-	u32 R13_valueIdx = NewGlobalValue(context, "R13"_s, TYPETABLEIDX_S64, regValueFlags);
-	u32 R14_valueIdx = NewGlobalValue(context, "R14"_s, TYPETABLEIDX_S64, regValueFlags);
-	u32 R15_valueIdx = NewGlobalValue(context, "R15"_s, TYPETABLEIDX_S64, regValueFlags);
+	u32 RAX_valueIdx = NewGlobalValue("RAX"_s, TYPETABLEIDX_S64, regValueFlags);
+	u32 RCX_valueIdx = NewGlobalValue("RCX"_s, TYPETABLEIDX_S64, regValueFlags);
+	u32 RDX_valueIdx = NewGlobalValue("RDX"_s, TYPETABLEIDX_S64, regValueFlags);
+	u32 RBX_valueIdx = NewGlobalValue("RBX"_s, TYPETABLEIDX_S64, regValueFlags);
+	u32 RSI_valueIdx = NewGlobalValue("RSI"_s, TYPETABLEIDX_S64, regValueFlags);
+	u32 RDI_valueIdx = NewGlobalValue("RDI"_s, TYPETABLEIDX_S64, regValueFlags);
+	u32 RSP_valueIdx = NewGlobalValue("RSP"_s, TYPETABLEIDX_S64, regValueFlags);
+	u32 RBP_valueIdx = NewGlobalValue("RBP"_s, TYPETABLEIDX_S64, regValueFlags);
+	u32 R8_valueIdx  = NewGlobalValue("R8"_s,  TYPETABLEIDX_S64, regValueFlags);
+	u32 R9_valueIdx  = NewGlobalValue("R9"_s,  TYPETABLEIDX_S64, regValueFlags);
+	u32 R10_valueIdx = NewGlobalValue("R10"_s, TYPETABLEIDX_S64, regValueFlags);
+	u32 R11_valueIdx = NewGlobalValue("R11"_s, TYPETABLEIDX_S64, regValueFlags);
+	u32 R12_valueIdx = NewGlobalValue("R12"_s, TYPETABLEIDX_S64, regValueFlags);
+	u32 R13_valueIdx = NewGlobalValue("R13"_s, TYPETABLEIDX_S64, regValueFlags);
+	u32 R14_valueIdx = NewGlobalValue("R14"_s, TYPETABLEIDX_S64, regValueFlags);
+	u32 R15_valueIdx = NewGlobalValue("R15"_s, TYPETABLEIDX_S64, regValueFlags);
 
-	u32 XMM0_valueIdx =  NewGlobalValue(context, "XMM0"_s,  TYPETABLEIDX_F64, regValueFlags);
-	u32 XMM1_valueIdx =  NewGlobalValue(context, "XMM1"_s,  TYPETABLEIDX_F64, regValueFlags);
-	u32 XMM2_valueIdx =  NewGlobalValue(context, "XMM2"_s,  TYPETABLEIDX_F64, regValueFlags);
-	u32 XMM3_valueIdx =  NewGlobalValue(context, "XMM3"_s,  TYPETABLEIDX_F64, regValueFlags);
-	u32 XMM4_valueIdx =  NewGlobalValue(context, "XMM4"_s,  TYPETABLEIDX_F64, regValueFlags);
-	u32 XMM5_valueIdx =  NewGlobalValue(context, "XMM5"_s,  TYPETABLEIDX_F64, regValueFlags);
-	u32 XMM6_valueIdx =  NewGlobalValue(context, "XMM6"_s,  TYPETABLEIDX_F64, regValueFlags);
-	u32 XMM7_valueIdx =  NewGlobalValue(context, "XMM7"_s,  TYPETABLEIDX_F64, regValueFlags);
-	u32 XMM8_valueIdx =  NewGlobalValue(context, "XMM8"_s,  TYPETABLEIDX_F64, regValueFlags);
-	u32 XMM9_valueIdx =  NewGlobalValue(context, "XMM9"_s,  TYPETABLEIDX_F64, regValueFlags);
-	u32 XMM10_valueIdx = NewGlobalValue(context, "XMM10"_s, TYPETABLEIDX_F64, regValueFlags);
-	u32 XMM11_valueIdx = NewGlobalValue(context, "XMM11"_s, TYPETABLEIDX_F64, regValueFlags);
-	u32 XMM12_valueIdx = NewGlobalValue(context, "XMM12"_s, TYPETABLEIDX_F64, regValueFlags);
-	u32 XMM13_valueIdx = NewGlobalValue(context, "XMM13"_s, TYPETABLEIDX_F64, regValueFlags);
-	u32 XMM14_valueIdx = NewGlobalValue(context, "XMM14"_s, TYPETABLEIDX_F64, regValueFlags);
-	u32 XMM15_valueIdx = NewGlobalValue(context, "XMM15"_s, TYPETABLEIDX_F64, regValueFlags);
+	u32 XMM0_valueIdx =  NewGlobalValue("XMM0"_s,  TYPETABLEIDX_F64, regValueFlags);
+	u32 XMM1_valueIdx =  NewGlobalValue("XMM1"_s,  TYPETABLEIDX_F64, regValueFlags);
+	u32 XMM2_valueIdx =  NewGlobalValue("XMM2"_s,  TYPETABLEIDX_F64, regValueFlags);
+	u32 XMM3_valueIdx =  NewGlobalValue("XMM3"_s,  TYPETABLEIDX_F64, regValueFlags);
+	u32 XMM4_valueIdx =  NewGlobalValue("XMM4"_s,  TYPETABLEIDX_F64, regValueFlags);
+	u32 XMM5_valueIdx =  NewGlobalValue("XMM5"_s,  TYPETABLEIDX_F64, regValueFlags);
+	u32 XMM6_valueIdx =  NewGlobalValue("XMM6"_s,  TYPETABLEIDX_F64, regValueFlags);
+	u32 XMM7_valueIdx =  NewGlobalValue("XMM7"_s,  TYPETABLEIDX_F64, regValueFlags);
+	u32 XMM8_valueIdx =  NewGlobalValue("XMM8"_s,  TYPETABLEIDX_F64, regValueFlags);
+	u32 XMM9_valueIdx =  NewGlobalValue("XMM9"_s,  TYPETABLEIDX_F64, regValueFlags);
+	u32 XMM10_valueIdx = NewGlobalValue("XMM10"_s, TYPETABLEIDX_F64, regValueFlags);
+	u32 XMM11_valueIdx = NewGlobalValue("XMM11"_s, TYPETABLEIDX_F64, regValueFlags);
+	u32 XMM12_valueIdx = NewGlobalValue("XMM12"_s, TYPETABLEIDX_F64, regValueFlags);
+	u32 XMM13_valueIdx = NewGlobalValue("XMM13"_s, TYPETABLEIDX_F64, regValueFlags);
+	u32 XMM14_valueIdx = NewGlobalValue("XMM14"_s, TYPETABLEIDX_F64, regValueFlags);
+	u32 XMM15_valueIdx = NewGlobalValue("XMM15"_s, TYPETABLEIDX_F64, regValueFlags);
 
 	for (int i = 0; i < X64REGISTER_Count; ++i)
 	{
-		Value v = GetGlobalValue(context, RAX_valueIdx + i);
+		Value v = GetGlobalValue(RAX_valueIdx + i);
 		v.allocatedRegister = i;
-		UpdateGlobalValue(context, RAX_valueIdx + i, &v);
+		UpdateGlobalValue(RAX_valueIdx + i, &v);
 	}
 
 	RAX  = IRValueValue(RAX_valueIdx, TYPETABLEIDX_S64);
@@ -2895,11 +2895,11 @@ int ComparePointers(const void *lhs, const void *rhs)
 	return (lhsNum > rhsNum) - (lhsNum < rhsNum);
 }
 
-String GetLinkerExtraArguments(Context *context)
+String GetLinkerExtraArguments()
 {
 	String extraLinkerArguments = {};
-	for (int i = 0; i < context->libsToLink.size; ++i) {
-		String libName = context->libsToLink[i];
+	for (int i = 0; i < g_context->libsToLink.size; ++i) {
+		String libName = g_context->libsToLink[i];
 		String libFullName;
 
 		// Working path relative
@@ -2922,7 +2922,7 @@ foundFullName:
 #if IS_WINDOWS
 	bool useWindowsSubsystem = false;
 	{
-		auto staticDefinitions = context->staticDefinitions.GetForRead();
+		auto staticDefinitions = g_context->staticDefinitions.GetForRead();
 		u64 staticDefinitionCount = staticDefinitions->count;
 		for (u64 i = 0; i < staticDefinitionCount; ++i)
 		{
@@ -2948,14 +2948,14 @@ foundFullName:
 	return extraLinkerArguments;
 }
 
-void GetOutputInfo(Context *context, String *outputFilename, String *outputPath,
+void GetOutputInfo(String *outputFilename, String *outputPath,
 		OutputType *outputType, DynamicArray<String, ThreadAllocator> *exportedSymbols)
 {
 	*outputFilename = "output/out"_s;
 
 	*outputType = OUTPUTTYPE_EXECUTABLE;
 	{
-		auto staticDefinitions = context->staticDefinitions.GetForRead();
+		auto staticDefinitions = g_context->staticDefinitions.GetForRead();
 		u64 staticDefinitionCount = staticDefinitions->count;
 		for (u64 i = 0; i < staticDefinitionCount; ++i)
 		{
@@ -2972,7 +2972,7 @@ void GetOutputInfo(Context *context, String *outputFilename, String *outputPath,
 				ASSERT(currentDef->constant.type == CONSTANTTYPE_INTEGER);
 				*outputType = (OutputType)currentDef->constant.valueAsInt;
 				if (*outputType < 0 || *outputType >= OUTPUTTYPE_Count)
-					LogError(context, {}, "Invalid output type"_s);
+					LogError({}, "Invalid output type"_s);
 			}
 		}
 	}
@@ -2989,7 +2989,7 @@ void GetOutputInfo(Context *context, String *outputFilename, String *outputPath,
 	*exportedSymbols = {};
 	if (*outputType != OUTPUTTYPE_EXECUTABLE) {
 		DynamicArrayInit(exportedSymbols, 8);
-		auto externalProcedures = context->procedures.GetForRead();
+		auto externalProcedures = g_context->procedures.GetForRead();
 		for (int i = 0; i < externalProcedures->count; ++i) {
 			Procedure proc = externalProcedures[i];
 			if (proc.isExported)
@@ -2998,34 +2998,34 @@ void GetOutputInfo(Context *context, String *outputFilename, String *outputPath,
 	}
 }
 
-void BackendGenerateOutputFile(Context *context)
+void BackendGenerateOutputFile()
 {
-	JobContext fakeJobContext = { context, U32_MAX };
+	JobContext fakeJobContext = { U32_MAX };
 
-	OutputBufferReset(context);
+	OutputBufferReset();
 
 #if IS_WINDOWS
-	OutputBufferPrint(context, "_DATA SEGMENT\n");
+	OutputBufferPrint("_DATA SEGMENT\n");
 #else
-	OutputBufferPrint(context, "section .data\n");
+	OutputBufferPrint("section .data\n");
 #endif
 
-	OutputBufferPrint(context, "ALIGN 16\n");
+	OutputBufferPrint("ALIGN 16\n");
 
 	{
 		auto scope = ProfilerScope("Writing all static variables");
 
-		OutputBufferPrint(context, "__start_of_static_data:\n");
+		OutputBufferPrint("__start_of_static_data:\n");
 
-		qsort(context->staticDataPointersToRelocate.data,
-				context->staticDataPointersToRelocate.size,
+		qsort(g_context->staticDataPointersToRelocate.data,
+				g_context->staticDataPointersToRelocate.size,
 				sizeof(void *), ComparePointers);
 
 		{
 			u8 *scan = STATIC_DATA_VIRTUAL_ADDRESS;
-			u8 *end  = scan + context->staticDataSize;
+			u8 *end  = scan + g_context->staticDataSize;
 			u64 nextPointerIdx = 0;
-			void *nextPointerToRelocate = (u8 *)context->staticDataPointersToRelocate[nextPointerIdx];
+			void *nextPointerToRelocate = (u8 *)g_context->staticDataPointersToRelocate[nextPointerIdx];
 			while (scan < end) {
 				u8 *current = scan;
 				if (scan == nextPointerToRelocate) {
@@ -3038,17 +3038,17 @@ void BackendGenerateOutputFile(Context *context)
 
 					if (qword != 0) {
 						u64 offset = qword - (u64)STATIC_DATA_VIRTUAL_ADDRESS;
-						OutputBufferPrint(context, "DQ __start_of_static_data + 0%llXh", offset);
+						OutputBufferPrint("DQ __start_of_static_data + 0%llXh", offset);
 					}
 					else
-						OutputBufferPrint(context, "DQ 00h ;nullptr");
+						OutputBufferPrint("DQ 00h ;nullptr");
 					scan += 8;
 
 					// Find next pointer to relocate, skipping duplicates
 					++nextPointerIdx;
-					u64 pointersCount = context->staticDataPointersToRelocate.size;
+					u64 pointersCount = g_context->staticDataPointersToRelocate.size;
 					for (void *nextPtr = 0; nextPointerIdx < pointersCount; ++nextPointerIdx) {
-						nextPtr = context->staticDataPointersToRelocate[nextPointerIdx];
+						nextPtr = g_context->staticDataPointersToRelocate[nextPointerIdx];
 						if (nextPtr != nextPointerToRelocate) {
 							nextPointerToRelocate = nextPtr;
 							break;
@@ -3065,44 +3065,44 @@ void BackendGenerateOutputFile(Context *context)
 						   qword > (u64)STATIC_DATA_VIRTUAL_ADDRESS_END);
 #endif
 
-					OutputBufferPrint(context, "DQ 0%.16llXh", qword);
+					OutputBufferPrint("DQ 0%.16llXh", qword);
 					scan += 8;
 				}
 				else {
-					OutputBufferPrint(context, "DB 0%.2Xh", *scan++);
+					OutputBufferPrint("DB 0%.2Xh", *scan++);
 				}
-				OutputBufferPrint(context, "\t\t; static_data + 0x%llX\n", (u64)(current -
-								STATIC_DATA_VIRTUAL_ADDRESS));
+				OutputBufferPrint("\t\t; static_data + 0x%llX\n",
+						(u64)(current - STATIC_DATA_VIRTUAL_ADDRESS));
 			}
 		}
 
 #if IS_WINDOWS
-		OutputBufferPrint(context, "_DATA ENDS\n");
-		OutputBufferPrint(context, "_BSS SEGMENT\n");
+		OutputBufferPrint("_DATA ENDS\n");
+		OutputBufferPrint("_BSS SEGMENT\n");
 #else
-		OutputBufferPrint(context, "section .bss\n");
+		OutputBufferPrint("section .bss\n");
 #endif
 	}
 
 #if IS_WINDOWS
-	OutputBufferPrint(context, "_BSS ENDS\n");
+	OutputBufferPrint("_BSS ENDS\n");
 #endif
 
 #if IS_LINUX
-	u64 procedureCount = context->procedures.GetForRead(.count);
+	u64 procedureCount = g_context->procedures.GetForRead(.count);
 	for (int procedureIdx = 1; procedureIdx < procedureCount; ++procedureIdx) {
-		Procedure proc = GetProcedureRead(context, procedureIdx);
+		Procedure proc = GetProcedureRead(procedureIdx);
 		if (proc.isExported)
-			OutputBufferPrint(context, "GLOBAL %S\n", proc.name);
+			OutputBufferPrint("GLOBAL %S\n", proc.name);
 	}
 #endif
 
 	{
 		auto scope = ProfilerScope("Writing external variables");
 
-		auto externalVars = context->irExternalVariables.GetForRead();
+		auto externalVars = g_context->irExternalVariables.GetForRead();
 		for (int varIdx = 0; varIdx < externalVars->size; ++varIdx) {
-			Value v = GetGlobalValue(context, externalVars[varIdx]);
+			Value v = GetGlobalValue(externalVars[varIdx]);
 			s64 size = GetTypeInfo(&fakeJobContext, v.typeTableIdx).size;
 			String type;
 			switch (size) {
@@ -3114,9 +3114,9 @@ void BackendGenerateOutputFile(Context *context)
 			}
 			String name = StringExpand(v.externalSymbolName);
 #if IS_WINDOWS
-			OutputBufferPrint(context, "EXTRN %S:%S\n", name, type);
+			OutputBufferPrint("EXTRN %S:%S\n", name, type);
 #else
-			OutputBufferPrint(context, "EXTERN %S:%S\n", name, type);
+			OutputBufferPrint("EXTERN %S:%S\n", name, type);
 #endif
 		}
 	}
@@ -3124,73 +3124,72 @@ void BackendGenerateOutputFile(Context *context)
 	{
 		auto scope = ProfilerScope("Writing external procedures");
 
-		auto externalProcedures = context->externalProcedures.GetForRead();
+		auto externalProcedures = g_context->externalProcedures.GetForRead();
 		u64 externalProcedureCount = externalProcedures->count;
 		for (u32 procedureIdx = 1; procedureIdx < externalProcedureCount; ++procedureIdx) {
 			String procName = externalProcedures[procedureIdx].name;
 #if IS_WINDOWS
-			OutputBufferPrint(context, "EXTRN %S:proc\n", procName);
+			OutputBufferPrint("EXTRN %S:proc\n", procName);
 #else
-			OutputBufferPrint(context, "EXTERN %S\n", procName);
+			OutputBufferPrint("EXTERN %S\n", procName);
 #endif
 		}
 	}
 
 #if IS_WINDOWS
-	OutputBufferPrint(context, "_TEXT SEGMENT\n");
+	OutputBufferPrint("_TEXT SEGMENT\n");
 #else
-	OutputBufferPrint(context, "section .text\n");
+	OutputBufferPrint("section .text\n");
 #endif
 
 	// Code
 	X64PrintInstructions(&fakeJobContext);
 
 #if IS_WINDOWS
-	OutputBufferPrint(context, "_TEXT ENDS\n");
-	OutputBufferPrint(context, "END\n");
+	OutputBufferPrint("_TEXT ENDS\n");
+	OutputBufferPrint("END\n");
 #endif
 
 	String outputFilename, outputPath;
 	OutputType outputType;
 	DynamicArray<String, ThreadAllocator> exportedSymbols;
-	GetOutputInfo(context, &outputFilename, &outputPath, &outputType, &exportedSymbols);
+	GetOutputInfo(&outputFilename, &outputPath, &outputType, &exportedSymbols);
 
-	OutputBufferWriteToFile(context, ChangeFilenameExtension(outputFilename, ".asm"_s));
+	OutputBufferWriteToFile(ChangeFilenameExtension(outputFilename, ".asm"_s));
 
-	if (!context->config.silent)
+	if (!g_context->config.silent)
 		TimerSplit("X64 output file write"_s);
 
-	String extraLinkerArguments = GetLinkerExtraArguments(context);
+	String extraLinkerArguments = GetLinkerExtraArguments();
 
-	if (!context->config.dontCallAssembler)
-	{
+	if (!g_context->config.dontCallAssembler) {
 		ProfilerBegin("Calling assembler");
-		SYSRunAssembler(outputPath, outputFilename, ""_s, context->config.silent);
-		if (!context->config.silent)
+		SYSRunAssembler(outputPath, outputFilename, ""_s, g_context->config.silent);
+		if (!g_context->config.silent)
 			TimerSplit("Calling assembler"_s);
 		ProfilerEnd();
 
 		ProfilerBegin("Calling linker");
 		SYSRunLinker(outputPath, outputFilename, outputType, exportedSymbols,
-				extraLinkerArguments, context->config.silent);
-		if (!context->config.silent)
+				extraLinkerArguments, g_context->config.silent);
+		if (!g_context->config.silent)
 			TimerSplit("Calling linker"_s);
 		ProfilerEnd();
 	}
 }
 
 #if USE_OWN_ASSEMBLER
-void BackendGenerateWindowsObj(Context *context)
+void BackendGenerateWindowsObj()
 {
-	JobContext fakeJobContext = { context, U32_MAX };
+	JobContext fakeJobContext = { U32_MAX };
 
 	ProfilerBegin("Generating output image");
 	const int dataSectionIdx = 0;
 	const int codeSectionIdx = 1;
 
-	OutputBufferReset(context);
+	OutputBufferReset();
 
-	u64 procCount = context->procedures.unsafe.count;
+	u64 procCount = g_context->procedures.unsafe.count;
 	ArrayInit(&g_procedureAddresses, procCount);
 	g_procedureAddresses.size = procCount;
 
@@ -3244,13 +3243,13 @@ void BackendGenerateWindowsObj(Context *context)
 	codeSectionHeader.Characteristics = IMAGE_SCN_CNT_CODE;
 
 	// We write the headers later, skip for now
-	OutputBufferSeek(context, sizeof(header) + sizeof(dataSectionHeader) +
+	OutputBufferSeek(sizeof(header) + sizeof(dataSectionHeader) +
 			sizeof(codeSectionHeader));
 
 	// data section
-	OutputBufferAlign(context, 16);
-	u64 dataSectionOffset = context->outputBufferOffset;
-	OutputBufferPut(context, context->staticDataSize, STATIC_DATA_VIRTUAL_ADDRESS);
+	OutputBufferAlign(16);
+	u64 dataSectionOffset = g_context->outputBufferOffset;
+	OutputBufferPut(g_context->staticDataSize, STATIC_DATA_VIRTUAL_ADDRESS);
 
 	u32 startOfStaticDataSymbolIdx = (u32)symbolTable.size;
 	{
@@ -3270,15 +3269,15 @@ void BackendGenerateWindowsObj(Context *context)
 	}
 
 	// Remap pointers
-	qsort(context->staticDataPointersToRelocate.data,
-			context->staticDataPointersToRelocate.size,
+	qsort(g_context->staticDataPointersToRelocate.data,
+			g_context->staticDataPointersToRelocate.size,
 			sizeof(void *), ComparePointers);
 
-	u64 staticDataPtrCount = context->staticDataPointersToRelocate.size;
+	u64 staticDataPtrCount = g_context->staticDataPointersToRelocate.size;
 	u64 uniqueStaticDataPtrCount = 0;
 	void *lastPtr = nullptr;
 	for (int ptrIdx = 0; ptrIdx < staticDataPtrCount; ++ptrIdx) {
-		void *ptr = context->staticDataPointersToRelocate.data[ptrIdx];
+		void *ptr = g_context->staticDataPointersToRelocate.data[ptrIdx];
 		// Skip duplicates (this is important cause the linker WILL reallocate these twice
 		// additively)
 		if (ptr == lastPtr)
@@ -3295,23 +3294,23 @@ void BackendGenerateWindowsObj(Context *context)
 				   dataPtr < (u64)STATIC_DATA_VIRTUAL_ADDRESS_END);
 			u64 remappedPtr = dataPtr - (u64)STATIC_DATA_VIRTUAL_ADDRESS;
 
-			OutputBufferSeek(context, fileOffset);
-			OutputBufferPut(context, 8, &remappedPtr);
+			OutputBufferSeek(fileOffset);
+			OutputBufferPut(8, &remappedPtr);
 		}
 	}
 
 	// code section
-	OutputBufferSeek(context, context->outputBufferSize);
-	OutputBufferAlign(context, 16);
-	u64 codeSectionOffset = context->outputBufferOffset;
+	OutputBufferSeek(g_context->outputBufferSize);
+	OutputBufferAlign(16);
+	u64 codeSectionOffset = g_context->outputBufferOffset;
 	xed_tables_init();
 	X64EncodeInstructions(&fakeJobContext);
-	u64 codeSectionSize = context->outputBufferOffset - codeSectionOffset;
+	u64 codeSectionSize = g_context->outputBufferOffset - codeSectionOffset;
 
 	// Add procedures to symbol table
-	u32 externalProcCount = (u32)context->externalProcedures.unsafe.count;
+	u32 externalProcCount = (u32)g_context->externalProcedures.unsafe.count;
 	for (u32 procIdx = 1; procIdx < externalProcCount; ++procIdx) {
-		Procedure proc = context->externalProcedures.unsafe[procIdx];
+		Procedure proc = g_context->externalProcedures.unsafe[procIdx];
 		// Add name to string table
 		u32 nameStringTableOffset = stringTableOffset;
 		*DynamicArrayAdd(&stringTable) = proc.name;
@@ -3328,7 +3327,7 @@ void BackendGenerateWindowsObj(Context *context)
 		*DynamicArrayAdd(&symbolTable) = symbol;
 	}
 	for (u32 procIdx = 1; procIdx < procCount; ++procIdx) {
-		Procedure proc = context->procedures.unsafe[procIdx];
+		Procedure proc = g_context->procedures.unsafe[procIdx];
 		// Add name to string table
 		u32 nameStringTableOffset = stringTableOffset;
 		*DynamicArrayAdd(&stringTable) = proc.name;
@@ -3355,8 +3354,8 @@ void BackendGenerateWindowsObj(Context *context)
 		{
 			u64 procOffset = g_procedureAddresses[relocation.procedureIdx];
 			s32 offsetInBuffer;
-			OutputBufferSeek(context, relocation.destOffset);
-			OutputBufferRead(context, 4, &offsetInBuffer);
+			OutputBufferSeek(relocation.destOffset);
+			OutputBufferRead(4, &offsetInBuffer);
 			// We need to fit these into u32's
 			ASSERT(procOffset <= U32_MAX);
 			ASSERT(relocation.destOffset <= U32_MAX);
@@ -3364,36 +3363,36 @@ void BackendGenerateWindowsObj(Context *context)
 			s64 finalOffset = (s64)procOffset - (4 + (s64)relocation.destOffset) + offsetInBuffer -
 				relocation.offsetShift;
 			ASSERT(finalOffset >= S32_MIN && finalOffset <= S32_MAX);
-			OutputBufferSeek(context, relocation.destOffset);
-			OutputBufferPut(context, 4, &finalOffset);
+			OutputBufferSeek(relocation.destOffset);
+			OutputBufferPut(4, &finalOffset);
 		} break;
 		case RELOCATIONTYPE_LABEL:
 		{
 #if DEBUG_BUILD
 			s32 offsetInBuffer;
-			OutputBufferSeek(context, relocation.destOffset);
-			OutputBufferRead(context, 4, &offsetInBuffer);
+			OutputBufferSeek(relocation.destOffset);
+			OutputBufferRead(4, &offsetInBuffer);
 			ASSERT(offsetInBuffer == 0xCCCCCCCC);
 #endif
 			s64 finalOffset = (s64)relocation.label->address - (4 + (s64)relocation.destOffset) -
 				relocation.offsetShift;
 			ASSERT(finalOffset >= S32_MIN && finalOffset <= S32_MAX);
-			OutputBufferSeek(context, relocation.destOffset);
-			OutputBufferPut(context, 4, &finalOffset);
+			OutputBufferSeek(relocation.destOffset);
+			OutputBufferPut(4, &finalOffset);
 		} break;
 		}
 	}
 
 	// Static data relocation table
-	OutputBufferSeek(context, context->outputBufferSize);
-	OutputBufferAlign(context, 16);
-	u64 dataRelocationTableOffset = context->outputBufferOffset;
+	OutputBufferSeek(g_context->outputBufferSize);
+	OutputBufferAlign(16);
+	u64 dataRelocationTableOffset = g_context->outputBufferOffset;
 	IMAGE_RELOCATION imageRelocation;
 	imageRelocation.Type = IMAGE_REL_AMD64_ADDR64;
 	imageRelocation.SymbolTableIndex = startOfStaticDataSymbolIdx;
 	lastPtr = nullptr;
 	for (int ptrIdx = 0; ptrIdx < staticDataPtrCount; ++ptrIdx) {
-		void *ptr = context->staticDataPointersToRelocate.data[ptrIdx];
+		void *ptr = g_context->staticDataPointersToRelocate.data[ptrIdx];
 		if (ptr == lastPtr)
 			continue;
 		lastPtr = ptr;
@@ -3401,13 +3400,13 @@ void BackendGenerateWindowsObj(Context *context)
 		u64 sectionOffset = (u64)ptr - (u64)STATIC_DATA_VIRTUAL_ADDRESS;
 		ASSERT(sectionOffset <= U32_MAX);
 		imageRelocation.VirtualAddress = (u32)sectionOffset;
-		OutputBufferPut(context, sizeof(imageRelocation), &imageRelocation);
+		OutputBufferPut(sizeof(imageRelocation), &imageRelocation);
 	}
 
 	// Code relocation table
-	OutputBufferSeek(context, context->outputBufferSize);
-	OutputBufferAlign(context, 16);
-	u64 codeRelocationTableOffset = context->outputBufferOffset;
+	OutputBufferSeek(g_context->outputBufferSize);
+	OutputBufferAlign(16);
+	u64 codeRelocationTableOffset = g_context->outputBufferOffset;
 	u64 codeRelocationCount = 0;
 	for (int relIdx = 0; relIdx < g_relocations.size; ++relIdx) {
 		Relocation relocation = g_relocations[relIdx];
@@ -3424,7 +3423,7 @@ void BackendGenerateWindowsObj(Context *context)
 			imageRelocation.VirtualAddress = (u32)sectionOffset;
 			// +2 for section symbols, -1 because procedure index is 1-based.
 			imageRelocation.SymbolTableIndex = 1 + relocation.procedureIdx;
-			OutputBufferPut(context, sizeof(imageRelocation), &imageRelocation);
+			OutputBufferPut(sizeof(imageRelocation), &imageRelocation);
 			++codeRelocationCount;
 		} break;
 		case RELOCATIONTYPE_STATIC_DATA:
@@ -3433,30 +3432,30 @@ void BackendGenerateWindowsObj(Context *context)
 			ASSERT(sectionOffset <= U32_MAX);
 			imageRelocation.VirtualAddress = (u32)sectionOffset;
 			imageRelocation.SymbolTableIndex = dataSectionIdx; // Refer to symbol table order comment
-			OutputBufferPut(context, sizeof(imageRelocation), &imageRelocation);
+			OutputBufferPut(sizeof(imageRelocation), &imageRelocation);
 			++codeRelocationCount;
 		} break;
 		}
 	}
 
 	// Symbol table
-	OutputBufferAlign(context, 16);
-	u64 symbolTableOffset = context->outputBufferOffset;
+	OutputBufferAlign(16);
+	u64 symbolTableOffset = g_context->outputBufferOffset;
 	for (int symbolIdx = 0; symbolIdx < symbolTable.size; ++symbolIdx)
-		OutputBufferPut(context, sizeof(symbolTable.data[0]), &symbolTable[symbolIdx]);
+		OutputBufferPut(sizeof(symbolTable.data[0]), &symbolTable[symbolIdx]);
 
 	// String table
-	u64 stringTableStart = context->outputBufferOffset;
+	u64 stringTableStart = g_context->outputBufferOffset;
 	u32 stringTableTotalSize = stringTableOffset;
-	OutputBufferPut(context, 4, &stringTableTotalSize);
+	OutputBufferPut(4, &stringTableTotalSize);
 	u8 zero = 0;
 	for (int stringIdx = 0; stringIdx < stringTable.size; ++stringIdx) {
 		String str = stringTable[stringIdx];
-		OutputBufferPut(context, str.size, str.data);
-		OutputBufferPut(context, 1, &zero);
+		OutputBufferPut(str.size, str.data);
+		OutputBufferPut(1, &zero);
 	}
 	// Assert we had the total size right
-	ASSERT(context->outputBufferOffset == stringTableStart + stringTableTotalSize);
+	ASSERT(g_context->outputBufferOffset == stringTableStart + stringTableTotalSize);
 
 	// Fix headers
 	ASSERT(symbolTableOffset <= U32_MAX);
@@ -3464,8 +3463,8 @@ void BackendGenerateWindowsObj(Context *context)
 	ASSERT(symbolTable.size <= U32_MAX);
 	header.NumberOfSymbols = (u32)symbolTable.size;
 
-	ASSERT(context->staticDataSize <= U32_MAX);
-	dataSectionHeader.SizeOfRawData = (u32)context->staticDataSize;
+	ASSERT(g_context->staticDataSize <= U32_MAX);
+	dataSectionHeader.SizeOfRawData = (u32)g_context->staticDataSize;
 	ASSERT(dataSectionOffset <= U32_MAX);
 	dataSectionHeader.PointerToRawData = (u32)dataSectionOffset;
 	ASSERT(dataRelocationTableOffset <= U32_MAX);
@@ -3473,7 +3472,7 @@ void BackendGenerateWindowsObj(Context *context)
 	ASSERT(uniqueStaticDataPtrCount <= U16_MAX);
 	dataSectionHeader.NumberOfRelocations = (u16)uniqueStaticDataPtrCount;
 
-	ASSERT(context->staticDataSize <= U32_MAX);
+	ASSERT(g_context->staticDataSize <= U32_MAX);
 	codeSectionHeader.SizeOfRawData = (u32)codeSectionSize;
 	ASSERT(codeSectionOffset <= U32_MAX);
 	codeSectionHeader.PointerToRawData = (u32)codeSectionOffset;
@@ -3483,28 +3482,28 @@ void BackendGenerateWindowsObj(Context *context)
 	codeSectionHeader.NumberOfRelocations = (u16)codeRelocationCount;
 
 	// Write headers
-	OutputBufferSeek(context, 0);
-	OutputBufferPut(context, sizeof(header), &header);
-	OutputBufferPut(context, sizeof(dataSectionHeader), &dataSectionHeader);
-	OutputBufferPut(context, sizeof(codeSectionHeader), &codeSectionHeader);
+	OutputBufferSeek(0);
+	OutputBufferPut(sizeof(header), &header);
+	OutputBufferPut(sizeof(dataSectionHeader), &dataSectionHeader);
+	OutputBufferPut(sizeof(codeSectionHeader), &codeSectionHeader);
 
 	String outputFilename, outputPath;
 	OutputType outputType;
 	DynamicArray<String, ThreadAllocator> exportedSymbols;
-	GetOutputInfo(context, &outputFilename, &outputPath, &outputType, &exportedSymbols);
+	GetOutputInfo(&outputFilename, &outputPath, &outputType, &exportedSymbols);
 
-	OutputBufferWriteToFile(context, ChangeFilenameExtension(outputFilename, ".obj"_s));
+	OutputBufferWriteToFile(ChangeFilenameExtension(outputFilename, ".obj"_s));
 
-	if (!context->config.silent)
+	if (!g_context->config.silent)
 		TimerSplit("Generating output image"_s);
 
 	// Call linker
-	String extraLinkerArguments = GetLinkerExtraArguments(context);
+	String extraLinkerArguments = GetLinkerExtraArguments();
 
 	ProfilerBegin("Calling linker");
 	SYSRunLinker(outputPath, outputFilename, outputType, exportedSymbols, extraLinkerArguments,
-			context->config.silent);
-	if (!context->config.silent)
+			g_context->config.silent);
+	if (!g_context->config.silent)
 		TimerSplit("Calling linker"_s);
 	ProfilerEnd();
 }
@@ -3548,7 +3547,6 @@ void BackendJobProc(IRContext *irContext, u32 procedureIdx)
 	};
 
 	X64Context *context = ALLOC(LinearAllocator, X64Context);
-	context->global = irContext->global;
 	context->jobIdx = irContext->jobIdx;
 	context->procedureIdx = irContext->procedureIdx;
 	context->localValues = irContext->localValues;
@@ -3595,7 +3593,7 @@ void BackendJobProc(IRContext *irContext, u32 procedureIdx)
 		context->x64SpilledParametersWrite[paramIdx] = newValueIdx;
 	}
 
-	Procedure proc = GetProcedureRead(context->global, procedureIdx);
+	Procedure proc = GetProcedureRead(procedureIdx);
 	ASSERT(proc.astBody);
 	ASSERT(GetTypeInfo(context, proc.typeTableIdx).typeCategory == TYPECATEGORY_PROCEDURE);
 	TypeInfoProcedure procTypeInfo = GetTypeInfo(context, proc.typeTableIdx).procedureInfo;
@@ -3646,7 +3644,7 @@ void BackendJobProc(IRContext *irContext, u32 procedureIdx)
 
 #if DEBUG_BUILD
 		if (inst.loc.fileIdx != 0) {
-			FatSourceLocation fatLoc = ExpandSourceLocation(context->global, inst.loc);
+			FatSourceLocation fatLoc = ExpandSourceLocation(inst.loc);
 			if (inst.loc.fileIdx != lastFileIdx || fatLoc.line != lastLine)
 				*BucketArrayAdd(&context->beInstructions) = {
 					.loc = inst.loc,
@@ -3890,6 +3888,6 @@ unalignedMovups:;
 	finalProc.localValues = *context->localValues;
 	finalProc.instructions = context->beInstructions;
 	finalProc.stackSize = context->stackSize;
-	auto finalProcs = context->global->beFinalProcedureData.GetForWrite();
+	auto finalProcs = g_context->beFinalProcedureData.GetForWrite();
 	*DynamicArrayAdd(&finalProcs) = finalProc;
 }

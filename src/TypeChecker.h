@@ -284,20 +284,18 @@ struct InlineCall
 
 struct TCJobArgs
 {
-	Context *context;
 	ASTExpression *expression;
 };
 
 struct TCStructJobArgs
 {
-	Context *context;
 	u32 typeTableIdx;
 	ASTStructDeclaration astStructDecl;
 	String name;
 	bool isUnion;
 };
 
-void GenerateTypeCheckJobs(Context *context, ASTExpression *expression);
+void GenerateTypeCheckJobs(ASTExpression *expression);
 void TCStructJobProc(u32 jobIdx, void *args);
 
 struct TCContext : JobContext

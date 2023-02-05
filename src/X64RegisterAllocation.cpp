@@ -132,9 +132,9 @@ inline bool IsXMMFast(X64Context *context, u32 valueIdx)
 void DoLivenessAnalisisOnInstruction(X64Context *context, BasicBlock *basicBlock, X64Instruction *inst,
 		DynamicArray<u32, ThreadAllocator> *liveValues)
 {
-	Procedure *proc = &context->global->procedures.unsafe[context->procedureIdx];
+	Procedure *proc = &g_context->procedures.unsafe[context->procedureIdx];
 
-	if (context->global->config.logAllocationInfo) {
+	if (g_context->config.logAllocationInfo) {
 		if (inst->type != X64_Patch && inst->type != X64_Patch_Many) {
 			Print("\t");
 			s64 s = Print("%S", X64InstructionToStr(context, *inst, proc->localValues));
@@ -300,9 +300,9 @@ void DoLivenessAnalisisOnInstruction(X64Context *context, BasicBlock *basicBlock
 void DoLivenessAnalisis(X64Context *context, BasicBlock *basicBlock,
 		DynamicArray<u32, ThreadAllocator> *liveValues)
 {
-	if (context->global->config.logAllocationInfo)
+	if (g_context->config.logAllocationInfo)
 		Print("Doing liveness analisis on block %S %d-%d\n",
-				GetProcedureRead(context->global, context->procedureIdx).name,
+				GetProcedureRead(context->procedureIdx).name,
 				basicBlock->beginIdx, basicBlock->endIdx);
 
 	for (int i = 0; i < basicBlock->liveValuesAtOutput.size; ++i)
@@ -344,11 +344,11 @@ void DoLivenessAnalisis(X64Context *context, BasicBlock *basicBlock,
 
 void GenerateBasicBlocks(X64Context *context)
 {
-	Procedure *proc = &context->global->procedures.unsafe[context->procedureIdx];
+	Procedure *proc = &g_context->procedures.unsafe[context->procedureIdx];
 
-	if (context->global->config.logAllocationInfo)
+	if (g_context->config.logAllocationInfo)
 		Print("GENERATING BASIC BLOCKS FOR %S\n",
-				GetProcedureRead(context->global, context->procedureIdx).name);
+				GetProcedureRead(context->procedureIdx).name);
 
 	BasicBlock *currentBasicBlock = PushBasicBlock(context, nullptr);
 
@@ -356,11 +356,11 @@ void GenerateBasicBlocks(X64Context *context)
 	for (int instructionIdx = 0; instructionIdx < instructionCount; ++instructionIdx) {
 		X64Instruction inst = context->beInstructions[instructionIdx];
 
-		if (context->global->config.logAllocationInfo)
+		if (g_context->config.logAllocationInfo)
 			Print("\t%S\n", X64InstructionToStr(context, inst, proc->localValues));
 
 		if (inst.type >= X64_Jump_Begin && inst.type <= X64_Jump_End) {
-			if (context->global->config.logAllocationInfo)
+			if (g_context->config.logAllocationInfo)
 				Print("- Split because of jump\n");
 
 			currentBasicBlock->endIdx = instructionIdx;
@@ -378,7 +378,7 @@ void GenerateBasicBlocks(X64Context *context)
 		{
 			// If we're not in a brand new block, push a new one
 			if (currentBasicBlock->beginIdx != instructionIdx) {
-				if (context->global->config.logAllocationInfo)
+				if (g_context->config.logAllocationInfo)
 					Print("- Split because of label \"%S\"\n", inst.label->name);
 
 				currentBasicBlock->endIdx = instructionIdx - 1;
@@ -397,7 +397,7 @@ void GenerateBasicBlocks(X64Context *context)
 	currentBasicBlock->endIdx = instructionCount - 1;
 	context->beLeafBasicBlock = currentBasicBlock;
 
-	if (context->global->config.logAllocationInfo)
+	if (g_context->config.logAllocationInfo)
 		Print("- End\n\n");
 
 	// Link basic blocks together
@@ -585,7 +585,7 @@ inline u64 RegisterSavingInstruction(X64Context *context, X64Instruction *inst, 
 
 void X64AllocateRegisters(X64Context *context)
 {
-	Procedure *proc = &context->global->procedures.unsafe[context->procedureIdx];
+	Procedure *proc = &g_context->procedures.unsafe[context->procedureIdx];
 
 	BucketArrayInit(&context->beBasicBlocks);
 
@@ -616,7 +616,7 @@ void X64AllocateRegisters(X64Context *context)
 		for (int valueIdx = 1; valueIdx < valueCount; ++valueIdx) {
 			u32 typeTableIdx = X64GetValue(context, valueIdx).typeTableIdx;
 			if (typeTableIdx >= 0) {
-				TypeInfo typeInfo = GetTypeInfo(context, StripAllAliases(context->global, typeTableIdx));
+				TypeInfo typeInfo = GetTypeInfo(context, StripAllAliases(typeTableIdx));
 				bool isXMM = typeInfo.size > 8 || typeInfo.typeCategory == TYPECATEGORY_FLOATING;
 				if (isXMM)
 					BitfieldSetBit(context->valueIsXmmBits, valueIdx);
@@ -633,7 +633,7 @@ void X64AllocateRegisters(X64Context *context)
 	BasicBlock *currentLeafBlock = context->beLeafBasicBlock;
 
 #if USE_PROFILER_API
-	String procName = GetProcedureRead(context->global, context->procedureIdx).name;
+	String procName = GetProcedureRead(context->procedureIdx).name;
 	ProfilerBegin("Liveness analisis", StringToCStr(procName, ThreadAllocator::Alloc), PERFORMANCEAPI_DEFAULT_COLOR);
 #endif
 
@@ -656,7 +656,7 @@ void X64AllocateRegisters(X64Context *context)
 
 	InterferenceGraph interferenceGraph = context->beInterferenceGraph;
 
-	if (context->global->config.logAllocationInfo) {
+	if (g_context->config.logAllocationInfo) {
 		for (u32 nodeIdx = 0; nodeIdx < interferenceGraph.count; ++nodeIdx) {
 			u32 currentNodeValueIdx = interferenceGraph.valueIndices[nodeIdx];
 			HashSet<u32, ThreadAllocator> currentNodeEdges = interferenceGraph.edges[nodeIdx];
@@ -838,7 +838,7 @@ skipImmitate:
 			u64 registerBit = 1ull << candidate;
 			if (!(usedRegisters & registerBit)) {
 #if DEBUG_BUILD
-				TypeInfo t = GetTypeInfo(context, StripAllAliases(context->global, v->typeTableIdx));
+				TypeInfo t = GetTypeInfo(context, StripAllAliases(v->typeTableIdx));
 				if (t.typeCategory == TYPECATEGORY_FLOATING || t.size > 8)
 					ASSERT(candidate >= XMM0_idx);
 				else
@@ -871,7 +871,7 @@ skipImmitate:
 	}
 
 	// Don't save registers used to return values
-	u32 procTypeIdx = GetProcedureRead(context->global, context->procedureIdx).typeTableIdx;
+	u32 procTypeIdx = GetProcedureRead(context->procedureIdx).typeTableIdx;
 	TypeInfoProcedure procTypeInfo = GetTypeInfo(context, procTypeIdx).procedureInfo;
 	u64 returnValueCount = procTypeInfo.returnTypeIndices.size;
 	for (int i = 1; i < returnValueCount; ++i) {

@@ -117,12 +117,12 @@ String OperatorToString(s32 op)
 }
 
 #if PRINT_TOKEN_SOURCE_LOCATION
-void PrintSourceLocation(Context *context, SourceLocation loc)
+void PrintSourceLocation(SourceLocation loc)
 {
 	const char *colorCode = "\u001b[36m";
 	const char *clearCode = "\u001b[0m";
 
-	SourceFile sourceFile = context->sourceFiles[loc.fileIdx];
+	SourceFile sourceFile = g_context->sourceFiles[loc.fileIdx];
 
 	String beforeToken = {};
 	String token = {};
@@ -132,10 +132,8 @@ void PrintSourceLocation(Context *context, SourceLocation loc)
 	int size = 0;
 	int l = 1;
 	ASSERT(loc.line > 0);
-	for (const char *scan = (const char *)sourceFile.buffer; *scan; ++scan)
-	{
-		if (l == loc.line)
-		{
+	for (const char *scan = (const char *)sourceFile.buffer; *scan; ++scan) {
+		if (l == loc.line) {
 			beginningOfLine = scan;
 			break;
 		}
@@ -143,19 +141,15 @@ void PrintSourceLocation(Context *context, SourceLocation loc)
 			++l;
 	}
 	s64 relativeChar = loc.character;
-	for (const char *scan = beginningOfLine; *scan; ++scan)
-	{
-		if (!IsWhitespace(*scan))
-		{
+	for (const char *scan = beginningOfLine; *scan; ++scan) {
+		if (!IsWhitespace(*scan)) {
 			beginningOfLine = scan;
 			break;
 		}
 		--relativeChar;
 	}
-	if (beginningOfLine)
-	{
-		for (const char *scan = beginningOfLine; ; ++scan)
-		{
+	if (beginningOfLine) {
+		for (const char *scan = beginningOfLine; ; ++scan) {
 			if (!*scan || *scan == '\n' || *scan == '\r')
 				break;
 			++size;
@@ -183,8 +177,8 @@ void Indent()
 		Print("+-");
 }
 
-void PrintExpression(Context *context, const ASTExpression *e);
-void PrintASTType(Context *context, const ASTType *type)
+void PrintExpression(const ASTExpression *e);
+void PrintASTType(const ASTType *type)
 {
 	Indent();
 	if (!type)
@@ -210,7 +204,7 @@ void PrintASTType(Context *context, const ASTType *type)
 		Print("\n");
 
 		++indentLevels;
-		PrintASTType(context, type->pointedType);
+		PrintASTType(type->pointedType);
 		--indentLevels;
 	} break;
 	case ASTTYPENODETYPE_ARRAY:
@@ -223,34 +217,32 @@ void PrintASTType(Context *context, const ASTType *type)
 		++indentLevels;
 		Indent();
 		Print("Count:\n");
-		PrintExpression(context, type->arrayCountExp);
+		PrintExpression(type->arrayCountExp);
 
-		PrintASTType(context, type->arrayType);
+		PrintASTType(type->arrayType);
 		--indentLevels;
 	} break;
 	case ASTTYPENODETYPE_STRUCT_DECLARATION:
 	{
 		Print("Struct");
 
-		PrintSourceLocation(context, type->loc);
+		PrintSourceLocation(type->loc);
 		Print("\n");
 
 		++indentLevels;
-		for (int i = 0; i < type->structDeclaration.members.size; ++i)
-		{
+		for (int i = 0; i < type->structDeclaration.members.size; ++i) {
 			const ASTStructMemberDeclaration *member = &type->structDeclaration.members[i];
 
 			Indent();
 			Print("Struct member \"%S\" of type:\n", member->name);
 
 			++indentLevels;
-			PrintASTType(context, member->astType);
+			PrintASTType(member->astType);
 			--indentLevels;
 
-			if (member->value)
-			{
+			if (member->value) {
 				++indentLevels;
-				PrintExpression(context, member->value);
+				PrintExpression(member->value);
 				--indentLevels;
 			}
 		}
@@ -260,7 +252,7 @@ void PrintASTType(Context *context, const ASTType *type)
 	{
 		Print("Enum");
 
-		PrintSourceLocation(context, type->loc);
+		PrintSourceLocation(type->loc);
 		Print("\n");
 
 		if (type->enumDeclaration.astType)
@@ -268,7 +260,7 @@ void PrintASTType(Context *context, const ASTType *type)
 			Indent();
 			Print("Of type:\n");
 			++indentLevels;
-			PrintASTType(context, type->enumDeclaration.astType);
+			PrintASTType(type->enumDeclaration.astType);
 			--indentLevels;
 		}
 
@@ -283,7 +275,7 @@ void PrintASTType(Context *context, const ASTType *type)
 			if (member->value)
 			{
 				++indentLevels;
-				PrintExpression(context, member->value);
+				PrintExpression(member->value);
 				--indentLevels;
 			}
 		}
@@ -292,12 +284,12 @@ void PrintASTType(Context *context, const ASTType *type)
 	default:
 		Print("???TYPE");
 
-		PrintSourceLocation(context, type->loc);
+		PrintSourceLocation(type->loc);
 		Print("\n");
 	}
 }
 
-void PrintExpression(Context *context, const ASTExpression *e)
+void PrintExpression(const ASTExpression *e)
 {
 	Indent();
 	switch (e->nodeType)
@@ -311,13 +303,13 @@ void PrintExpression(Context *context, const ASTExpression *e)
 		String typeStr = ASTTypeToString(e->variableDeclaration.astType);
 		Print("of type \"%S\"", typeStr);
 
-		PrintSourceLocation(context, e->any.loc);
+		PrintSourceLocation(e->any.loc);
 		Print("\n");
 
 		if (e->variableDeclaration.astInitialValue)
 		{
 			++indentLevels;
-			PrintExpression(context, e->variableDeclaration.astInitialValue);
+			PrintExpression(e->variableDeclaration.astInitialValue);
 			--indentLevels;
 		}
 	} break;
@@ -326,7 +318,7 @@ void PrintExpression(Context *context, const ASTExpression *e)
 		Print("Procedure declaration");
 		++indentLevels;
 
-		PrintSourceLocation(context, e->any.loc);
+		PrintSourceLocation(e->any.loc);
 		Print("\n");
 
 		Indent();
@@ -341,20 +333,20 @@ void PrintExpression(Context *context, const ASTExpression *e)
 			String typeStr = ASTTypeToString(astParam.astType);
 			Print("\"%S\" of type \"%S\"", astParam.name, typeStr);
 
-			PrintSourceLocation(context, astParam.loc);
+			PrintSourceLocation(astParam.loc);
 			Print("\n");
 
 			if (astParam.astInitialValue)
 			{
 				++indentLevels;
-				PrintExpression(context, astParam.astInitialValue);
+				PrintExpression(astParam.astInitialValue);
 				--indentLevels;
 			}
 		}
 		--indentLevels;
 
 		if (e->procedureDeclaration.astBody)
-			PrintExpression(context, e->procedureDeclaration.astBody);
+			PrintExpression(e->procedureDeclaration.astBody);
 
 		--indentLevels;
 	} break;
@@ -365,7 +357,7 @@ void PrintExpression(Context *context, const ASTExpression *e)
 		++indentLevels;
 		for (int i = 0; i < e->block.statements.size; ++i)
 		{
-			PrintExpression(context, &e->block.statements[i]);
+			PrintExpression(&e->block.statements[i]);
 		}
 		--indentLevels;
 	} break;
@@ -373,21 +365,21 @@ void PrintExpression(Context *context, const ASTExpression *e)
 	{
 		Print("Identifier \"%S\"", e->identifier.string);
 
-		PrintSourceLocation(context, e->any.loc);
+		PrintSourceLocation(e->any.loc);
 		Print("\n");
 	} break;
 	case ASTNODETYPE_PROCEDURE_CALL:
 	{
 		Print("Procedure call");
 
-		PrintSourceLocation(context, e->any.loc);
+		PrintSourceLocation(e->any.loc);
 		Print("\n");
 
 		++indentLevels;
-		PrintExpression(context, e->procedureCall.procedureExpression);
+		PrintExpression(e->procedureCall.procedureExpression);
 		for (int i = 0; i < e->procedureCall.arguments.size; ++i)
 		{
-			PrintExpression(context, e->procedureCall.arguments[i]);
+			PrintExpression(e->procedureCall.arguments[i]);
 		}
 		--indentLevels;
 	} break;
@@ -409,7 +401,7 @@ void PrintExpression(Context *context, const ASTExpression *e)
 		} break;
 		}
 
-		PrintSourceLocation(context, e->any.loc);
+		PrintSourceLocation(e->any.loc);
 		Print("\n");
 	} break;
 	case ASTNODETYPE_UNARY_OPERATION:
@@ -417,11 +409,11 @@ void PrintExpression(Context *context, const ASTExpression *e)
 		String operatorStr = OperatorToString(e->unaryOperation.op);
 		Print("Unary operation (%S)", operatorStr);
 
-		PrintSourceLocation(context, e->any.loc);
+		PrintSourceLocation(e->any.loc);
 		Print("\n");
 
 		++indentLevels;
-		PrintExpression(context, e->unaryOperation.expression);
+		PrintExpression(e->unaryOperation.expression);
 		--indentLevels;
 	} break;
 	case ASTNODETYPE_BINARY_OPERATION:
@@ -429,34 +421,34 @@ void PrintExpression(Context *context, const ASTExpression *e)
 		String operatorStr = OperatorToString(e->binaryOperation.op);
 		Print("Binary operation (%S)", operatorStr);
 
-		PrintSourceLocation(context, e->any.loc);
+		PrintSourceLocation(e->any.loc);
 		Print("\n");
 
 		++indentLevels;
-		PrintExpression(context, e->binaryOperation.leftHand);
-		PrintExpression(context, e->binaryOperation.rightHand);
+		PrintExpression(e->binaryOperation.leftHand);
+		PrintExpression(e->binaryOperation.rightHand);
 		--indentLevels;
 	} break;
 	case ASTNODETYPE_IF:
 	{
 		Print("If");
 
-		PrintSourceLocation(context, e->any.loc);
+		PrintSourceLocation(e->any.loc);
 		Print("\n");
 
 		++indentLevels;
-		PrintExpression(context, e->ifNode.condition);
-		PrintExpression(context, e->ifNode.body);
+		PrintExpression(e->ifNode.condition);
+		PrintExpression(e->ifNode.body);
 		if (e->ifNode.elseBody)
 		{
 			Indent();
 			Print("Else:");
 
-			PrintSourceLocation(context, e->ifNode.elseLoc);
+			PrintSourceLocation(e->ifNode.elseLoc);
 			Print("\n");
 
 			++indentLevels;
-			PrintExpression(context, e->ifNode.elseBody);
+			PrintExpression(e->ifNode.elseBody);
 			--indentLevels;
 		}
 		--indentLevels;
@@ -465,36 +457,36 @@ void PrintExpression(Context *context, const ASTExpression *e)
 	{
 		Print("While");
 
-		PrintSourceLocation(context, e->any.loc);
+		PrintSourceLocation(e->any.loc);
 		Print("\n");
 
 		++indentLevels;
-		PrintExpression(context, e->whileNode.condition);
-		PrintExpression(context, e->whileNode.body);
+		PrintExpression(e->whileNode.condition);
+		PrintExpression(e->whileNode.body);
 		--indentLevels;
 	} break;
 	case ASTNODETYPE_FOR:
 	{
 		Print("For");
 
-		PrintSourceLocation(context, e->any.loc);
+		PrintSourceLocation(e->any.loc);
 		Print("\n");
 
 		++indentLevels;
-		PrintExpression(context, e->forNode.range);
-		PrintExpression(context, e->forNode.body);
+		PrintExpression(e->forNode.range);
+		PrintExpression(e->forNode.body);
 		--indentLevels;
 	} break;
 	case ASTNODETYPE_RETURN:
 	{
 		Print("Return");
 
-		PrintSourceLocation(context, e->any.loc);
+		PrintSourceLocation(e->any.loc);
 		Print("\n");
 
 		if (e->returnNode.expression) {
 			++indentLevels;
-			PrintExpression(context, e->returnNode.expression);
+			PrintExpression(e->returnNode.expression);
 			--indentLevels;
 		}
 	} break;
@@ -502,11 +494,11 @@ void PrintExpression(Context *context, const ASTExpression *e)
 	{
 		Print("Defer");
 
-		PrintSourceLocation(context, e->any.loc);
+		PrintSourceLocation(e->any.loc);
 		Print("\n");
 
 		++indentLevels;
-		PrintExpression(context, e->deferNode.expression);
+		PrintExpression(e->deferNode.expression);
 		--indentLevels;
 	} break;
 	case ASTNODETYPE_BREAK:
@@ -522,36 +514,36 @@ void PrintExpression(Context *context, const ASTExpression *e)
 		Print("Static definition\n");
 
 		++indentLevels;
-		PrintExpression(context, e->staticDefinition.expression);
+		PrintExpression(e->staticDefinition.expression);
 		--indentLevels;
 	} break;
 	case ASTNODETYPE_TYPE:
 	{
 		Print("Type\n");
 		++indentLevels;
-		PrintASTType(context, &e->astType);
+		PrintASTType(&e->astType);
 		--indentLevels;
 	} break;
 	case ASTNODETYPE_CAST:
 	{
 		Print("Cast\n");
 		++indentLevels;
-		PrintASTType(context, &e->castNode.astType);
-		PrintExpression(context, e->castNode.expression);
+		PrintASTType(&e->castNode.astType);
+		PrintExpression(e->castNode.expression);
 		--indentLevels;
 	} break;
 	case ASTNODETYPE_TYPEOF:
 	{
 		Print("Type of\n");
 		++indentLevels;
-		PrintExpression(context, e->typeOfNode.expression);
+		PrintExpression(e->typeOfNode.expression);
 		--indentLevels;
 	} break;
 	case ASTNODETYPE_SIZEOF:
 	{
 		Print("Size of\n");
 		++indentLevels;
-		PrintExpression(context, e->typeOfNode.expression);
+		PrintExpression(e->typeOfNode.expression);
 		--indentLevels;
 	} break;
 	case ASTNODETYPE_GARBAGE:
@@ -576,7 +568,7 @@ void PrintAST(PContext *context)
 	ArrayView<ASTExpression> statements = context->astRoot.block.statements;
 	for (int i = 0; i < statements.size; ++i) {
 		const ASTExpression *statement = &statements[i];
-		PrintExpression(context->global, statement);
+		PrintExpression(statement);
 	}
 	SYSMutexUnlock(printASTMutex);
 }

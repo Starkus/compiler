@@ -77,8 +77,8 @@ struct Job
 #endif
 
 	// Some data about why the job yielded execution.
-	YieldContext context;
+	YieldContext yieldContext;
 };
 
 void SwitchJob(JobContext *context, YieldReason yieldReason, YieldContext yieldContext);
-u32 RequestNewJob(Context *context, JobType type, void (*proc)(u32, void *), void *args);
+u32 RequestNewJob(JobType type, void (*proc)(u32, void *), void *args);

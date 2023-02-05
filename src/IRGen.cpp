@@ -53,7 +53,7 @@ inline Value IRGetValue(IRContext *context, u32 valueIdx)
 {
 	ASSERT(valueIdx > 0);
 	if (valueIdx & VALUE_GLOBAL_BIT)
-		return GetGlobalValue(context->global, valueIdx);
+		return GetGlobalValue(valueIdx);
 	else
 		return (*context->localValues)[valueIdx];
 }
@@ -68,7 +68,7 @@ inline Value *IRGetLocalValue(IRContext *context, u32 valueIdx)
 inline void IRUpdateValue(IRContext *context, u32 valueIdx, Value *value)
 {
 	if (valueIdx & VALUE_GLOBAL_BIT) {
-		auto globalValues = context->global->globalValues.GetForWrite();
+		auto globalValues = g_context->globalValues.GetForWrite();
 		globalValues[valueIdx & VALUE_GLOBAL_MASK] = *value;
 	}
 	else
@@ -78,7 +78,7 @@ inline void IRUpdateValue(IRContext *context, u32 valueIdx, Value *value)
 inline void IRSetValueFlags(IRContext *context, u32 valueIdx, u32 flags)
 {
 	if (valueIdx & VALUE_GLOBAL_BIT) {
-		auto globalValues = context->global->globalValues.GetForWrite();
+		auto globalValues = g_context->globalValues.GetForWrite();
 		globalValues[valueIdx & VALUE_GLOBAL_MASK].flags |= flags;
 	}
 	else
@@ -184,7 +184,7 @@ IRValue IRValueImmediateString(JobContext *context, String string)
 	if (string.size == 0)
 		result.immediateStringIdx = 0;
 	else {
-		auto stringLiterals = context->global->stringLiterals.GetForWrite();
+		auto stringLiterals = g_context->stringLiterals.GetForWrite();
 		s64 stringCount = stringLiterals->count;
 		ASSERT(stringCount < U32_MAX);
 		for (u32 stringIdx = 0; stringIdx < stringCount; ++stringIdx) {
@@ -195,13 +195,13 @@ IRValue IRValueImmediateString(JobContext *context, String string)
 		}
 		// Create a new one
 		u32 idx = (u32)stringCount;
-		u32 globalValueIdx = NewGlobalValue(context->global, SNPrintF(8, "_str%u", idx),
+		u32 globalValueIdx = NewGlobalValue(SNPrintF(8, "_str%u", idx),
 				GetTypeInfoPointerOf(context, TYPETABLEIDX_U8), VALUEFLAGS_ON_STATIC_STORAGE);
-		String staticDataStr = CopyStringToStaticData(context->global, string);
+		String staticDataStr = CopyStringToStaticData(string);
 
 		{
-			ScopedLockSpin lock(&context->global->globalValuesLock);
-			*HashMapGetOrAdd(&context->global->globalValueContents, globalValueIdx & VALUE_GLOBAL_MASK) =
+			ScopedLockSpin lock(&g_context->globalValuesLock);
+			*HashMapGetOrAdd(&g_context->globalValueContents, globalValueIdx & VALUE_GLOBAL_MASK) =
 				(u8 *)staticDataStr.data;
 		}
 
@@ -222,7 +222,7 @@ IRValue IRValueImmediateCStr(IRContext *context, String string)
 
 	u32 globalValueIdx;
 	{
-		auto stringLiterals = context->global->cStringLiterals.GetForWrite();
+		auto stringLiterals = g_context->cStringLiterals.GetForWrite();
 		s64 stringCount = stringLiterals->count;
 		ASSERT(stringCount < U32_MAX);
 		for (u32 stringIdx = 0; stringIdx < stringCount; ++stringIdx) {
@@ -233,13 +233,13 @@ IRValue IRValueImmediateCStr(IRContext *context, String string)
 		}
 		// Create a new one
 		u32 idx = (u32)stringCount;
-		globalValueIdx = NewGlobalValue(context->global, SNPrintF(8, "_cstr%u", idx),
+		globalValueIdx = NewGlobalValue(SNPrintF(8, "_cstr%u", idx),
 				charPtrTypeIdx, VALUEFLAGS_ON_STATIC_STORAGE);
-		String staticDataStr = CopyStringToStaticData(context->global, string, true);
+		String staticDataStr = CopyStringToStaticData(string, true);
 
 		{
-			ScopedLockSpin lock(&context->global->globalValuesLock);
-			*HashMapGetOrAdd(&context->global->globalValueContents, globalValueIdx & VALUE_GLOBAL_MASK) =
+			ScopedLockSpin lock(&g_context->globalValuesLock);
+			*HashMapGetOrAdd(&g_context->globalValueContents, globalValueIdx & VALUE_GLOBAL_MASK) =
 				(u8 *)staticDataStr.data;
 		}
 
@@ -249,14 +249,14 @@ done:
 	return IRPointerToValue(context, {}, IRValueValue(globalValueIdx, charPtrTypeIdx));
 }
 
-IRValue IRValueImmediateF64(Context *context, f64 f)
+IRValue IRValueImmediateF64(f64 f)
 {
 	u32 globalValueIdx;
 	{
 		union { f64 in; u64 inQWord; };
 		in = f;
 
-		auto floatLiterals = context->f64Literals.GetForWrite();
+		auto floatLiterals = g_context->f64Literals.GetForWrite();
 		s64 count = floatLiterals->count;
 		for (u32 floatIdx = 0; floatIdx < count; ++floatIdx) {
 			// Compare as quad word, not float (for example to distinguish 0 from -0
@@ -270,10 +270,10 @@ IRValue IRValueImmediateF64(Context *context, f64 f)
 		}
 		// Create a new one
 		u32 idx = (u32)count;
-		globalValueIdx = NewGlobalValue(context, SNPrintF(12, "_staticF64%u", idx),
-				TYPETABLEIDX_F64, VALUEFLAGS_ON_STATIC_STORAGE);
+		globalValueIdx = NewGlobalValue(SNPrintF(12, "_staticF64%u", idx), TYPETABLEIDX_F64,
+				VALUEFLAGS_ON_STATIC_STORAGE);
 
-		f64 *staticData = (f64 *)AllocateStaticData(context, globalValueIdx, 8, 8);
+		f64 *staticData = (f64 *)AllocateStaticData(globalValueIdx, 8, 8);
 		*staticData = f;
 
 		*BucketArrayAdd(&floatLiterals) = { .globalValueIdx = globalValueIdx, .asF64 = staticData };
@@ -282,14 +282,14 @@ done:
 	return IRValueValue(globalValueIdx, TYPETABLEIDX_F64);
 }
 
-IRValue IRValueImmediateF32(Context *context, f32 f)
+IRValue IRValueImmediateF32(f32 f)
 {
 	u32 globalValueIdx;
 	{
 		union { f32 in; u32 inDWord; };
 		in = f;
 
-		auto floatLiterals = context->f32Literals.GetForWrite();
+		auto floatLiterals = g_context->f32Literals.GetForWrite();
 		s64 count = floatLiterals->count;
 		for (u32 floatIdx = 0; floatIdx < count; ++floatIdx) {
 			// Compare as quad word, not float (for example to distinguish 0 from -0
@@ -303,10 +303,10 @@ IRValue IRValueImmediateF32(Context *context, f32 f)
 		}
 		// Create a new one
 		u32 idx = (u32)count;
-		globalValueIdx = NewGlobalValue(context, SNPrintF(12, "_staticF32%u", idx),
+		globalValueIdx = NewGlobalValue(SNPrintF(12, "_staticF32%u", idx),
 				TYPETABLEIDX_F32, VALUEFLAGS_ON_STATIC_STORAGE);
 
-		f32 *staticData = (f32 *)AllocateStaticData(context, globalValueIdx, 4, 4);
+		f32 *staticData = (f32 *)AllocateStaticData(globalValueIdx, 4, 4);
 		*staticData = f;
 
 		*BucketArrayAdd(&floatLiterals) = { .globalValueIdx = globalValueIdx, .asF32 = staticData };
@@ -315,25 +315,25 @@ done:
 	return IRValueValue(globalValueIdx, TYPETABLEIDX_F32);
 }
 
-inline IRValue IRValueImmediateFloat(Context *context, f64 f, u32 typeTableIdx)
+inline IRValue IRValueImmediateFloat(f64 f, u32 typeTableIdx)
 {
 	switch (typeTableIdx) {
 	case TYPETABLEIDX_F32:
 	case TYPETABLEIDX_FLOATING: // @Improve: maybe have type checker always collapse these?
-		return IRValueImmediateF32(context, (f32)f);
+		return IRValueImmediateF32((f32)f);
 	case TYPETABLEIDX_F64:
-		return IRValueImmediateF64(context, f);
+		return IRValueImmediateF64(f);
 	default:
 		ASSERT(false);
 	}
 }
 
-inline IRValue IRValueProcedure(Context *context, u32 procedureIdx)
+inline IRValue IRValueProcedure(u32 procedureIdx)
 {
 	IRValue result = {};
 	result.valueType = IRVALUETYPE_PROCEDURE;
 	result.procedureIdx = procedureIdx;
-	result.typeTableIdx = GetProcedureRead(context, procedureIdx).typeTableIdx;
+	result.typeTableIdx = GetProcedureRead(procedureIdx).typeTableIdx;
 	return result;
 }
 
@@ -559,7 +559,7 @@ IRValue IRDoCast(IRContext *context, SourceLocation loc, IRValue srcValue, u32 t
 
 		StringLiteral literal;
 		{
-			auto stringLiterals = context->global->stringLiterals.GetForRead();
+			auto stringLiterals = g_context->stringLiterals.GetForRead();
 			literal = stringLiterals[srcValue.immediateStringIdx];
 		}
 
@@ -700,8 +700,8 @@ IRValue IRDoCast(IRContext *context, SourceLocation loc, IRValue srcValue, u32 t
 		return result;
 	}
 	else {
-		TypeInfo dstTypeInfo = GetTypeInfo(context, StripAllAliases(context->global, typeTableIdx));
-		TypeInfo srcTypeInfo = GetTypeInfo(context, StripAllAliases(context->global, srcValue.typeTableIdx));
+		TypeInfo dstTypeInfo = GetTypeInfo(context, StripAllAliases(typeTableIdx));
+		TypeInfo srcTypeInfo = GetTypeInfo(context, StripAllAliases(srcValue.typeTableIdx));
 
 		bool isSrcFloat = srcTypeInfo.typeCategory == TYPECATEGORY_FLOATING;
 		bool isDstFloat = dstTypeInfo.typeCategory == TYPECATEGORY_FLOATING;
@@ -814,8 +814,8 @@ void IRDoAssignment(IRContext *context, SourceLocation loc, IRValue dstValue, IR
 
 	srcValue = IRDoCast(context, loc, srcValue, dstValue.typeTableIdx);
 
-	dstValue.typeTableIdx = StripAllAliases(context->global, dstValue.typeTableIdx);
-	srcValue.typeTableIdx = StripAllAliases(context->global, srcValue.typeTableIdx);
+	dstValue.typeTableIdx = StripAllAliases(dstValue.typeTableIdx);
+	srcValue.typeTableIdx = StripAllAliases(srcValue.typeTableIdx);
 
 	TypeInfo dstTypeInfo = GetTypeInfo(context, dstValue.typeTableIdx);
 	TypeInfo srcTypeInfo = GetTypeInfo(context, srcValue.typeTableIdx);
@@ -853,7 +853,7 @@ void IRDoAssignment(IRContext *context, SourceLocation loc, IRValue dstValue, IR
 			.type = IRINSTRUCTIONTYPE_ASSIGNMENT,
 			.loc = loc,
 			.assignment = {
-				.src = IRValueImmediateFloat(context->global, (f64)srcValue.immediate, dstValue.typeTableIdx),
+				.src = IRValueImmediateFloat((f64)srcValue.immediate, dstValue.typeTableIdx),
 				.dst = dstValue
 			}
 		};
@@ -1199,11 +1199,11 @@ IRValue IRInstructionFromBinaryOperation(IRContext *context, const ASTExpression
 		} break;
 		case TOKEN_OP_RANGE:
 		{
-			LogError(context->global, expression->any.loc, "Range operator used in invalid context"_s);
+			LogError(expression->any.loc, "Range operator used in invalid context"_s);
 		} break;
 		default:
 		{
-			LogError(context->global, expression->any.loc, "Binary operator unrecognized during IR generation"_s);
+			LogError(expression->any.loc, "Binary operator unrecognized during IR generation"_s);
 		} break;
 		}
 
@@ -1385,7 +1385,7 @@ IRValue IRDoInlineProcedureCall(IRContext *context, ASTProcedureCall astProcCall
 	SourceLocation loc = astProcCall.loc;
 
 	ASSERT(astProcCall.callType == CALLTYPE_STATIC);
-	Procedure procedure = GetProcedureRead(context->global, astProcCall.procedureIdx);
+	Procedure procedure = GetProcedureRead(astProcCall.procedureIdx);
 
 	IRLabel *oldReturnLabel = context->returnLabel;
 	ArrayView<u32> oldReturnValueIndices = context->returnValueIndices;
@@ -1441,7 +1441,7 @@ IRValue IRDoInlineProcedureCall(IRContext *context, ASTProcedureCall astProcCall
 		if (constant.type == CONSTANTTYPE_INTEGER)
 			arg = IRValueImmediate(constant.valueAsInt, procParam.typeTableIdx);
 		else if (constant.type == CONSTANTTYPE_FLOATING)
-			arg = IRValueImmediateFloat(context->global, constant.valueAsFloat,
+			arg = IRValueImmediateFloat(constant.valueAsFloat,
 					procParam.typeTableIdx);
 		else
 			ASSERT(!"Invalid constant type");
@@ -1560,7 +1560,7 @@ skipGeneratingVarargsArray:
 	return returnValue;
 }
 
-IRValue IRValueFromConstant(Context *context, Constant constant)
+IRValue IRValueFromConstant(Constant constant)
 {
 	IRValue result = {};
 	switch (constant.type)
@@ -1582,7 +1582,7 @@ IRValue IRValueFromConstant(Context *context, Constant constant)
 		result.tuple.size = membersCount;
 		for (int i = 0; i < membersCount; ++i)
 			result.tuple[i] =
-				IRValueFromConstant(context, constant.valueAsGroup[i]);
+				IRValueFromConstant(constant.valueAsGroup[i]);
 	} break;
 	default:
 		ASSERT(!"Unknown constant type");
@@ -1726,11 +1726,11 @@ void IRAssignmentFromExpression(IRContext *context, IRValue dstValue,
 void IRGenProcedure(IRContext *context, u32 procedureIdx, SourceLocation loc,
 		BucketArray<Value, LinearAllocator, 256> *localValues)
 {
-	Procedure procedure = GetProcedureRead(context->global, procedureIdx);
+	Procedure procedure = GetProcedureRead(procedureIdx);
 
 	ASSERT(procedure.astBody);
 
-	Procedure *proc = &context->global->procedures.unsafe[procedureIdx];
+	Procedure *proc = &g_context->procedures.unsafe[procedureIdx];
 	proc->localValues = *localValues;
 	BucketArrayInit(&proc->irInstructions);
 	context->irInstructions = &proc->irInstructions;
@@ -1885,13 +1885,13 @@ IRValue IRGenFromExpression(IRContext *context, const ASTExpression *expression)
 				u32 varTypeIdx  = *GetVariableTypeIdx(&varDecl, varIdx);
 
 				TypeInfo varTypeInfo = GetTypeInfo(context, varTypeIdx);
-				void *staticData = AllocateStaticData(context->global, varValueIdx, varTypeInfo.size, 8);
+				void *staticData = AllocateStaticData(varValueIdx, varTypeInfo.size, 8);
 				memset(staticData, 0, varTypeInfo.size);
 				AddStaticDataPointersToRelocateInType(context, staticData, varTypeIdx);
 			}
 			else if (varDecl.isExternal) {
 				ASSERT(varDecl.astInitialValue == nullptr);
-				auto externalVars = context->global->irExternalVariables.GetForWrite();
+				auto externalVars = g_context->irExternalVariables.GetForWrite();
 				*DynamicArrayAdd(&externalVars) = valueIdx;
 			}
 
@@ -1930,7 +1930,7 @@ IRValue IRGenFromExpression(IRContext *context, const ASTExpression *expression)
 					}
 					else if (dstTypeInfo.typeCategory == TYPECATEGORY_FLOATING) {
 						IRValue dstValue = IRValueValue(context, valueIdx);
-						IRValue srcValue = IRValueImmediateFloat(context->global, 0, typeIdx);
+						IRValue srcValue = IRValueImmediateFloat(0, typeIdx);
 						IRDoAssignment(context, varDecl.loc, dstValue, srcValue);
 					}
 					else {
@@ -1962,7 +1962,7 @@ IRValue IRGenFromExpression(IRContext *context, const ASTExpression *expression)
 			case STATICDEFINITIONTYPE_CONSTANT:
 			{
 				Constant constant = staticDefinition.constant;
-				u32 typeTableIdx = StripAllAliases(context->global, expression->typeTableIdx);
+				u32 typeTableIdx = StripAllAliases(expression->typeTableIdx);
 				TypeCategory typeCat = GetTypeInfo(context, typeTableIdx).typeCategory;
 				if (typeCat == TYPECATEGORY_FLOATING) {
 					f64 f;
@@ -1972,14 +1972,14 @@ IRValue IRGenFromExpression(IRContext *context, const ASTExpression *expression)
 						f = constant.valueAsFloat;
 					else
 						ASSERT(false);
-					result = IRValueImmediateFloat(context->global, f, typeTableIdx);
+					result = IRValueImmediateFloat(f, typeTableIdx);
 				}
 				else
 					result = IRValueImmediate(constant.valueAsInt, typeTableIdx);
 			} break;
 			case STATICDEFINITIONTYPE_PROCEDURE:
 			{
-				result = IRValueProcedure(context->global, staticDefinition.procedureIdx);
+				result = IRValueProcedure(staticDefinition.procedureIdx);
 			} break;
 			default:
 				ASSERT(!"Invalid static definition type found while generating IR");
@@ -2008,7 +2008,7 @@ IRValue IRGenFromExpression(IRContext *context, const ASTExpression *expression)
 		switch (astProcCall->callType) {
 		case CALLTYPE_STATIC:
 		{
-			Procedure proc = GetProcedureRead(context->global, astProcCall->procedureIdx);
+			Procedure proc = GetProcedureRead(astProcCall->procedureIdx);
 			if ((proc.isInline || astProcCall->inlineType == CALLINLINETYPE_ALWAYS_INLINE) &&
 					astProcCall->inlineType != CALLINLINETYPE_NEVER_INLINE)
 				return IRDoInlineProcedureCall(context, *astProcCall);
@@ -2092,7 +2092,7 @@ IRValue IRGenFromExpression(IRContext *context, const ASTExpression *expression)
 			if (constant.type == CONSTANTTYPE_INTEGER)
 				param = IRValueImmediate(constant.valueAsInt, procParam.typeTableIdx);
 			else if (constant.type == CONSTANTTYPE_FLOATING)
-				param = IRValueImmediateFloat(context->global, constant.valueAsFloat,
+				param = IRValueImmediateFloat(constant.valueAsFloat,
 						procParam.typeTableIdx);
 			else
 				ASSERT(!"Invalid constant type");
@@ -2287,10 +2287,10 @@ skipGeneratingVarargsArray:
 		switch (expression->literal.type) {
 		case LITERALTYPE_INTEGER:
 		{
-			u32 typeTableIdx = StripAllAliases(context->global, expression->typeTableIdx);
+			u32 typeTableIdx = StripAllAliases(expression->typeTableIdx);
 			TypeCategory typeCat = GetTypeInfo(context, typeTableIdx).typeCategory;
 			if (typeCat == TYPECATEGORY_FLOATING)
-				result = IRValueImmediateFloat(context->global, (f64)expression->literal.integer,
+				result = IRValueImmediateFloat((f64)expression->literal.integer,
 						typeTableIdx);
 			else
 				result = IRValueImmediate(expression->literal.integer, typeTableIdx);
@@ -2300,8 +2300,8 @@ skipGeneratingVarargsArray:
 			break;
 		case LITERALTYPE_FLOATING:
 		{
-			u32 typeTableIdx = StripAllAliases(context->global, expression->typeTableIdx);
-			result = IRValueImmediateFloat(context->global, expression->literal.floating,
+			u32 typeTableIdx = StripAllAliases(expression->typeTableIdx);
+			result = IRValueImmediateFloat(expression->literal.floating,
 					typeTableIdx);
 		} break;
 		case LITERALTYPE_STRING:
@@ -2709,7 +2709,7 @@ skipGeneratingVarargsArray:
 	} break;
 	case ASTNODETYPE_TYPE:
 	{
-		LogError(context->global, expression->any.loc, "COMPILER ERROR! Type found while generating IR."_s);
+		LogError(expression->any.loc, "COMPILER ERROR! Type found while generating IR."_s);
 	} break;
 	case ASTNODETYPE_COMPILER_BREAKPOINT:
 	{
@@ -2731,36 +2731,36 @@ skipGeneratingVarargsArray:
 }
 
 void PrintJobIRInstructions(IRContext *context);
-void IRGenMain(Context *context)
+void IRGenMain()
 {
-	JobContext fakeJobContext = { context, U32_MAX };
+	JobContext fakeJobContext = { U32_MAX };
 	{
-		auto externalVars = context->irExternalVariables.GetForWrite();
+		auto externalVars = g_context->irExternalVariables.GetForWrite();
 		DynamicArrayInit(&externalVars, 32);
 	}
 	{
-		auto &stringLiterals = context->stringLiterals.unsafe;
+		auto &stringLiterals = g_context->stringLiterals.unsafe;
 		BucketArrayInit(&stringLiterals);
 		// Empty string
-		u32 globalValueIdx = NewGlobalValue(context, "_emptystr"_s,
+		u32 globalValueIdx = NewGlobalValue("_emptystr"_s,
 				GetTypeInfoPointerOf(&fakeJobContext, TYPETABLEIDX_U8), VALUEFLAGS_ON_STATIC_STORAGE);
 		*BucketArrayAdd(&stringLiterals) = { globalValueIdx, {} };
 	}
 	{
-		auto &cStringLiterals = context->cStringLiterals.unsafe;
+		auto &cStringLiterals = g_context->cStringLiterals.unsafe;
 		BucketArrayInit(&cStringLiterals);
 	}
 	{
-		auto &f32Literals = context->f32Literals.unsafe;
+		auto &f32Literals = g_context->f32Literals.unsafe;
 		BucketArrayInit(&f32Literals);
 		// Empty string
-		IRValueImmediateF32(context, 0.0f);
+		IRValueImmediateF32(0.0f);
 	}
 	{
-		auto &f64Literals = context->f64Literals.unsafe;
+		auto &f64Literals = g_context->f64Literals.unsafe;
 		BucketArrayInit(&f64Literals);
 		// Empty string
-		IRValueImmediateF64(context, 0.0);
+		IRValueImmediateF64(0.0);
 	}
 }
 
@@ -2770,19 +2770,18 @@ void IRJobProcedure(u32 jobIdx, void *args)
 	u32 procedureIdx = argsStruct->procedureIdx;
 
 	IRContext *context = ALLOC(LinearAllocator, IRContext);
-	context->global = argsStruct->context;
 	context->jobIdx = jobIdx;
 	context->procedureIdx = procedureIdx;
-	context->returnValueIndices = GetProcedureRead(context->global, procedureIdx).returnValueIndices;
+	context->returnValueIndices = GetProcedureRead(procedureIdx).returnValueIndices;
 	context->shouldReturnValueIdx = U32_MAX;
 
 	Job *runningJob = GetCurrentJob(context);
 	runningJob->state = JOBSTATE_RUNNING;
 #if DEBUG_BUILD
-	runningJob->description = SStringConcat("IR:"_s, GetProcedureRead(context->global, procedureIdx).name);
+	runningJob->description = SStringConcat("IR:"_s, GetProcedureRead(procedureIdx).name);
 #endif
 
-	ASSERT(GetProcedureRead(context->global, procedureIdx).astBody != nullptr);
+	ASSERT(GetProcedureRead(procedureIdx).astBody != nullptr);
 
 	DynamicArrayInit(&context->irStack, 64);
 	BucketArrayInit(&context->irLabels);
@@ -2790,14 +2789,14 @@ void IRJobProcedure(u32 jobIdx, void *args)
 	IRGenProcedure(context, procedureIdx, {}, &argsStruct->localValues);
 
 	{
-		Procedure proc = GetProcedureRead(context->global, procedureIdx);
+		Procedure proc = GetProcedureRead(procedureIdx);
 		proc.isIRReady = true;
-		UpdateProcedure(context->global, procedureIdx, &proc);
+		UpdateProcedure(procedureIdx, &proc);
 	}
 	// Wake up any jobs that were waiting for this procedure's IR
-	WakeUpAllByIndex(context->global, YIELDREASON_PROC_IR_NOT_READY, procedureIdx);
+	WakeUpAllByIndex(YIELDREASON_PROC_IR_NOT_READY, procedureIdx);
 
-	if (context->global->config.logIR)
+	if (g_context->config.logIR)
 		PrintJobIRInstructions(context);
 
 	BackendJobProc(context, procedureIdx);
@@ -2810,7 +2809,6 @@ void IRJobExpression(u32 jobIdx, void *args)
 	IRJobArgs *argsStruct = (IRJobArgs *)args;
 
 	IRContext *context = ALLOC(LinearAllocator, IRContext);
-	context->global = argsStruct->context;
 	context->jobIdx = jobIdx;
 
 	Job *runningJob = GetCurrentJob(context);

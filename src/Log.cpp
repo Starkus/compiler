@@ -25,17 +25,17 @@ inline void ConsoleSetColor(ConsoleColor color, bool bright = false, bool underl
 		Print("\x1b[%d;%d;%dm", color, bright ? 1 : 22, underline ? 4 : 24);
 }
 
-FatSourceLocation ExpandSourceLocation(Context *context, SourceLocation loc);
+FatSourceLocation ExpandSourceLocation(SourceLocation loc);
 
-void __Log(Context *context, SourceLocation loc, String str, String prefix, ConsoleColor color,
+void __Log(SourceLocation loc, String str, String prefix, ConsoleColor color,
 			bool bright, const char *inFile, const char *inFunc, int inLine)
 {
-	ScopedLockMutex lock(context->consoleMutex);
+	ScopedLockMutex lock(g_context->consoleMutex);
 
 	FatSourceLocation fatLoc = {};
 	if (loc.fileIdx != 0) {
-		fatLoc = ExpandSourceLocation(context, loc);
-		String filename = context->sourceFiles[loc.fileIdx].name;
+		fatLoc = ExpandSourceLocation(loc);
+		String filename = g_context->sourceFiles[loc.fileIdx].name;
 
 		ConsoleSetColor(CONSOLE_BLACK_TXT, true);
 
@@ -68,7 +68,7 @@ void __Log(Context *context, SourceLocation loc, String str, String prefix, Cons
 		Print("\n");
 
 		// Token underline
-		if (!context->config.useEscapeSequences) {
+		if (!g_context->config.useEscapeSequences) {
 			ConsoleSetColor(CONSOLE_BLACK_TXT, true);
 			Print("... ");
 
@@ -93,16 +93,15 @@ void __Log(Context *context, SourceLocation loc, String str, String prefix, Cons
 	ConsoleSetColor(CONSOLE_RESET_COLOR);
 }
 
-void __LogRange(Context *context, SourceLocation locBegin, SourceLocation locEnd, String str,
-			String prefix, ConsoleColor color, bool bright, const char *inFile, const char *inFunc,
-			int inLine)
+void __LogRange(SourceLocation locBegin, SourceLocation locEnd, String str, String prefix,
+		ConsoleColor color, bool bright, const char *inFile, const char *inFunc, int inLine)
 {
-	ScopedLockMutex lock(context->consoleMutex);
+	ScopedLockMutex lock(g_context->consoleMutex);
 
 	ASSERT(locBegin.fileIdx == locEnd.fileIdx);
-	FatSourceLocation fatLocBegin = ExpandSourceLocation(context, locBegin);
-	FatSourceLocation fatLocEnd   = ExpandSourceLocation(context, locEnd);
-	String filename = context->sourceFiles[locBegin.fileIdx].name;
+	FatSourceLocation fatLocBegin = ExpandSourceLocation(locBegin);
+	FatSourceLocation fatLocEnd   = ExpandSourceLocation(locEnd);
+	String filename = g_context->sourceFiles[locBegin.fileIdx].name;
 
 	ConsoleSetColor(CONSOLE_BLACK_TXT, true);
 
@@ -137,7 +136,7 @@ void __LogRange(Context *context, SourceLocation locBegin, SourceLocation locEnd
 	Print("\n");
 
 	// Token underline
-	if (!context->config.useEscapeSequences) {
+	if (!g_context->config.useEscapeSequences) {
 		ConsoleSetColor(CONSOLE_BLACK_TXT, true);
 		Print("... ");
 
@@ -161,41 +160,41 @@ void __LogRange(Context *context, SourceLocation locBegin, SourceLocation locEnd
 	ConsoleSetColor(CONSOLE_RESET_COLOR);
 }
 
-#define Log(context, loc, str) \
-	do { __Log(context, loc, str, {}, CONSOLE_RESET_COLOR, false, __FILE__, __func__, __LINE__); } while (0)
+#define Log(loc, str) \
+	do { __Log(loc, str, {}, CONSOLE_RESET_COLOR, false, __FILE__, __func__, __LINE__); } while (0)
 
-#define LogErrorNoCrash(context, loc, str) \
-	do { __Log(context, loc, str, "ERROR:"_s, CONSOLE_RED_TXT, false, __FILE__, __func__, __LINE__); } while (0)
+#define LogErrorNoCrash(loc, str) \
+	do { __Log(loc, str, "ERROR:"_s, CONSOLE_RED_TXT, false, __FILE__, __func__, __LINE__); } while (0)
 
-#define LogWarning(context, loc, str) \
-	do { __Log(context, loc, str, "WARNING:"_s, CONSOLE_YELLOW_TXT, false, __FILE__, __func__, __LINE__); } while (0)
+#define LogWarning(loc, str) \
+	do { __Log(loc, str, "WARNING:"_s, CONSOLE_YELLOW_TXT, false, __FILE__, __func__, __LINE__); } while (0)
 
-#define LogNote(context, loc, str) \
-	do { __Log(context, loc, str, "NOTE:"_s, CONSOLE_WHITE_TXT, true, __FILE__, __func__, __LINE__); } while (0)
+#define LogNote(loc, str) \
+	do { __Log(loc, str, "NOTE:"_s, CONSOLE_WHITE_TXT, true, __FILE__, __func__, __LINE__); } while (0)
 
-#define LogCompilerError(context, loc, str) \
-	do { __Log(context, loc, str, "COMPILER ERROR:"_s, CONSOLE_RED_TXT, true, __FILE__, __func__, __LINE__); PANIC; } while (0)
+#define LogCompilerError(loc, str) \
+	do { __Log(loc, str, "COMPILER ERROR:"_s, CONSOLE_RED_TXT, true, __FILE__, __func__, __LINE__); PANIC; } while (0)
 
-#define Log2(context, locBegin, locEnd, str) \
-	do { __LogRange(context, locBegin, locEnd, str, {}, CONSOLE_RESET_COLOR, false, __FILE__, __func__, __LINE__); } while (0)
+#define Log2(locBegin, locEnd, str) \
+	do { __LogRange(locBegin, locEnd, str, {}, CONSOLE_RESET_COLOR, false, __FILE__, __func__, __LINE__); } while (0)
 
-#define Log2ErrorNoCrash(context, locBegin, locEnd, str) \
-	do { __LogRange(context, locBegin, locEnd, str, "ERROR:"_s, CONSOLE_RED_TXT, false, __FILE__, __func__, __LINE__); } while (0)
+#define Log2ErrorNoCrash(locBegin, locEnd, str) \
+	do { __LogRange(locBegin, locEnd, str, "ERROR:"_s, CONSOLE_RED_TXT, false, __FILE__, __func__, __LINE__); } while (0)
 
-#define Log2Warning(context, locBegin, locEnd, str) \
-	do { __LogRange(context, locBegin, locEnd, str, "WARNING:"_s, CONSOLE_YELLOW_TXT, false, __FILE__, __func__, __LINE__); } while (0)
+#define Log2Warning(locBegin, locEnd, str) \
+	do { __LogRange(locBegin, locEnd, str, "WARNING:"_s, CONSOLE_YELLOW_TXT, false, __FILE__, __func__, __LINE__); } while (0)
 
-#define Log2Note(context, locBegin, locEnd, str) \
-	do { __LogRange(context, locBegin, locEnd, str, "NOTE:"_s, CONSOLE_WHITE_TXT, true, __FILE__, __func__, __LINE__); } while (0)
+#define Log2Note(locBegin, locEnd, str) \
+	do { __LogRange(locBegin, locEnd, str, "NOTE:"_s, CONSOLE_WHITE_TXT, true, __FILE__, __func__, __LINE__); } while (0)
 
 #if EXIT_ON_FIRST_ERROR
-#define LogError(context, loc, str) \
-	do { LogErrorNoCrash(context, loc, str); PANIC; } while(0)
-#define Log2Error(context, locBegin, locEnd, str) \
-	do { Log2ErrorNoCrash(context, locBegin, locEnd, str); PANIC; } while(0)
+#define LogError(loc, str) \
+	do { LogErrorNoCrash(loc, str); PANIC; } while(0)
+#define Log2Error(locBegin, locEnd, str) \
+	do { Log2ErrorNoCrash(locBegin, locEnd, str); PANIC; } while(0)
 #else
-#define LogError(context, loc, str) \
-	do { LogErrorNoCrash(context, loc, str); SwitchJob(context, YIELDREASON_FAILED, {}); } while(0)
-#define Log2Error(context, locBegin, locEnd, str) \
-	do { Log2ErrorNoCrash(context, locBegin, locEnd, str); SwitchJob(context, YIELDREASON_FAILED, {}); } while(0)
+#define LogError(loc, str) \
+	do { LogErrorNoCrash(loc, str); SwitchJob(YIELDREASON_FAILED, {}); } while(0)
+#define Log2Error(locBegin, locEnd, str) \
+	do { Log2ErrorNoCrash(locBegin, locEnd, str); SwitchJob(YIELDREASON_FAILED, {}); } while(0)
 #endif

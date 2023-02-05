@@ -57,33 +57,28 @@ void ProcessCppComment(Tokenizer *tokenizer)
 void ProcessCComment(Tokenizer *tokenizer)
 {
 	tokenizer->cursor += 2;
-	for (;; ++tokenizer->cursor)
-	{
+	for (;; ++tokenizer->cursor) {
 		if (!*tokenizer->cursor)
 			break;
 
-		if (*tokenizer->cursor == '\\')
-		{
+		if (*tokenizer->cursor == '\\') {
 		}
-		else if (*tokenizer->cursor == '\n')
-		{
+		else if (*tokenizer->cursor == '\n') {
 			++tokenizer->line;
 			tokenizer->beginningOfLine = tokenizer->cursor;
 		}
-		else if (*tokenizer->cursor == '*' && *(tokenizer->cursor + 1) == '/')
-		{
+		else if (*tokenizer->cursor == '*' && *(tokenizer->cursor + 1) == '/') {
 			tokenizer->cursor += 2;
 			break;
 		}
 	}
 }
 
-String TokenToString(Context *context, Token token)
+String TokenToString(Token token)
 {
-	SourceFile sourceFile = context->sourceFiles[token.loc.fileIdx];
+	SourceFile sourceFile = g_context->sourceFiles[token.loc.fileIdx];
 	String result = { token.size, (const char *)sourceFile.buffer + token.loc.character };
-	if (token.type == TOKEN_LITERAL_STRING || token.type == TOKEN_LITERAL_CHARACTER)
-	{
+	if (token.type == TOKEN_LITERAL_STRING || token.type == TOKEN_LITERAL_CHARACTER) {
 		result.size -= 2;
 		++result.data;
 	}
@@ -92,8 +87,7 @@ String TokenToString(Context *context, Token token)
 
 String TokenTypeToString(s32 type)
 {
-	switch (type)
-	{
+	switch (type) {
 	case TOKEN_INVALID:
 		return "<Invalid>"_s;
 	case TOKEN_IDENTIFIER:
@@ -181,35 +175,35 @@ String TokenTypeToString(s32 type)
 	return { 5, str };
 }
 
-inline String TokenToStringOrType(Context *context, Token token)
+inline String TokenToStringOrType(Token token)
 {
 	if (token.type >= TOKEN_KEYWORD_Begin && token.type <= TOKEN_KEYWORD_End)
-		return TokenToString(context, token);
+		return TokenToString(token);
 
 	return TokenTypeToString(token.type);
 }
 
-inline bool TokenIsStr(Context *context, Token token, String str)
+inline bool TokenIsStr(Token token, String str)
 {
 	if (token.type != TOKEN_IDENTIFIER || token.size != str.size)
 		return false;
 
-	String tokenStr = TokenToString(context, token);
+	String tokenStr = TokenToString(token);
 	return StringEquals(tokenStr, str);
 }
 
-inline bool TokenIsEqual(Context *context, Token a, Token b)
+inline bool TokenIsEqual(Token a, Token b)
 {
 	if (a.type != b.type)
 		return false;
 	if (a.type != TOKEN_IDENTIFIER)
 		return true;
-	String aStr = TokenToString(context, a);
-	String bStr = TokenToString(context, b);
+	String aStr = TokenToString(a);
+	String bStr = TokenToString(b);
 	return StringEquals(aStr, bStr);
 }
 
-enum TokenType CalculateTokenType(Context *context, const Tokenizer *tokenizer)
+enum TokenType CalculateTokenType(const Tokenizer *tokenizer)
 {
 	const char * const begin = tokenizer->cursor;
 
@@ -455,7 +449,7 @@ enum TokenType CalculateTokenType(Context *context, const Tokenizer *tokenizer)
 		return TOKEN_INVALID;
 }
 
-u16 CalculateTokenSize(Context *context, const Tokenizer *tokenizer, enum TokenType tokenType)
+u16 CalculateTokenSize(const Tokenizer *tokenizer, enum TokenType tokenType)
 {
 	const char *begin = tokenizer->cursor;
 
@@ -633,24 +627,24 @@ u16 CalculateTokenSize(Context *context, const Tokenizer *tokenizer, enum TokenT
 	}
 }
 
-Token ReadNewToken(PContext *context, Tokenizer *tokenizer, const char *fileBuffer)
+Token ReadNewToken(Tokenizer *tokenizer, const char *fileBuffer)
 {
 	EatWhitespace(tokenizer);
 
 	Token newToken;
-	newToken.type = CalculateTokenType(context->global, tokenizer);
-	newToken.size = CalculateTokenSize(context->global, tokenizer, newToken.type);
+	newToken.type = CalculateTokenType(tokenizer);
+	newToken.size = CalculateTokenSize(tokenizer, newToken.type);
 	newToken.loc.fileIdx = tokenizer->fileIdx;
 	newToken.loc.character = (s32)(tokenizer->cursor - fileBuffer);
 	return newToken;
 }
 
-FatSourceLocation ExpandSourceLocation(Context *context, SourceLocation loc)
+FatSourceLocation ExpandSourceLocation(SourceLocation loc)
 {
 	SourceFile sourceFile;
 	{
-		ScopedLockSpin filesLock(&context->filesLock);
-		sourceFile = context->sourceFiles[loc.fileIdx];
+		ScopedLockSpin filesLock(&g_context->filesLock);
+		sourceFile = g_context->sourceFiles[loc.fileIdx];
 	}
 
 	FatSourceLocation result;
@@ -681,8 +675,8 @@ FatSourceLocation ExpandSourceLocation(Context *context, SourceLocation loc)
 		loc.fileIdx,
 		nullptr
 	};
-	enum TokenType tokenType = CalculateTokenType(context, &tokenizer);
-	result.size = CalculateTokenSize(context, &tokenizer, tokenType);
+	enum TokenType tokenType = CalculateTokenType(&tokenizer);
+	result.size = CalculateTokenSize(&tokenizer, tokenType);
 
 	for (const char *lineScan = result.beginingOfLine; *lineScan && *lineScan != '\n'; ++lineScan)
 		++result.lineSize;
@@ -695,8 +689,8 @@ void TokenizeFile(PContext *context, u32 fileIdx)
 	Tokenizer tokenizer = {};
 	SourceFile file;
 	{
-		ScopedLockSpin filesLock(&context->global->filesLock);
-		file = context->global->sourceFiles[fileIdx];
+		ScopedLockSpin filesLock(&g_context->filesLock);
+		file = g_context->sourceFiles[fileIdx];
 	}
 	tokenizer.fileIdx = fileIdx;
 	tokenizer.cursor = (char *)file.buffer;
@@ -725,10 +719,10 @@ void TokenizeFile(PContext *context, u32 fileIdx)
 		if (!*tokenizer.cursor || tokenizer.cursor >= tokenizer.end)
 			break;
 
-		Token newToken = ReadNewToken(context, &tokenizer, fileBuffer);
+		Token newToken = ReadNewToken(&tokenizer, fileBuffer);
 
 		if (newToken.type == TOKEN_INVALID_DIRECTIVE)
-			LogError(context->global, newToken.loc, "Invalid parser directive"_s);
+			LogError(newToken.loc, "Invalid parser directive"_s);
 
 		*BucketArrayAdd(&context->tokens) = newToken;
 
