@@ -31,11 +31,6 @@ PerformanceAPI_Functions performanceAPI;
 #endif
 #include "Profiler.cpp"
 
-#define USE_OWN_ASSEMBLER 1
-
-// To properly turn this off, we'd need to make sure we don't leak locks anywhere we call LogError.
-#define EXIT_ON_FIRST_ERROR 1
-
 #include "Config.h"
 #include "Maths.h"
 #include "Multithreading.h"
@@ -191,7 +186,7 @@ struct Config
 
 #define OUTPUT_BUFFER_BUCKET_SIZE 8192
 #define STATIC_DATA_VIRTUAL_ADDRESS ((u8 *)0x0000044000000000)
-#define STATIC_DATA_VIRTUAL_ADDRESS_END ((u8 *)0x0000045000000000)
+#define STATIC_DATA_VIRTUAL_ADDRESS_END ((u8 *)0x0000044100000000)
 struct Context
 {
 	Config config;
@@ -414,10 +409,7 @@ int main(int argc, char **argv)
 	if (!context->config.silent)
 		TimerSplit("Create starting jobs"_s);
 
-	SYSTEM_INFO win32SystemInfo;
-	GetSystemInfo(&win32SystemInfo);
-	int threadCount = win32SystemInfo.dwNumberOfProcessors;
-
+	int threadCount = SYSGetProcessorCount();
 	Array<ThreadArgs, LinearAllocator> threadArgs;
 	ArrayInit(&g_threads, threadCount);
 	ArrayInit(&g_mainFibers, threadCount);

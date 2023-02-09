@@ -201,7 +201,7 @@ void *GetExternalProcedureAddress(String name)
 					LogWarning(lib->loc, TPrintF("Could not load \"%S\" at "
 								"compile time", lib->name));
 			}
-			void *procStart = GetProcAddress((HMODULE)lib->address, procCStr);
+			void *procStart = SYSGetProcAddress(lib->address, procCStr);
 			if (procStart)
 				return procStart;
 		}
@@ -209,6 +209,150 @@ void *GetExternalProcedureAddress(String name)
 		// Lock again!
 		SYSMutexLock(g_context->ctExternalLibraries.lock);
 	}
+}
+
+u64 CallProcedureDynamically(void *procStart, u32 typeTableIdx, ArrayView<CTRegister *> arguments)
+{
+	TypeInfo typeInfo = GetTypeInfo(typeTableIdx);
+	ASSERT(typeInfo.typeCategory == TYPECATEGORY_PROCEDURE);
+	CallingConvention cc = typeInfo.procedureInfo.callingConvention;
+	if (cc == CC_WIN64)
+		return SYSCallProcedureDynamically_windowscc(procStart, arguments.size, arguments.data);
+
+	// linux calling convention...
+	ArrayView<ProcedureParameter> parameters = typeInfo.procedureInfo.parameters;
+
+	Array<u64, ThreadAllocator> gpArgs;
+	Array<f64, ThreadAllocator> xmmArgs;
+	Array<u64, ThreadAllocator> stackArgs;
+
+	ArrayInit(&gpArgs, 6);
+	ArrayInit(&xmmArgs, 16);
+	ArrayInit(&stackArgs, 16);
+
+	for (int i = 0; i < arguments.size; ++i) {
+		void *arg = arguments[i];
+		u32 paramTypeIdx = parameters[i].typeTableIdx;
+
+		TypeInfo paramTypeInfo = GetTypeInfo(paramTypeIdx);
+		bool isStruct = paramTypeInfo.typeCategory == TYPECATEGORY_STRUCT ||
+			(paramTypeInfo.typeCategory == TYPECATEGORY_ARRAY && paramTypeInfo.arrayInfo.count == 0);
+		if (isStruct && paramTypeInfo.size <= 16) {
+			ArrayView<StructMember> members;
+			if (paramTypeInfo.typeCategory == TYPECATEGORY_ARRAY)
+				members = GetTypeInfo(TYPETABLEIDX_ARRAY_STRUCT).structInfo.members;
+			else
+				members = paramTypeInfo.structInfo.members;
+
+			void *first = nullptr, *second = nullptr;
+			bool isFirstXmm, isSecondXmm;
+			int regCount = 1;
+
+			first = arg;
+			if (members[0].typeTableIdx == TYPETABLEIDX_F64 ||
+			   (members.size == 2 &&
+				members[0].typeTableIdx == TYPETABLEIDX_F32 &&
+				members[1].typeTableIdx == TYPETABLEIDX_F32))
+			{
+				// An F64 or two consecutive F32s into an XMM register.
+				isFirstXmm = true;
+			}
+			else if (members[0].typeTableIdx == TYPETABLEIDX_F32 &&
+					(members.size == 1 || members[1].offset >= 8)) {
+				// An only F32 into XMM register
+				isFirstXmm = true;
+			}
+			else
+				isFirstXmm = false;
+
+			int firstMember = 0;
+			for (; firstMember < members.size; ++firstMember) {
+				if (members[firstMember].offset >= 8)
+					break;
+			}
+			if (firstMember > 0 && firstMember < members.size) {
+				second = arg;
+				regCount = 2;
+
+				if (members[firstMember].typeTableIdx == TYPETABLEIDX_F64 ||
+				   (firstMember < members.size - 1 &&
+					members[firstMember].typeTableIdx   == TYPETABLEIDX_F32 &&
+					members[firstMember+1].typeTableIdx == TYPETABLEIDX_F32)) {
+					// An F64 or two consecutive F32s into an XMM register.
+					isSecondXmm = true;
+				}
+				else if (members[firstMember].typeTableIdx == TYPETABLEIDX_F32 &&
+						(firstMember == members.size - 1 ||
+						 members[firstMember+1].offset >= 8)) {
+					// An only F32 into XMM register
+					isSecondXmm = true;
+				}
+				else
+					isSecondXmm = false;
+			}
+
+			u64 theoGPCount = gpArgs.size, theoXMMCount = xmmArgs.size;
+			if (regCount >= 1) {
+				bool fits = true;
+				if (isFirstXmm && theoXMMCount++ >= 16)
+					fits = false;
+				else if (theoGPCount++ >= 6)
+					fits = false;
+
+				if (regCount >= 2) {
+					if (isSecondXmm && theoXMMCount++ >= 16)
+						fits = false;
+					else if (theoGPCount++ >= 6)
+						fits = false;
+				}
+
+				if (fits) {
+					if (isFirstXmm)
+						*ArrayAdd(&xmmArgs) = *(f64 *)first;
+					else
+						*ArrayAdd(&gpArgs) = *(u64 *)first;
+					if (regCount >= 2) {
+						if (isSecondXmm)
+							*ArrayAdd(&xmmArgs) = *(f64 *)second;
+						else
+							*ArrayAdd(&gpArgs) = *(u64 *)second;
+					}
+					continue;
+				}
+			}
+		}
+
+		if (paramTypeInfo.size > 8) {
+			u64 *scan = (u64 *)arg;
+			int sizeLeft = (int)paramTypeInfo.size;
+			while (sizeLeft > 0) {
+				*ArrayAdd(&stackArgs) = *scan;
+				++scan;
+				sizeLeft -= 8;
+			}
+		}
+		else {
+			bool isXmm = paramTypeInfo.typeCategory == TYPECATEGORY_FLOATING;
+			if (isXmm) {
+				if (xmmArgs.size < 16)
+					*ArrayAdd(&xmmArgs) = *(f64 *)arg;
+				else
+					*ArrayAdd(&stackArgs) = *(u64 *)arg;
+			}
+			else {
+				if (gpArgs.size < 6)
+					*ArrayAdd(&gpArgs) = *(u64 *)arg;
+				else
+					*ArrayAdd(&stackArgs) = *(u64 *)arg;
+			}
+		}
+	}
+	// Paranoid checks...
+	ASSERT(gpArgs.size <= 6);
+	ASSERT(xmmArgs.size <= 16);
+	ASSERT(stackArgs.size <= 16);
+	return SYSCallProcedureDynamically_linuxcc(procStart, gpArgs.size, gpArgs.data, xmmArgs.size,
+			xmmArgs.data, stackArgs.size, stackArgs.data);
 }
 
 ArrayView<const CTRegister *> CTInternalRunInstructions(CTContext *context,
@@ -1035,7 +1179,11 @@ ArrayView<const CTRegister *> CTInternalRunInstructions(CTContext *context,
 				void *procStart = GetExternalProcedureAddress(calleeProc.name);
 				ASSERT(procStart);
 
+#if IS_WINDOWS
 				u64 returnValue = SYSCallProcedureDynamically(procStart, arguments.size, arguments.data);
+#else
+				u64 returnValue = CallProcedureDynamically(procStart, calleeProc.typeTableIdx, arguments);
+#endif
 
 				if (inst.procedureCall.returnValues.size) {
 					ASSERT(inst.procedureCall.returnValues.size == 1);

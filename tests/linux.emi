@@ -1,4 +1,5 @@
 Main :: (args : [] String) -> s64
 {	fd := open(#cstr "file.txt", O_RDONLY, 0x1FF);
+	close(fd);
 	return 0;
 }

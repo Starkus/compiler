@@ -18,15 +18,16 @@ const f64 PI2_64 = 6.283185307179586476925286766559;
 #define INTRINSIC constexpr
 #endif
 
-INTRINSIC u8 Nlz(u32 x)
+INTRINSIC u8 Nlz(u32 n)
 {
 #if IS_MSVC
 	unsigned long i;
-	if (_BitScanReverse(&i, x))
+	if (_BitScanReverse(&i, n))
 		return 31 - (u8)i;
 	return 32;
 #else
-	return __builtin_clz(x);
+	if (n == 0) return 32;
+	return __builtin_clz(n);
 #endif
 }
 
@@ -37,6 +38,7 @@ INTRINSIC u8 Ntz(u32 n)
 	_BitScanForward(&i, n);
 	return (u8)i;
 #else
+	if (n == 0) return 32;
 	return __builtin_ctz(n);
 #endif
 }
@@ -60,15 +62,15 @@ INTRINSIC u32 LastPowerOf2(u32 n)
 	return 0x80000000 >> Nlz(n);
 }
 
-INTRINSIC u8 Nlz64(u64 x)
+INTRINSIC u8 Nlz64(u64 n)
 {
 #if IS_MSVC
 	unsigned long i;
-	if (_BitScanReverse64(&i, x))
+	if (_BitScanReverse64(&i, n))
 		return 63 - (u8)i;
 	return 64;
 #else
-	return __builtin_clzll(x);
+	return __builtin_clzll(n);
 #endif
 }
 

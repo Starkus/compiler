@@ -11,7 +11,7 @@ inline void EnqueueReadyJob(u32 jobIdx)
 	while (!MTQueueEnqueue(&g_context->readyJobs, jobIdx)) {
 		// Lockless sleep while queue is full
 		while (g_context->readyJobs.head == g_context->readyJobs.tail)
-			Sleep(0);
+			SYSSleep(0);
 	}
 }
 
@@ -92,7 +92,7 @@ void SchedulerProc(void *args)
 		switch (yieldReason) {
 		case YIELDREASON_FAILED:
 		{
-			_InterlockedIncrement((LONG volatile *)&g_context->failedJobsCount);
+			AtomicIncrementGetNew(&g_context->failedJobsCount);
 			previousJob->state = JOBSTATE_FINISHED;
 		} break;
 		case YIELDREASON_WAITING_FOR_STOP:
@@ -225,7 +225,7 @@ okWontStop:
 			}
 stillBelieve:
 			// @Improve: This is silly but shouldn't happen too often...
-			Sleep(0);
+			SYSSleep(0);
 		}
 	}
 	goto finish;
@@ -255,7 +255,7 @@ switchFiber:
 		}
 		else {
 			nextJob->state = JOBSTATE_RUNNING;
-			t_fiberToDelete = GetCurrentFiber();
+			t_fiberToDelete = SYSGetCurrentFiber();
 
 			Fiber fiber = nextJob->fiber;
 			ASSERT(fiber != SYS_INVALID_FIBER_HANDLE);
@@ -268,11 +268,11 @@ switchFiber:
 	}
 
 finish:
-	t_fiberToDelete = GetCurrentFiber();
+	t_fiberToDelete = SYSGetCurrentFiber();
 
 	Fiber mainFiber = g_mainFibers[t_threadIndex];
 	//Print("Switching to main fiber of thread %d (%p)\n", t_threadIndex, mainFiber);
-	ASSERT(GetCurrentFiber() != mainFiber);
+	ASSERT(SYSGetCurrentFiber() != mainFiber);
 	SYSSwitchToFiber(mainFiber);
 }
 
@@ -289,7 +289,7 @@ inline void SwitchJob(YieldReason yieldReason, YieldContext yieldContext)
 	Job *previousJob = GetCurrentJob();
 	ASSERT(previousJob->state == JOBSTATE_RUNNING);
 
-	previousJob->fiber = GetCurrentFiber();
+	previousJob->fiber = SYSGetCurrentFiber();
 	previousJob->yieldContext = yieldContext;
 
 	SchedulerArgs *args = ALLOC(LinearAllocator, SchedulerArgs);
@@ -347,5 +347,5 @@ int WorkerThreadProc(void *args)
 	SpinlockUnlock(&g_context->threadStatesLock);
 
 	SYSPrepareFiberForExit();
-	ExitThread(0);
+	return 0;
 }

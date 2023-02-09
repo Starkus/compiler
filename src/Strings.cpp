@@ -402,6 +402,8 @@ String ChangeFilenameExtension(String filename, String newExtension)
 			break;
 		}
 	}
+	if (newExtension.size == 0)
+		return filename;
 	return SStringConcat(filename, newExtension);
 }
 

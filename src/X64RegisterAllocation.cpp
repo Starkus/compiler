@@ -433,7 +433,7 @@ void ResolveStackOffsets(X64Context *x64Context)
 	DynamicArray<s64, ThreadAllocator> stack;
 	DynamicArrayInit(&stack, 16);
 
-	s64 stackCursor = 0;
+	u64 stackCursor = 0;
 
 	// Allocate space for the parameters we pass on the stack to procedures we call.
 	s64 allocParameters = x64Context->allocatedParameterCount;

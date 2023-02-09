@@ -17,11 +17,12 @@ O_NONBLOCK :: 0x00004000;
 
 // Declare syscalls for typechecking
 write      :: #external #convention(linux64) (handle: s64, buffer: ^void, bytesToWrite: u64) -> u64;
-open       :: #external #convention(linux64) (filename : ^u8, flags : s32, mode : s32) -> s32;
+open       :: #external #convention(linux64) (filename : ^s8, flags : s32, mode : s32) -> s32;
+close      :: #external #convention(linux64) (fd : s64) -> s32;
 exit       :: #external #convention(linux64) (errorCode : s64);
 exit_group :: #external #convention(linux64) (errorCode : s64);
 
-Print :: (string: String)
+Print :: #export (string: String)
 {
 	write(STDOUT, string.data, string.size);
 }
@@ -39,6 +40,7 @@ Assert :: (expr: bool)
 #if compiler_output_type == COMPILER_OUTPUT_EXECUTABLE
 __LinuxMain :: #export ()
 {
-	errorCode : s64 = Main();
+	// @Todo: pass arguments
+	errorCode : s64 = Main({});
 	exit_group(errorCode);
 }

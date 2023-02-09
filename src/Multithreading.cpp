@@ -20,20 +20,18 @@ inline void SpinlockLock(volatile u32 *locked)
 	int oldLocked = 1;
 retry:
 	int eax = 0;
-	asm volatile("xacquire lock cmpxchg %2, %1"
-					: "+a" (eax), "+m" (*locked)
+	int success;
+	asm volatile("xacquire lock cmpxchg %3, %1"
+					: "+a" (eax), "+m" (*locked), "=@cce" (success)
 					: "r" (oldLocked) : "memory", "cc");
-	if (!eax)
-		goto ret;
+	if (success)
+		return;
 
 pause:
 	if (!*locked)
 		goto retry;
 	_mm_pause();
 	goto pause;
-
-ret:
-	return;
 #endif
 }
 
@@ -64,7 +62,19 @@ inline void RWSpinlockLockForRead(volatile s32 *lock)
 	}
 #else
 	// GCC/Clang
-#error not implemented
+	for (;;) {
+		s32 expected = *lock;
+		if (expected >= 0) {
+			s32 desired = expected + 1;
+			int success;
+			asm volatile(
+					"xacquire lock cmpxchg %3, %1"
+							: "+a" (expected), "+m" (*lock), "=@cce" (success)
+							: "r" (desired) : "memory", "cc");
+			if (success) return;
+		}
+		_mm_pause();
+	}
 #endif
 }
 
@@ -76,7 +86,7 @@ inline void RWSpinlockUnlockForRead(volatile s32 *lock)
 	_InterlockedExchangeAdd_HLERelease((volatile long *)lock, -1);
 #else
 	// GCC/Clang
-#error not implemented
+	asm volatile("xrelease lock decl %1" : "+m"(*lock) : : "memory");
 #endif
 }
 
@@ -96,7 +106,19 @@ inline void RWSpinlockLockForWrite(volatile s32 *lock)
 	}
 #else
 	// GCC/Clang
-#error not implemented
+	int oldLock = -1;
+retry:
+	int eax = 0;
+	int success;
+	asm volatile("xacquire lock cmpxchg %3, %1"
+					: "+a" (eax), "+m" (*lock), "=@cce" (success)
+					: "r" (oldLock) : "memory", "cc");
+	if (success) return;
+pause:
+	if (!*lock)
+		goto retry;
+	_mm_pause();
+	goto pause;
 #endif
 }
 
@@ -107,7 +129,7 @@ inline void RWSpinlockUnlockForWrite(volatile s32 *lock)
 	_Store_HLERelease((volatile long *)lock, 0);
 #else
 	// GCC/Clang
-#error not implemented
+	asm volatile("xrelease movl %1, %0" : "+m"(*lock) : "i"(0) : "memory");
 #endif
 }
 

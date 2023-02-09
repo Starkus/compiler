@@ -2,6 +2,7 @@
 #include <time.h>
 #include <sys/stat.h>
 #include <sys/wait.h>
+#include <sys/mman.h>
 #include <fcntl.h>
 #include <immintrin.h>
 #include <linux/limits.h>
@@ -11,6 +12,7 @@
 #include <semaphore.h>
 #include <errno.h>
 #include <ucontext.h>
+#include <dlfcn.h>
 
 #define IS_LINUX 1
 
@@ -24,6 +26,8 @@ typedef u32 Fiber;
 #define SYS_INVALID_THREAD_HANDLE ((pthread_t)-1)
 #define SYS_INVALID_FIBER_HANDLE (0xFFFFFFFF)
 #define SYS_MAX_PATH PATH_MAX
+#define THREADLOCAL __thread
+#define NOINLINE __attribute((noinline))
 
 #define BREAK asm("int $3")
 #if DEBUG_BUILD

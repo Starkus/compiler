@@ -1,3 +1,6 @@
+* Don't force-include the basic library. Maybe separate mandatory things like String and TypeInfo
+	from procedures like Print. So we can compile a library and then use it in a program without
+	both defining a Print procedure. Then make the linker not ignore duplicate definitions!
 * Detect unreachable code and log error.
 * Put 8 bit offsets on instructions where possible (mainly branches and calls). However this is
 	complicated and codegen has way worse problems right now...

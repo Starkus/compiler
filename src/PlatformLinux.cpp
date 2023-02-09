@@ -1,5 +1,19 @@
+inline bool SYSFileExists(String filename)
+{
+	const char *cstr = StringToCStr(filename, ThreadAllocator::Alloc);
+	struct stat buffer;
+	return stat(cstr, &buffer) == 0;
+}
+
+inline bool SYSIsAbsolutePath(String filename)
+{
+	return filename.size && filename.data[0] == '/';
+}
+
 String SYSExpandPathCompilerRelative(String relativePath)
 {
+	ASSERT(!SYSIsAbsolutePath(relativePath));
+
 	char relativeCStr[SYS_MAX_PATH];
 	strncpy(relativeCStr, relativePath.data, relativePath.size);
 	relativeCStr[relativePath.size] = 0;
@@ -14,6 +28,7 @@ String SYSExpandPathCompilerRelative(String relativePath)
 
 String SYSExpandPathWorkingDirectoryRelative(String relativePath)
 {
+	ASSERT(!SYSIsAbsolutePath(relativePath));
 	String result;
 
 	char *absolutePath = (char *)ThreadAllocator::Alloc(SYS_MAX_PATH, 1);
@@ -32,15 +47,52 @@ String SYSExpandPathWorkingDirectoryRelative(String relativePath)
 
 FileHandle SYSOpenFileRead(String filename)
 {
-	String fullname = SYSExpandPathWorkingDirectoryRelative(filename);
+	String fullname = filename;
+	if (!SYSIsAbsolutePath(filename))
+		fullname = SYSExpandPathWorkingDirectoryRelative(filename);
+
 	return open(fullname.data, O_RDONLY);
 }
 
 FileHandle SYSOpenFileWrite(String filename)
 {
-	String fullname = SYSExpandPathWorkingDirectoryRelative(filename);
+	String fullname = filename;
+	if (!SYSIsAbsolutePath(filename))
+		fullname = SYSExpandPathWorkingDirectoryRelative(filename);
+
 	return open(fullname.data, O_WRONLY | O_CREAT | O_TRUNC,
 			S_IRUSR | S_IWUSR | S_IRGRP | S_IWGRP);
+}
+
+void *SYSReserveMemory(void *addressHint, u64 size)
+{
+	void *result = mmap(addressHint, size, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+	if (result == MAP_FAILED) {
+		Print("mmap error: %s\n", strerror(errno));
+		return nullptr;
+	}
+	return result;
+}
+
+void *SYSCommitMemory(void *address, u64 size)
+{
+	int error = mprotect(address, size, PROT_READ | PROT_WRITE);
+#if DEBUG_BUILD
+	if (error)
+		Print("mprotect error: %s\n", strerror(errno));
+#endif
+	ASSERT(error == 0);
+	return address;
+}
+
+void SYSFreeMemory(void *address, u64 size)
+{
+	int error = munmap(address, size);
+#if DEBUG_BUILD
+	if (error)
+		Print("munmap error: %s\n", strerror(errno));
+#endif
+	ASSERT(error == 0);
 }
 
 s64 SYSWriteFile(FileHandle fileHandle, void *buffer, s64 size)
@@ -117,16 +169,16 @@ void SYSCreateDirectory(String pathname)
 	mkdir(pathnameCStr, 0777);
 }
 
-void SYSRunAssembler(String outputPath, String extraArguments)
+void SYSRunAssembler(String outputPath, String outputFilename, String extraArguments, bool silent)
 {
 #if 1
 	String yasmCmd = TPrintF("yasm -f elf64 -g dwarf2 %S %S -o %S%c",
 			extraArguments,
-			SYSExpandPathWorkingDirectoryRelative("output/out.asm"_s),
-			SYSExpandPathWorkingDirectoryRelative("output/out.o"_s), 0);
+			ChangeFilenameExtension(outputFilename, ".asm"_s),
+			ChangeFilenameExtension(outputFilename, ".o"_s),
+			0);
 	int status = system(yasmCmd.data);
-	if (status)
-	{
+	if (status) {
 		if (status > 255) status = 255;
 		Print("Error executing yasm! Error 0x%.2x\n", status);
 		exit(status);
@@ -135,19 +187,18 @@ void SYSRunAssembler(String outputPath, String extraArguments)
 	int status;
 	pid_t pid = fork();
 
-	if (pid == 0)
-	{
-		const char *yasmArgs[] =
-		{
+	if (pid == 0) {
+		const char *filenameCstr = StringToCStr(ChangeFilenameExtension(outputFilename, ".asm"_s),
+				ThreadAllocator::Alloc);
+		const char *yasmArgs[] = {
 			"yasm",
 			"-f elf64",
 			"-F dwarf",
 			"-g",
-			SYSExpandPathWorkingDirectoryRelative("output/out.asm"_s).data,
+			filenameCstr,
 			0
 		};
-		if (execvp("yasm", (char **)yasmArgs) == -1)
-		{
+		if (execvp("yasm", (char **)yasmArgs) == -1) {
 			Print("Error executing yasm!\n");
 			exit(1);
 		}
@@ -155,32 +206,44 @@ void SYSRunAssembler(String outputPath, String extraArguments)
 #endif
 }
 
-void SYSRunLinker(String outputPath, bool makeLibrary, ArrayView<String> exportedSymbols,
-		String extraArguments) {
+void SYSRunLinker(String outputPath, String outputFilename, OutputType outputType,
+		ArrayView<String> exportedSymbols, String extraArguments, bool silent)
+{
 #if 1
-	if (makeLibrary)
-	{
+	if (outputType == OUTPUTTYPE_LIBRARY_STATIC) {
 		String arCmd = TPrintF("ar rcs %S %S %S%c",
+			ChangeFilenameExtension(outputFilename, ".a"_s),
+			ChangeFilenameExtension(outputFilename, ".o"_s),
 			extraArguments,
-			SYSExpandPathWorkingDirectoryRelative("output/out.a"_s),
-			SYSExpandPathWorkingDirectoryRelative("output/out.o"_s), 0);
+			0);
 		int status = system(arCmd.data);
-		if (status)
-		{
+		if (status) {
 			if (status > 255) status = 255;
 			Print("Error executing ar! Error 0x%.2x\n", status);
 			exit(status);
 		}
 	}
-	else
-	{
-		String moldCmd = TPrintF("mold %S %S -o %S -e __LinuxMain%c",
-			SYSExpandPathWorkingDirectoryRelative("output/out.o"_s),
+	else if (outputType == OUTPUTTYPE_LIBRARY_DYNAMIC) {
+		String moldCmd = TPrintF("mold -shared %S %S -o %S%c",
+			ChangeFilenameExtension(outputFilename, ".o"_s),
 			extraArguments,
-			SYSExpandPathWorkingDirectoryRelative("output/out"_s), 0);
+			ChangeFilenameExtension(outputFilename, ".so"_s),
+			0);
 		int status = system(moldCmd.data);
-		if (status)
-		{
+		if (status) {
+			if (status > 255) status = 255;
+			Print("Error executing mold! Error 0x%.2x\n", status);
+			exit(status);
+		}
+	}
+	else {
+		String moldCmd = TPrintF("mold %S %S -o %S -z muldefs -e __LinuxMain%c",
+			ChangeFilenameExtension(outputFilename, ".o"_s),
+			extraArguments,
+			ChangeFilenameExtension(outputFilename, {}),
+			0);
+		int status = system(moldCmd.data);
+		if (status) {
 			if (status > 255) status = 255;
 			Print("Error executing mold! Error 0x%.2x\n", status);
 			exit(status);
@@ -232,6 +295,13 @@ inline void SYSWaitForThreads(int count, ThreadHandle *threads)
 		int res = pthread_join(threads[i], nullptr);
 		ASSERT(res == 0);
 	}
+}
+
+inline void SYSExitThread(int errorCode)
+{
+	int *retval = ALLOC(LinearAllocator, int);
+	*retval = errorCode;
+	pthread_exit(retval);
 }
 
 inline ThreadHandle SYSGetCurrentThread()
@@ -325,36 +395,51 @@ inline void SYSSleepConditionVariableRead(ConditionVariable *conditionVar, Mutex
 	pthread_cond_wait(conditionVar, lock);
 }
 
-inline void SYSWakeAllConditionVariable(ConditionVariable *conditionVar) {
+inline void SYSWakeAllConditionVariable(ConditionVariable *conditionVar)
+{
 	pthread_cond_broadcast(conditionVar);
 }
 #endif
 
-inline void SYSSleep(int milliseconds) {
+inline void SYSSleep(int milliseconds)
+{
 	struct timespec t = { 0, milliseconds * 1000 };
 	nanosleep(&t, nullptr);
 }
 
-inline s32 AtomicCompareExchange(volatile s32 *destination, s32 exchange, s32 comparand) {
+inline s32 AtomicCompareExchange(volatile s32 *destination, s32 exchange, s32 comparand)
+{
 	__atomic_compare_exchange(destination, &comparand, &exchange, false, __ATOMIC_SEQ_CST,
 			__ATOMIC_SEQ_CST);
 	return comparand;
 }
 
-inline s64 AtomicCompareExchange64(volatile s64 *destination, s64 exchange, s64 comparand) {
+inline s64 AtomicCompareExchange64(volatile s64 *destination, s64 exchange, s64 comparand)
+{
 	__atomic_compare_exchange(destination, &comparand, &exchange, false, __ATOMIC_SEQ_CST,
 			__ATOMIC_SEQ_CST);
 	return comparand;
+}
+
+inline s32 AtomicIncrementGetNew(volatile s32 *destination)
+{
+	return __atomic_add_fetch(destination, 1, __ATOMIC_SEQ_CST);
 }
 
 // Fibers!
 // @Improve: infinite storage for fibers
 ucontext_t fiberContexts[8192];
 u32 g_fiberCount = 0;
-__thread u32 g_currentFiber = U32_MAX;
-__thread ucontext_t g_originalContext;
+__thread u32 t_currentFiber = U32_MAX;
+__thread ucontext_t t_originalContext;
 
-inline Fiber SYSCreateFiber(void (*start)(void *), void *args) {
+inline Fiber SYSGetCurrentFiber()
+{
+	return t_currentFiber;
+}
+
+inline Fiber SYSCreateFiber(void (*start)(void *), void *args)
+{
 	const u64 fiberStackSize = 1 * 1024 * 1024; // 1MB
 	void *fiberStack = SYSAlloc(fiberStackSize);
 	u32 fiberIdx = __atomic_fetch_add(&g_fiberCount, 1, __ATOMIC_SEQ_CST);
@@ -369,22 +454,72 @@ inline Fiber SYSCreateFiber(void (*start)(void *), void *args) {
 	return fiberIdx;
 }
 
-inline void SYSConvertThreadToFiber() {
+inline Fiber SYSConvertThreadToFiber()
+{
+	u32 fiberIdx = __atomic_fetch_add(&g_fiberCount, 1, __ATOMIC_SEQ_CST);
+	t_currentFiber = fiberIdx;
+	ASSERT(fiberIdx < ArrayCount(fiberContexts)); // Out of fibers!
+	ucontext_t *fiberContext = &fiberContexts[fiberIdx];
+	int res = getcontext(fiberContext);
+	ASSERT(res == 0);
+	return fiberIdx;
+}
+
+inline void SYSDeleteFiber(Fiber fiber)
+{
+	// @Todo: can we delete something?
+}
+
+inline void SYSPrepareFiberForExit()
+{
 	// Nothing on linux?
 }
 
-inline void SYSSwitchToFiber(Fiber fiber) {
+inline void SYSSwitchToFiber(Fiber fiber)
+{
 	ASSERT(fiber != SYS_INVALID_FIBER_HANDLE);
-	Fiber oldFiber = g_currentFiber;
-	g_currentFiber = fiber;
-	if (oldFiber != SYS_INVALID_FIBER_HANDLE)
-	{
+	Fiber oldFiber = t_currentFiber;
+	t_currentFiber = fiber;
+	if (oldFiber != SYS_INVALID_FIBER_HANDLE) {
 		fiberContexts[fiber].uc_link = &fiberContexts[oldFiber];
 		swapcontext(&fiberContexts[oldFiber], &fiberContexts[fiber]);
 	}
-	else
-	{
-		fiberContexts[fiber].uc_link = &g_originalContext;
-		swapcontext(&g_originalContext, &fiberContexts[fiber]);
+	else {
+		fiberContexts[fiber].uc_link = &t_originalContext;
+		swapcontext(&t_originalContext, &fiberContexts[fiber]);
 	}
+}
+
+extern "C" u64 SYSCallProcedureDynamically_linuxcc(void *start, u64 gpArgCount, void *gpArgValues,
+		u64 xmmArgCount, void *xmmArgValues, u64 stackArgCount, void *stackArgValues);
+
+extern "C" u64 SYSCallProcedureDynamically_windowscc(void *start, u64 argCount, void *argValues);
+
+void *SYSLoadDynamicLibrary(String filename)
+{
+	const char *cstr = StringToCStr(filename, ThreadAllocator::Alloc);
+	void *result = dlopen(cstr, RTLD_LAZY);
+	if (result) return result;
+
+	// Look in working path
+	String workingPathRelative = SYSExpandPathWorkingDirectoryRelative(filename);
+	// this string is null terminated
+	result = dlopen(workingPathRelative.data, RTLD_LAZY);
+	if (result) return result;
+
+	// Look in compiler path
+	String compilerPathRelative = SYSExpandPathCompilerRelative(TStringConcat("bin/"_s, filename));
+	// this string is null terminated
+	result = dlopen(compilerPathRelative.data, RTLD_LAZY);
+	return result;
+}
+
+inline void *SYSGetProcAddress(void *lib, const char *procedureCStr)
+{
+	return dlsym(lib, procedureCStr);
+}
+
+inline int SYSGetProcessorCount()
+{
+	return sysconf(_SC_NPROCESSORS_ONLN);
 }

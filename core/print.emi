@@ -156,7 +156,29 @@ PrintF :: (format : String, ..args)
 		}
 		else if typeInfo.typeKind == TypeKind_Enum {
 			enumInfo := cast(^TypeInfoEnum) typeInfo;
-			num := arg.asS64;
+
+			intInfo := cast(^TypeInfoInteger) enumInfo.typeInfo;
+			num : s64;
+			if intInfo.isSigned {
+				if intInfo.size == 1
+					num = arg.asS8;
+				else if intInfo.size == 2
+					num = arg.asS16;
+				else if intInfo.size == 4
+					num = arg.asS32;
+				else if intInfo.size == 8
+					num = arg.asS64;
+			}
+			else {
+				if intInfo.size == 1
+					num = arg.asU8;
+				else if intInfo.size == 2
+					num = arg.asU16;
+				else if intInfo.size == 4
+					num = arg.asU32;
+				else if intInfo.size == 8
+					num = cast(s64)arg.asU64;
+			}
 			for (enumInfo.values) {
 				if @it == num {
 					Print(enumInfo.names[i]);
@@ -170,23 +192,29 @@ PrintF :: (format : String, ..args)
 		}
 		else if typeInfo.typeKind == TypeKind_Array {
 			arrayInfo := cast(^TypeInfoArray) typeInfo;
+			elementTypeInfo: ^TypeInfo = arrayInfo.elementTypeInfo;
+
 			Print("{ ");
 			element : Any = ?;
-			element.typeInfo = arrayInfo.elementTypeInfo;
-			elementSize := arrayInfo.elementTypeInfo.size;
+			element.typeInfo = elementTypeInfo;
+			elementSize := elementTypeInfo.size;
+
 			buffer : ^u8 = cast(^u8)arg.data;
 			count : u64 = arrayInfo.count;
 			if count == 0 {
 				count = @ cast(^u64) buffer;
 				buffer = @ (cast(^^u8) buffer + 8);
 			}
+
 			Print("[");
 			PrintArgument(count);
 			Print("] ");
+
 			for 0..count {
 				if i > 0 Print(", ");
 
 				element.data = buffer + cast(u64)i * elementSize;
+
 				if element.typeInfo.typeKind == TypeKind_Integer ||
 				   element.typeInfo.typeKind == TypeKind_Floating ||
 				   element.typeInfo.typeKind == TypeKind_Enum ||

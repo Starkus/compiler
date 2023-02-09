@@ -228,6 +228,9 @@ String X64IRValueToStr(IRValue value, BucketArrayView<Value> localValues)
 					ptrToStaticData < STATIC_DATA_VIRTUAL_ADDRESS_END);
 			result = TPrintF("__start_of_static_data+0%llXh", (u64)(ptrToStaticData -
 						STATIC_DATA_VIRTUAL_ADDRESS));
+#if !IS_MSVC
+			result = TStringConcat("rel "_s, result);
+#endif
 		}
 
 		if (offset > 0)
@@ -2552,8 +2555,8 @@ void BackendMain()
 	}
 
 	x64InstructionInfos[X64_INT] =       { "int"_s,       OPERANDTYPE_IMMEDIATE, OPERANDACCESS_READ };
-	x64InstructionInfos[X64_INT1] =      { "int 1"_s };
-	x64InstructionInfos[X64_INT3] =      { "int 3"_s };
+	x64InstructionInfos[X64_INT1] =      { "int1"_s };
+	x64InstructionInfos[X64_INT3] =      { "int3"_s };
 	x64InstructionInfos[X64_INTO] =      { "into"_s };
 	x64InstructionInfos[X64_MOV] =       { "mov"_s,       OPERANDTYPE_REGMEM,    OPERANDACCESS_WRITE, OPERANDTYPE_ALL,    OPERANDACCESS_READ };
 	x64InstructionInfos[X64_MOVZX] =     { "movzx"_s,     OPERANDTYPE_REGMEM,    OPERANDACCESS_WRITE, OPERANDTYPE_REGMEM, OPERANDACCESS_READ };
@@ -2887,23 +2890,62 @@ int ComparePointers(const void *lhs, const void *rhs)
 
 String GetLinkerExtraArguments()
 {
+#if IS_WINDOWS
+	String objectFileExtension = ".obj"_s;
+	String staticLibFileExtension = ".lib"_s;
+#else
+	String objectFileExtension = ".o"_s;
+	String staticLibFileExtension = ".a"_s;
+#endif
+
 	String extraLinkerArguments = {};
 	for (int i = 0; i < g_context->libsToLink.size; ++i) {
 		String libName = g_context->libsToLink[i];
 		String libFullName;
 
 		// Working path relative
-		libFullName = SYSExpandPathWorkingDirectoryRelative(libName);
-		if (SYSFileExists(libFullName))
-			goto foundFullName;
-		libFullName = ChangeFilenameExtension(libFullName, ".obj"_s);
-		if (SYSFileExists(libFullName))
-			goto foundFullName;
-		libFullName = ChangeFilenameExtension(libFullName, ".lib"_s);
-		if (SYSFileExists(libFullName))
-			goto foundFullName;
+		{
+			libFullName = SYSExpandPathWorkingDirectoryRelative(libName);
+			if (SYSFileExists(libFullName))
+				goto foundFullName;
+			libFullName = ChangeFilenameExtension(libFullName, objectFileExtension);
+			if (SYSFileExists(libFullName))
+				goto foundFullName;
+			libFullName = ChangeFilenameExtension(libFullName, staticLibFileExtension);
+			if (SYSFileExists(libFullName))
+				goto foundFullName;
+		}
 
-		libFullName = ChangeFilenameExtension(libName, ".lib"_s);
+		// Bin path
+		{
+			String insideBin = TStringConcat("bin/"_s, libName);
+			libFullName = SYSExpandPathWorkingDirectoryRelative(insideBin);
+			if (SYSFileExists(libFullName))
+				goto foundFullName;
+			libFullName = ChangeFilenameExtension(libFullName, objectFileExtension);
+			if (SYSFileExists(libFullName))
+				goto foundFullName;
+			libFullName = ChangeFilenameExtension(libFullName, staticLibFileExtension);
+			if (SYSFileExists(libFullName))
+				goto foundFullName;
+
+		}
+
+		libFullName = ChangeFilenameExtension(libName, staticLibFileExtension);
+
+		// Would be great to be able to have this error. Right now, however, we don't check all the
+		// include paths that we pass to the linker.
+		// @Improve: make a good system where we have a list of all include paths (including things
+		// like the path to Windows SDK and Visual Studio libs) and we resolve them here. We
+		// wouldn't give the linker any include paths cause all libs will be already in full paths.
+		// Then we could report errors ourselves when we don't find the library.
+		// Oh, note that this is needed anyways, cause if we don't find the library here it will
+		// always have .lib extension, so we couldn't find .obj files using include paths on the
+		// linker!
+		/*
+		if (!SYSFileExists(libFullName))
+			LogError({}, TPrintF("Can't find library to link: \"%S\"", libName));
+		*/
 
 foundFullName:
 		extraLinkerArguments = TPrintF("%S %S", extraLinkerArguments, libFullName);
@@ -3077,7 +3119,7 @@ void BackendGenerateOutputFile()
 #endif
 
 #if IS_LINUX
-	u64 procedureCount = g_context->procedures.GetForRead(.count);
+	u64 procedureCount = g_context->procedures.GetForRead()->count;
 	for (int procedureIdx = 1; procedureIdx < procedureCount; ++procedureIdx) {
 		Procedure proc = GetProcedureRead(procedureIdx);
 		if (proc.isExported)
@@ -3104,7 +3146,7 @@ void BackendGenerateOutputFile()
 #if IS_WINDOWS
 			OutputBufferPrint("EXTRN %S:%S\n", name, type);
 #else
-			OutputBufferPrint("EXTERN %S:%S\n", name, type);
+			OutputBufferPrint("EXTERN %S\n", name);
 #endif
 		}
 	}

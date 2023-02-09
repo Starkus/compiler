@@ -148,6 +148,24 @@ FileHandle SYSOpenFileWrite(String filename)
 	return file;
 }
 
+inline void *SYSReserveMemory(void *addressHint, u64 size)
+{
+	void *result = VirtualAlloc(addressHint, size, MEM_RESERVE, PAGE_READWRITE);
+	if (!result && addressHint)
+		result = VirtualAlloc(nullptr, size, MEM_RESERVE, PAGE_READWRITE);
+	return result;
+}
+
+inline void *SYSCommitMemory(void *address, u64 size)
+{
+	return VirtualAlloc(address, size, MEM_COMMIT, PAGE_READWRITE);
+}
+
+void SYSFreeMemory(void *address, u64 size)
+{
+	VirtualFree(address, size, MEM_DECOMMIT);
+}
+
 s64 SYSWriteFile(FileHandle file, void *buffer, s64 size)
 {
 	DWORD written;
@@ -570,15 +588,23 @@ inline ThreadHandle SYSCreateThread(int (*start)(void *), void *args)
 	return CreateThread(nullptr, 0, (DWORD (*)(void *))start, args, 0, nullptr);
 }
 
-inline void SYSWaitForThread(ThreadHandle thread) {
+inline void SYSWaitForThread(ThreadHandle thread)
+{
 	WaitForSingleObject(thread, INFINITE);
 }
 
-void SYSWaitForThreads(u64 count, ThreadHandle *threads) {
+inline void SYSWaitForThreads(u64 count, ThreadHandle *threads)
+{
 	WaitForMultipleObjects((DWORD)count, threads, true, INFINITE);
 }
 
-inline ThreadHandle SYSGetCurrentThread() {
+noreturn inline void SYSExitThread(int errorCode)
+{
+	ExitThread(errorCode);
+}
+
+inline ThreadHandle SYSGetCurrentThread()
+{
 	return GetCurrentThread();
 }
 
@@ -597,6 +623,11 @@ void SYSSetThreadDescription(ThreadHandle thread, String string) {
 }
 
 Fiber g_runningFibers[8] = { SYS_INVALID_FIBER_HANDLE };
+
+inline Fiber SYSGetCurrentFiber()
+{
+	return GetCurrentFiber();
+}
 
 inline Fiber SYSCreateFiber(void (*start)(void *), void *args) {
 	const u64 fiberStackSize = 1 * 1024 * 1024; // 1MB
@@ -684,24 +715,34 @@ inline void SYSUnlockForWrite(RWLock *lock) {
 	ReleaseSRWLockExclusive(lock);
 }
 
-inline void SYSCreateConditionVariable(ConditionVariable *conditionVar) {
+inline void SYSCreateConditionVariable(ConditionVariable *conditionVar)
+{
 	InitializeConditionVariable(conditionVar);
 }
 
-inline void SYSSleepConditionVariableRead(ConditionVariable *conditionVar, RWLock *lock) {
+inline void SYSSleepConditionVariableRead(ConditionVariable *conditionVar, RWLock *lock)
+{
 	SleepConditionVariableSRW(conditionVar, lock, INFINITE, CONDITION_VARIABLE_LOCKMODE_SHARED);
 }
 
-inline void SYSWakeAllConditionVariable(ConditionVariable *conditionVar) {
+inline void SYSWakeAllConditionVariable(ConditionVariable *conditionVar)
+{
 	WakeAllConditionVariable(conditionVar);
 }
 
-inline s32 AtomicCompareExchange(volatile s32 *destination, s32 exchange, s32 comparand) {
+inline s32 AtomicCompareExchange(volatile s32 *destination, s32 exchange, s32 comparand)
+{
 	return _InterlockedCompareExchange((volatile LONG *)destination, (LONG)exchange, (LONG)comparand);
 }
 
-inline s64 AtomicCompareExchange64(volatile s64 *destination, s64 exchange, s64 comparand) {
+inline s64 AtomicCompareExchange64(volatile s64 *destination, s64 exchange, s64 comparand)
+{
 	return _InterlockedCompareExchange64((volatile LONG64 *)destination, (LONG64)exchange, (LONG64)comparand);
+}
+
+inline s32 AtomicIncrementGetNew(volatile s32 *destination)
+{
+	_InterlockedIncrement((LONG volatile *)destination);
 }
 
 extern "C" u64 SYSCallProcedureDynamically(void *start, u64 argCount, void *argValues);
@@ -723,4 +764,16 @@ void *SYSLoadDynamicLibrary(String filename)
 	// this string is null terminated
 	result = LoadLibraryA(compilerPathRelative.data);
 	return result;
+}
+
+inline void *SYSGetProcAddress(void *lib, const char *procedureCStr)
+{
+	return GetProcAddress((HMODULE)lib, procedureCStr);
+}
+
+inline int SYSGetProcessorCount()
+{
+	SYSTEM_INFO win32SystemInfo;
+	GetSystemInfo(&win32SystemInfo);
+	return win32SystemInfo.dwNumberOfProcessors;
 }

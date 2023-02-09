@@ -10,7 +10,10 @@ TwoNumbers :: struct
 	b: s32;
 };
 
-TestProc :: #external #convention(win64) (a: s64, b: s64, c: s64, d: s64, e: s64, f: s64, g: s64, h: s64);
+#if 1 || compiler_platform == COMPILER_PLATFORM_WINDOWS
+	TestProc :: #external #convention(win64) (a: s64, b: s64, c: s64, d: s64, e: s64, f: s64, g: s64, h: s64);
+else
+	TestProc :: #external #convention(linux64) (a: s64, b: s64, c: s64, d: s64, e: s64, f: s64, g: s64, h: s64);
 
 RunThisOnCompileTime :: (arg: s64) -> s64
 {

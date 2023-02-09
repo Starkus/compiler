@@ -3,10 +3,9 @@
 
 void OutputBufferInit()
 {
-	void *base = VirtualAlloc(OUTPUT_BUFFER_PREFERRED_VIRTUAL_ADDRESS, 0x1000000000, MEM_RESERVE,
-			PAGE_READWRITE);
+	void *base = SYSReserveMemory(OUTPUT_BUFFER_PREFERRED_VIRTUAL_ADDRESS, 0x100000000);
 	ASSERT(base);
-	void *firstPage = VirtualAlloc(base, OUTPUT_BUFFER_PAGE_SIZE, MEM_COMMIT, PAGE_READWRITE);
+	void *firstPage = SYSCommitMemory(base, OUTPUT_BUFFER_PAGE_SIZE);
 	ASSERT(firstPage);
 	g_context->outputBufferMem = (u8 *)base;
 	g_context->outputBufferCapacity = OUTPUT_BUFFER_PAGE_SIZE;
@@ -19,8 +18,8 @@ void OutputBufferInit()
 
 void OutputBufferAllocatePage()
 {
-	void *newPage = VirtualAlloc(g_context->outputBufferMem + g_context->outputBufferCapacity,
-			OUTPUT_BUFFER_PAGE_SIZE, MEM_COMMIT, PAGE_READWRITE);
+	void *newPage = SYSCommitMemory(g_context->outputBufferMem + g_context->outputBufferCapacity,
+			OUTPUT_BUFFER_PAGE_SIZE);
 	ASSERT(newPage);
 	g_context->outputBufferCapacity += OUTPUT_BUFFER_PAGE_SIZE;
 
@@ -80,7 +79,7 @@ void OutputBufferReset()
 	// Free all but first page
 	s64 bytesToFree = g_context->outputBufferCapacity - OUTPUT_BUFFER_PAGE_SIZE;
 	if (bytesToFree > 0)
-		VirtualFree(g_context->outputBufferMem + OUTPUT_BUFFER_PAGE_SIZE, bytesToFree, MEM_DECOMMIT);
+		SYSFreeMemory(g_context->outputBufferMem + OUTPUT_BUFFER_PAGE_SIZE, bytesToFree);
 	g_context->outputBufferSize = 0;
 	g_context->outputBufferOffset = 0;
 	g_context->outputBufferCapacity = OUTPUT_BUFFER_PAGE_SIZE;

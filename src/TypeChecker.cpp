@@ -1090,8 +1090,8 @@ void *AllocateStaticData(u32 valueIdx, u64 size, int alignment)
 		u8 *end = result + size;
 		while (end > STATIC_DATA_VIRTUAL_ADDRESS + g_context->staticDataAllocatedSpace) {
 			// Allocate more memory
-			void *newMem = VirtualAlloc(STATIC_DATA_VIRTUAL_ADDRESS + g_context->staticDataAllocatedSpace,
-					0x100000, MEM_COMMIT, PAGE_READWRITE);
+			void *newMem = SYSCommitMemory(STATIC_DATA_VIRTUAL_ADDRESS + g_context->staticDataAllocatedSpace,
+					0x100000);
 			memset(newMem, 0xCC, 0x100000);
 			g_context->staticDataAllocatedSpace += 0x100000;
 		}
@@ -4667,7 +4667,12 @@ void TypeCheckExpression(TCContext *tcContext, ASTExpression *expression)
 		String filename = expression->linklib.filename;
 		*DynamicArrayAdd(&g_context->libsToLink) = filename;
 
-		CTLibrary ctLib = { .name = ChangeFilenameExtension(filename, ".dll"_s),
+#if IS_WINDOWS
+		String dynamicLibExt = ".dll"_s;
+#else
+		String dynamicLibExt = ".so"_s;
+#endif
+		CTLibrary ctLib = { .name = ChangeFilenameExtension(filename, dynamicLibExt),
 			.loc = expression->any.loc };
 		auto ctLibs = g_context->ctExternalLibraries.Get();
 		*DynamicArrayAdd(&ctLibs) = ctLib;
@@ -4857,7 +4862,7 @@ int GetTypeAlignment(u32 typeTableIdx)
 		}
 	}
 	else if (typeInfo.typeCategory == TYPECATEGORY_ARRAY)
-		return GetTypeAlignment(typeInfo.arrayInfo.elementTypeTableIdx);
+		alignment = GetTypeAlignment(typeInfo.arrayInfo.elementTypeTableIdx);
 	else {
 		alignment = 8;
 		if (typeInfo.size < 8)
@@ -5022,8 +5027,8 @@ void TypeCheckMain()
 {
 	// Initialize memory and bookkeep of types for static data
 	u64 virtualRangeSize = (u64)(STATIC_DATA_VIRTUAL_ADDRESS_END - STATIC_DATA_VIRTUAL_ADDRESS);
-	VirtualAlloc(STATIC_DATA_VIRTUAL_ADDRESS, virtualRangeSize, MEM_RESERVE, PAGE_READWRITE);
-	VirtualAlloc(STATIC_DATA_VIRTUAL_ADDRESS, 0x100000, MEM_COMMIT, PAGE_READWRITE);
+	SYSReserveMemory(STATIC_DATA_VIRTUAL_ADDRESS, virtualRangeSize);
+	SYSCommitMemory(STATIC_DATA_VIRTUAL_ADDRESS, 0x100000);
 	memset(STATIC_DATA_VIRTUAL_ADDRESS, 0xCC, 0x100000);
 	g_context->staticDataAllocatedSpace = 0x100000;
 	g_context->staticDataSize = 0;
