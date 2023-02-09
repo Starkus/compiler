@@ -37,10 +37,27 @@ Assert :: (expr: bool)
 	}
 }
 
-#if compiler_output_type == COMPILER_OUTPUT_EXECUTABLE
-__LinuxMain :: #export ()
-{
-	// @Todo: pass arguments
-	errorCode : s64 = Main({});
-	exit_group(errorCode);
+#if compiler_output_type == COMPILER_OUTPUT_EXECUTABLE {
+	#linklib "LinuxStart";
+
+	__LinuxMain :: #export (argsRaw: [] ^s8)
+	{
+		// Convert array of cstr to array of Strings
+		argsBuffer: [64] String = ?;
+		args: [] String = ?;
+		args.size = argsRaw.size;
+		args.data = ^argsBuffer;
+		for argsRaw {
+			arg: String = { 0, cast(^u8)@it };
+			scan: ^s8 = @it;
+			while @scan != 0 {
+				arg.size += 1;
+				scan += 1;
+			}
+			args[i] = arg;
+		}
+
+		errorCode : s64 = Main(args);
+		exit_group(errorCode);
+	}
 }

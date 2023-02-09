@@ -237,7 +237,7 @@ void SYSRunLinker(String outputPath, String outputFilename, OutputType outputTyp
 		}
 	}
 	else {
-		String moldCmd = TPrintF("mold %S %S -o %S -z muldefs -e __LinuxMain%c",
+		String moldCmd = TPrintF("mold %S %S -o %S -z muldefs -e __LinuxStart%c",
 			ChangeFilenameExtension(outputFilename, ".o"_s),
 			extraArguments,
 			ChangeFilenameExtension(outputFilename, {}),

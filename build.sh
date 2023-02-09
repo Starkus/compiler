@@ -7,6 +7,7 @@ COMMON_OPTIONS="-I src/ -I external/ -std=c++20 -Wno-switch -Wno-assume -mavx2 -
 echo Compiling...
 
 nasm src/DynamicCallLinux.asm -f elf64 -o bin/basic.o
+nasm src/LinuxStart.asm -f elf64 -o bin/LinuxStart.o
 clang -shared -o bin/basic.so bin/basic.o
 
 if [ "$1" = "-r" ]
