@@ -2,9 +2,11 @@
 #if _WIN32
 #define IMPORT __declspec(dllimport)
 #define EXPORT __declspec(dllexport)
+#define WINDOWSCC
 #else
 #define IMPORT
 #define EXPORT
+#define WINDOWSCC __attribute__((ms_abi))
 #endif
 
 #if _MSC_VER
@@ -60,4 +62,9 @@ EXPORT int TestProc(int a, int b, int c, int d, int e, int f, int g, int h)
 #endif
 
 	return a + b + c + d + e + f + g + h;
+}
+
+EXPORT WINDOWSCC int TestProcWinCC(int a, int b, int c, int d, int e, int f, int g, int h)
+{
+	return TestProc(a, b, c, d, e, f, g, h);
 }

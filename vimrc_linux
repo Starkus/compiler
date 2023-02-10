@@ -1,8 +1,25 @@
-let g:build_command = "./build.sh"
-let g:build_release_command = "./build.sh -r"
-let g:run_command =  "bin/Compiler"
+function! Make(args)
+	exec "make" . a:args
+	if !empty(filter(getqflist(), 'match(v:val.text, "Success") >= 0'))
+		echo "Compilation succeeded!"
+	else
+		echo "Compilation failed!"
+	endif
+endfunction
 
-command! Test :!output/out
+function! RunCompiler(args)
+	if empty(a:args) == 0
+		let g:compiler_args = a:args
+	endif
+	exec "!bin/Compiler " . g:compiler_args . " & pause"
+endfunction
+
+set makeprg=./build.sh
+
+command! Build :call Make("")
+command! BuildR :call Make("-r")
+command! -nargs=* -complete=file Run :call RunCompiler("<args>")
+command! Test :!output/out & pause
 
 " Ignore build folder in wildcards
 set wildignore+=*/build/*
