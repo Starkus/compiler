@@ -15,7 +15,8 @@ TwoNumbers :: struct
 else
 	TestProc :: #external #convention(linux64) (a: s64, b: s64, c: s64, d: s64, e: s64, f: s64, g: s64, h: s64);
 
-TestProcWinCC :: #external #convention(win64) (a: s64, b: s64, c: s64, d: s64, e: s64, f: s64, g: s64, h: s64);
+TestProcWinCC   :: #external #convention(win64)   (a: s64, b: s64, c: s64, d: s64, e: s64, f: s64, g: s64, h: s64);
+TestProcLinuxCC :: #external #convention(linux64) (a: s64, b: s64, c: s64, d: s64, e: s64, f: s64, g: s64, h: s64);
 
 RunThisOnCompileTime :: (arg: s64) -> s64
 {
@@ -24,6 +25,9 @@ RunThisOnCompileTime :: (arg: s64) -> s64
 
 	Print("Calling procedure with win64 calling convention from dll:\n");
 	TestProcWinCC(2, 4, 6, 8, 10, 12, 14, 16);
+
+	Print("Calling procedure with linux64 calling convention from dll:\n");
+	TestProcLinuxCC(2, 4, 6, 8, 10, 12, 14, 16);
 
 	foo := 6 + arg;
 

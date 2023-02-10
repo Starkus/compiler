@@ -1,15 +1,11 @@
 #include <stdint.h>
-#if _WIN32
+
 #define IMPORT __declspec(dllimport)
 #define EXPORT __declspec(dllexport)
-#define WINDOWSCC
-#else
-#define IMPORT
-#define EXPORT
 #define WINDOWSCC __attribute__((ms_abi))
-#endif
+#define LINUXCC   __attribute__((sysv_abi))
 
-#if _MSC_VER
+#if _WIN32
 IMPORT void *GetStdHandle(unsigned int num);
 IMPORT int WriteFile(void *file, void *buffer, unsigned int count,
 		unsigned int *written, void *overlapped);
@@ -39,11 +35,18 @@ EXPORT int TestProc(int a, int b, int c, int d, int e, int f, int g, int h)
 			*cursor++ = '-';
 			n = -n;
 		}
+
+		char numBuffer[32];
+		char *numCursor = &numBuffer[31];
+		// Fill numBuffer backwards
 		while (n > 0) {
 			int digit = n % 10;
-			*cursor++ = '0' + digit;
+			*numCursor-- = '0' + digit;
 			n /= 10;
 		}
+		// Copy only what we wrote, forwards
+		while (numCursor != numBuffer+32)
+			*cursor++ = *++numCursor;
 	}
 	*cursor++ = '\n';
 
@@ -51,6 +54,8 @@ EXPORT int TestProc(int a, int b, int c, int d, int e, int f, int g, int h)
 	void *stdOut = GetStdHandle((unsigned int)-11);
 	WriteFile(stdOut, buffer, cursor - buffer, 0, 0);
 #else
+	// Just calling 'write' forces whoever uses this lib to link against libc.so. I don't wanna link
+	// libc!
 	register int syscallCode asm ("eax") = SYS_write;
 	register int fd asm ("edi") = 1;
 	register const void *buf asm ("rsi") = buffer;
@@ -65,6 +70,11 @@ EXPORT int TestProc(int a, int b, int c, int d, int e, int f, int g, int h)
 }
 
 EXPORT WINDOWSCC int TestProcWinCC(int a, int b, int c, int d, int e, int f, int g, int h)
+{
+	return TestProc(a, b, c, d, e, f, g, h);
+}
+
+EXPORT LINUXCC int TestProcLinuxCC(int a, int b, int c, int d, int e, int f, int g, int h)
 {
 	return TestProc(a, b, c, d, e, f, g, h);
 }

@@ -116,6 +116,7 @@ pop rbp
 
 ret 0
 
+align(4)
 .GPJumpTable:
 	.jt0: equ .nogp - .GPJumpTable
 	.jt1: equ .rdi  - .GPJumpTable
@@ -126,6 +127,7 @@ ret 0
 	.jt6: equ .r9   - .GPJumpTable
 	dd .jt0, .jt1, .jt2, .jt3, .jt4, .jt5, .jt6
 
+align(4)
 .XMMJumpTable:
 	.jt7  equ .xmm0  - .XMMJumpTable
 	.jt8  equ .xmm1  - .XMMJumpTable
@@ -206,6 +208,7 @@ pop rbp
 
 ret 0
 
+align(4)
 .GPJumpTable:
 	.jt0: equ .nogp - .GPJumpTable
 	.jt1: equ .rcx  - .GPJumpTable
