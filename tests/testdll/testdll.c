@@ -38,14 +38,16 @@ EXPORT int TestProc(int a, int b, int c, int d, int e, int f, int g, int h)
 
 		char numBuffer[32];
 		char *numCursor = &numBuffer[31];
+		int digitCount = 0;
 		// Fill numBuffer backwards
 		while (n > 0) {
 			int digit = n % 10;
 			*numCursor-- = '0' + digit;
+			++digitCount;
 			n /= 10;
 		}
 		// Copy only what we wrote, forwards
-		while (numCursor != numBuffer+32)
+		for (int i = 0; i < digitCount; ++i)
 			*cursor++ = *++numCursor;
 	}
 	*cursor++ = '\n';
