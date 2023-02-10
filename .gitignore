@@ -1,5 +1,11 @@
 bin/
+output/
+tests/testdll/*.o
+tests/testdll/*.obj
+tests/testdll/*.exp
+tests/testdll/*.map
 tags
 *.rdbg
 *.swp
 *.swo
+.vimrc
