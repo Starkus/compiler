@@ -1,5 +1,5 @@
 #include <stdint.h>
-#if _MSC_VER
+#if _WIN32
 #define IMPORT __declspec(dllimport)
 #define EXPORT __declspec(dllexport)
 #else
@@ -12,11 +12,9 @@ IMPORT void *GetStdHandle(unsigned int num);
 IMPORT int WriteFile(void *file, void *buffer, unsigned int count,
 		unsigned int *written, void *overlapped);
 #else
-//int64_t write(int fd, const void *buf, uint64_t count);
 #include <unistd.h>
 #include <sys/syscall.h>
 #endif
-//IMPORT void Print(uint64_t size, char *buffer);
 
 const char prefix[] = "Arguments: ";
 
@@ -47,7 +45,7 @@ EXPORT int TestProc(int a, int b, int c, int d, int e, int f, int g, int h)
 	}
 	*cursor++ = '\n';
 
-#if _MSC_VER
+#if _WIN32
 	void *stdOut = GetStdHandle((unsigned int)-11);
 	WriteFile(stdOut, buffer, cursor - buffer, 0, 0);
 #else

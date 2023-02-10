@@ -14,11 +14,11 @@ section .text
 %define stackArgData  r10
 SYSCallProcedureDynamically_linuxcc:
 ; rdi: procedure address
-; rsi: gp arg count   [0, 6)
+; rsi: gp arg count   [0, 6]
 ; rdx: gp arg data
-; rcx: xmm arg count  [0, 16)
+; rcx: xmm arg count  [0, 16]
 ; r8: xmm arg data
-; r9: stack arg count [0, 16)
+; r9: stack arg count [0, 16]
 ; (r10): stack arg data
 
 push rbp

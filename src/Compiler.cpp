@@ -12,10 +12,12 @@ typedef uint64_t u64;
 typedef float f32;
 typedef double f64;
 
-#if _MSC_VER
+#if _WIN32
 #include "PlatformWindows.h"
-#else
+#elif linux
 #include "PlatformLinux.h"
+#else
+#error "Unsupported operating system"
 #endif
 
 #include "General.h"

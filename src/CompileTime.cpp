@@ -216,10 +216,20 @@ u64 CallProcedureDynamically(void *procStart, u32 typeTableIdx, ArrayView<CTRegi
 	TypeInfo typeInfo = GetTypeInfo(typeTableIdx);
 	ASSERT(typeInfo.typeCategory == TYPECATEGORY_PROCEDURE);
 	CallingConvention cc = typeInfo.procedureInfo.callingConvention;
-	if (cc == CC_WIN64)
-		return SYSCallProcedureDynamically_windowscc(procStart, arguments.size, arguments.data);
 
-	// linux calling convention...
+	// Windows calling convention...
+	if (cc == CC_WIN64) {
+		// Right now we only support 16 arguments just because I'm lazy.
+		ASSERT(arguments.size <= 16);
+
+		u64 derefArguments[16];
+		for (int i = 0; i < arguments.size; ++i)
+			derefArguments[i] = *(u64 *)arguments[i];
+
+		return SYSCallProcedureDynamically_windowscc(procStart, arguments.size, derefArguments);
+	}
+
+	// Linux calling convention...
 	ArrayView<ProcedureParameter> parameters = typeInfo.procedureInfo.parameters;
 
 	Array<u64, ThreadAllocator> gpArgs;
@@ -245,7 +255,7 @@ u64 CallProcedureDynamically(void *procStart, u32 typeTableIdx, ArrayView<CTRegi
 				members = paramTypeInfo.structInfo.members;
 
 			void *first = nullptr, *second = nullptr;
-			bool isFirstXmm, isSecondXmm;
+			bool isFirstXmm = false, isSecondXmm = false;
 			int regCount = 1;
 
 			first = arg;
@@ -1179,11 +1189,7 @@ ArrayView<const CTRegister *> CTInternalRunInstructions(CTContext *context,
 				void *procStart = GetExternalProcedureAddress(calleeProc.name);
 				ASSERT(procStart);
 
-#if IS_WINDOWS
-				u64 returnValue = SYSCallProcedureDynamically(procStart, arguments.size, arguments.data);
-#else
 				u64 returnValue = CallProcedureDynamically(procStart, calleeProc.typeTableIdx, arguments);
-#endif
 
 				if (inst.procedureCall.returnValues.size) {
 					ASSERT(inst.procedureCall.returnValues.size == 1);

@@ -495,7 +495,7 @@ void ResolveStackOffsets(X64Context *x64Context)
 		} break;
 		case X64_Pop_Scope:
 		{
-			if (stackCursor > (s64)x64Context->stackSize)
+			if (stackCursor > x64Context->stackSize)
 				x64Context->stackSize = stackCursor;
 			stackCursor = stack[--stack.size];
 		} break;
@@ -503,7 +503,7 @@ void ResolveStackOffsets(X64Context *x64Context)
 next:
 		inst = X64InstructionStreamAdvance(&stream);
 	}
-	if (stackCursor > (s64)x64Context->stackSize)
+	if (stackCursor > x64Context->stackSize)
 		x64Context->stackSize = stackCursor;
 
 	// Align stack to 16 bytes.

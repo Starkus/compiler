@@ -598,7 +598,7 @@ inline void SYSWaitForThreads(u64 count, ThreadHandle *threads)
 	WaitForMultipleObjects((DWORD)count, threads, true, INFINITE);
 }
 
-noreturn inline void SYSExitThread(int errorCode)
+inline void SYSExitThread(int errorCode)
 {
 	ExitThread(errorCode);
 }
@@ -742,10 +742,13 @@ inline s64 AtomicCompareExchange64(volatile s64 *destination, s64 exchange, s64 
 
 inline s32 AtomicIncrementGetNew(volatile s32 *destination)
 {
-	_InterlockedIncrement((LONG volatile *)destination);
+	return _InterlockedIncrement((LONG volatile *)destination);
 }
 
-extern "C" u64 SYSCallProcedureDynamically(void *start, u64 argCount, void *argValues);
+extern "C" u64 SYSCallProcedureDynamically_windowscc(void *start, u64 argCount, void *argValues);
+
+extern "C" u64 SYSCallProcedureDynamically_linuxcc(void *start, u64 gpArgCount, void *gpArgValues,
+		u64 xmmArgCount, void *xmmArgValues, u64 stackArgCount, void *stackArgValues);
 
 void *SYSLoadDynamicLibrary(String filename)
 {
