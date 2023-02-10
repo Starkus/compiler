@@ -276,5 +276,5 @@ struct IRContext
 };
 
 IRValue IRGenFromExpression(IRContext *context, const ASTExpression *expression);
-void IRJobProcedure(u32 jobIdx, void *args);
-void IRJobExpression(u32 jobIdx, void *args);
+void IRJobProcedure(void *args);
+void IRJobExpression(void *args);

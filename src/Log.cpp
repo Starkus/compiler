@@ -27,8 +27,11 @@ inline void ConsoleSetColor(ConsoleColor color, bool bright = false, bool underl
 
 FatSourceLocation ExpandSourceLocation(SourceLocation loc);
 
-void __Log(SourceLocation loc, String str, String prefix, ConsoleColor color,
-			bool bright, const char *inFile, const char *inFunc, int inLine)
+void __Log(SourceLocation loc, String str, String prefix, ConsoleColor color, bool bright
+#if DEBUG_BUILD
+		, const char *inFile, const char *inFunc, int inLine
+#endif
+		)
 {
 	ScopedLockMutex lock(g_context->consoleMutex);
 
@@ -94,7 +97,11 @@ void __Log(SourceLocation loc, String str, String prefix, ConsoleColor color,
 }
 
 void __LogRange(SourceLocation locBegin, SourceLocation locEnd, String str, String prefix,
-		ConsoleColor color, bool bright, const char *inFile, const char *inFunc, int inLine)
+		ConsoleColor color, bool bright
+#if DEBUG_BUILD
+		, const char *inFile, const char *inFunc, int inLine
+#endif
+		)
 {
 	ScopedLockMutex lock(g_context->consoleMutex);
 
@@ -160,41 +167,59 @@ void __LogRange(SourceLocation locBegin, SourceLocation locEnd, String str, Stri
 	ConsoleSetColor(CONSOLE_RESET_COLOR);
 }
 
-#define Log(loc, str) \
-	do { __Log(loc, str, {}, CONSOLE_RESET_COLOR, false, __FILE__, __func__, __LINE__); } while (0)
+#define Log(loc, str) do {\
+	__Log(loc, str, {},					 CONSOLE_RESET_COLOR,	false DEBUG_ONLY(, __FILE__, __func__, __LINE__)); \
+} while (0)
 
-#define LogErrorNoCrash(loc, str) \
-	do { __Log(loc, str, "ERROR:"_s, CONSOLE_RED_TXT, false, __FILE__, __func__, __LINE__); } while (0)
+#define LogErrorNoCrash(loc, str) do {\
+	__Log(loc, str, "ERROR:"_s,			 CONSOLE_RED_TXT,		false DEBUG_ONLY(, __FILE__, __func__, __LINE__)); \
+} while (0)
 
-#define LogWarning(loc, str) \
-	do { __Log(loc, str, "WARNING:"_s, CONSOLE_YELLOW_TXT, false, __FILE__, __func__, __LINE__); } while (0)
+#define LogWarning(loc, str) do {\
+	__Log(loc, str, "WARNING:"_s,		 CONSOLE_YELLOW_TXT,	false DEBUG_ONLY(, __FILE__, __func__, __LINE__)); \
+} while (0)
 
-#define LogNote(loc, str) \
-	do { __Log(loc, str, "NOTE:"_s, CONSOLE_WHITE_TXT, true, __FILE__, __func__, __LINE__); } while (0)
+#define LogNote(loc, str) do {\
+	__Log(loc, str, "NOTE:"_s,			 CONSOLE_WHITE_TXT,		true  DEBUG_ONLY(, __FILE__, __func__, __LINE__)); \
+} while (0)
 
-#define LogCompilerError(loc, str) \
-	do { __Log(loc, str, "COMPILER ERROR:"_s, CONSOLE_RED_TXT, true, __FILE__, __func__, __LINE__); PANIC; } while (0)
+#define LogCompilerError(loc, str) do {\
+	__Log(loc, str, "COMPILER ERROR:"_s, CONSOLE_RED_TXT,		true  DEBUG_ONLY(, __FILE__, __func__, __LINE__)); \
+	PANIC; \
+} while (0)
 
-#define Log2(locBegin, locEnd, str) \
-	do { __LogRange(locBegin, locEnd, str, {}, CONSOLE_RESET_COLOR, false, __FILE__, __func__, __LINE__); } while (0)
+#define Log2(locBegin, locEnd, str) do {\
+	__LogRange(locBegin, locEnd, str, {},			CONSOLE_RESET_COLOR, false DEBUG_ONLY(, __FILE__, __func__, __LINE__)); \
+} while (0)
 
-#define Log2ErrorNoCrash(locBegin, locEnd, str) \
-	do { __LogRange(locBegin, locEnd, str, "ERROR:"_s, CONSOLE_RED_TXT, false, __FILE__, __func__, __LINE__); } while (0)
+#define Log2ErrorNoCrash(locBegin, locEnd, str) do {\
+	__LogRange(locBegin, locEnd, str, "ERROR:"_s,	CONSOLE_RED_TXT,	 false DEBUG_ONLY(, __FILE__, __func__, __LINE__)); \
+} while (0)
 
-#define Log2Warning(locBegin, locEnd, str) \
-	do { __LogRange(locBegin, locEnd, str, "WARNING:"_s, CONSOLE_YELLOW_TXT, false, __FILE__, __func__, __LINE__); } while (0)
+#define Log2Warning(locBegin, locEnd, str) do {\
+	__LogRange(locBegin, locEnd, str, "WARNING:"_s,	CONSOLE_YELLOW_TXT,	 false DEBUG_ONLY(, __FILE__, __func__, __LINE__)); \
+} while (0)
 
-#define Log2Note(locBegin, locEnd, str) \
-	do { __LogRange(locBegin, locEnd, str, "NOTE:"_s, CONSOLE_WHITE_TXT, true, __FILE__, __func__, __LINE__); } while (0)
+#define Log2Note(locBegin, locEnd, str) do {\
+	__LogRange(locBegin, locEnd, str, "NOTE:"_s,	CONSOLE_WHITE_TXT,	 true  DEBUG_ONLY(, __FILE__, __func__, __LINE__)); \
+} while (0)
 
 #if EXIT_ON_FIRST_ERROR
-#define LogError(loc, str) \
-	do { LogErrorNoCrash(loc, str); PANIC; } while(0)
-#define Log2Error(locBegin, locEnd, str) \
-	do { Log2ErrorNoCrash(locBegin, locEnd, str); PANIC; } while(0)
+#define LogError(loc, str) do {\
+	LogErrorNoCrash(loc, str); \
+	PANIC; \
+} while(0)
+#define Log2Error(locBegin, locEnd, str) do {\
+	Log2ErrorNoCrash(locBegin, locEnd, str); \
+	PANIC; \
+} while(0)
 #else
-#define LogError(loc, str) \
-	do { LogErrorNoCrash(loc, str); SwitchJob(YIELDREASON_FAILED, {}); } while(0)
-#define Log2Error(locBegin, locEnd, str) \
-	do { Log2ErrorNoCrash(locBegin, locEnd, str); SwitchJob(YIELDREASON_FAILED, {}); } while(0)
+#define LogError(loc, str) do {\
+	LogErrorNoCrash(loc, str); \
+	SwitchJob(YIELDREASON_FAILED, {}); \
+} while(0)
+#define Log2Error(locBegin, locEnd, str) do {\
+	Log2ErrorNoCrash(locBegin, locEnd, str); \
+	SwitchJob(YIELDREASON_FAILED, {}); \
+} while(0)
 #endif

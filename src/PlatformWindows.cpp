@@ -1,4 +1,3 @@
-
 String StupidStrToString(const wchar_t *wstr, void *(*allocFunc)(u64, int))
 {
 	u64 size = 0;
@@ -631,7 +630,7 @@ inline Fiber SYSGetCurrentFiber()
 
 inline Fiber SYSCreateFiber(void (*start)(void *), void *args) {
 	const u64 fiberStackSize = 1 * 1024 * 1024; // 1MB
-	auto scope = ProfilerScope("Creating a fiber");
+	PROFILER_SCOPE("Creating a fiber");
 
 	Fiber fiber = CreateFiber(fiberStackSize, start, args);
 	ProfilerRegisterFiber(fiber);
@@ -645,7 +644,7 @@ inline Fiber SYSConvertThreadToFiber() {
 }
 
 inline void SYSDeleteFiber(Fiber fiber) {
-	auto scope = ProfilerScope("Deleting a fiber");
+	PROFILER_SCOPE("Deleting a fiber");
 	for (int i = 0; i < ArrayCount(g_runningFibers); ++i)
 		if (g_runningFibers[i] == fiber) {
 			Print("CRASH: Trying to delete a running fiber (%llX)\n", fiber);
@@ -771,7 +770,7 @@ void *SYSLoadDynamicLibrary(String filename)
 
 inline void *SYSGetProcAddress(void *lib, const char *procedureCStr)
 {
-	return GetProcAddress((HMODULE)lib, procedureCStr);
+	return (void *)GetProcAddress((HMODULE)lib, procedureCStr);
 }
 
 inline int SYSGetProcessorCount()

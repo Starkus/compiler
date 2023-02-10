@@ -413,7 +413,7 @@ ASTVariableDeclaration ParseVariableDeclaration(PContext *pContext, ArrayView<St
 	return varDecl;
 }
 
-bool TryParseUnaryOperation(PContext *pContext, s32 prevPrecedence, ASTUnaryOperation *result)
+bool TryParseUnaryOperation(PContext *pContext, ASTUnaryOperation *result)
 {
 	if (!IsOperatorToken(pContext->token->type))
 		return false;
@@ -1220,13 +1220,7 @@ ASTExpression ParseExpression(PContext *pContext, s32 precedence, bool isStateme
 
 		String tokenStr = TokenToString(*pContext->token);
 
-		bool isHex = false;
 		bool isFloating = false;
-		if (tokenStr.data[0] == '0') {
-			if (tokenStr.data[1] == 'x' || tokenStr.data[1] == 'X')
-				isHex = true;
-		}
-
 		for (u32 i = 0; i < pContext->token->size; ++i) {
 			if (tokenStr.data[i] == '.') {
 				isFloating = true;
@@ -1667,7 +1661,7 @@ ASTExpression ParseExpression(PContext *pContext, s32 precedence, bool isStateme
 		if (result.nodeType == ASTNODETYPE_INVALID) {
 			// If we have no left hand, try unary operation
 			ASTUnaryOperation unaryOp = result.unaryOperation;
-			bool success = TryParseUnaryOperation(pContext, precedence, &unaryOp);
+			bool success = TryParseUnaryOperation(pContext, &unaryOp);
 			if (!success)
 				LogError(pContext->token->loc, "Invalid expression!"_s);
 			result.nodeType = ASTNODETYPE_UNARY_OPERATION;
@@ -1755,7 +1749,7 @@ ASTExpression ParseExpression(PContext *pContext, s32 precedence, bool isStateme
 	return result;
 }
 
-void ParseJobProc(u32 jobIdx, void *args)
+void ParseJobProc(void *args)
 {
 	ParseJobArgs *argsStruct = (ParseJobArgs *)args;
 	u32 fileIdx = argsStruct->fileIdx;

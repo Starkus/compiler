@@ -116,6 +116,8 @@ u32 X64NewValue(X64Context *x64Context, String name, u32 typeTableIdx, u32 flags
 	Value *result = BucketArrayAdd(x64Context->localValues);
 #if DEBUG_BUILD
 	result->name = name;
+#else
+	(void) name;
 #endif
 	result->typeTableIdx = typeTableIdx;
 	result->flags = flags;
@@ -640,8 +642,6 @@ void X64CopyMemory(X64Context *x64Context, SourceLocation loc, IRValue dst, IRVa
 
 	// First attempt to copy manually
 	if (size.valueType == IRVALUETYPE_IMMEDIATE_INTEGER) {
-		TypeInfo dstTypeInfo = GetTypeInfo(X64GetValue(x64Context, dstIdx).typeTableIdx);
-		TypeInfo srcTypeInfo = GetTypeInfo(X64GetValue(x64Context, srcIdx).typeTableIdx);
 		s64 sizeImm = size.immediate;
 
 		s64 copiedBytes = 0;
@@ -1333,7 +1333,6 @@ void X64ConvertInstruction(X64Context *x64Context, IRInstruction inst)
 				IRValue tmp = X64IRValueNewValue(x64Context, "_mulshfttmp"_s, left.typeTableIdx,
 						immitateFlag, left.valueIdx);
 
-				TypeInfo leftType = GetTypeInfo(left.typeTableIdx);
 				X64InstructionType shiftType = isSigned ? X64_SAR : X64_SHR;
 
 				X64Mov(x64Context, inst.loc, tmp, left);
@@ -1416,13 +1415,11 @@ void X64ConvertInstruction(X64Context *x64Context, IRInstruction inst)
 	}
 	case IRINSTRUCTIONTYPE_SHIFT_LEFT:
 	{
-		TypeInfo leftType = GetTypeInfo(inst.binaryOperation.left.typeTableIdx);
 		result.type = isSigned ? X64_SAL : X64_SHL;
 		goto doShift;
 	}
 	case IRINSTRUCTIONTYPE_SHIFT_RIGHT:
 	{
-		TypeInfo leftType = GetTypeInfo(inst.binaryOperation.left.typeTableIdx);
 		result.type = isSigned ? X64_SAR : X64_SHR;
 		goto doShift;
 	}
@@ -1717,9 +1714,7 @@ void X64ConvertInstruction(X64Context *x64Context, IRInstruction inst)
 		u32 dstIdx = inst.zeroMemory.dst.valueIdx;
 
 		// First attempt to zero manually
-		if (inst.zeroMemory.size.valueType == IRVALUETYPE_IMMEDIATE_INTEGER)
-		{
-			TypeInfo dstTypeInfo = GetTypeInfo(X64GetValue(x64Context, dstIdx).typeTableIdx);
+		if (inst.zeroMemory.size.valueType == IRVALUETYPE_IMMEDIATE_INTEGER) {
 			s64 size = inst.zeroMemory.size.immediate;
 
 			s64 copiedBytes = 0;
@@ -2466,7 +2461,6 @@ void X64EncodeInstructions()
 	int procCount = (int)beFinalProcedureData->size;
 	for (int finalProcIdx = 0; finalProcIdx < procCount; ++finalProcIdx) {
 		X64FinalProcedure finalProc = beFinalProcedureData[finalProcIdx];
-		Procedure proc = GetProcedureRead(finalProc.procedureIdx);
 
 		g_procedureAddresses[finalProc.procedureIdx] = g_context->outputBufferOffset;
 
@@ -3043,7 +3037,7 @@ void BackendGenerateOutputFile()
 	OutputBufferPrint("ALIGN 16\n");
 
 	{
-		auto scope = ProfilerScope("Writing all static variables");
+		PROFILER_SCOPE("Writing all static variables");
 
 		OutputBufferPrint("__start_of_static_data:\n");
 
@@ -3128,7 +3122,7 @@ void BackendGenerateOutputFile()
 #endif
 
 	{
-		auto scope = ProfilerScope("Writing external variables");
+		PROFILER_SCOPE("Writing external variables");
 
 		auto externalVars = g_context->irExternalVariables.GetForRead();
 		for (int varIdx = 0; varIdx < externalVars->size; ++varIdx) {
@@ -3152,7 +3146,7 @@ void BackendGenerateOutputFile()
 	}
 
 	{
-		auto scope = ProfilerScope("Writing external procedures");
+		PROFILER_SCOPE("Writing external procedures");
 
 		auto externalProcedures = g_context->externalProcedures.GetForRead();
 		u64 externalProcedureCount = externalProcedures->count;
@@ -3539,6 +3533,7 @@ void BackendGenerateWindowsObj()
 
 void BackendJobProc(IRContext *irContext, u32 procedureIdx)
 {
+#if DEBUG_BUILD
 	static const String paramNames[] = {
 		"_param0"_s,
 		"_param1"_s,
@@ -3573,6 +3568,7 @@ void BackendJobProc(IRContext *irContext, u32 procedureIdx)
 		"_param30"_s,
 		"_param31"_s,
 	};
+#endif
 
 	X64Context *x64Context = ALLOC(LinearAllocator, X64Context);
 	x64Context->procedureIdx = irContext->procedureIdx;

@@ -15,7 +15,7 @@ inline void EnqueueReadyJob(u32 jobIdx)
 	}
 }
 
-u32 RequestNewJob(JobType type, void (*proc)(u32, void *), void *args)
+u32 RequestNewJob(JobType type, void (*proc)(void *), void *args)
 {
 	SpinlockLock(&g_context->jobs.lock);
 	u32 newJobIdx = (u32)g_context->jobs.unsafe.count;
@@ -84,7 +84,6 @@ void SchedulerProc(void *args)
 	if (previousJobIdx != U32_MAX) {
 		Job *previousJob = &g_context->jobs.unsafe[previousJobIdx];
 		YieldReason yieldReason = argsStruct->yieldReason;
-		YieldContext yieldContext = argsStruct->yieldContext;
 
 		ASSERT(previousJob->state == JOBSTATE_RUNNING);
 		previousJob->state = JOBSTATE_SUSPENDED;
@@ -249,7 +248,7 @@ switchFiber:
 		Job *nextJob = &g_context->jobs.unsafe[nextJobIdx];
 		if (nextJob->state == JOBSTATE_INIT) {
 			nextJob->state = JOBSTATE_RUNNING;
-			nextJob->startProcedure(nextJobIdx, nextJob->args);
+			nextJob->startProcedure(nextJob->args);
 			// If we come back here afterwards, this job should be finished
 			ASSERT(nextJob->state == JOBSTATE_FINISHED);
 		}

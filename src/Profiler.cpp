@@ -28,11 +28,11 @@ inline void ProfilerBeginFiberSwitch(Fiber currentFiber, Fiber nextFiber) {
 inline void ProfilerEndFiberSwitch(Fiber fiber) {
 	performanceAPI.EndFiberSwitch((u64)fiber);
 }
+#define PROFILER_SCOPE(...) UNUSED ProfilerScope _profilerScope(__VA_ARGS__)
 #else
 #define PROFILER_COLOR(r,g,b) (0)
 struct ProfilerScope {
-	[[nodiscard]] ProfilerScope(const char *label, const char *context = nullptr,
-			u32 color = 0) {
+	[[nodiscard]] ProfilerScope(const char *, const char * = nullptr, u32  = 0) {
 	}
 };
 #define ProfilerBegin(...)
@@ -41,4 +41,5 @@ struct ProfilerScope {
 #define ProfilerUnregisterFiber(...)
 #define ProfilerBeginFiberSwitch(...)
 #define ProfilerEndFiberSwitch(...)
+#define PROFILER_SCOPE(...)
 #endif

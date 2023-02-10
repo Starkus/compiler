@@ -1,5 +1,17 @@
 #include <stdio.h>
 
+#if __clang__
+#define IS_CLANG 1
+#define IS_MSVC  0
+#elif _MSC_VER
+#define IS_CLANG 0
+#define IS_MSVC  1
+#else
+// Probably gcc or the like, assuming clang should work...
+#define IS_CLANG 1
+#define IS_MSVC  0
+#endif
+
 #if DEBUG_BUILD
 #define DEBUG_ONLY(...) __VA_ARGS__
 #else
@@ -55,5 +67,11 @@ s64 Print(const char *format, ...);
 #endif
 
 #define NOMANGLE extern "C"
+
+#if IS_MSVC
+#define UNUSED
+#else
+#define UNUSED __attribute__((unused))
+#endif
 
 #define ArrayCount(array) (sizeof(array) / sizeof(array[0]))

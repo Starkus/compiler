@@ -75,8 +75,7 @@ inline bool AddValue(X64Context *x64Context, u32 valueIdx, DynamicArray<u32, Thr
 	// Nonsense to take these into account
 	if (!CanBeRegister(x64Context, valueIdx)) {
 		u32 valueFlags = X64GetValue(x64Context, valueIdx).flags;
-		if (!(valueFlags & VALUEFLAGS_ON_STATIC_STORAGE |
-					VALUEFLAGS_IS_EXTERNAL))
+		if (!(valueFlags & (VALUEFLAGS_ON_STATIC_STORAGE | VALUEFLAGS_IS_EXTERNAL)))
 			DynamicArrayAddUnique(&x64Context->spilledValues, valueIdx);
 
 		return false;
@@ -128,7 +127,7 @@ inline bool IsXMMFast(X64Context *x64Context, u32 valueIdx)
 	return BitfieldGetBit(x64Context->valueIsXmmBits, valueIdx);
 }
 
-void DoLivenessAnalisisOnInstruction(X64Context *x64Context, BasicBlock *basicBlock, X64Instruction *inst,
+void DoLivenessAnalisisOnInstruction(X64Context *x64Context, X64Instruction *inst,
 		DynamicArray<u32, ThreadAllocator> *liveValues)
 {
 	Procedure *proc = &g_context->procedures.unsafe[x64Context->procedureIdx];
@@ -317,7 +316,7 @@ void DoLivenessAnalisis(X64Context *x64Context, BasicBlock *basicBlock,
 	for (s64 instructionIdx = basicBlock->endIdx; instructionIdx >= basicBlock->beginIdx;
 			--instructionIdx) {
 		X64Instruction *inst = &x64Context->beInstructions[instructionIdx];
-		DoLivenessAnalisisOnInstruction(x64Context, basicBlock, inst, liveValues);
+		DoLivenessAnalisisOnInstruction(x64Context, inst, liveValues);
 	}
 
 	bool somethingChanged = false;

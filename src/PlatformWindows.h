@@ -5,13 +5,13 @@
 #include <shlobj_core.h>
 #include <Shlobj.h>
 #include <process.h>
+#include <intrin.h>
 
 // I hate this OS
 #undef near
 #undef far
 
 #define IS_WINDOWS 1
-#define IS_MSVC 1
 
 typedef HANDLE FileHandle;
 typedef HANDLE ThreadHandle;
@@ -22,7 +22,6 @@ typedef CONDITION_VARIABLE ConditionVariable;
 #define SYS_INVALID_THREAD_HANDLE INVALID_HANDLE_VALUE
 #define SYS_INVALID_FIBER_HANDLE nullptr
 #define SYS_MAX_PATH MAX_PATH
-#define THREADLOCAL __declspec(thread)
 #define NOINLINE __declspec(noinline)
 #define BREAK __debugbreak()
 #if DEBUG_BUILD
@@ -32,6 +31,13 @@ typedef CONDITION_VARIABLE ConditionVariable;
 #endif
 #define ASSUME(expr) __assume(expr)
 #define PANIC do { DEBUGBREAK; exit(1); } while(0)
+
+#if IS_CLANG
+// We make thread local variables 'volatile' on Clang since there's no fiber-safe TLS option.
+#define THREADLOCAL volatile __declspec(thread)
+#else
+#define THREADLOCAL __declspec(thread)
+#endif
 
 struct Mutex {
 	HANDLE mutexHandle;

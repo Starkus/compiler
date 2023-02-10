@@ -65,7 +65,7 @@ enum JobState
 };
 struct Job
 {
-	void (*startProcedure)(u32, void *);
+	void (*startProcedure)(void *);
 	void *args;
 	Fiber fiber;
 	JobType type;
@@ -81,4 +81,4 @@ struct Job
 };
 
 void SwitchJob(YieldReason yieldReason, YieldContext yieldContext);
-u32 RequestNewJob(JobType type, void (*proc)(u32, void *), void *args);
+u32 RequestNewJob(JobType type, void (*proc)(void *), void *args);

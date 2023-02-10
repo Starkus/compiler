@@ -296,7 +296,7 @@ struct TCStructJobArgs
 };
 
 void GenerateTypeCheckJobs(ASTExpression *expression);
-void TCStructJobProc(u32 jobIdx, void *args);
+void TCStructJobProc(void *args);
 
 struct TCContext
 {

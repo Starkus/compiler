@@ -112,8 +112,7 @@ ParseNumberResult IntFromString(String string)
 		++scan;
 	}
 
-	for (; i < string.size; ++i)
-	{
+	for (; i < string.size; ++i) {
 		char c = *scan++;
 		if (!IsNumeric(c))
 			return { PARSENUMBERRROR_INVALID_CHARACTER };
@@ -125,15 +124,13 @@ ParseNumberResult IntFromString(String string)
 		resultU = newResultU;
 	}
 	s64 result;
-	if (isNegative)
-	{
+	if (isNegative) {
 		if (resultU >= -S64_MIN)
 			return { PARSENUMBERRROR_UNDERFLOW };
 		result = -(s64)resultU;
 	}
-	else
-	{
-		if (resultU >= S64_MAX)
+	else {
+		if (resultU >= (u64)S64_MAX)
 			return { PARSENUMBERRROR_OVERFLOW };
 		result = (s64)resultU;
 	}
@@ -146,14 +143,12 @@ ParseNumberResult IntFromStringHex(String string)
 	int i = 0;
 	const char *scan = string.data;
 	bool isNegative = false;
-	if (*scan == '-')
-	{
+	if (*scan == '-') {
 		isNegative = true;
 		++i;
 		++scan;
 	}
-	for (; i < string.size; ++i)
-	{
+	for (; i < string.size; ++i) {
 		char c = *scan++;
 		char upper = c & ~0x20;
 

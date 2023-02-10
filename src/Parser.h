@@ -45,7 +45,7 @@ struct Token
 	SourceLocation loc;
 };
 
-void ParseJobProc(u32, void *);
+void ParseJobProc(void *);
 
 struct PContext
 {

@@ -26,6 +26,8 @@ u32 IRNewValue(IRContext *irContext, String name, u32 typeTableIdx, u32 flags, u
 	Value *result = BucketArrayAdd(irContext->localValues);
 #if DEBUG_BUILD
 	result->name = name;
+#else
+	(void)name;
 #endif
 	result->typeTableIdx = typeTableIdx;
 	result->flags = flags;
@@ -1743,10 +1745,8 @@ void IRGenProcedure(IRContext *irContext, u32 procedureIdx, SourceLocation loc,
 	}
 
 	u64 returnValueCount = procedure.returnValueIndices.size;
-	for (int i = 0; i < returnValueCount; ++i)
-	{
+	for (int i = 0; i < returnValueCount; ++i) {
 		u32 returnValueIdx = procedure.returnValueIndices[i];
-		Value returnValue = IRGetValue(irContext, returnValueIdx);
 		IRPushValueIntoStack(irContext, loc, returnValueIdx);
 	}
 
@@ -2761,7 +2761,7 @@ void IRGenMain()
 	}
 }
 
-void IRJobProcedure(u32 jobIdx, void *args)
+void IRJobProcedure(void *args)
 {
 	IRJobArgs *argsStruct = (IRJobArgs *)args;
 	u32 procedureIdx = argsStruct->procedureIdx;
@@ -2800,7 +2800,7 @@ void IRJobProcedure(u32 jobIdx, void *args)
 	FinishCurrentJob();
 }
 
-void IRJobExpression(u32 jobIdx, void *args)
+void IRJobExpression(void *args)
 {
 	IRJobArgs *argsStruct = (IRJobArgs *)args;
 

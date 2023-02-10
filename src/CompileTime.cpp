@@ -136,7 +136,7 @@ CTRegister CTGetIRValueContentRead(CTContext *context, IRValue irValue)
 	return result;
 }
 
-void CTStore(CTContext *context, CTRegister *dst, const CTRegister *src, u32 typeTableIdx)
+void CTStore(CTRegister *dst, const CTRegister *src, u32 typeTableIdx)
 {
 	TypeInfo typeInfo = GetTypeInfo(StripAllAliases(typeTableIdx));
 	memcpy(dst, src, typeInfo.size);
@@ -167,12 +167,12 @@ void CTCopyIRValue(CTContext *context, CTRegister *dst, IRValue irValue)
 	switch (irValue.valueType) {
 	case IRVALUETYPE_VALUE:
 	{
-		CTStore(context, dst, CTRegisterFromIRValue(context, irValue, false),
+		CTStore(dst, CTRegisterFromIRValue(context, irValue, false),
 				irValue.typeTableIdx);
 	} break;
 	case IRVALUETYPE_MEMORY:
 	{
-		CTStore(context, dst, CTRegisterFromIRValue(context, irValue, true),
+		CTStore(dst, CTRegisterFromIRValue(context, irValue, true),
 				irValue.typeTableIdx);
 	} break;
 	case IRVALUETYPE_IMMEDIATE_INTEGER:
@@ -584,7 +584,7 @@ ArrayView<const CTRegister *> CTInternalRunInstructions(CTContext *context,
 			};
 
 			CTRegister *outContent = CTGetIRValueContentWrite(context, out);
-			CTStore(context, outContent, &result, out.typeTableIdx);
+			CTStore(outContent, &result, out.typeTableIdx);
 		}
 		else if (inst.type >= IRINSTRUCTIONTYPE_UnaryBegin &&
 				 inst.type <= IRINSTRUCTIONTYPE_UnaryEnd &&
@@ -684,7 +684,7 @@ ArrayView<const CTRegister *> CTInternalRunInstructions(CTContext *context,
 			};
 
 			CTRegister *outContent = CTGetIRValueContentWrite(context, out);
-			CTStore(context, outContent, &result, out.typeTableIdx);
+			CTStore(outContent, &result, out.typeTableIdx);
 		}
 		else if (inst.type == IRINSTRUCTIONTYPE_JUMP_IF_ZERO ||
 				 inst.type == IRINSTRUCTIONTYPE_JUMP_IF_NOT_ZERO) {
@@ -916,7 +916,7 @@ ArrayView<const CTRegister *> CTInternalRunInstructions(CTContext *context,
 			CTVerboseLog(inst.loc, TPrintF("Assigned: 0x%llX, to 0x%llX",
 						srcContent.asU64, dstContent));
 
-			CTStore(context, dstContent, &srcContent, dst.typeTableIdx);
+			CTStore(dstContent, &srcContent, dst.typeTableIdx);
 		} break;
 		case IRINSTRUCTIONTYPE_CONVERT_INT_TO_FLOAT:
 		{
@@ -1046,7 +1046,7 @@ ArrayView<const CTRegister *> CTInternalRunInstructions(CTContext *context,
 				LogCompilerError(inst.loc, "SIGN_EXTEND source has "
 						"invalid size"_s);
 			}
-			CTStore(context, dstContent, &result, dst.typeTableIdx);
+			CTStore(dstContent, &result, dst.typeTableIdx);
 		} break;
 		case IRINSTRUCTIONTYPE_ZERO_EXTEND:
 		{
@@ -1076,7 +1076,7 @@ ArrayView<const CTRegister *> CTInternalRunInstructions(CTContext *context,
 				LogCompilerError(inst.loc, "ZERO_EXTEND source has "
 						"invalid size"_s);
 			}
-			CTStore(context, dstContent, &result, dst.typeTableIdx);
+			CTStore(dstContent, &result, dst.typeTableIdx);
 		} break;
 		case IRINSTRUCTIONTYPE_COPY_MEMORY:
 		{
@@ -1235,7 +1235,7 @@ ArrayView<const CTRegister *> CTInternalRunInstructions(CTContext *context,
 				else ASSERT(false);
 
 				CTRegister *outContent = CTGetIRValueContentWrite(context, lhs);
-				CTStore(context, outContent, &result, lhs.typeTableIdx);
+				CTStore(outContent, &result, lhs.typeTableIdx);
 			}
 			default:
 				LogCompilerError(inst.loc, "Intrinsic not implemented"_s);
@@ -1289,7 +1289,7 @@ ArrayView<const CTRegister *> CTRunProcedure(u32 procedureIdx, ArrayView<CTRegis
 	for (int i = 0; i < parameters.size; ++i) {
 		CTRegister *varContent = CTGetValueContent(context, proc.parameterValues[i]);
 		u32 paramTypeIdx = CTGetValue(context, proc.parameterValues[i]).typeTableIdx;
-		CTStore(context, varContent, parameters[i], paramTypeIdx);
+		CTStore(varContent, parameters[i], paramTypeIdx);
 	}
 
 	ArrayView<const CTRegister *> result = CTInternalRunInstructions(context, proc.irInstructions);

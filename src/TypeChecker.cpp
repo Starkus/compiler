@@ -37,6 +37,8 @@ u32 TCNewValue(TCContext *tcContext, String name, u32 typeTableIdx, u32 flags, u
 	Value *result = BucketArrayAdd(&tcContext->localValues);
 #if DEBUG_BUILD
 	result->name = name;
+#else
+	(void) name;
 #endif
 	result->typeTableIdx = typeTableIdx;
 	result->flags = flags;
@@ -632,8 +634,8 @@ TypeCheckErrorCode CheckTypesMatch(u32 leftTypeIdx, u32 rightTypeIdx)
 #if 1
 		if ((left.typeCategory == TYPECATEGORY_INTEGER ||
 			left.typeCategory == TYPECATEGORY_FLOATING) &&
-			right.typeCategory == TYPECATEGORY_INTEGER ||
-			right.typeCategory == TYPECATEGORY_FLOATING)
+			(right.typeCategory == TYPECATEGORY_INTEGER ||
+			right.typeCategory == TYPECATEGORY_FLOATING))
 			return TYPECHECK_COOL;
 #endif
 
@@ -4769,7 +4771,7 @@ done:
 	}
 }
 
-void TCJobProc(u32 jobIdx, void *args)
+void TCJobProc(void *args)
 {
 	TCJobArgs *argsStruct = (TCJobArgs *)args;
 
@@ -4872,7 +4874,7 @@ int GetTypeAlignment(u32 typeTableIdx)
 	return alignment;
 }
 
-void TCStructJobProc(u32 jobIdx, void *args)
+void TCStructJobProc(void *args)
 {
 	TCStructJobArgs *argsStruct = (TCStructJobArgs *)args;
 

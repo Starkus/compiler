@@ -40,8 +40,8 @@ inline IRValue PIRValueValue(BucketArrayView<Value> localValues, u32 valueIdx)
 
 inline String PIRValueToStr(BucketArrayView<Value> localValues, u32 valueIdx)
 {
-	Value v = PIRGetValue(localValues, valueIdx);
 #if DEBUG_BUILD
+	Value v = PIRGetValue(localValues, valueIdx);
 	if (v.name) {
 		if (valueIdx & VALUE_GLOBAL_BIT)
 			return TPrintF("$gv%u\"%S\"", valueIdx & VALUE_GLOBAL_MASK, v.name);
@@ -49,6 +49,8 @@ inline String PIRValueToStr(BucketArrayView<Value> localValues, u32 valueIdx)
 			return TPrintF("$v%u\"%S\"", valueIdx, v.name);
 	}
 	else
+#else
+	(void) localValues;
 #endif
 	{
 		if (valueIdx & VALUE_GLOBAL_BIT)
@@ -355,10 +357,10 @@ void PrintJobIRInstructions(IRContext *context)
 	for (int paramIdx = 0; paramIdx < proc.parameterValues.size; ++paramIdx) {
 		if (paramIdx) PIRPrintOut(", ");
 		u32 paramValueIdx = proc.parameterValues[paramIdx];
-		Value paramValue = IRGetValue(context, paramValueIdx);
-		String typeStr = TypeInfoToString(paramValue.typeTableIdx);
 		PIRPrintOut("%S", PIRValueToStr(proc.localValues, paramValueIdx));
 #if PRINTIR_PRINT_TYPES
+		Value paramValue = IRGetValue(context, paramValueIdx);
+		String typeStr = TypeInfoToString(paramValue.typeTableIdx);
 		PIRPrintOut(" : %S", typeStr);
 #endif
 	}
