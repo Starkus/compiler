@@ -10,14 +10,20 @@ TwoNumbers :: struct
 	b: s32;
 };
 
-#if 1 || compiler_platform == COMPILER_PLATFORM_WINDOWS
+#if compiler_platform == COMPILER_PLATFORM_WINDOWS
 	TestProc :: #external #convention(win64) (a: s64, b: s64, c: s64, d: s64, e: s64, f: s64, g: s64, h: s64);
 else
 	TestProc :: #external #convention(linux64) (a: s64, b: s64, c: s64, d: s64, e: s64, f: s64, g: s64, h: s64);
 
+TestProcWinCC :: #external #convention(win64) (a: s64, b: s64, c: s64, d: s64, e: s64, f: s64, g: s64, h: s64);
+
 RunThisOnCompileTime :: (arg: s64) -> s64
 {
+	Print("Calling procedure from dll:\n");
 	TestProc(1, 2, 3, 4, 5, 6, 7, 8);
+
+	Print("Calling procedure with win64 calling convention from dll:\n");
+	TestProcWinCC(2, 4, 6, 8, 10, 12, 14, 16);
 
 	foo := 6 + arg;
 
