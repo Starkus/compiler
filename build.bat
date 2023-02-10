@@ -29,11 +29,12 @@ IF "%ArgRelease%"=="1" (
 
 if "%ArgClang%"=="1" (
 	set Compiler=clang-cl.exe
-	set CompilerFlags=%CompilerFlags% -mavx2
+	set CompilerFlags=%CompilerFlags% -mavx2 -DIS_CLANG=1
 	set IgnoreWarnings=-Wno-assume -Wno-switch -Wno-missing-field-initializers -Wno-sign-compare ^
 			-Wno-missing-braces -Wno-deprecated-declarations
 ) ELSE (
 	set Compiler=cl.exe
+	set CompilerFlags=%CompilerFlags% -DIS_MSVC=1
 	set IgnoreWarnings=-wd4201 -wd4996 -wd4063
 )
 
