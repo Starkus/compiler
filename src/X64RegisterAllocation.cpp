@@ -247,26 +247,30 @@ void DoLivenessAnalisisOnInstruction(X64Context *x64Context, X64Instruction *ins
 			nodeIdx = x64Context->beInterferenceGraph.count++;
 			if (nodeIdx >= x64Context->beInterferenceGraph.capacity)
 			{
+				constexpr u64 valueIndexSize = sizeof(x64Context->beInterferenceGraph.valueIndices[0]);
+				constexpr u64 remWordSize = sizeof(x64Context->beInterferenceGraph.removed[0]);
+				constexpr u64 edgesSize = sizeof(x64Context->beInterferenceGraph.edges[0]);
 				u64 oldCapacity = x64Context->beInterferenceGraph.capacity;
-				x64Context->beInterferenceGraph.capacity *= 2;
+				u64 newCapacity = oldCapacity * 2;
+				x64Context->beInterferenceGraph.capacity = newCapacity;
 				x64Context->beInterferenceGraph.valueIndices = (u32 *)
 						ThreadAllocator::Realloc(x64Context->beInterferenceGraph.valueIndices,
-						sizeof(x64Context->beInterferenceGraph.valueIndices[0]) * oldCapacity,
-						sizeof(x64Context->beInterferenceGraph.valueIndices[0]) *
-						x64Context->beInterferenceGraph.capacity, alignof(u32));
-				x64Context->beInterferenceGraph.removed = (u8 *)
+						valueIndexSize * oldCapacity,
+						valueIndexSize * newCapacity,
+						alignof(u32));
+				x64Context->beInterferenceGraph.removed = (u64 *)
 						ThreadAllocator::Realloc(x64Context->beInterferenceGraph.removed,
-						sizeof(x64Context->beInterferenceGraph.removed[0]) * oldCapacity,
-						sizeof(x64Context->beInterferenceGraph.removed[0]) *
-						x64Context->beInterferenceGraph.capacity, alignof(u8));
+						(oldCapacity + remWordSize - 1) / remWordSize,
+						(newCapacity + remWordSize - 1) / remWordSize,
+						alignof(u64));
 				x64Context->beInterferenceGraph.edges = (HashSet<u32, ThreadAllocator> *)
 						ThreadAllocator::Realloc(x64Context->beInterferenceGraph.edges,
-						sizeof(x64Context->beInterferenceGraph.edges[0]) * oldCapacity,
-						sizeof(x64Context->beInterferenceGraph.edges[0]) *
-						x64Context->beInterferenceGraph.capacity, alignof(HashSet<u32, ThreadAllocator>));
+						edgesSize * oldCapacity,
+						edgesSize * newCapacity,
+						alignof(HashSet<u32, ThreadAllocator>));
 			}
 			x64Context->beInterferenceGraph.valueIndices[nodeIdx] = valueIdx;
-			x64Context->beInterferenceGraph.removed[nodeIdx]      = false;
+			BitfieldClearBit(x64Context->beInterferenceGraph.removed, nodeIdx);
 			HashSetInit(&x64Context->beInterferenceGraph.edges[nodeIdx], 32);
 
 			*HashMapGetOrAdd(&x64Context->beInterferenceGraph.valueToNodeMap, valueIdx) = nodeIdx;
@@ -591,8 +595,8 @@ void X64AllocateRegisters(X64Context *x64Context)
 	x64Context->beInterferenceGraph.capacity = 128;
 	x64Context->beInterferenceGraph.valueIndices = (u32 *)
 		ThreadAllocator::Alloc(sizeof(u32) * 128, alignof(u32));
-	x64Context->beInterferenceGraph.removed = (u8 *)
-		ThreadAllocator::Alloc(sizeof(u8) * 128, alignof(u8));
+	x64Context->beInterferenceGraph.removed = (u64 *)
+		ThreadAllocator::Alloc(128 / 8, alignof(u64));
 	x64Context->beInterferenceGraph.edges = (HashSet<u32, ThreadAllocator> *)
 		ThreadAllocator::Alloc(sizeof(HashSet<u32, ThreadAllocator>) * 128, alignof(HashSet<u32,
 					ThreadAllocator>));
@@ -680,7 +684,7 @@ void X64AllocateRegisters(X64Context *x64Context)
 
 		// Remove nodes that have a number of edges that fit in the available registers
 		for (u32 nodeIdx = 0; nodeIdx < interferenceGraph.count; ++nodeIdx) {
-			if (interferenceGraph.removed[nodeIdx])
+			if (BitfieldGetBit(interferenceGraph.removed, nodeIdx))
 				continue;
 			if (HashSetCount(interferenceGraph.edges[nodeIdx]) < availableRegisters) {
 				nodeToRemoveIdx = nodeIdx;
@@ -691,7 +695,7 @@ void X64AllocateRegisters(X64Context *x64Context)
 		// Here we pick one that we're probably going to spill. Choose the one with most edges.
 		mostEdges = -1;
 		for (u32 nodeIdx = 0; nodeIdx < interferenceGraph.count; ++nodeIdx) {
-			if (interferenceGraph.removed[nodeIdx])
+			if (BitfieldGetBit(interferenceGraph.removed, nodeIdx))
 				continue;
 
 			u32 valueIdx = interferenceGraph.valueIndices[nodeIdx];
@@ -714,12 +718,13 @@ void X64AllocateRegisters(X64Context *x64Context)
 		// Pick a fallback node that might be flagged as no-spill. When adding back nodes, we
 		// might get lucky and not spill it.
 		for (u32 nodeIdx = 0; nodeIdx < interferenceGraph.count; ++nodeIdx) {
-			if (interferenceGraph.removed[nodeIdx])
+			if (BitfieldGetBit(interferenceGraph.removed, nodeIdx))
 				continue;
 
 			nodeToRemoveIdx = nodeIdx;
 		}
 gotNodeToRemove:
+		ASSERT(nodeToRemoveIdx != U32_MAX);
 
 		u32 nodeCount = interferenceGraph.count;
 		u32 parameterValuesBegin = x64Context->x64SpilledParametersRead[0];
@@ -727,7 +732,7 @@ gotNodeToRemove:
 		// We assume we allocated the read parameter values first...
 		ASSERT(x64Context->x64SpilledParametersRead[0] < x64Context->x64SpilledParametersWrite[0]);
 		for (u32 nodeIdx = 0; nodeIdx < nodeCount; ++nodeIdx) {
-			if (interferenceGraph.removed[nodeIdx])
+			if (BitfieldGetBit(interferenceGraph.removed, nodeIdx))
 				continue;
 
 			HashSet<u32, ThreadAllocator> *edges = &interferenceGraph.edges[nodeIdx];
@@ -741,7 +746,7 @@ gotNodeToRemove:
 				HashSetRemove(edges, valueIdx);
 			}
 		}
-		interferenceGraph.removed[nodeToRemoveIdx] = true;
+		BitfieldSetBit(interferenceGraph.removed, nodeToRemoveIdx);
 		*ArrayAdd(&nodeStack) = nodeToRemoveIdx;
 	}
 

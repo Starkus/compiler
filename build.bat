@@ -15,7 +15,7 @@ GOTO args
 :endargs
 
 set SourceFiles=..\src\Compiler.cpp
-set CompilerFlags=-nologo -GR- -GT -Oi -EHa- -W4 -FC -Z7 -I ..\external\ -std:c++latest
+set CompilerFlags=-nologo -GR- -GT -Oi -EHa- -W4 -FC -Z7 -I ..\external\ -std:c++latest -SIS_WINDOWS=1
 set LinkerFlags=-opt:ref -incremental:no -debug:full DynamicCallWindows.obj
 set Libraries=user32.lib winmm.lib shell32.lib advapi32.lib ..\external\xed\xed.lib
 

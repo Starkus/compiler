@@ -461,8 +461,8 @@ inline u64 BitfieldCount(u64 *array, u64 size)
 	return count;
 }
 
-template <typename T, typename A>
-inline u64 BitfieldCount(Array<T,A> array)
+template <typename T>
+inline u64 BitfieldCount(ArrayView<T> array)
 {
 	ASSERT(sizeof(T) % sizeof(u32) == 0);
 	u64 count = 0;
@@ -473,8 +473,7 @@ inline u64 BitfieldCount(Array<T,A> array)
 }
 
 // Specialization to use popcnt64
-template <typename A>
-inline u64 BitfieldCount(Array<u64,A> array, u64 size)
+inline u64 BitfieldCount(ArrayView<u64> array, u64 size)
 {
 	u64 count = 0;
 	u64 *end = array.data + array.size;

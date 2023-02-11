@@ -14,8 +14,6 @@
 #include <ucontext.h>
 #include <dlfcn.h>
 
-#define IS_LINUX 1
-
 typedef int FileHandle;
 typedef pthread_t ThreadHandle;
 typedef pthread_mutex_t Mutex;

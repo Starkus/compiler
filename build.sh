@@ -1,7 +1,7 @@
 #/bin/bash
 
-COMMON_OPTIONS="-I src/ -I external/ -std=c++20 -Wno-switch -Wno-assume -mavx2 -g -fno-omit-frame-pointer
-	-fno-exceptions -fno-rtti -DIS_CLANG=1"
+COMMON_OPTIONS="-I src/ -I external/ -std=c++20 -Wno-switch -Wno-assume -mavx2 -g
+	-fno-exceptions -fno-rtti -DIS_LINUX=1 -DIS_CLANG=1"
 # -fuse-ld=mold
 
 echo Compiling...
@@ -13,8 +13,11 @@ clang -shared -o bin/basic.so bin/basic.o
 if [ "$1" = "-r" ]
 then
 	clang++ src/Compiler.cpp bin/basic.o -o bin/Compiler -DDEBUG_BUILD=0 -O3 $COMMON_OPTIONS
+elif [ "$1" = "-p" ]
+then
+	clang++ src/Compiler.cpp bin/basic.o -o bin/Compiler -DDEBUG_BUILD=0 -O3 $COMMON_OPTIONS -fno-omit-frame-pointer
 else
-	clang++ src/Compiler.cpp bin/basic.o -o bin/Compiler -DDEBUG_BUILD=1 -O0 $COMMON_OPTIONS
+	clang++ src/Compiler.cpp bin/basic.o -o bin/Compiler -DDEBUG_BUILD=1 -O0 $COMMON_OPTIONS -fno-omit-frame-pointer
 fi
 
 if [ "$?" = 0 ]

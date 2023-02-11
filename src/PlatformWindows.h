@@ -11,8 +11,6 @@
 #undef near
 #undef far
 
-#define IS_WINDOWS 1
-
 typedef HANDLE FileHandle;
 typedef HANDLE ThreadHandle;
 typedef void *Fiber;

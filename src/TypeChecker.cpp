@@ -1514,22 +1514,34 @@ void TCAddScopeNames(TCContext *tcContext, ArrayView<TCScopeName> scopeNames)
 		{
 			auto globalNames = g_context->tcGlobalNames.GetForWrite();
 
-			// Check if already exists
-			for (int i = 0; i < globalNames->size; ++i) {
-				const TCScopeName *currentName = &globalNames[i];
-				for (int j = 0; j < scopeNames.size; ++j) {
-					if (StringEquals(scopeNames[j].name, currentName->name)) {
-						LogErrorNoCrash(scopeNames[j].loc, TPrintF("Name \"%S\" already "
-									"assigned", scopeNames[j].name));
-						LogNote(currentName->loc, "First defined here"_s);
-						PANIC;
-					}
-				}
-			}
-
 			TCScopeName *newNames = DynamicArrayAddMany(&globalNames, scopeNames.size);
 			for (int i = 0; i < scopeNames.size; ++i)
 				newNames[i] = scopeNames[i];
+		}
+
+		// Check if any was added twice
+		{
+			Array<s8, ThreadAllocator> timesFound;
+			ArrayInit(&timesFound, scopeNames.size);
+			timesFound.size = scopeNames.size;
+			memset(timesFound.data, 0, timesFound.size * sizeof(s8));
+
+			auto globalNames = g_context->tcGlobalNames.GetForRead();
+
+			for (int globalNameIdx = 0; globalNameIdx < globalNames->size; ++globalNameIdx) {
+				const TCScopeName *currentName = &globalNames[globalNameIdx];
+				for (int inputIdx = 0; inputIdx < scopeNames.size; ++inputIdx) {
+					if (StringEquals(scopeNames[inputIdx].name, currentName->name)) {
+						if (timesFound[inputIdx]) {
+							LogErrorNoCrash(scopeNames[inputIdx].loc, TPrintF("Name \"%S\" already "
+										"assigned", scopeNames[inputIdx].name));
+							LogNote(currentName->loc, "First defined here"_s);
+							PANIC;
+						}
+						++timesFound[inputIdx];
+					}
+				}
+			}
 		}
 
 		// Wake up any jobs that were waiting for these names

@@ -7,7 +7,7 @@ struct InterferenceGraph
 	u32 count;
 	u32 capacity;
 	u32 *valueIndices;
-	u8 *removed;
+	u64 *removed;
 	HashSet<u32, ThreadAllocator> *edges; // @Improve?
 
 	HashMap<u32, u32, ThreadAllocator> valueToNodeMap;
