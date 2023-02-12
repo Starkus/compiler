@@ -12,27 +12,25 @@ enum IRValueType
 struct IRValue
 {
 	IRValueType valueType;
-	union
-	{
+	u32 typeTableIdx;
+	union {
 		u32 valueIdx;
 		s64 immediate;
 		f64 immediateFloat;
 		u32 immediateStringIdx;
 		Array<IRValue, LinearAllocator> tuple;
 		u32 procedureIdx;
-		struct
-		{
-			// When value type is DEREFERENCE, valueIdx contains the value to which a pointer has
+		struct {
+			// When value type is MEMORY, valueIdx contains the value to which a pointer has
 			// been assigned (i.e. with IRINSTRUCTIONTYPE_LOAD_EFFECTIVE_ADDRESS), offset is an
 			// immediate added to the pointer, and if elementSize is not 0, the value of
 			// indexValueIdx * elementSize is also added. The resulting pointer is dereferenced.
 			u32 baseValueIdx;
 			u32 indexValueIdx;
-			u64 elementSize;
-			s64 offset;
+			u32 elementSize;
+			s32 offset;
 		} mem;
 	};
-	u32 typeTableIdx;
 };
 static_assert(offsetof(IRValue, valueIdx) == offsetof(IRValue, mem.baseValueIdx));
 

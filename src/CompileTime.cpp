@@ -74,8 +74,8 @@ CTRegister *CTRegisterFromIRValue(CTContext *ctContext, IRValue irValue, bool de
 			u32 indexTypeIdx = CTGetValue(ctContext, irValue.mem.indexValueIdx).typeTableIdx;
 			IRValue indexIRValue = {
 				.valueType = IRVALUETYPE_VALUE,
-				.valueIdx = irValue.mem.indexValueIdx,
-				.typeTableIdx = indexTypeIdx
+				.typeTableIdx = indexTypeIdx,
+				.valueIdx = irValue.mem.indexValueIdx
 			};
 			CTRegister index = CTGetIRValueContentRead(ctContext, indexIRValue);
 			ptr += index.asS64;

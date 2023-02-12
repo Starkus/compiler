@@ -143,20 +143,16 @@ struct BEInstruction
 {
 	SourceLocation loc;
 	X64InstructionType type;
-	union
-	{
-		struct
-		{
+	union {
+		struct {
 			IRValue dst;
 			IRValue src;
 			IRValue src2;
 		};
 		IRLabel *label;
-		struct
-		{
+		struct {
 			// Proc call info
-			union
-			{
+			union {
 				u32 procedureIdx;
 				IRValue procedureIRValue;
 			};
@@ -166,8 +162,7 @@ struct BEInstruction
 			Array<u32, ThreadAllocator> parameterValues;
 		};
 		u32 valueIdx;
-		struct
-		{
+		struct {
 			BEInstruction *patch1;
 			BEInstruction *patch2;
 		};
