@@ -53,6 +53,13 @@ u64 OutputBufferRead(u64 count, void *buffer)
 	return count;
 }
 
+u64 OutputBufferPeek(u64 offset, u64 count, void *buffer)
+{
+	ASSERT(offset + count <= g_context->outputBufferSize);
+	memcpy(buffer, g_context->outputBufferMem + offset, count);
+	return count;
+}
+
 void OutputBufferSeek(u64 offset)
 {
 	while (offset >= g_context->outputBufferCapacity)

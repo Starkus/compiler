@@ -614,11 +614,7 @@ int main(int argc, char **argv)
 		ASSERT(job.state == JOBSTATE_FINISHED);
 	}
 
-#if USE_OWN_ASSEMBLER
-	BackendGenerateWindowsObj();
-#else
 	BackendGenerateOutputFile();
-#endif
 
 	if (!g_context->config.silent) {
 		TimerSplit("Done"_s);

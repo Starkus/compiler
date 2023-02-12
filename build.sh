@@ -12,12 +12,12 @@ clang -shared -o bin/basic.so bin/basic.o
 
 if [ "$1" = "-r" ]
 then
-	clang++ src/Compiler.cpp bin/basic.o -o bin/Compiler -DDEBUG_BUILD=0 -O3 $COMMON_OPTIONS
+	clang++ src/Compiler.cpp bin/basic.o external/xed/xed.a -o bin/Compiler -DDEBUG_BUILD=0 -O3 $COMMON_OPTIONS
 elif [ "$1" = "-p" ]
 then
-	clang++ src/Compiler.cpp bin/basic.o -o bin/Compiler -DDEBUG_BUILD=0 -O3 $COMMON_OPTIONS -fno-omit-frame-pointer
+	clang++ src/Compiler.cpp bin/basic.o external/xed/xed.a -o bin/Compiler -DDEBUG_BUILD=0 -O3 $COMMON_OPTIONS -fno-omit-frame-pointer
 else
-	clang++ src/Compiler.cpp bin/basic.o -o bin/Compiler -DDEBUG_BUILD=1 -O0 $COMMON_OPTIONS -fno-omit-frame-pointer
+	clang++ src/Compiler.cpp bin/basic.o external/xed/xed.a -o bin/Compiler -DDEBUG_BUILD=1 -O0 $COMMON_OPTIONS -fno-omit-frame-pointer
 fi
 
 if [ "$?" = 0 ]

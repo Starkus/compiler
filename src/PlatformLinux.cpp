@@ -210,6 +210,7 @@ void SYSRunLinker(String outputPath, String outputFilename, OutputType outputTyp
 		ArrayView<String> exportedSymbols, String extraArguments, bool silent)
 {
 #if 1
+	String linkerProgram = "ld"_s;
 	if (outputType == OUTPUTTYPE_LIBRARY_STATIC) {
 		String arCmd = TPrintF("ar rcs %S %S %S%c",
 			ChangeFilenameExtension(outputFilename, ".a"_s),
@@ -224,7 +225,8 @@ void SYSRunLinker(String outputPath, String outputFilename, OutputType outputTyp
 		}
 	}
 	else if (outputType == OUTPUTTYPE_LIBRARY_DYNAMIC) {
-		String moldCmd = TPrintF("mold -shared %S %S -o %S%c",
+		String moldCmd = TPrintF("%S -shared %S %S -o %S%c",
+			linkerProgram,
 			ChangeFilenameExtension(outputFilename, ".o"_s),
 			extraArguments,
 			ChangeFilenameExtension(outputFilename, ".so"_s),
@@ -237,7 +239,8 @@ void SYSRunLinker(String outputPath, String outputFilename, OutputType outputTyp
 		}
 	}
 	else {
-		String moldCmd = TPrintF("mold %S %S -o %S -z muldefs -e __LinuxStart%c",
+		String moldCmd = TPrintF("%S %S %S -o %S -z muldefs -e __LinuxStart%c",
+			linkerProgram,
 			ChangeFilenameExtension(outputFilename, ".o"_s),
 			extraArguments,
 			ChangeFilenameExtension(outputFilename, {}),
