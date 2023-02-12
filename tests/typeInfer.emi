@@ -1,3 +1,5 @@
+#include "core/basic.emi";
+
 anS32 :s s32 = 10;
 anS64 :s s64 = 11;
 anS8  :s s8  = 12;

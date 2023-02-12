@@ -1,3 +1,6 @@
+#include "core/basic.emi";
+#include "core/print.emi";
+
 #linklib "tests/testdll/testdll";
 
 CONSTANT :: #run RunThisOnCompileTime(10);

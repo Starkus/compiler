@@ -2544,6 +2544,11 @@ String GetLinkerExtraArguments()
 		String libName = g_context->libsToLink[i];
 		String libFullName;
 
+		if (SYSIsAbsolutePath(libName)) {
+			libFullName = libName;
+			goto foundFullName;
+		}
+
 		// Working path relative
 		{
 			libFullName = SYSExpandPathWorkingDirectoryRelative(libName);
@@ -2557,7 +2562,7 @@ String GetLinkerExtraArguments()
 				goto foundFullName;
 		}
 
-		// Bin path
+		// Compiler bin path
 		{
 			String insideBin = TStringConcat("bin/"_s, libName);
 			libFullName = SYSExpandPathWorkingDirectoryRelative(insideBin);
@@ -2571,6 +2576,22 @@ String GetLinkerExtraArguments()
 				goto foundFullName;
 
 		}
+
+		// Linux only: search in /usr/lib/compiler
+#if IS_LINUX
+		{
+			libFullName = TStringConcat("/usr/lib/compiler/"_s, libName);
+			if (SYSFileExists(libFullName))
+				goto foundFullName;
+			libFullName = ChangeFilenameExtension(libFullName, objectFileExtension);
+			if (SYSFileExists(libFullName))
+				goto foundFullName;
+			libFullName = ChangeFilenameExtension(libFullName, staticLibFileExtension);
+			if (SYSFileExists(libFullName))
+				goto foundFullName;
+
+		}
+#endif
 
 		libFullName = ChangeFilenameExtension(libName, staticLibFileExtension);
 

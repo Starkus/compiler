@@ -1,3 +1,5 @@
+#include "core/basic.emi";
+
 foo :s u64 = 0;
 
 AStruct :: struct

@@ -1,3 +1,6 @@
+#include "core/basic.emi";
+#include "core/print.emi";
+
 argByPointer :: (n : ^s32)
 {
 	@n = @n * @n;

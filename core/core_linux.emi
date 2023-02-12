@@ -1,0 +1,54 @@
+compiler_platform :: COMPILER_PLATFORM_LINUX;
+
+#if !#defined(compiler_target_platform)
+	compiler_target_platform :: COMPILER_PLATFORM_LINUX;
+
+STDIN  :: 0;
+STDOUT :: 1;
+STDERR :: 2;
+
+O_ACCMODE  :: 0x00000003;
+O_RDONLY   :: 0x00000000;
+O_WRONLY   :: 0x00000001;
+O_RDWR     :: 0x00000002;
+O_CREAT    :: 0x00000100;
+O_EXCL     :: 0x00000200;
+O_NOCTTY   :: 0x00000400;
+O_TRUNC    :: 0x00001000;
+O_APPEND   :: 0x00002000;
+O_NONBLOCK :: 0x00004000;
+
+// Declare syscalls for typechecking
+// @Improve: add an actual syscall declaration so these symbols don't get exported and the linker
+// doesn't try to match them. Perhaps we can specify the syscall number here too.
+write      :: #external #convention(linux64) (handle: s64, buffer: ^void, bytesToWrite: u64) -> u64;
+open       :: #external #convention(linux64) (filename : ^s8, flags : s32, mode : s32) -> s32;
+close      :: #external #convention(linux64) (fd : s64) -> s32;
+exit       :: #external #convention(linux64) (errorCode : s64);
+exit_group :: #external #convention(linux64) (errorCode : s64);
+
+// @Todo: offer a way to avoid all this and have a custom start point
+#if compiler_output_type == COMPILER_OUTPUT_EXECUTABLE {
+	#linklib "LinuxStart";
+
+	__LinuxMain :: #export (argsRaw: [] ^s8)
+	{
+		// Convert array of cstr to array of Strings
+		argsBuffer: [64] String = ?;
+		args: [] String = ?;
+		args.size = argsRaw.size;
+		args.data = ^argsBuffer;
+		for argsRaw {
+			arg: String = { 0, cast(^u8)@it };
+			scan: ^s8 = @it;
+			while @scan != 0 {
+				arg.size += 1;
+				scan += 1;
+			}
+			args[i] = arg;
+		}
+
+		errorCode : s64 = Main(args);
+		exit_group(errorCode);
+	}
+}

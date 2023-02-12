@@ -1,3 +1,6 @@
+#include "core/basic.emi";
+#include "core/print.emi";
+
 ParseInt :: (string : String) -> s64, ParseError
 {	if string.size == 0 return 0, PARSEERROR_EMPTY_STRING;
 	scan := string.data;

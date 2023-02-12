@@ -1,3 +1,5 @@
+#include "core/basic.emi";
+
 PrintType :: (param : Any)
 {
 	if param.typeInfo.typeKind == TypeKind_Integer

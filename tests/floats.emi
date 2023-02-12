@@ -1,3 +1,6 @@
+#include "core/basic.emi";
+#include "core/print.emi";
+
 FloatArg :: (smol : f32, big : f64)
 {
 	PrintF("an f32 % and an f64 %\n", smol, big);

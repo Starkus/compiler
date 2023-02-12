@@ -1,3 +1,6 @@
+#include "core/basic.emi";
+#include "core/print.emi";
+
 counter :s= 0;
 error   :s= 0;
 

@@ -1,3 +1,6 @@
+#include "core/basic.emi";
+#include "core/print.emi";
+
 Varargs :: (..args)
 {
 	PrintF("Number of args: %\n", args.size);

@@ -1,3 +1,5 @@
+#include "core/basic.emi";
+
 Main :: (args: [] String) -> s64
 {
 	i := 0;

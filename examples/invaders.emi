@@ -1,3 +1,5 @@
+#include "core/basic.emi";
+#include "core/print.emi";
 #include "core/vector.emi";
 #include "core/math.emi";
 #include "core/glh.emi";

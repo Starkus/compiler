@@ -1,3 +1,6 @@
+#include "core/basic.emi";
+#include "core/print.emi";
+
 doThings :: (eight : u8, sixteen : u16, thirtytwo : u32)
 {
 	PrintF("Arguments: %, %, %\n", eight, sixteen, thirtytwo);

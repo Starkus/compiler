@@ -1,3 +1,6 @@
+#include "core/basic.emi";
+#include "core/print.emi";
+
 Color :: enum : s8 {
 	COLOR_RED,
 	COLOR_GREEN = 15,

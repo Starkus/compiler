@@ -1,3 +1,6 @@
+#include "core/basic.emi";
+#include "core/print.emi";
+
 MyType :: #alias s16;
 PointerType :: #alias ^s64;
 Nested :: #alias ^MyType;

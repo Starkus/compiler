@@ -1,3 +1,5 @@
+#include "core/basic.emi";
+#include "core/print.emi";
 #linklib "output/lib";
 
 LibAddTwoNumbers :: #external (a : s64, b : s64) -> s64;

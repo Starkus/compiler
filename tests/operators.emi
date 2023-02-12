@@ -1,3 +1,5 @@
+#include "core/basic.emi";
+
 foo :s u64;
 
 operatorPrecedence :: (arg1 : u32, arg2 : u64 = 4) -> s32

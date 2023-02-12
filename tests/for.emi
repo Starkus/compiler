@@ -1,3 +1,6 @@
+#include "core/basic.emi";
+#include "core/print.emi";
+
 Main :: (args : [] String) -> s64
 {
 	// Range

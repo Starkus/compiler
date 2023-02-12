@@ -1,3 +1,5 @@
+#include "core/basic.emi";
+#include "core/print.emi";
 #include "core/windows.emi";
 
 compiler_subsystem :: COMPILER_SUBSYSTEM_WINDOWS;

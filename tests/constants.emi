@@ -1,3 +1,6 @@
+#include "core/basic.emi";
+#include "core/print.emi";
+
 constant :: 8;
 constantFloat :: 8.5;
 

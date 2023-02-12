@@ -1,3 +1,6 @@
+#include "core/basic.emi";
+#include "core/print.emi";
+
 meters :: #type f32;
 metersSquared :: #type f32;
 metersPerSecond :: #type f32;

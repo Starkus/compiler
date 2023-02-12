@@ -1,0 +1,48 @@
+#if compiler_output_type != COMPILER_OUTPUT_LIBRARY_STATIC
+{
+	#linklib "kernel32";
+	#linklib "user32";
+	#linklib "gdi32";
+	#linklib "winmm";
+}
+
+compiler_platform :: COMPILER_PLATFORM_WINDOWS;
+
+#if !#defined(compiler_target_platform)
+	compiler_target_platform :: COMPILER_PLATFORM_WINDOWS;
+
+#if compiler_output_type == COMPILER_OUTPUT_EXECUTABLE
+__WindowsMain :: #export ()
+{
+	cmdLineCStr := GetCommandLineA();
+	args : [] String;
+	argsBuffer : [64] String = ?;
+	args.data = ^argsBuffer;
+
+	scan := cast(^u8)cmdLineCStr;
+	word := scan;
+	while (args.size < 64) {
+		if @scan == ' ' || @scan == '\t' || @scan == '\n' || @scan == '\r' {
+			size := scan - word;
+			if size > 0 {
+				argsBuffer[args.size] = { size, word };
+				args.size += 1;
+			}
+			scan += 1;
+			word = scan;
+		}
+		else if @scan == 0 {
+			size := scan - word;
+			if size > 0 {
+				argsBuffer[args.size] = { size, word };
+				args.size += 1;
+			}
+			break;
+		}
+		else
+			scan += 1;
+	}
+
+	errorCode : s64 = Main(args);
+	ExitProcess(cast(u32)errorCode);
+}

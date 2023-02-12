@@ -1,3 +1,6 @@
+#include "core/basic.emi";
+#include "core/print.emi";
+
 Main :: (args : [] String) -> s64
 {
 	// Sign extend
@@ -26,10 +29,12 @@ Main :: (args : [] String) -> s64
 
 	// Print big numbers
 	{
+		buf: [16] u8 = ?;
+
 		foo : s64 = -1;
 		bar : u64 = -1;
 		PrintF("-1 == %\n", foo);
-		PrintF("U64_MAX == %\n", bar);
+		PrintF("U64_MAX == % or 0x%\n", bar, ToHex(bar, ^buf));
 		if foo != -1 return 1;
 		if bar != 0xFFFFFFFFFFFFFFFF return 1;
 	}

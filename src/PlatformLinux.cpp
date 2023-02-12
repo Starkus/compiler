@@ -2,7 +2,19 @@ inline bool SYSFileExists(String filename)
 {
 	const char *cstr = StringToCStr(filename, ThreadAllocator::Alloc);
 	struct stat buffer;
-	return stat(cstr, &buffer) == 0;
+	if (stat(cstr, &buffer) != 0)
+		return false;
+	// Regular files only
+	return S_ISREG(buffer.st_mode);
+}
+
+inline bool SYSDirectoryExists(String filename)
+{
+	const char *cstr = StringToCStr(filename, ThreadAllocator::Alloc);
+	struct stat buffer;
+	if (stat(cstr, &buffer) != 0)
+		return false;
+	return S_ISDIR(buffer.st_mode);
 }
 
 inline bool SYSIsAbsolutePath(String filename)
@@ -51,7 +63,21 @@ FileHandle SYSOpenFileRead(String filename)
 	if (!SYSIsAbsolutePath(filename))
 		fullname = SYSExpandPathWorkingDirectoryRelative(filename);
 
-	return open(fullname.data, O_RDONLY);
+	FileHandle file = open(StringToCStr(fullname, ThreadAllocator::Alloc), O_RDONLY);
+	if (file == SYS_INVALID_FILE_HANDLE) {
+		switch (errno) {
+		case EACCES:
+			Print("Cannot open file \"%S\" for read, access denied\n", fullname);
+			break;
+		case ENOENT:
+			// No error if file doesn't exist, just return invalid handle.
+			break;
+		default:
+			Print("Cannot open file \"%S\" for read, error: %s\n", fullname, strerror(errno));
+			break;
+		}
+	}
+	return file;
 }
 
 FileHandle SYSOpenFileWrite(String filename)
@@ -60,8 +86,22 @@ FileHandle SYSOpenFileWrite(String filename)
 	if (!SYSIsAbsolutePath(filename))
 		fullname = SYSExpandPathWorkingDirectoryRelative(filename);
 
-	return open(fullname.data, O_WRONLY | O_CREAT | O_TRUNC,
+	FileHandle file = open(fullname.data, O_WRONLY | O_CREAT | O_TRUNC,
 			S_IRUSR | S_IWUSR | S_IRGRP | S_IWGRP);
+	if (file == SYS_INVALID_FILE_HANDLE) {
+		switch (errno) {
+		case EACCES:
+			Print("Cannot open file \"%S\" for write, access denied\n", fullname);
+			break;
+		case ENOENT:
+			// No error if file doesn't exist, just return invalid handle.
+			break;
+		default:
+			Print("Cannot open file \"%S\" for write, error: %s\n", fullname, strerror(errno));
+			break;
+		}
+	}
+	return file;
 }
 
 void *SYSReserveMemory(void *addressHint, u64 size)
@@ -225,30 +265,30 @@ void SYSRunLinker(String outputPath, String outputFilename, OutputType outputTyp
 		}
 	}
 	else if (outputType == OUTPUTTYPE_LIBRARY_DYNAMIC) {
-		String moldCmd = TPrintF("%S -shared %S %S -o %S%c",
+		String linkerCmd = TPrintF("%S -shared %S %S -o %S%c",
 			linkerProgram,
 			ChangeFilenameExtension(outputFilename, ".o"_s),
 			extraArguments,
 			ChangeFilenameExtension(outputFilename, ".so"_s),
 			0);
-		int status = system(moldCmd.data);
+		int status = system(linkerCmd.data);
 		if (status) {
 			if (status > 255) status = 255;
-			Print("Error executing mold! Error 0x%.2x\n", status);
+			Print("Error executing linker %S! Error 0x%.2x\n", linkerProgram, status);
 			exit(status);
 		}
 	}
 	else {
-		String moldCmd = TPrintF("%S %S %S -o %S -z muldefs -e __LinuxStart%c",
+		String linkerCmd = TPrintF("%S %S %S -o %S -e __LinuxStart%c",
 			linkerProgram,
 			ChangeFilenameExtension(outputFilename, ".o"_s),
 			extraArguments,
 			ChangeFilenameExtension(outputFilename, {}),
 			0);
-		int status = system(moldCmd.data);
+		int status = system(linkerCmd.data);
 		if (status) {
 			if (status > 255) status = 255;
-			Print("Error executing mold! Error 0x%.2x\n", status);
+			Print("Error executing linker %S! Error 0x%.2x\n", linkerProgram, status);
 			exit(status);
 		}
 	}

@@ -1,3 +1,6 @@
+#include "core/basic.emi";
+#include "core/print.emi";
+
 fibonacci :: (i : s64) -> s64
 {
 	a := 0;

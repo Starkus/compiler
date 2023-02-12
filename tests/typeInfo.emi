@@ -1,3 +1,5 @@
+#include "core/basic.emi";
+
 Struct :: struct
 {
 	memberOne : s32;

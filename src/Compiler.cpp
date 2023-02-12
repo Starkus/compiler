@@ -38,7 +38,7 @@ PerformanceAPI_Functions performanceAPI;
 #include "Multithreading.h"
 #include "Containers.h"
 
-// Keep in sync with core/basic.emi
+// Keep in sync with core/core.emi
 enum OutputType
 {
 	OUTPUTTYPE_EXECUTABLE = 0,
@@ -264,9 +264,31 @@ struct ThreadArgs
 
 bool CompilerAddSourceFile(String filename, SourceLocation loc)
 {
-	FileHandle file = SYSOpenFileRead(filename);
+	String fullName;
+
+	if (SYSIsAbsolutePath(filename)) {
+		fullName = filename;
+		goto foundFullName;
+	}
+
+	// Working path relative
+	fullName = SYSExpandPathWorkingDirectoryRelative(filename);
+	if (SYSFileExists(fullName))
+		goto foundFullName;
+
+	// Linux only: search in /usr/include/compiler
+#if IS_LINUX
+	fullName = TStringConcat("/usr/include/compiler/"_s, filename);
+	if (SYSFileExists(fullName))
+		goto foundFullName;
+#endif
+
+	fullName = filename;
+
+foundFullName:
+	FileHandle file = SYSOpenFileRead(fullName);
 	if (file == SYS_INVALID_FILE_HANDLE)
-		LogError(loc, TPrintF("Included source file \"%S\" doesn't exist!", filename));
+		LogError(loc, TPrintF("Could not find source file \"%S\"", filename));
 
 	for (int i = 0; i < g_context->sourceFiles.size; ++i) {
 		String currentFilename = g_context->sourceFiles[i].name;
@@ -280,7 +302,7 @@ bool CompilerAddSourceFile(String filename, SourceLocation loc)
 		}
 	}
 
-	SourceFile newSourceFile = { filename, loc };
+	SourceFile newSourceFile = { fullName, loc };
 	SYSReadEntireFile(file, &newSourceFile.buffer, &newSourceFile.size, LinearAllocator::Alloc);
 
 	u32 fileIdx;
@@ -362,12 +384,11 @@ int main(int argc, char **argv)
 
 	DynamicArray<String, LinearAllocator> inputFiles;
 	DynamicArrayInit(&inputFiles, 16);
-	*DynamicArrayAdd(&inputFiles) = "core/basic.emi"_s;
-	*DynamicArrayAdd(&inputFiles) = "core/print.emi"_s;
+	*DynamicArrayAdd(&inputFiles) = "core/core.emi"_s;
 #if IS_WINDOWS
-	*DynamicArrayAdd(&inputFiles) = "core/basic_windows.emi"_s;
+	*DynamicArrayAdd(&inputFiles) = "core/core_windows.emi"_s;
 #else
-	*DynamicArrayAdd(&inputFiles) = "core/basic_linux.emi"_s;
+	*DynamicArrayAdd(&inputFiles) = "core/core_linux.emi"_s;
 #endif
 	context->config.useEscapeSequences = true;
 	for (int argIdx = 1; argIdx < argc; ++argIdx) {

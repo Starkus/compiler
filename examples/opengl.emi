@@ -1,3 +1,4 @@
+#include "core/basic.emi";
 #include "core/windows.emi";
 #include "core/opengl.emi";
 #linklib "opengl32.lib";

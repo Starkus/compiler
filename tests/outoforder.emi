@@ -1,3 +1,6 @@
+#include "core/basic.emi";
+#include "core/print.emi";
+
 justAStaticVariable :s= A_CONSTANT;
 
 PrintConstant :: ()

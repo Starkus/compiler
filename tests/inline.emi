@@ -1,3 +1,6 @@
+#include "core/basic.emi";
+#include "core/print.emi";
+
 AProc :: #inline ()
 {
 	localVar : s32;

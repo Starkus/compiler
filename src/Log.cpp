@@ -40,7 +40,7 @@ void __Log(SourceLocation loc, String str, String prefix, ConsoleColor color, bo
 		fatLoc = ExpandSourceLocation(loc);
 		String filename = g_context->sourceFiles[loc.fileIdx].name;
 
-		ConsoleSetColor(CONSOLE_BLACK_TXT, true);
+		ConsoleSetColor(CONSOLE_RESET_COLOR, false);
 
 		// Info
 		Print("%S %d:%d ", filename, fatLoc.line, fatLoc.column);
