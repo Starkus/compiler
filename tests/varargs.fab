@@ -1,0 +1,23 @@
+#include "core/basic.fab";
+#include "core/print.fab";
+
+Varargs :: (..args)
+{
+	PrintF("Number of args: %\n", args.size);
+	i : s64 = 0;
+	while (i < cast(s64) args.size)
+	{
+		Print("An arg: ");
+		PrintF("%\n", args[i]);
+		i += 1;
+	}
+}
+
+Main :: (args : [] String) -> s64
+{
+	Varargs(cast(s32) 15, 32, 98, 5.42);
+	Varargs();
+
+	Print("Test ok\n");
+	return 0;
+}

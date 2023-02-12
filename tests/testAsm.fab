@@ -1,0 +1,8 @@
+#include "core/basic.fab";
+
+Main :: (args : [] String) -> s64
+{
+	foo := 4 + 2;
+	Print("Test ok\n");
+	return 0;
+}

@@ -1,9 +1,0 @@
-#include "core/basic.emi";
-#include "core/print.emi";
-
-Main :: (args : [] String) -> s64
-{
-	PrintF("Asd % another % this is awesome! Another %!\n", 5, 2, 3.5);
-	Print("Test ok\n");
-	return 0;
-}

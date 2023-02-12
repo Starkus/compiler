@@ -1,0 +1,17 @@
+#include "core/basic.fab";
+#include "core/print.fab";
+
+constant :: 8;
+constantFloat :: 8.5;
+
+Main :: (args : [] String) -> s64
+{
+	foo : s64 = constant;
+	bar : s32 = constant;
+	baz : f32 = constantFloat;
+
+	PrintF("foo:% bar:% baz:%\n", foo, bar, baz);
+
+	Print("Test ok\n");
+	return 0;
+}

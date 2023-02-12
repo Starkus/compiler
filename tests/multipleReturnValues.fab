@@ -1,0 +1,65 @@
+#include "core/basic.fab";
+#include "core/print.fab";
+
+ParseInt :: (string : String) -> s64, ParseError
+{	if string.size == 0 return 0, PARSEERROR_EMPTY_STRING;
+	scan := string.data;
+	negative := false;
+	if @scan == '-'
+	{	negative = true;
+		scan += 1;
+	}
+	result : s64 = 0;
+	end := string.data + string.size;
+	while scan < end
+	{	digit : u8 = @scan - '0';
+		if digit > 9 return 0, PARSEERROR_INVALID_CHARACTER;
+		result *= 10;
+		result += cast(s64)digit;
+		scan += 1;
+	}
+	return result, PARSEERROR_OK;
+}
+
+BigStruct :: struct
+{	a : u64;
+	b : u64;
+	c : u64;
+};
+ByCopy :: () -> BigStruct, BigStruct, BigStruct
+{	a : BigStruct = { 1, 2, 3 };
+	b : BigStruct = { 4, 5, 6 };
+	c : BigStruct = { 7, 8, 9 };
+	return a, b, c;
+}
+
+ParseError :: enum
+{	PARSEERROR_OK,
+	PARSEERROR_EMPTY_STRING,
+	PARSEERROR_INVALID_CHARACTER
+};
+
+Main :: (args : [] String) -> s64
+{	failed := false;
+
+	num : s64;
+	error : ParseError;
+	num, error = ParseInt("1774");
+	PrintF("Result: % - error: %\n", num, error);
+	if num != 1774 || error != PARSEERROR_OK failed = true;
+
+	num, error = ParseInt("123error!");
+	PrintF("Result: % - error: %\n", num, error);
+	if num != 0 || error != PARSEERROR_INVALID_CHARACTER failed = true;
+
+	bigA, bigB, bigC := ByCopy();
+	PrintF("Big structs returned: % % %\n", bigA, bigB, bigC);
+
+	if failed
+	{	PrintF("Test failed!\n");
+		return 1;
+	}
+
+	PrintF("Test ok!\n");
+	return 0;
+}

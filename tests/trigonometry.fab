@@ -1,0 +1,13 @@
+#include "core/basic.fab";
+#include "core/print.fab";
+#include "core/math.fab";
+
+Main :: (args : [] String) -> s64
+{
+	for 0..32
+	{
+		n : f64 = cast(f64)i / 5.0;
+		PrintF("Sin(%) = %, Cos(%) = %, Tan(%) = %\n", n, Sin(n), n, Cos(n), n, Tan(n));
+	}
+	return 0;
+}

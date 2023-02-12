@@ -1,0 +1,7 @@
+#include "core/basic.fab";
+#include "core/print.fab";
+
+Main :: (args: [] String) -> s64
+{	PrintF("args: %\n", args);
+	return 0;
+}

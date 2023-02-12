@@ -1,0 +1,63 @@
+#include "core/basic.fab";
+
+foo :s u64 = 0;
+
+AStruct :: struct
+{
+	member1 : s32;
+	member2 : s64;
+};
+
+doThings :: (arg : f32)
+{
+	awesomeVariable : f32 = 25.2;
+	{
+		awesomeVariable : s32 = 2;
+	}
+	// Reference non existing variable
+	//awesomeVariable = nonExistant;
+}
+
+outerProc :: ()
+{
+	outerVar : s64 = 25;
+	innerProc :: ()
+	{
+		innerVar : s64 = 50;
+	}
+
+	innerProc();
+}
+
+scopes :: ()
+{
+	foo : s32 = 1;
+	{
+		bar : s32 = foo;
+		{
+			baz : s32 = foo;
+			baz = bar;
+		}
+	}
+}
+
+Main :: (args : [] String) -> s64
+{
+	//asd : AnotherStruct;
+	var : u32 = 7;
+
+	anU64 : u64 = 0x123456;
+	anU8  : u8  = 1;
+	anU8 <<= anU64;
+
+	anF32 : f32 = anU8;
+	anF64 : f64 = anU8;
+	anF32 = cast(f32)5;
+
+	doThings(25.5);
+
+	Print("Hello, Sailor!\n");
+
+	Print("Test ok\n");
+	return 0;
+}

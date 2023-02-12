@@ -1,0 +1,34 @@
+#include "core/basic.fab";
+#include "core/print.fab";
+
+doThings :: (eight : u8, sixteen : u16, thirtytwo : u32)
+{
+	PrintF("Arguments: %, %, %\n", eight, sixteen, thirtytwo);
+	foo := eight + eight;
+	bar := sixteen * 4;
+	baz := thirtytwo - 2;
+}
+
+defaultArg :: (eight : s8 = 8)
+{
+	foo := eight;
+	PrintF("Argument: %\n", eight);
+}
+
+mixed :: (fixedParam : u32, optional : f64 = 5.5, ..varargs)
+{
+	PrintF("FixedParam: %, optional: %, varargs: %\n", fixedParam, optional, varargs);
+}
+
+Main :: (args : [] String) -> s64
+{
+	doThings(8, 16, 32);
+	defaultArg();
+	defaultArg(16);
+	mixed(42);
+	mixed(43, 6.6);
+	mixed(44, 7.7, 1, 2, 3);
+
+	Print("Test ok\n");
+	return 0;
+}

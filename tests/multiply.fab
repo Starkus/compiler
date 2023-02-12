@@ -1,0 +1,13 @@
+#include "core/basic.fab";
+
+Main :: (args : [] String) -> s64
+{
+	immediates := 4 * 5;
+	n := 6;
+	varTimesImm := n * 7;
+	replaceForShiftLeft := 4 * n;
+	replaceForShiftRight := n * 0x10000;
+
+	Print("Test ok\n");
+	return 0;
+}

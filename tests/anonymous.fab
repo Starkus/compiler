@@ -1,0 +1,64 @@
+#include "core/basic.fab";
+#include "core/print.fab";
+
+AnonReturn :: () -> struct { one : s64; two : s32; }
+{
+	return { 1, 2 };
+}
+
+AnonParam :: (param : struct { three : s64; four : s64; }) -> s64
+{
+	if param.three != 3 || param.four != 4 return 1;
+	PrintF("Anonymous struct parameter received: %\n", param);
+	return 0;
+}
+
+Main :: (args : [] String) -> s64
+{
+	struct
+	{
+		foo : s32;
+		bar : s32;
+	};
+	bar = 3;
+	foo = bar;
+	if (foo != 3 || bar != 3) return 1;
+
+	aStruct : struct
+	{
+		a : f32;
+	};
+	aStruct.a = 5.0;
+	if aStruct.a != 5.0 return 1;
+
+	union
+	{
+		asInt : s64;
+		asFloat : f64;
+	};
+	asFloat = 2.5;
+	if asFloat != 2.5 return 1;
+
+	struct
+	{
+		struct
+		{
+			struct
+			{
+				deep : s64;
+			};
+		};
+	};
+	deep = 5;
+	if deep != 5 return 1;
+
+	anonReturnValue := AnonReturn();
+	PrintF("Anonymous struct return: %\n", anonReturnValue);
+	if anonReturnValue.one != 1 || anonReturnValue.two != 2 return 1;
+
+	error := AnonParam({ 3, 4 });
+	if error return error;
+
+	Print("Test ok\n");
+	return 0;
+}

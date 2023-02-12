@@ -1,10 +1,18 @@
 #/bin/bash
 
-mkdir -p /usr/include/compiler/core/
-mkdir -p /usr/lib/compiler
-
-cp core/* /usr/include/compiler/core/
-cp bin/Compiler /usr/bin/compiler
-cp bin/core.o /usr/lib/compiler/
-cp bin/core.so /usr/lib/compiler/
-cp bin/LinuxStart.o /usr/lib/compiler/
+if [ "$1" = "-remove" ]
+then
+	rm /usr/bin/fabric
+	rm -r /usr/lib/fabric
+	rm -r /usr/include/fabric
+	echo "Fabric compiler successfully removed"
+else
+	mkdir -p /usr/include/fabric/core/
+	mkdir -p /usr/lib/fabric
+	cp bin/Compiler		/usr/bin/fabric
+	cp bin/core.o		/usr/lib/fabric/
+	cp bin/core.so		/usr/lib/fabric/
+	cp bin/LinuxStart.o	/usr/lib/fabric/
+	cp core/*			/usr/include/fabric/core/
+	echo "Fabric compiler successfully installed"
+fi

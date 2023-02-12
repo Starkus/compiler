@@ -276,9 +276,9 @@ bool CompilerAddSourceFile(String filename, SourceLocation loc)
 	if (SYSFileExists(fullName))
 		goto foundFullName;
 
-	// Linux only: search in /usr/include/compiler
+	// Linux only: search in /usr/include/fabric
 #if IS_LINUX
-	fullName = TStringConcat("/usr/include/compiler/"_s, filename);
+	fullName = TStringConcat("/usr/include/fabric/"_s, filename);
 	if (SYSFileExists(fullName))
 		goto foundFullName;
 #endif
@@ -384,11 +384,11 @@ int main(int argc, char **argv)
 
 	DynamicArray<String, LinearAllocator> inputFiles;
 	DynamicArrayInit(&inputFiles, 16);
-	*DynamicArrayAdd(&inputFiles) = "core/core.emi"_s;
+	*DynamicArrayAdd(&inputFiles) = "core/core.fab"_s;
 #if IS_WINDOWS
-	*DynamicArrayAdd(&inputFiles) = "core/core_windows.emi"_s;
+	*DynamicArrayAdd(&inputFiles) = "core/core_windows.fab"_s;
 #else
-	*DynamicArrayAdd(&inputFiles) = "core/core_linux.emi"_s;
+	*DynamicArrayAdd(&inputFiles) = "core/core_linux.fab"_s;
 #endif
 	context->config.useEscapeSequences = true;
 	for (int argIdx = 1; argIdx < argc; ++argIdx) {

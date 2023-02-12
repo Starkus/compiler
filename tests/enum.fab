@@ -1,0 +1,29 @@
+#include "core/basic.fab";
+#include "core/print.fab";
+
+Color :: enum : s8 {
+	COLOR_RED,
+	COLOR_GREEN = 15,
+	COLOR_BLUE
+};
+
+Main :: (args : [] String) -> s64
+{
+	color : Color = COLOR_RED;
+	PrintF("Color is %\n", color);
+
+	color2 :: COLOR_GREEN;
+	PrintF("Color is %\n", color2);
+
+	PrintF("Color is %\n", COLOR_BLUE);
+
+	enumTypeInfo := cast(^TypeInfoEnum) typeof(color);
+	for enumTypeInfo.names
+	{
+		Print(@it);
+		Print("\n");
+	}
+
+	Print("Test ok\n");
+	return 0;
+}

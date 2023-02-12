@@ -1,0 +1,9 @@
+#include "core/basic.fab";
+#include "core/print.fab";
+
+Main :: (args : [] String) -> s64
+{
+	PrintF("Platform: %\n", compiler_platform);
+	compiler_platform == COMPILER_PLATFORM_LINUX;
+	return 0;
+}

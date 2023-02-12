@@ -1,0 +1,349 @@
+#include "core/basic.fab";
+#include "core/print.fab";
+#include "core/vector.fab";
+#include "core/math.fab";
+#include "core/glh.fab";
+
+//compiler_subsystem :: COMPILER_SUBSYSTEM_WINDOWS;
+
+g_running :s bool = true;
+g_windowHandle :s HANDLE;
+g_screenWidth :s s32 = 800;
+g_screenHeight :s s32 = 600;
+g_deviceContext :s ^void;
+g_glContext :s ^void;
+
+Win32WindowCallback :: #convention(win64) (hWnd : HANDLE, message : DWORD, wParam : WPARAM,
+		lParam : LPARAM) -> LRESULT
+{
+	if message == WM_CLOSE
+		g_running = false;
+	else if message == WM_SIZE
+	{
+		g_screenWidth = cast(s32)(lParam & 0xFFFF);
+		g_screenHeight = cast(s32)((lParam >> 16) & 0xFFFF);
+		glViewport(0, 0, g_screenWidth, g_screenHeight);
+	}
+	else
+		return DefWindowProcA(hWnd, message, wParam, lParam);
+
+	return 0;
+}
+
+g_randomSeed :s u32;
+RandomFloat :: () -> f32 {
+	rand: u32 = g_randomSeed;
+	rand = ((rand >> 16) ^ rand) * 0x45d9f3b;
+	rand = ((rand >> 16) ^ rand) * 0x45d9f3b;
+	rand = ((rand >> 16) ^ rand);
+	g_randomSeed = rand;
+	return cast(f32)(rand % 8192) / 4096.0 - 1.0;
+}
+
+Input :: struct {
+	left : bool;
+	right : bool;
+	shoot : bool;
+};
+input :s Input;
+
+Enemy :: struct {
+	pos : v2;
+	life : s32;
+};
+
+Particle :: struct {
+	pos : v2;
+	vel : v2;
+	life : f32;
+	duration : f32;
+};
+
+ENEMY_WIDTH   :: 64.0;
+ENEMY_HEIGHT  :: 64.0;
+BULLET_WIDTH  :: 16.0;
+BULLET_HEIGHT :: 24.0;
+g_playerPos :s v2;
+g_bullets :s [] v2;
+g_enemies :s [] Enemy;
+g_particles :s [] Particle;
+
+Main :: (args : [] String) -> s64
+{
+	g_windowHandle, g_deviceContext, g_glContext = GLHInitOpenGLContext(#cstr "Invaders",
+			#cstr "invaders", g_screenWidth, g_screenHeight);
+
+	// Allocate memory for entities
+	g_bullets.data = cast(^v2)VirtualAlloc(0, cast(u64)(256 * sizeof(v2)), MEM_COMMIT, PAGE_READWRITE);
+	g_enemies.data = cast(^v2)VirtualAlloc(0, cast(u64)(256 * sizeof(Enemy)), MEM_COMMIT, PAGE_READWRITE);
+	g_particles.data = cast(^v2)VirtualAlloc(0, cast(u64)(256 * sizeof(Particle)), MEM_COMMIT, PAGE_READWRITE);
+
+	g_randomSeed = 123456;
+
+	// Init player
+	g_playerPos = { cast(f32)g_screenWidth / 2.0, 50.0 };
+
+	// Init enemies
+	g_enemies.size = 8;
+	for 0..8
+	{
+		g_enemies[i].pos = { 50.0 + cast(f32)i * 100.0, 500.0 };
+		g_enemies[i].life = 10;
+	}
+
+	vertexArrayId : GLuint = ?;
+	glGenVertexArrays(1, ^vertexArrayId);
+	glBindVertexArray(vertexArrayId);
+
+	vertexBufferData : [6] v2 = {
+		{ 1.0, 1.0 },
+		{ 0.0, 0.0 },
+		{ 0.0, 1.0 },
+		{ 1.0, 1.0 },
+		{ 1.0, 0.0 },
+		{ 0.0, 0.0 }
+	};
+
+	// Projection matrix
+	projectionMatrix : mat4 = ?;
+	{
+		left := 0.0;
+		right := cast(f32)g_screenWidth;
+		top := cast(f32)g_screenHeight;
+		bottom := 0.0;
+		near :=  1.0;
+		far  := -1.0;
+		projectionMatrix = {
+			2.0/(right-left),	0.0,				0.0,			-(right+left)/(right-left),
+			0.0,				2.0/(top-bottom),	0.0,			-(top+bottom)/(top-bottom),
+			0.0,				0.0,				2.0/(far-near),	-(far+near)/(far-near),
+			0.0,				0.0,				0.0,			1.0
+		};
+		projectionMatrix = Mat4Transpose(projectionMatrix);
+	}
+
+	vertexBuffer : GLuint = ?;
+	glGenBuffers(1, ^vertexBuffer);
+	glBindBuffer(GL_ARRAY_BUFFER, vertexBuffer);
+	glBufferData(GL_ARRAY_BUFFER, cast(s64)sizeof(vertexBufferData), ^vertexBufferData, GL_STATIC_DRAW);
+	glEnableVertexAttribArray(0);
+
+	vertexShaderId, fragmentShaderId: GLuint = ?;
+	shaderError: GLHError = ?;
+	shaderError, vertexShaderId   = GLHLoadShader("examples/invaders_vertexshader.glsl",   GL_VERTEX_SHADER);
+	if shaderError != GLHERROR_OK return 1;
+	shaderError, fragmentShaderId = GLHLoadShader("examples/invaders_fragmentshader.glsl", GL_FRAGMENT_SHADER);
+	if shaderError != GLHERROR_OK return 1;
+	programId := glCreateProgram();
+	glAttachShader(programId, vertexShaderId);
+	glAttachShader(programId, fragmentShaderId);
+	glLinkProgram(programId);
+
+	logSize : s32 = ?;
+	glGetProgramiv(programId, GL_INFO_LOG_LENGTH, ^logSize);
+	if logSize > 0 {
+		programLog : String;
+		programLog.size = cast(u64)logSize;
+		programLog.data = cast(^u8)VirtualAlloc(0, programLog.size, MEM_COMMIT, PAGE_READWRITE);
+		defer VirtualFree(programLog.data, 0, MEM_RELEASE);
+		glGetProgramInfoLog(programId, logSize, null, cast(^GLchar)programLog.data);
+		PrintF("%\n", programLog);
+	}
+
+	glUseProgram(programId);
+
+	uniformName := #cstr "projectionMatrix";
+	projectionUniform := glGetUniformLocation(programId, uniformName);
+	glUniformMatrix4fv(projectionUniform, 1, false, ^projectionMatrix.m00);
+
+	glEnable(GL_BLEND);
+	glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+
+	textureId:		 GLuint = ?;
+	textureIdShip:	 GLuint = ?;
+	textureIdBullet: GLuint = ?;
+	textureIdEnemy:	 GLuint = ?;
+	textureIdSmoke:	 GLuint = ?;
+	textureError: GLHError = ?;
+	textureError, textureId = GLHLoadTexture("examples/texture.bmp");
+	if textureError != GLHERROR_OK return 1;
+	textureError, textureIdShip = GLHLoadTexture("examples/ship.bmp");
+	if textureError != GLHERROR_OK return 1;
+	textureError, textureIdBullet = GLHLoadTexture("examples/player_bullet.bmp");
+	if textureError != GLHERROR_OK return 1;
+	textureError, textureIdEnemy = GLHLoadTexture("examples/enemy.bmp");
+	if textureError != GLHERROR_OK return 1;
+	textureError, textureIdSmoke = GLHLoadTexture("examples/smoke.bmp");
+	if textureError != GLHERROR_OK return 1;
+
+	lastPerformanceCounter : s64;
+	performanceFrequency : s64;
+	{
+		largeInteger : LARGE_INTEGER;
+		QueryPerformanceCounter(^largeInteger);
+		lastPerformanceCounter = largeInteger.QuadPart;
+		QueryPerformanceFrequency(^largeInteger);
+		performanceFrequency = largeInteger.QuadPart;
+	}
+
+	deltaTime : f32;
+
+	message : MSG = ?;
+	while g_running {
+		// Timer
+		{
+			largeInteger : LARGE_INTEGER;
+			QueryPerformanceCounter(^largeInteger);
+			newPerfCounter := largeInteger.QuadPart;
+			deltaTime = cast(f32)(newPerfCounter - lastPerformanceCounter) /
+				cast(f32)performanceFrequency;
+			lastPerformanceCounter = newPerfCounter;
+		}
+
+		// UPDATE
+		// Player movement
+		{
+			speed :: 300.0;
+			if input.right
+				g_playerPos.x += deltaTime * speed;
+			if input.left
+				g_playerPos.x -= deltaTime * speed;
+		}
+
+		// Player shooting
+		{
+			shootCooldown :s f32;
+			shootCooldown += deltaTime;
+			if input.shoot && shootCooldown >= 0 {
+				g_bullets[g_bullets.size] = V2Subtract(g_playerPos, { 20.0, 0.0 });
+				g_bullets.size += 1;
+				g_bullets[g_bullets.size] = V2Add(g_playerPos, { 20.0, 0.0 });
+				g_bullets.size += 1;
+				shootCooldown = -0.1;
+			}
+		}
+
+		for g_bullets {
+			it.y += 1000.0 * deltaTime;
+			if it.y > g_screenHeight
+				remove;
+		}
+
+		// Player bullet collisions
+		HALF_BULLET_WIDTH  :: BULLET_WIDTH  * 0.5;
+		HALF_BULLET_HEIGHT :: BULLET_HEIGHT * 0.5;
+		HALF_ENEMY_WIDTH   :: ENEMY_WIDTH   * 0.5;
+		HALF_ENEMY_HEIGHT  :: ENEMY_HEIGHT  * 0.5;
+		for bulletIdx, bullet : g_bullets {
+			for enemyIdx, enemy : g_enemies {
+				if (bullet.x - HALF_BULLET_WIDTH  < enemy.pos.x + HALF_ENEMY_WIDTH &&
+					bullet.x + HALF_BULLET_WIDTH  > enemy.pos.x - HALF_ENEMY_WIDTH &&
+					bullet.y - HALF_BULLET_HEIGHT < enemy.pos.y + HALF_ENEMY_HEIGHT &&
+					bullet.y + HALF_BULLET_HEIGHT > enemy.pos.y - HALF_ENEMY_HEIGHT) {
+
+					// Spawn g_particles
+					newParticle: Particle;
+					newParticle.pos = @bullet;
+					newParticle.duration = 0.15;
+					for 0..20 {
+						newParticle.vel = { RandomFloat(), RandomFloat() };
+						newParticle.vel = V2Normalize(newParticle.vel);
+						speed := 200.0 * (RandomFloat() + 0.5);
+						newParticle.vel.x *= speed;
+						newParticle.vel.y *= speed;
+						g_particles[g_particles.size] = newParticle;
+						g_particles.size += 1;
+					}
+
+					// Destroy bullet
+					g_bullets.size -= 1;
+					@bullet = g_bullets[g_bullets.size];
+					bulletIdx -= 1;
+
+					// Reduce health
+					enemy.life -= 1;
+
+					if enemy.life <= 0 {
+						// Destroy enemy
+						g_enemies.size -= 1;
+						@enemy = g_enemies[g_enemies.size];
+						enemyIdx -= 1;
+					}
+				}
+			}
+		}
+
+		for g_enemies {
+			SPEED :: 3.0;
+			PERIOD :: PI2 * SPEED;
+			enemySinTimer :s f32 = HALFPI * SPEED;
+			it.pos.x += Sin(enemySinTimer / SPEED) * 3.0;
+			enemySinTimer += deltaTime;
+			while enemySinTimer > PERIOD
+				enemySinTimer -= PERIOD;
+		}
+
+		// Update g_particles
+		for g_particles {
+			it.life += deltaTime;
+			if it.life > it.duration
+				remove;
+			else {
+				it.pos.x += it.vel.x * deltaTime;
+				it.pos.y += it.vel.y * deltaTime;
+			}
+		}
+
+		// RENDER
+		glClearColor(0.05, 0.0, 0.09, 0.0);
+		glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+
+		glBindBuffer(GL_ARRAY_BUFFER, vertexBuffer);
+		glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, 0, 0);
+
+		DrawSprite :: #inline (programId: GLuint, position: v2, size: v2) {
+			dimensions : v4 = { position.x, position.y, size.x, size.y };
+			dimensionsUniform := glGetUniformLocation(programId, #cstr "dimensions");
+			glUniform4fv(dimensionsUniform, 1, ^dimensions.x);
+			glDrawArrays(GL_TRIANGLES, 0, 6);
+		}
+
+		glBindTexture(GL_TEXTURE_2D, textureIdShip);
+		DrawSprite(programId, g_playerPos, { 64.0, 64.0 });
+		glBindTexture(GL_TEXTURE_2D, textureIdBullet);
+		for g_bullets DrawSprite(programId, @it,    { BULLET_WIDTH, BULLET_HEIGHT });
+		glBindTexture(GL_TEXTURE_2D, textureIdEnemy);
+		for g_enemies DrawSprite(programId, it.pos, { ENEMY_WIDTH,  ENEMY_HEIGHT  });
+		glBindTexture(GL_TEXTURE_2D, textureIdSmoke);
+		for g_particles DrawSprite(programId, it.pos, { 24, 24 });
+
+		SwapBuffers(g_deviceContext);
+
+		while PeekMessageA(^message, 0, 0, 0, PM_REMOVE) {
+			consumed := true;
+			if message.message == WM_QUIT
+				g_running = false;
+			else if message.message == WM_KEYDOWN || message.message == WM_KEYUP {
+				isDown : bool = (message.lParam & (1 << 31)) == 0;
+				if message.wParam == 'Q'
+					g_running = false;
+				else if message.wParam == 'A'
+					input.left = isDown;
+				else if message.wParam == 'D'
+					input.right = isDown;
+				else if message.wParam == VK_SPACE
+					input.shoot = isDown;
+				else
+					consumed = false;
+			}
+			else
+				consumed = false;
+
+			TranslateMessage(^message);
+			if !consumed
+				DispatchMessageA(^message);
+		}
+	}
+
+	return 0;
+}

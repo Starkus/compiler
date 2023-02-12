@@ -1,0 +1,41 @@
+#include "core/basic.fab";
+#include "core/print.fab";
+
+justAStaticVariable :s= A_CONSTANT;
+
+PrintConstant :: ()
+{
+	aStruct : AStruct = { A_CONSTANT };
+	PrintF("Constant is %, %\n", ANOTHER_CONSTANT, aStruct.foo);
+}
+
+ANOTHER_CONSTANT :: A_CONSTANT;
+A_CONSTANT :: 5;
+
+// This should not cause a hang
+//asd :s= neverDefined;
+
+// Nor should this
+// @Todo: better error message?
+//cyclicA :s= cyclicB;
+//cyclicB :s= cyclicA;
+
+CyclicA :: () -> s32
+{
+	return CyclicB();
+}
+CyclicB :: () -> s32
+{
+	return CyclicA();
+}
+
+AStruct :: struct
+{
+	foo : s32;
+};
+
+Main :: (args : [] String) -> s64
+{
+	PrintConstant();
+	return 0;
+}

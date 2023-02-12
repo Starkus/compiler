@@ -1,0 +1,79 @@
+#include "core/basic.fab";
+#include "core/windows.fab";
+#include "core/opengl.fab";
+#linklib "opengl32.lib";
+
+compiler_subsystem :: COMPILER_SUBSYSTEM_WINDOWS;
+
+g_windowHandle :s HANDLE;
+g_running :s bool = true;
+
+Win32WindowCallback :: #convention(win64) (hWnd : ^void, uMsg : u32, wParam : u64, lParam : u64) -> u64
+{
+	if (uMsg == WM_DESTROY || uMsg == WM_CLOSE) {
+		g_running = false;
+		PostQuitMessage(0);
+		return 0;
+	}
+	else
+		return DefWindowProcA(hWnd, uMsg, wParam, lParam);
+}
+
+Main :: (args : [] String) -> s64
+{
+	hInstance := ^__ImageBase;
+
+	windowClassName := #cstr "window";
+	windowTitle := #cstr "Hello OpenGL!";
+
+	windowClass : WNDCLASSEXA;
+	windowClass.cbSize = cast(u32)sizeof(windowClass);
+	windowClass.style = CS_HREDRAW | CS_VREDRAW | CS_OWNDC;
+	windowClass.lpfnWndProc = Win32WindowCallback;
+	windowClass.hInstance = hInstance;
+	windowClass.lpszClassName = windowClassName;
+
+	success := RegisterClassExA(^windowClass);
+
+	pfd : PIXELFORMATDESCRIPTOR;
+	pfd.nSize = cast(u16) sizeof(PIXELFORMATDESCRIPTOR);
+	pfd.nVersion = 1;
+	pfd.dwFlags = PFD_DOUBLEBUFFER | PFD_SUPPORT_OPENGL | PFD_DRAW_TO_WINDOW;
+	pfd.iPixelType = PFD_TYPE_RGBA;
+	pfd.cColorBits = 32;
+	pfd.cDepthBits = 32;
+
+	g_windowHandle = CreateWindowExA(0, windowClassName, windowTitle, WS_OVERLAPPEDWINDOW | WS_VISIBLE,
+					16, 16, 800, 600, 0, 0, hInstance, 0);
+
+	deviceContext := GetDC(g_windowHandle);
+	pixelFormatId := ChoosePixelFormat(deviceContext, ^pfd);
+	SetPixelFormat(deviceContext, pixelFormatId, ^pfd);
+	glContext := wglCreateContext(deviceContext);
+	wglMakeCurrent(deviceContext, glContext);
+
+	glViewport(0, 0, 800, 600);
+
+	message : MSG = ?;
+	while g_running {
+		glClearColor(0.8, 0.6, 0.0, 0.0);
+		glClear(GL_COLOR_BUFFER_BIT);
+		SwapBuffers(deviceContext);
+
+		while PeekMessageA(^message, 0, 0, 0, PM_REMOVE) {
+			if message.message == WM_QUIT
+				g_running = 0;
+			else {
+				TranslateMessage(^message);
+				DispatchMessageA(^message);
+			}
+		}
+	}
+
+	wglDeleteContext(glContext);
+	ReleaseDC(g_windowHandle, deviceContext);
+	DestroyWindow(g_windowHandle);
+
+	Print("Test ok\n");
+	return 0;
+}

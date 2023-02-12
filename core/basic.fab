@@ -1,0 +1,4 @@
+#if compiler_target_platform == COMPILER_PLATFORM_WINDOWS
+	#include "core/basic_windows.fab";
+else #if compiler_target_platform == COMPILER_PLATFORM_LINUX
+	#include "core/basic_linux.fab";

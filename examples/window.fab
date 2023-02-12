@@ -1,0 +1,56 @@
+#include "core/basic.fab";
+#include "core/print.fab";
+#include "core/windows.fab";
+
+compiler_subsystem :: COMPILER_SUBSYSTEM_WINDOWS;
+
+g_running :s bool = true;
+
+Win32WindowCallback :: #convention(win64) (hWnd : ^void, uMsg : u32, wParam : u64, lParam : u64) -> u64
+{
+	if (uMsg == WM_DESTROY || uMsg == WM_CLOSE) {
+		g_running = false;
+		return 0;
+	}
+	else
+		return DefWindowProcA(hWnd, uMsg, wParam, lParam);
+}
+
+Main :: (args : [] String) -> s64
+{
+	hInstance := ^__ImageBase;
+
+	windowClassName := #cstr "window";
+	windowTitle := #cstr "Hello, Sailor!";
+
+	windowClass : WNDCLASSEXA;
+	windowClass.cbSize = cast(u32)sizeof(windowClass);
+	windowClass.style = CS_HREDRAW | CS_VREDRAW | CS_OWNDC;
+	windowClass.lpfnWndProc = Win32WindowCallback;
+	windowClass.hInstance = hInstance;
+	windowClass.lpszClassName = windowClassName;
+
+	success := RegisterClassExA(^windowClass);
+	PrintF("Window succeded: % Last error: %\n", success, GetLastError());
+
+	window := CreateWindowExA(0, windowClassName, windowTitle, WS_CLIPSIBLINGS |
+			WS_CLIPCHILDREN | WS_SIZEBOX | WS_SYSMENU, 0, 0, 128, 128, 0, 0, hInstance, 0);
+	PrintF("Window handle: % Last error: %\n", cast(s64) window, GetLastError());
+
+	ShowWindow(window, SW_SHOW);
+
+	message : MSG = ?;
+
+	while g_running {
+		while PeekMessageA(^message, 0, 0, 0, PM_REMOVE) {
+			if message.message == WM_QUIT
+				g_running = 0;
+			else {
+				TranslateMessage(^message);
+				DispatchMessageA(^message);
+			}
+		}
+	}
+
+	return 0;
+}

@@ -1,0 +1,731 @@
+#include "core/math.fab"; // For square root
+
+PI     :: 3.1415926535897932384626433832795;
+HALFPI :: 1.5707963267948966192313216916398;
+PI2    :: 6.283185307179586476925286766559;
+
+v2 :: union
+{
+	struct
+	{
+		x : f32; y : f32;
+	};
+	v : [2] f32;
+};
+
+v3 :: union
+{
+	struct
+	{
+		x : f32; y : f32; z : f32;
+	};
+	struct
+	{
+		r : f32; g : f32; b : f32;
+	};
+	xy : v2;
+	v : [3] f32;
+};
+
+v4 :: union
+{
+	struct
+	{
+		x : f32; y : f32; z : f32; w : f32;
+	};
+	struct
+	{
+		r : f32; g : f32; b : f32; a : f32;
+	};
+	xyz : v3;
+	xy  : v2;
+	v   : [4] f32;
+};
+
+mat4 :: union
+{
+	struct
+	{
+		m00 : f32; m01 : f32; m02 : f32; m03 : f32;
+		m10 : f32; m11 : f32; m12 : f32; m13 : f32;
+		m20 : f32; m21 : f32; m22 : f32; m23 : f32;
+		m30 : f32; m31 : f32; m32 : f32; m33 : f32;
+	};
+	m : [16] f32;
+};
+
+MAT4_IDENTITY :s mat4 =
+{
+	1.0,	0.0,	0.0,	0.0,
+	0.0,	1.0,	0.0,	0.0,
+	0.0,	0.0,	1.0,	0.0,
+	0.0,	0.0,	0.0,	1.0
+};
+
+Mat4Scale :: (a : mat4, b : f32) -> mat4
+{
+	result : mat4 =
+	{
+		a.m00 * b, a.m01 * b, a.m02 * b, a.m03 * b,
+		a.m10 * b, a.m11 * b, a.m12 * b, a.m13 * b,
+		a.m20 * b, a.m21 * b, a.m22 * b, a.m23 * b,
+		a.m30 * b, a.m31 * b, a.m32 * b, a.m33 * b
+	};
+	return result;
+}
+
+Mat4Divide :: (a : mat4, b : f32) -> mat4
+{
+	result : mat4 =
+	{
+		a.m00 / b, a.m01 / b, a.m02 / b, a.m03 / b,
+		a.m10 / b, a.m11 / b, a.m12 / b, a.m13 / b,
+		a.m20 / b, a.m21 / b, a.m22 / b, a.m23 / b,
+		a.m30 / b, a.m31 / b, a.m32 / b, a.m33 / b
+	};
+	return result;
+}
+
+Mat4MakeTranslation :: (translation : v3, scale : f32 = 1.0) -> mat4
+{
+	result : mat4 =
+	{
+		scale,	0.0,	0.0,	0.0,
+		0.0,	scale,	0.0,	0.0,
+		0.0,	0.0,	scale,	0.0,
+		translation.x, translation.y, translation.z, 1.0
+	};
+	return result;
+}
+
+Mat4MakeScale :: (scale : f32) -> mat4
+{
+	result : mat4 =
+	{
+		scale,	0.0,	0.0,	0.0,
+		0.0,	scale,	0.0,	0.0,
+		0.0,	0.0,	scale,	0.0,
+		0.0,	0.0,	0.0,	0.0
+	};
+	return result;
+}
+
+V2Add :: (a : v2, b : v2) -> v2
+{
+	result : v2 = { a.x + b.x, a.y + b.y };
+	return result;
+}
+
+V2Subtract :: (a : v2, b : v2) -> v2
+{
+	result : v2 = { a.x - b.x, a.y - b.y };
+	return result;
+}
+
+V2Negate :: (v : v2) -> v2
+{
+	result : v2 = { -v.x, -v.y };
+	return result;
+}
+
+V2Scale :: (a : v2, b : f32) -> v2
+{
+	result : v2 = { a.x * b, a.y * b };
+	return result;
+}
+
+V2Divide :: (a : v2, b : f32) -> v2
+{
+	result : v2 = { a.x / b, a.y / b };
+	return result;
+}
+
+V2Equals :: (a : v2, b : v2) -> bool
+{
+	return a.x == b.x && a.y == b.y;
+}
+
+V2Dot :: (a : v2, b : v2) -> f32
+{
+	return a.x * b.x + a.y * b.y;
+}
+
+V2SqrLen :: (a : v2) -> f32
+{
+	return a.x * a.x + a.y * a.y;
+}
+
+V2Length :: (a : v2) -> f32
+{
+	return Sqrt32(a.x * a.x + a.y * a.y);
+}
+
+V2Normalize :: (a : v2) -> v2
+{
+	result : v2 = V2Divide(a, V2Length(a));
+	return result;
+}
+
+V3Dot :: (a : v3, b : v3) -> f32
+{
+	return a.x * b.x + a.y * b.y + a.z * b.z;
+}
+
+V3Cross :: (a : v3, b : v3) -> v3
+{
+	result : v3 =
+	{
+		a.y * b.z - a.z * b.y,
+		a.z * b.x - a.x * b.z,
+		a.x * b.y - a.y * b.x
+	};
+	return result;
+}
+
+V3MakeScale :: (v : v3, scale : v3) -> v3
+{
+	result : v3 = { v.x * scale.x, v.y * scale.y, v.z * scale.z };
+	return result;
+}
+
+V3Add :: (a : v3, b : v3) -> v3
+{
+	result : v3 = { a.x + b.x, a.y + b.y, a.z + b.z };
+	return result;
+}
+
+V3Subtract :: (a : v3, b : v3) -> v3
+{
+	result : v3 = { a.x - b.x, a.y - b.y, a.z - b.z };
+	return result;
+}
+
+V3Negate :: (v : v3) -> v3
+{
+	result : v3 = { -v.x, -v.y, -v.z };
+	return result;
+}
+
+V3Multiply :: (a : v3, b : v3) -> v3
+{
+	result : v3 = { a.x * b.x, a.y * b.y, a.z * b.z };
+	return result;
+}
+
+V3Scale :: (a : v3, b : f32) -> v3
+{
+	result : v3 = { a.x * b, a.y * b, a.z * b };
+	return result;
+}
+
+V3Divide :: (a : v3, b : f32) -> v3
+{
+	result : v3 = { a.x / b, a.y / b, a.z / b };
+	return result;
+}
+
+V3Equals :: (a : v3, b : v3) -> bool
+{
+	return a.x == b.x && a.y == b.y && a.z == b.z;
+}
+
+V3SqrLen :: (a : v3) -> f32
+{
+	return a.x * a.x + a.y * a.y + a.z * a.z;
+}
+
+V3Length :: (a : v3) -> f32
+{
+	return Sqrt32(V3SqrLen(a));
+}
+
+V3Normalize :: (a : v3) -> v3
+{
+	result : v3 = V3Divide(a, V3Length(a));
+	return result;
+}
+
+V4Add :: (a : v4, b : v4) -> v4
+{
+	result : v4 = { a.x + b.x, a.y + b.y, a.z + b.z, a.w + b.w };
+	return result;
+}
+
+V4Subtract :: (a : v4, b : v4) -> v4
+{
+	result : v4 = { a.x - b.x, a.y - b.y, a.z - b.z, a.w - b.w };
+	return result;
+}
+
+V4Negate :: (v : v4) -> v4
+{
+	result : v4 = { -v.x, -v.y, -v.z, -v.w };
+	return result;
+}
+
+V4Scale :: (a : v4, b : f32) -> v4
+{
+	result : v4 = { a.x * b, a.y * b, a.z * b, a.w * b };
+	return result;
+}
+
+V4Divide :: (a : v4, b : f32) -> v4
+{
+	result : v4 = { a.x / b, a.y / b, a.z / b, a.w / b };
+	return result;
+}
+
+V4Dot :: (a : v4, b : v4) -> f32
+{
+	return a.x * b.x + a.y * b.y + a.z * b.z + a.w * b.w;
+}
+
+V4SqrLen :: (a : v4) -> f32
+{
+	return a.x * a.x + a.y * a.y + a.z * a.z + a.w * a.w;
+}
+
+V4Length :: (a : v4) -> f32
+{
+	return Sqrt32(V4SqrLen(a));
+}
+
+V4Normalize :: (a : v4) -> v4
+{
+	result : v4 = V4Divide(a, V4Length(a));
+	return result;
+}
+
+V4Multiply :: (v : v4, scale : v4) -> v4
+{
+	result : v4 = { v.x * scale.x, v.y * scale.y, v.z * scale.z, v.w * scale.w };
+	return result;
+}
+
+V4Point :: (v : v3) -> v4
+{
+	result : v4 = ?;
+	result.xyz = v;
+	result.w = 1.0;
+	return result;
+}
+
+V4Direction :: (v : v3) -> v4
+{
+	result : v4 = ?;
+	result.xyz = v;
+	result.w = 0.0;
+	return result;
+}
+
+Mat4Determinant :: (m : mat4) -> f32
+{
+	result : f32 = m.m00 *
+		 (m.m11 * m.m22 * m.m33 + m.m12 * m.m23 * m.m31 + m.m13 * m.m21 * m.m32
+		- m.m13 * m.m22 * m.m31 - m.m12 * m.m21 * m.m33 - m.m11 * m.m23 * m.m32);
+	result -= m.m10 *
+		 (m.m01 * m.m22 * m.m33 + m.m02 * m.m23 * m.m31 + m.m03 * m.m21 * m.m32
+		- m.m03 * m.m22 * m.m31 - m.m02 * m.m21 * m.m33 - m.m01 * m.m23 * m.m32);
+	result += m.m20 *
+		 (m.m01 * m.m12 * m.m33 + m.m02 * m.m13 * m.m31 + m.m03 * m.m11 * m.m32
+		- m.m03 * m.m12 * m.m31 - m.m02 * m.m11 * m.m33 - m.m01 * m.m13 * m.m32);
+	result -= m.m30 *
+		 (m.m01 * m.m12 * m.m23 + m.m02 * m.m13 * m.m21 + m.m03 * m.m11 * m.m22
+		- m.m03 * m.m12 * m.m21 - m.m02 * m.m11 * m.m23 - m.m01 * m.m13 * m.m22);
+	return result;
+}
+
+Mat4Adjugate :: (m : mat4) -> mat4
+{
+	result : mat4 = ?;
+	result.m00 =  m.m11 * m.m22 * m.m33 + m.m12 * m.m23 * m.m31 + m.m13 * m.m21 * m.m32
+				- m.m13 * m.m22 * m.m31 - m.m12 * m.m21 * m.m33 - m.m11 * m.m23 * m.m32;
+	result.m01 = -m.m01 * m.m22 * m.m33 - m.m02 * m.m23 * m.m31 - m.m03 * m.m21 * m.m32
+				+ m.m03 * m.m22 * m.m31 + m.m02 * m.m21 * m.m33 + m.m01 * m.m23 * m.m32;
+	result.m02 =  m.m01 * m.m12 * m.m33 + m.m02 * m.m13 * m.m31 + m.m03 * m.m11 * m.m32
+				- m.m03 * m.m12 * m.m31 - m.m02 * m.m11 * m.m33 - m.m01 * m.m13 * m.m32;
+	result.m03 = -m.m01 * m.m12 * m.m23 - m.m02 * m.m13 * m.m21 - m.m03 * m.m11 * m.m22
+				+ m.m03 * m.m12 * m.m21 + m.m02 * m.m11 * m.m23 + m.m01 * m.m13 * m.m22;
+
+	result.m10 = -m.m10 * m.m22 * m.m33 - m.m12 * m.m23 * m.m30 - m.m13 * m.m20 * m.m32
+				+ m.m13 * m.m22 * m.m30 + m.m12 * m.m20 * m.m33 + m.m10 * m.m23 * m.m32;
+	result.m11 =  m.m00 * m.m22 * m.m33 + m.m02 * m.m23 * m.m30 + m.m03 * m.m20 * m.m32
+				- m.m03 * m.m22 * m.m30 - m.m02 * m.m20 * m.m33 - m.m00 * m.m23 * m.m32;
+	result.m12 = -m.m00 * m.m12 * m.m33 - m.m02 * m.m13 * m.m30 - m.m03 * m.m10 * m.m32
+				+ m.m03 * m.m12 * m.m30 + m.m02 * m.m10 * m.m33 + m.m00 * m.m13 * m.m32;
+	result.m13 =  m.m00 * m.m12 * m.m23 + m.m02 * m.m13 * m.m20 + m.m03 * m.m10 * m.m22
+				- m.m03 * m.m12 * m.m20 - m.m02 * m.m10 * m.m23 - m.m00 * m.m13 * m.m22;
+
+	result.m20 =  m.m10 * m.m21 * m.m33 + m.m11 * m.m23 * m.m30 + m.m13 * m.m20 * m.m31
+				- m.m13 * m.m21 * m.m30 - m.m11 * m.m20 * m.m33 - m.m10 * m.m23 * m.m31;
+	result.m21 = -m.m00 * m.m21 * m.m33 - m.m01 * m.m23 * m.m30 - m.m03 * m.m20 * m.m31
+				+ m.m03 * m.m21 * m.m30 + m.m01 * m.m20 * m.m33 + m.m00 * m.m23 * m.m31;
+	result.m22 =  m.m00 * m.m11 * m.m33 + m.m01 * m.m13 * m.m30 + m.m03 * m.m10 * m.m31
+				- m.m03 * m.m11 * m.m30 - m.m01 * m.m10 * m.m33 - m.m00 * m.m13 * m.m31;
+	result.m23 = -m.m00 * m.m11 * m.m23 - m.m01 * m.m13 * m.m20 - m.m03 * m.m10 * m.m21
+				+ m.m03 * m.m11 * m.m20 + m.m01 * m.m10 * m.m23 + m.m00 * m.m13 * m.m21;
+
+	result.m30 = -m.m10 * m.m21 * m.m32 - m.m11 * m.m22 * m.m30 - m.m12 * m.m20 * m.m31
+				+ m.m12 * m.m21 * m.m30 + m.m11 * m.m20 * m.m32 + m.m10 * m.m22 * m.m31;
+	result.m31 =  m.m00 * m.m21 * m.m32 + m.m01 * m.m22 * m.m30 + m.m02 * m.m20 * m.m31
+				- m.m02 * m.m21 * m.m30 - m.m01 * m.m20 * m.m32 - m.m00 * m.m22 * m.m31;
+	result.m32 = -m.m00 * m.m11 * m.m32 - m.m01 * m.m12 * m.m30 - m.m02 * m.m10 * m.m31
+				+ m.m02 * m.m11 * m.m30 + m.m01 * m.m10 * m.m32 + m.m00 * m.m12 * m.m31;
+	result.m33 =  m.m00 * m.m11 * m.m22 + m.m01 * m.m12 * m.m20 + m.m02 * m.m10 * m.m21
+				- m.m02 * m.m11 * m.m20 - m.m01 * m.m10 * m.m22 - m.m00 * m.m12 * m.m21;
+	return result;
+}
+
+Mat4Inverse :: (m : mat4) -> mat4
+{
+	// Beware: ridiculously expensive!
+	det : f32 = Mat4Determinant(m);
+	unit : mat4 = Mat4Divide(m, det);
+	result : mat4 = Mat4Adjugate(unit);
+	result = Mat4Scale(result, det * det);
+	return result;
+}
+
+Mat4Transpose :: (a : mat4) -> mat4
+{
+	result : mat4 = ?;
+	result.m00 = a.m00;
+	result.m01 = a.m10;
+	result.m02 = a.m20;
+	result.m03 = a.m30;
+
+	result.m10 = a.m01;
+	result.m11 = a.m11;
+	result.m12 = a.m21;
+	result.m13 = a.m31;
+
+	result.m20 = a.m02;
+	result.m21 = a.m12;
+	result.m22 = a.m22;
+	result.m23 = a.m32;
+
+	result.m30 = a.m03;
+	result.m31 = a.m13;
+	result.m32 = a.m23;
+	result.m33 = a.m33;
+	return result;
+}
+
+Mat4Multiply :: (a : mat4, b : mat4) -> mat4
+{
+	result : mat4 = ?;
+	result.m00 = a.m00 * b.m00 + a.m01 * b.m10 + a.m02 * b.m20 + a.m03 * b.m30;
+	result.m01 = a.m00 * b.m01 + a.m01 * b.m11 + a.m02 * b.m21 + a.m03 * b.m31;
+	result.m02 = a.m00 * b.m02 + a.m01 * b.m12 + a.m02 * b.m22 + a.m03 * b.m32;
+	result.m03 = a.m00 * b.m03 + a.m01 * b.m13 + a.m02 * b.m23 + a.m03 * b.m33;
+
+	result.m10 = a.m10 * b.m00 + a.m11 * b.m10 + a.m12 * b.m20 + a.m13 * b.m30;
+	result.m11 = a.m10 * b.m01 + a.m11 * b.m11 + a.m12 * b.m21 + a.m13 * b.m31;
+	result.m12 = a.m10 * b.m02 + a.m11 * b.m12 + a.m12 * b.m22 + a.m13 * b.m32;
+	result.m13 = a.m10 * b.m03 + a.m11 * b.m13 + a.m12 * b.m23 + a.m13 * b.m33;
+
+	result.m20 = a.m20 * b.m00 + a.m21 * b.m10 + a.m22 * b.m20 + a.m23 * b.m30;
+	result.m21 = a.m20 * b.m01 + a.m21 * b.m11 + a.m22 * b.m21 + a.m23 * b.m31;
+	result.m22 = a.m20 * b.m02 + a.m21 * b.m12 + a.m22 * b.m22 + a.m23 * b.m32;
+	result.m23 = a.m20 * b.m03 + a.m21 * b.m13 + a.m22 * b.m23 + a.m23 * b.m33;
+
+	result.m30 = a.m30 * b.m00 + a.m31 * b.m10 + a.m32 * b.m20 + a.m33 * b.m30;
+	result.m31 = a.m30 * b.m01 + a.m31 * b.m11 + a.m32 * b.m21 + a.m33 * b.m31;
+	result.m32 = a.m30 * b.m02 + a.m31 * b.m12 + a.m32 * b.m22 + a.m33 * b.m32;
+	result.m33 = a.m30 * b.m03 + a.m31 * b.m13 + a.m32 * b.m23 + a.m33 * b.m33;
+	return result;
+}
+
+Mat4TransformV4 :: (m : mat4, v : v4) -> v4
+{
+	result : v4 = ?;
+	result.x = v.x * m.m00 + v.y * m.m10 + v.z * m.m20 + v.w * m.m30;
+	result.y = v.x * m.m01 + v.y * m.m11 + v.z * m.m21 + v.w * m.m31;
+	result.z = v.x * m.m02 + v.y * m.m12 + v.z * m.m22 + v.w * m.m32;
+	result.w = v.x * m.m03 + v.y * m.m13 + v.z * m.m23 + v.w * m.m33;
+	return result;
+}
+
+Mat4TransformPoint :: (m : mat4, v : v3) -> v3
+{
+	result : v3 = ?;
+	result.x = v.x * m.m00 + v.y * m.m10 + v.z * m.m20 + m.m30;
+	result.y = v.x * m.m01 + v.y * m.m11 + v.z * m.m21 + m.m31;
+	result.z = v.x * m.m02 + v.y * m.m12 + v.z * m.m22 + m.m32;
+	return result;
+}
+
+Mat4TransformDirection :: (m : mat4, v : v3) -> v3
+{
+	result : v3 = ?;
+	result.x = v.x * m.m00 + v.y * m.m10 + v.z;
+	result.y = v.x * m.m01 + v.y * m.m11 + v.z;
+	result.z = v.x * m.m02 + v.y * m.m12 + v.z;
+	return result;
+}
+
+Mat4FromQuaternion :: (q : v4) -> mat4
+{
+	result : mat4 = ?;
+	result.m00 = 1 - 2*q.y*q.y - 2*q.z*q.z;
+	result.m01 = 2*q.x*q.y + 2*q.z*q.w;
+	result.m02 = 2*q.x*q.z - 2*q.y*q.w;
+	result.m03 = 0;
+
+	result.m10 = 2*q.x*q.y - 2*q.z*q.w;
+	result.m11 = 1 - 2*q.x*q.x - 2*q.z*q.z;
+	result.m12 = 2*q.y*q.z + 2*q.x*q.w;
+	result.m13 = 0;
+
+	result.m20 = 2*q.x*q.z + 2*q.y*q.w;
+	result.m21 = 2*q.y*q.z - 2*q.x*q.w;
+	result.m22 = 1 - 2*q.x*q.x - 2*q.y*q.y;
+	result.m23 = 0;
+
+	result.m30 = 0;
+	result.m31 = 0;
+	result.m32 = 0;
+	result.m33 = 1;
+	return result;
+}
+
+QuaternionFromRotationMatrix :: (m : mat4) -> v4
+{
+	result : v4 = ?;
+	t : f32 = ?;
+	if (m.m22 < 0)
+	{
+		if (m.m00 > m.m11)
+		{
+			t = 1 + m.m00 - m.m11 - m.m22;
+			result = { t, m.m01 + m.m10, m.m20 + m.m02, m.m12 - m.m21 };
+		}
+		else
+		{
+			t = 1 - m.m00 + m.m11 - m.m22;
+			result = { m.m01 + m.m10, t, m.m12 + m.m21, m.m20 - m.m02 };
+		}
+	}
+	else
+	{
+		if (m.m00 < -m.m11)
+		{
+			t = 1 - m.m00 - m.m11 + m.m22;
+			result = { m.m20 + m.m02, m.m12 + m.m21, t, m.m01 - m.m10 };
+		}
+		else
+		{
+			t = 1 + m.m00 + m.m11 + m.m22;
+			result = { m.m12 - m.m21, m.m20 - m.m02, m.m01 - m.m10, t };
+		}
+	}
+	result = V4Scale(result, 0.5 / Sqrt32(t));
+	return result;
+}
+
+QuaternionFromAxisAngle :: (axis : v3, angle : f32) -> v4
+{
+	halfAngle : f32 = angle * 0.5;
+	s := Sin(halfAngle);
+	c := Cos(halfAngle);
+	result : v4 = { axis.x * s, axis.y * s, axis.z * s, c };
+	return result;
+}
+
+QuaternionRotateVector :: (q : v4, v : v3) -> v3
+{
+	vectorPart : v3 = { q.x, q.y, q.z };
+	scalarPart : f32 = q.w;
+
+	result : v3 = V3Scale(vectorPart, 2.0 * V3Dot(vectorPart, v));
+	result = V3Add(result, V3Scale(v, scalarPart * scalarPart - V3SqrLen(vectorPart)));
+	result = V3Add(result, V3Scale(V3Cross(vectorPart, v), 2.0 * scalarPart));
+
+	return result;
+}
+
+QuaternionMultiply :: (a : v4, b : v4) -> v4
+{
+	result : v4 =
+	{
+		a.w * b.x + a.x * b.w + a.y * b.z - a.z * b.y,
+		a.w * b.y - a.x * b.z + a.y * b.w + a.z * b.x,
+		a.w * b.z + a.x * b.y - a.y * b.x + a.z * b.w,
+		a.w * b.w - a.x * b.x - a.y * b.y - a.z * b.z
+	};
+	return result;
+}
+
+QuaternionFromEulerXYZ :: (euler : v3) -> v4
+{
+	halfYaw   : f32 = euler.z * 0.5;
+	halfPitch : f32 = euler.y * 0.5;
+	halfRoll  : f32 = euler.x * 0.5;
+
+	cosYaw   : f32 = Cos(halfYaw);
+	sinYaw   : f32 = Sin(halfYaw);
+	cosPitch : f32 = Cos(halfPitch);
+	sinPitch : f32 = Sin(halfPitch);
+	cosRoll  : f32 = Cos(halfRoll);
+	sinRoll  : f32 = Sin(halfRoll);
+
+	result : v4 = ?;
+	result.x = sinRoll * cosPitch * cosYaw - cosRoll * sinPitch * sinYaw;
+	result.y = cosRoll * sinPitch * cosYaw + sinRoll * cosPitch * sinYaw;
+	result.z = cosRoll * cosPitch * sinYaw - sinRoll * sinPitch * cosYaw;
+	result.w = cosRoll * cosPitch * cosYaw + sinRoll * sinPitch * sinYaw;
+
+	return result;
+}
+
+QuaternionFromEulerZYX :: (euler : v3) -> v4
+{
+	halfYaw   : f32 = euler.z * 0.5;
+	halfPitch : f32 = euler.y * 0.5;
+	halfRoll  : f32 = euler.x * 0.5;
+
+	cosYaw   : f32 = Cos(halfYaw);
+	sinYaw   : f32 = Sin(halfYaw);
+	cosPitch : f32 = Cos(halfPitch);
+	sinPitch : f32 = Sin(halfPitch);
+	cosRoll  : f32 = Cos(halfRoll);
+	sinRoll  : f32 = Sin(halfRoll);
+
+	result : v4 = ?;
+	result.x = sinRoll * cosPitch * cosYaw + cosRoll * sinPitch * sinYaw;
+	result.y = cosRoll * sinPitch * cosYaw - sinRoll * cosPitch * sinYaw;
+	result.z = cosRoll * cosPitch * sinYaw + sinRoll * sinPitch * cosYaw;
+	result.w = cosRoll * cosPitch * cosYaw - sinRoll * sinPitch * sinYaw;
+
+	return result;
+}
+
+Transform :: struct
+{
+	translation : v3;
+	rotation : v4;
+	scale : v3;
+};
+
+Mat4ColumnV3 :: (m : mat4, column : s32) -> v3
+{
+	result : v3 =
+	{
+		m.m[column],
+		m.m[column + 4],
+		m.m[column + 8]
+	};
+	return result;
+}
+
+Mat4ColumnV4 :: (m : mat4, column : s32) -> v4
+{
+	result : v4 =
+	{
+		m.m[column],
+		m.m[column + 4],
+		m.m[column + 8],
+		m.m[column + 12]
+	};
+	return result;
+}
+
+// NOTE: m is passed by copy on purpose here
+Mat4Decompose :: (m : mat4, transform : Transform) -> void
+{
+	transform.translation = { m.m30, m.m31, m.m32 };
+	m.m30 = 0;
+	m.m31 = 0;
+	m.m32 = 0;
+	transform.scale =
+	{
+		Sqrt32(m.m00 * m.m00 + m.m10 * m.m10 + m.m20 * m.m20),
+		Sqrt32(m.m01 * m.m01 + m.m11 * m.m11 + m.m21 * m.m21),
+		Sqrt32(m.m02 * m.m02 + m.m12 * m.m12 + m.m22 * m.m22)
+	};
+	m.m00 /= transform.scale.x;
+	m.m10 /= transform.scale.x;
+	m.m20 /= transform.scale.x;
+	m.m01 /= transform.scale.y;
+	m.m11 /= transform.scale.y;
+	m.m21 /= transform.scale.y;
+	m.m02 /= transform.scale.z;
+	m.m12 /= transform.scale.z;
+	m.m22 /= transform.scale.z;
+	transform.rotation = QuaternionFromRotationMatrix(m);
+}
+
+Mat4TranslationRotation :: (translation : v3, rotation : v4) -> mat4
+{
+	m : mat4 = ?;
+	m = Mat4FromQuaternion(rotation);
+	m.m30 = translation.x;
+	m.m31 = translation.y;
+	m.m32 = translation.z;
+	return m;
+}
+
+TranformToMat4 :: (t : Transform) -> mat4
+{
+	m : mat4 = ?;
+	m = Mat4FromQuaternion(t.rotation);
+	m.m00 *= t.scale.x;
+	m.m10 *= t.scale.x;
+	m.m20 *= t.scale.x;
+	m.m01 *= t.scale.y;
+	m.m11 *= t.scale.y;
+	m.m21 *= t.scale.y;
+	m.m02 *= t.scale.z;
+	m.m12 *= t.scale.z;
+	m.m22 *= t.scale.z;
+	m.m30 = t.translation.x;
+	m.m31 = t.translation.y;
+	m.m32 = t.translation.z;
+	return m;
+}
+
+Mat4Compose :: (translation : v3, rotation : v4, scale : f32) -> mat4
+{
+	m : mat4 = ?;
+	m = Mat4FromQuaternion(rotation);
+	m.m00 *= scale;
+	m.m10 *= scale;
+	m.m20 *= scale;
+	m.m01 *= scale;
+	m.m11 *= scale;
+	m.m21 *= scale;
+	m.m02 *= scale;
+	m.m12 *= scale;
+	m.m22 *= scale;
+	m.m30 = translation.x;
+	m.m31 = translation.y;
+	m.m32 = translation.z;
+
+	return m;
+}
+
+Mat4ChangeOfBases :: (fw : v3, up : v3, pos : v3) -> mat4
+{
+	right : v3 = V3Normalize(V3Cross(fw, up));
+	up2 : v3 = V3Cross(right, fw);
+	result : mat4 =
+	{
+		right.x,	right.y,	right.z,	0.0,
+		fw.x,		fw.y,		fw.z,		0.0,
+		up2.x,		up2.y,		up2.z,		0.0,
+		pos.x,		pos.y,		pos.z,		1.0
+	};
+	return result;
+}
+
+// NOTE: a happens before b!
+TransformChain :: (a : Transform, b : Transform) -> Transform
+{
+	result : Transform ;
+	result.translation = V3Add(
+			V3Multiply(QuaternionRotateVector(a.rotation, b.translation), a.scale),
+			a.translation);
+	result.rotation = QuaternionMultiply(a.rotation, b.rotation);
+	result.scale = V3Multiply(a.scale, b.scale);
+	return result;
+}

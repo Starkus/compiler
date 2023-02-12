@@ -2577,10 +2577,10 @@ String GetLinkerExtraArguments()
 
 		}
 
-		// Linux only: search in /usr/lib/compiler
+		// Linux only: search in /usr/lib/fabric
 #if IS_LINUX
 		{
-			libFullName = TStringConcat("/usr/lib/compiler/"_s, libName);
+			libFullName = TStringConcat("/usr/lib/fabric/"_s, libName);
 			if (SYSFileExists(libFullName))
 				goto foundFullName;
 			libFullName = ChangeFilenameExtension(libFullName, objectFileExtension);

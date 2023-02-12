@@ -1,0 +1,124 @@
+#include "core/basic.fab";
+#include "core/print.fab";
+
+manyArgs :: (a : s64, b : s64, c : s64, d : s64, e : s64, f : s64, g : s64, h : s64) -> s64
+{
+	PrintF("manyArgs(%, %, %, %, %, %, %, %)\n", a, b, c, d, e, f, g, h);
+	errors := 8;
+	if a == 1 errors -= 1;
+	if b == 2 errors -= 1;
+	if c == 3 errors -= 1;
+	if d == 4 errors -= 1;
+	if e == 5 errors -= 1;
+	if f == 6 errors -= 1;
+	if g == 7 errors -= 1;
+	if h == 8 errors -= 1;
+	a = 1;
+	b = 2;
+	c = 3;
+	d = 4;
+	e = 5;
+	f = 6;
+	g = 7;
+	h = 8;
+	//manyArgs(a, b, c, d, e, f, g, h);
+	return errors;
+}
+
+floatArgs :: (a : f64, b : f64, c : f64, d : f64, e : f64, f : f64, g : f64, h : f64) -> s64
+{
+	PrintF("floatArgs(%, %, %, %, %, %, %, %)\n", a, b, c, d, e, f, g, h);
+	errors := 8;
+	if a == 1.5 errors -= 1;
+	if b == 2.5 errors -= 1;
+	if c == 3.5 errors -= 1;
+	if d == 4.5 errors -= 1;
+	if e == 5.5 errors -= 1;
+	if f == 6.5 errors -= 1;
+	if g == 7.5 errors -= 1;
+	if h == 8.5 errors -= 1;
+	a = 1.5;
+	b = 2.5;
+	c = 3.5;
+	d = 4.5;
+	e = 5.5;
+	f = 6.5;
+	g = 7.5;
+	h = 8.5;
+	return errors;
+}
+
+mixedArgs :: (a : s64, b : f64, c : s64, d : f64, e : s64, f : f64, g : s64, h : f64) -> s64
+{
+	PrintF("mixedArgs(%, %, %, %, %, %, %, %)\n", a, b, c, d, e, f, g, h);
+	errors := 8;
+	if a == 1   errors -= 1;
+	if b == 2.5 errors -= 1;
+	if c == 3   errors -= 1;
+	if d == 4.5 errors -= 1;
+	if e == 5   errors -= 1;
+	if f == 6.5 errors -= 1;
+	if g == 7   errors -= 1;
+	if h == 8.5 errors -= 1;
+	a = 1;
+	b = 2.5;
+	c = 3;
+	d = 4.5;
+	e = 5;
+	f = 6.5;
+	g = 7;
+	h = 8.5;
+	return errors;
+}
+
+variadicArgs :: (..args) -> s64
+{
+	PrintF("variadicArgs(%, %, %, %, %, %, %, %)\n", args);
+	errors := 8;
+	if args[0].asS64 == 1   errors -= 1;
+	if args[1].asF32 == 2.5 errors -= 1;
+	if args[2].asS64 == 3   errors -= 1;
+	if args[3].asF32 == 4.5 errors -= 1;
+	if args[4].asS64 == 5   errors -= 1;
+	if args[5].asF32 == 6.5 errors -= 1;
+	if args[6].asS64 == 7   errors -= 1;
+	if args[7].asF32 == 8.5 errors -= 1;
+	args[0].asS64 = 1;
+	args[1].asF32 = 2.5;
+	args[2].asS64 = 3;
+	args[3].asF32 = 4.5;
+	args[4].asS64 = 5;
+	args[5].asF32 = 6.5;
+	args[6].asS64 = 7;
+	args[7].asF32 = 8.5;
+	return errors;
+}
+
+BigStruct :: struct
+{
+	a : u64;
+	b : u64;
+	c : u64;
+};
+
+bigStruct :: (a : BigStruct) -> s64
+{
+	PrintF("bigStruct(%)\n", a);
+	a.a = a.b;
+	a.b = a.c;
+	return 0;
+}
+
+Main :: (args : [] String) -> s64
+{
+	errorCode := manyArgs(1, 2, 3, 4, 5, 6, 7, 8);
+	if !errorCode errorCode = floatArgs(1.5, 2.5, 3.5, 4.5, 5.5, 6.5, 7.5, 8.5);
+	if !errorCode errorCode = mixedArgs(1, 2.5, 3, 4.5, 5, 6.5, 7, 8.5);
+	if !errorCode errorCode = variadicArgs(1, 2.5, 3, 4.5, 5, 6.5, 7, 8.5);
+	if !errorCode errorCode = bigStruct({ 1, 2, 3 });
+	if errorCode != 0
+		PrintF("Encountered % errors.\n", errorCode);
+	else
+		Print("Test ok\n");
+	return errorCode;
+}
