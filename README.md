@@ -22,7 +22,8 @@ Main :: (args: [] String) -> s64
 ```
 
 ## Usage
-`compiler.exe <source file> [-noEscapeSequences] [-silent]`
+`compiler <source file> [-noEscapeSequences] [-silent]`
 
 ## Build
 Run build.bat from within a Visual Studio shell (or any shell where you ran vsvarsall.bat).
+On Linux, run build.sh. The compiler is hardcoded to clang, but should be possible to change it to gcc.
