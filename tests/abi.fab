@@ -99,7 +99,7 @@ BigStruct :: struct
 	a : u64;
 	b : u64;
 	c : u64;
-};
+}
 
 bigStruct :: (a : BigStruct) -> s64
 {

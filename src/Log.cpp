@@ -56,7 +56,7 @@ void __Log(SourceLocation loc, String str, String prefix, ConsoleColor color, bo
 
 	if (loc.fileIdx != 0) {
 		// Source line
-		ConsoleSetColor(CONSOLE_BLACK_TXT, true);
+		ConsoleSetColor(CONSOLE_RESET_COLOR);
 		Print("... ");
 		const char *line = fatLoc.beginingOfLine;
 		u64 col = fatLoc.column - 1;
@@ -72,7 +72,7 @@ void __Log(SourceLocation loc, String str, String prefix, ConsoleColor color, bo
 
 		// Token underline
 		if (!g_context->config.useEscapeSequences) {
-			ConsoleSetColor(CONSOLE_BLACK_TXT, true);
+			ConsoleSetColor(CONSOLE_RESET_COLOR);
 			Print("... ");
 
 			for (u32 i = 0; i < col; ++i) {
@@ -88,9 +88,8 @@ void __Log(SourceLocation loc, String str, String prefix, ConsoleColor color, bo
 	}
 
 #if DEBUG_BUILD
-	ConsoleSetColor(CONSOLE_BLACK_TXT, true);
+	ConsoleSetColor(CONSOLE_RESET_COLOR);
 	Print("~~~ In %s - %s:%d\n", inFunc, inFile, inLine);
-	ConsoleSetColor(CONSOLE_RESET_COLOR, true);
 #endif
 
 	ConsoleSetColor(CONSOLE_RESET_COLOR);

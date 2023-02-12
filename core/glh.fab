@@ -13,7 +13,7 @@ GLHError :: enum
 	GLHERROR_FILE_CANNOT_READ,
 	GLHERROR_FILE_CANNOT_WRITE,
 	GLHERROR_WRONG_FORMAT
-};
+}
 
 GLHToCStr :: #inline (string: String, cstrBuffer: ^[512] s8) -> ^s8
 {

@@ -6,7 +6,7 @@ AStruct :: struct
 {
 	member1 : s32;
 	member2 : s64;
-};
+}
 
 doThings :: (arg : f32)
 {

@@ -4,7 +4,7 @@ Struct :: struct
 {
 	memberOne : s32;
 	memberTwo : s32;
-};
+}
 
 PrintAllMembers :: ()
 {

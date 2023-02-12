@@ -9,13 +9,13 @@ Struct :: struct
 		unionA : s32;
 		unionB : s64;
 	};
-};
+}
 
 AugmentedStruct :: struct
 {
 	using s : Struct;
 	baz : f32;
-};
+}
 
 OnParam :: (using param : Struct)
 {

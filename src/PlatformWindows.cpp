@@ -174,6 +174,20 @@ s64 SYSWriteFile(FileHandle file, void *buffer, s64 size)
 	return writtenS64;
 }
 
+void SYSReadFile(FileHandle file, const char *buffer, u64 size)
+{
+	DWORD bytesRead;
+	bool success = ReadFile(
+			file,
+			buffer,
+			(DWORD)size,
+			&bytesRead,
+			nullptr
+			);
+	if (!success) return 0;
+	return bytesRead;
+}
+
 u64 SYSGetFileSize(FileHandle file)
 {
 	DWORD fileSizeDword = GetFileSize(file, nullptr);
@@ -778,4 +792,9 @@ inline int SYSGetProcessorCount()
 	SYSTEM_INFO win32SystemInfo;
 	GetSystemInfo(&win32SystemInfo);
 	return win32SystemInfo.dwNumberOfProcessors;
+}
+
+inline bool SYSIsInputPipePresent()
+{
+	_isatty(_fileno(stdin));
 }

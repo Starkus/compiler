@@ -4,7 +4,7 @@ RED='\033[0;31m'
 GREEN='\033[0;32m'
 NOCOLOR='\033[0m'
 
-for TESTFILE in ./tests/*.emi
+for TESTFILE in ./tests/*.fab
 do
 	echo -n Compiling test ${TESTFILE}... 
 	bin/Compiler ${TESTFILE} &> ./output/test_output_compilation.txt
@@ -29,7 +29,7 @@ do
 	fi
 done
 
-for ERRORTESTFILE in ./errortests/*.emi
+for ERRORTESTFILE in ./errortests/*.fab
 do
 	echo -n Compiling error test ${ERRORTESTFILE}... 
 	bin/Compiler ${ERRORTESTFILE} &> /dev/null

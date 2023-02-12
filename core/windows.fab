@@ -389,19 +389,19 @@ WNDCLASSEXA :: struct
 	lpszMenuName : ^CHAR;
 	lpszClassName : ^CHAR;
 	hIconSm : HANDLE;
-};
+}
 POINT :: struct
 {
 	x : LONG;
 	y : LONG;
-};
+}
 RECT :: struct
 {
 	left   : LONG;
 	top    : LONG;
 	right  : LONG;
 	bottom : LONG;
-};
+}
 MSG :: struct
 {
 	hWnd : HANDLE;
@@ -411,7 +411,7 @@ MSG :: struct
 	time : DWORD;
 	pt : POINT;
 	lPrivate : DWORD;
-};
+}
 PIXELFORMATDESCRIPTOR :: struct
 {
 	nSize : WORD;
@@ -440,31 +440,31 @@ PIXELFORMATDESCRIPTOR :: struct
 	dwLayerMask : DWORD;
 	dwVisibleMask : DWORD;
 	dwDamageMask : DWORD;
-};
+}
 LARGE_INTEGER :: union {
 	struct {
 		LowPart : DWORD;
 		HighPart : LONG;
 	};
 	QuadPart : LONGLONG;
-};
+}
 GUID :: struct
 {
 	Data1 : u32;
 	Data2 : u16;
 	Data3 : u16;
 	Data4 : [8] u8;
-};
+}
 LUID :: struct
 {
 	LowPart: DWORD;
 	HighPart: LONG;
-};
+}
 EXCEPTION_DEBUG_INFO :: struct
 {
 	ExceptionRecord: EXCEPTION_RECORD;
 	dwFirstChance: DWORD;
-};
+}
 EXCEPTION_RECORD :: struct
 {
 	ExceptionCode: DWORD;
@@ -473,15 +473,15 @@ EXCEPTION_RECORD :: struct
 	ExceptionAddress: ^void;
 	NumberParameters: DWORD;
 	ExceptionInformation: [15] u64;
-};
+}
 EXIT_PROCESS_DEBUG_INFO :: struct
 {
 	dwExitCode: DWORD;
-};
+}
 EXIT_THREAD_DEBUG_INFO :: struct
 {
 	dwExitCode: DWORD;
-};
+}
 LOAD_DLL_DEBUG_INFO :: struct
 {
 	hFile: HANDLE;
@@ -490,22 +490,22 @@ LOAD_DLL_DEBUG_INFO :: struct
 	nDebugInfoSize: DWORD;
 	lpImageName: ^void;
 	fUnicode: WORD;
-};
+}
 OUTPUT_DEBUG_STRING_INFO :: struct
 {
 	lpDebugStringData: ^CHAR;
 	fUnicode: WORD;
 	nDebugStringLength: WORD;
-};
+}
 RIP_INFO :: struct
 {
 	dwError: DWORD;
 	dwType: DWORD;
-};
+}
 UNLOAD_DLL_DEBUG_INFO :: struct
 {
 	lpBaseOfDll: ^void;
-};
+}
 CONTEXT :: struct #align(16)
 {
 	P1Home: DWORD64;
@@ -579,7 +579,7 @@ CONTEXT :: struct #align(16)
 	LastBranchFromRip: DWORD64;
 	LastExceptionToRip: DWORD64;
 	LastExceptionFromRip: DWORD64;
-};
+}
 XMM_SAVE_AREA32 :: struct
 {
 	ControlWord: WORD;
@@ -598,17 +598,17 @@ XMM_SAVE_AREA32 :: struct
 	FloatRegisters: [8] M128A;
 	XmmRegisters: [16] M128A;
 	Reserved4: [96] BYTE;
-};
+}
 M128A :: struct
 {
 	Low: ULONGLONG;
 	High: LONGLONG;
-};
+}
 NEON128 :: struct
 {
 	Low: ULONGLONG;
 	High: LONGLONG;
-};
+}
 INPUT_RECORD :: struct
 {
 	EventType: WORD;
@@ -618,7 +618,7 @@ INPUT_RECORD :: struct
 		MenuEvent: MENU_EVENT_RECORD;
 		FocusEvent: FOCUS_EVENT_RECORD;
 	};
-};
+}
 KEY_EVENT_RECORD :: struct
 {
 	bKeyDown: BOOL;
@@ -630,31 +630,31 @@ KEY_EVENT_RECORD :: struct
 		AsciiChar: CHAR;
 	};
 	dwControlKeyState: DWORD;
-};
+}
 MOUSE_EVENT_RECORD :: struct
 {
 	dwMousePosition: COORD;
 	dwButtonState: DWORD;
 	dwControlKeyState: DWORD;
 	dwEventFlags: DWORD;
-};
+}
 WINDOW_BUFFER_SIZE_RECORD :: struct
 {
 	dwSize: COORD;
-};
+}
 MENU_EVENT_RECORD :: struct
 {
 	dwCommandId: UINT;
-};
+}
 FOCUS_EVENT_RECORD :: struct
 {
 	bSetFocus: BOOL;
-};
+}
 COORD :: struct
 {
 	X: SHORT;
 	Y: SHORT;
-};
+}
 CONSOLE_SCREEN_BUFFER_INFO :: struct
 {
 	dwSize: COORD;
@@ -662,21 +662,21 @@ CONSOLE_SCREEN_BUFFER_INFO :: struct
 	wAttributes: WORD;
 	srWindow: SMALL_RECT;
 	dwMaximumWindowSize: COORD;
-};
+}
 SMALL_RECT :: struct
 {
 	Left: SHORT;
 	Top: SHORT;
 	Right: SHORT;
 	Bottom: SHORT;
-};
+}
 PROCESS_INFORMATION :: struct
 {
 	hProcess: HANDLE;
 	hThread: HANDLE;
 	dwProcessId: DWORD;
 	dwThreadId: DWORD;
-};
+}
 STARTUPINFOA :: struct
 {
 	cb: DWORD;
@@ -697,13 +697,13 @@ STARTUPINFOA :: struct
 	hStdInput: HANDLE;
 	hStdOutput: HANDLE;
 	hStdError: HANDLE;
-};
+}
 SECURITY_ATTRIBUTES :: struct
 {
 	nLength: DWORD;
 	lpSecurityDescriptor: ^void;
 	bInheritHandle: bool;
-};
+}
 DEBUG_EVENT :: struct
 {
 	dwDebugEventCode: DWORD;
@@ -720,7 +720,7 @@ DEBUG_EVENT :: struct
 		DebugString: OUTPUT_DEBUG_STRING_INFO;
 		RipInfo: RIP_INFO;
 	};
-};
+}
 CREATE_PROCESS_DEBUG_INFO :: struct
 {
 	hFile: HANDLE;
@@ -733,13 +733,13 @@ CREATE_PROCESS_DEBUG_INFO :: struct
 	lpStartAddress: THREAD_START_ROUTINE;
 	lpImageName: ^void;
 	fUnicode: WORD;
-};
+}
 CREATE_THREAD_DEBUG_INFO :: struct
 {
 	hThread: HANDLE;
 	lpThreadLocalBase: ^void;
 	lpStartAddress: THREAD_START_ROUTINE;
-};
+}
 
 Sleep :: #external #convention(win64) (dwMilliseconds : DWORD);
 OutputDebugStringA :: #external #convention(win64) (str : ^CHAR);

@@ -32,7 +32,7 @@ CyclicB :: () -> s32
 AStruct :: struct
 {
 	foo : s32;
-};
+}
 
 Main :: (args : [] String) -> s64
 {

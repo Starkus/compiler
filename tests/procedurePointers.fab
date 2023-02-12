@@ -29,7 +29,7 @@ Varargs :: (format : String, ..args)
 ProcWrapper :: struct
 {
 	proc : ();
-};
+}
 
 Main :: (args : [] String) -> s64
 {

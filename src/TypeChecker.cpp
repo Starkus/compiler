@@ -4758,6 +4758,7 @@ done:
 	case ASTNODETYPE_RUN:
 	{
 		TCContext tcRunContext = *tcContext;
+		tcRunContext.onStaticContext = false;
 		BucketArrayInit(&tcRunContext.localValues);
 		*BucketArrayAdd(&tcRunContext.localValues) = {}; // No value number 0?
 
@@ -4770,13 +4771,16 @@ done:
 		IRContext irJobContext = {};
 		irJobContext.irInstructions = &irInstructions;
 		irJobContext.localValues = &tcRunContext.localValues;
+		DynamicArrayInit(&irJobContext.irStack, 16);
+		BucketArrayInit(&irJobContext.irLabels);
 
 		IRValue resultIRValue = IRGenFromExpression(&irJobContext, expression->runNode.expression);
 
 		CTRegister runResult = CTRunInstructions(tcRunContext.localValues, irInstructions,
 				resultIRValue);
 
-		expression->runNode.result = ConstantFromCTRegister(runResult, expression->typeTableIdx);
+		if (resultIRValue.valueType != IRVALUETYPE_INVALID)
+			expression->runNode.result = ConstantFromCTRegister(runResult, expression->typeTableIdx);
 	} break;
 	default:
 		LogCompilerError(expression->any.loc, "Unknown expression type on type checking"_s);

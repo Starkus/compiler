@@ -1,5 +1,4 @@
 ASTExpression ParseExpression(PContext *pContext, s32 precedence, bool isStatement);
-ASTExpression ParseStatement(PContext *pContext);
 
 void AssertToken(Token *token, int type)
 {
@@ -351,17 +350,24 @@ ASTStaticDefinition ParseStaticDefinition(PContext *pContext, ArrayView<String> 
 			Advance(pContext);
 			expression.nodeType = ASTNODETYPE_TYPE;
 			expression.astType = ParseType(pContext);
+
+			AssertToken(pContext->token, ';');
+			Advance(pContext);
 			break;
 		case TOKEN_DIRECTIVE_ALIAS:
 			Advance(pContext);
 			expression.nodeType = ASTNODETYPE_ALIAS;
 			expression.astType = ParseType(pContext);
+
+			AssertToken(pContext->token, ';');
+			Advance(pContext);
 			break;
 		default:
 			expression = ParseExpression(pContext, -1, false);
+
+			AssertToken(pContext->token, ';');
+			Advance(pContext);
 		}
-		AssertToken(pContext->token, ';');
-		Advance(pContext);
 	}
 
 	astStaticDef.expression = PNewTreeNode(pContext);
@@ -1395,7 +1401,20 @@ ASTExpression ParseExpression(PContext *pContext, s32 precedence, bool isStateme
 		Advance(pContext);
 		result.nodeType = ASTNODETYPE_RUN;
 		result.runNode.expression = PNewTreeNode(pContext);
-		*result.runNode.expression = ParseExpression(pContext, precedence, false);
+		if (isStatement) {
+			*result.runNode.expression = ParseExpression(pContext, precedence, isStatement);
+			return result;
+		}
+		else {
+			if (pContext->token->type == '{')
+				// If the run body is in braces, parse it as a statement. The result will be the
+				// return value.
+				*result.runNode.expression = ParseExpression(pContext, precedence, true);
+			else
+				// Else parse as statement, so we allow something like:
+				//    foo := #run Bar() + 2;
+				*result.runNode.expression = ParseExpression(pContext, precedence, false);
+		}
 	} break;
 	case TOKEN_KEYWORD_UNION:
 		if (!isStatement)
@@ -1789,8 +1808,6 @@ void ParseJobProc(void *args)
 
 void ParserMain()
 {
-	DynamicArrayInit(&g_context->sourceFiles, 64);
-
 	MTQueueInit<HeapAllocator>(&g_context->readyJobs, 2048);
 
 	for (int i = 0; i < YIELDREASON_Count; ++i)

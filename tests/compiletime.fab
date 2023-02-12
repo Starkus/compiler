@@ -11,7 +11,7 @@ TwoNumbers :: struct
 {
 	a: s32;
 	b: s32;
-};
+}
 
 #if compiler_platform == COMPILER_PLATFORM_WINDOWS
 	TestProc :: #external #convention(win64) (a: s64, b: s64, c: s64, d: s64, e: s64, f: s64, g: s64, h: s64);
@@ -68,4 +68,8 @@ Main :: (args: [] String) -> s64
 	Print("Now running on runtime:\n");
 	RunThisOnCompileTime(10);
 	return 0;
+}
+
+#run {
+	Print("Hello compile time\n");
 }

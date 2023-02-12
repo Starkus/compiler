@@ -10,7 +10,7 @@ Struct :: struct
 	m1 : s32;
 	m2 : s32;
 	m3 : s32;
-};
+}
 
 makeStruct :: () -> Struct
 {

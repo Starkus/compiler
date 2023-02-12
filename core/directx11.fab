@@ -50,7 +50,7 @@ D3D_SHADER_MACRO :: struct
 {
 	Name: ^CHAR;
 	Definition: ^CHAR;
-};
+}
 
 D3D11_VIEWPORT :: struct
 {
@@ -60,7 +60,7 @@ D3D11_VIEWPORT :: struct
 	Height: FLOAT;
 	MinDepth: FLOAT;
 	MaxDepth: FLOAT;
-};
+}
 
 D3D11_CLASS_INSTANCE_DESC :: struct
 {
@@ -72,14 +72,14 @@ D3D11_CLASS_INSTANCE_DESC :: struct
 	BaseTexture: UINT;
 	BaseSampler: UINT;
 	Created: BOOL;
-};
+}
 
 D3D11_MAPPED_SUBRESOURCE :: struct
 {
 	pData: ^void;
 	RowPitch: UINT;
 	DepthPitch: UINT;
-};
+}
 
 D3D11_TEXTURE1D_DESC :: struct
 {
@@ -91,7 +91,7 @@ D3D11_TEXTURE1D_DESC :: struct
 	BindFlags: D3D11_BIND_FLAG;
 	CPUAccessFlags: D3D11_CPU_ACCESS_FLAG;
 	MiscFlags: D3D11_RESOURCE_MISC_FLAG;
-};
+}
 
 D3D11_TEXTURE2D_DESC :: struct
 {
@@ -105,7 +105,7 @@ D3D11_TEXTURE2D_DESC :: struct
 	BindFlags: D3D11_BIND_FLAG;
 	CPUAccessFlags: D3D11_CPU_ACCESS_FLAG;
 	MiscFlags: D3D11_RESOURCE_MISC_FLAG;
-};
+}
 
 D3D11_TEXTURE3D_DESC :: struct
 {
@@ -118,7 +118,7 @@ D3D11_TEXTURE3D_DESC :: struct
 	BindFlags: D3D11_BIND_FLAG;
 	CPUAccessFlags: D3D11_CPU_ACCESS_FLAG;
 	MiscFlags: D3D11_RESOURCE_MISC_FLAG;
-};
+}
 
 DXGI_ADAPTER_DESC :: struct
 {
@@ -131,7 +131,7 @@ DXGI_ADAPTER_DESC :: struct
 	DedicatedSystemMemory: SIZE_T;
 	SharedSystemMemory: SIZE_T;
 	AdapterLuid: LUID;
-};
+}
 
 DXGI_FRAME_STATISTICS :: struct
 {
@@ -140,13 +140,13 @@ DXGI_FRAME_STATISTICS :: struct
 	SyncRefreshCount: UINT;
 	SyncQPCTime: LARGE_INTEGER;
 	SyncGPUTime: LARGE_INTEGER;
-};
+}
 
 DXGI_MAPPED_RECT :: struct
 {
 	Pitch: INT;
 	pBits: ^BYTE;
-};
+}
 
 DXGI_SURFACE_DESC :: struct
 {
@@ -154,7 +154,7 @@ DXGI_SURFACE_DESC :: struct
 	Height: UINT;
 	Format: DXGI_FORMAT;
 	SampleDesc: DXGI_SAMPLE_DESC;
-};
+}
 
 DXGI_GAMMA_CONTROL_CAPABILITIES :: struct
 {
@@ -163,21 +163,21 @@ DXGI_GAMMA_CONTROL_CAPABILITIES :: struct
 	MinConvertedValue: FLOAT;
 	NumGammaControlPoints: UINT;
 	ControlPointPositions: [1025]FLOAT;
-};
+}
 
 DXGI_GAMMA_CONTROL :: struct
 {
 	Scale: DXGI_RGB;
 	Offset: DXGI_RGB;
 	GammaCurve: [1025]DXGI_RGB;
-};
+}
 
 DXGI_RGB :: struct
 {
 	Red: FLOAT;
 	Green: FLOAT;
 	Blue: FLOAT;
-};
+}
 
 DXGI_OUTPUT_DESC :: struct
 {
@@ -186,7 +186,7 @@ DXGI_OUTPUT_DESC :: struct
 	AttachedToDesktop: BOOL;
 	Rotation: DXGI_MODE_ROTATION;
 	Monitor: HANDLE;
-};
+}
 
 D3D11_BUFFER_DESC :: struct
 {
@@ -196,14 +196,14 @@ D3D11_BUFFER_DESC :: struct
 	CPUAccessFlags: D3D11_CPU_ACCESS_FLAG;
 	MiscFlags: D3D11_RESOURCE_MISC_FLAG;
 	StructureByteStride: UINT;
-};
+}
 
 D3D11_SUBRESOURCE_DATA :: struct
 {
 	pSysMem: ^void;
 	SysMemPitch: UINT;
 	SysMemSlicePitch: UINT;
-};
+}
 
 D3D11_SHADER_RESOURCE_VIEW_DESC :: struct
 {
@@ -222,7 +222,7 @@ D3D11_SHADER_RESOURCE_VIEW_DESC :: struct
 		TextureCubeArray: D3D11_TEXCUBE_ARRAY_SRV;
 		BufferEx: D3D11_BUFFEREX_SRV;
 	};
-};
+}
 
 D3D11_UNORDERED_ACCESS_VIEW_DESC :: struct
 {
@@ -236,7 +236,7 @@ D3D11_UNORDERED_ACCESS_VIEW_DESC :: struct
 		Texture2DArray: D3D11_TEX2D_ARRAY_UAV;
 		Texture3D: D3D11_TEX3D_UAV;
 	};
-};
+}
 
 D3D11_RENDER_TARGET_VIEW_DESC :: struct
 {
@@ -252,7 +252,7 @@ D3D11_RENDER_TARGET_VIEW_DESC :: struct
 		Texture2DMSArray: D3D11_TEX2DMS_ARRAY_RTV;
 		Texture3D: D3D11_TEX3D_RTV;
 	};
-};
+}
 
 D3D11_DEPTH_STENCIL_VIEW_DESC :: struct
 {
@@ -267,7 +267,7 @@ D3D11_DEPTH_STENCIL_VIEW_DESC :: struct
 		Texture2DMS: D3D11_TEX2DMS_DSV;
 		Texture2DMSArray: D3D11_TEX2DMS_ARRAY_DSV;
 	};
-};
+}
 
 D3D11_INPUT_ELEMENT_DESC :: struct
 {
@@ -278,7 +278,7 @@ D3D11_INPUT_ELEMENT_DESC :: struct
 	AlignedByteOffset: UINT;
 	InputSlotClass: D3D11_INPUT_CLASSIFICATION;
 	InstanceDataStepRate: UINT;
-};
+}
 
 D3D11_SO_DECLARATION_ENTRY :: struct
 {
@@ -288,7 +288,7 @@ D3D11_SO_DECLARATION_ENTRY :: struct
 	StartComponent: BYTE;
 	ComponentCount: BYTE;
 	OutputSlot: BYTE;
-};
+}
 
 D3D11_DEPTH_STENCIL_DESC :: struct
 {
@@ -300,7 +300,7 @@ D3D11_DEPTH_STENCIL_DESC :: struct
 	StencilWriteMask: UINT8;
 	FrontFace: D3D11_DEPTH_STENCILOP_DESC;
 	BackFace: D3D11_DEPTH_STENCILOP_DESC;
-};
+}
 
 D3D11_RASTERIZER_DESC :: struct
 {
@@ -314,7 +314,7 @@ D3D11_RASTERIZER_DESC :: struct
 	ScissorEnable: BOOL;
 	MultisampleEnable: BOOL;
 	AntialiasedLineEnable: BOOL;
-};
+}
 
 D3D11_SAMPLER_DESC :: struct
 {
@@ -328,26 +328,26 @@ D3D11_SAMPLER_DESC :: struct
 	BorderColor: [4] FLOAT;
 	MinLOD: FLOAT;
 	MaxLOD: FLOAT;
-};
+}
 
 D3D11_QUERY_DESC :: struct
 {
 	Query: D3D11_QUERY;
 	MiscFlags: D3D11_RESOURCE_MISC_FLAG;
-};
+}
 
 D3D11_COUNTER_DESC :: struct
 {
 	Counter: D3D11_COUNTER;
 	MiscFlags: D3D11_RESOURCE_MISC_FLAG;
-};
+}
 
 D3D11_COUNTER_INFO :: struct
 {
 	LastDeviceDependentCounter: D3D11_COUNTER;
 	NumSimultaneousCounters: UINT;
 	NumDetectableParallelUnits: UINT8;
-};
+}
 
 D3D11_BUFFER_SRV :: struct
 {
@@ -359,51 +359,51 @@ D3D11_BUFFER_SRV :: struct
 		NumElements: UINT;
 		ElementWidth: UINT;
 	};
-};
+}
 
 D3D11_TEX1D_SRV :: struct
 {
 	MostDetailedMip: UINT;
 	MipLevels: UINT;
-};
+}
 
 D3D11_BUFFER_UAV :: struct
 {
 	FirstElement: UINT;
 	NumElements: UINT;
 	Flags: UINT;
-};
+}
 
 D3D11_TEX1D_UAV :: struct
 {
 	MipSlice: UINT;
-};
+}
 
 D3D11_TEX1D_ARRAY_UAV :: struct
 {
 	MipSlice: UINT;
 	FirstArraySlice: UINT;
 	ArraySize: UINT;
-};
+}
 
 D3D11_TEX2D_UAV :: struct
 {
 	MipSlice: UINT;
-};
+}
 
 D3D11_TEX2D_ARRAY_UAV :: struct
 {
 	MipSlice: UINT;
 	FirstArraySlice: UINT;
 	ArraySize: UINT;
-};
+}
 
 D3D11_TEX3D_UAV :: struct
 {
 	MipSlice: UINT;
 	FirstWSlice: UINT;
 	WSize: UINT;
-};
+}
 
 D3D11_BUFFER_RTV :: struct
 {
@@ -415,49 +415,49 @@ D3D11_BUFFER_RTV :: struct
 		NumElements: UINT;
 		ElementWidth: UINT;
 	};
-};
+}
 
 D3D11_TEX1D_RTV :: struct
 {
 	MipSlice: UINT;
-};
+}
 
 D3D11_TEX1D_ARRAY_RTV :: struct
 {
 	MipSlice: UINT;
 	FirstArraySlice: UINT;
 	ArraySize: UINT;
-};
+}
 
 D3D11_TEX2D_RTV :: struct
 {
 	MipSlice: UINT;
-};
+}
 
 D3D11_TEX2D_ARRAY_RTV :: struct
 {
 	MipSlice: UINT;
 	FirstArraySlice: UINT;
 	ArraySize: UINT;
-};
+}
 
 D3D11_TEX2DMS_RTV :: struct
 {
 	UnusedField_NothingToDefine: UINT;
-};
+}
 
 D3D11_TEX2DMS_ARRAY_RTV :: struct
 {
 	FirstArraySlice: UINT;
 	ArraySize: UINT;
-};
+}
 
 D3D11_TEX3D_RTV :: struct
 {
 	MipSlice: UINT;
 	FirstWSlice: UINT;
 	WSize: UINT;
-};
+}
 
 D3D11_TEX1D_ARRAY_SRV :: struct
 {
@@ -465,13 +465,13 @@ D3D11_TEX1D_ARRAY_SRV :: struct
 	MipLevels: UINT;
 	FirstArraySlice: UINT;
 	ArraySize: UINT;
-};
+}
 
 D3D11_TEX2D_SRV :: struct
 {
 	MostDetailedMip: UINT;
 	MipLevels: UINT;
-};
+}
 
 D3D11_TEX2D_ARRAY_SRV :: struct
 {
@@ -479,30 +479,30 @@ D3D11_TEX2D_ARRAY_SRV :: struct
 	MipLevels: UINT;
 	FirstArraySlice: UINT;
 	ArraySize: UINT;
-};
+}
 
 D3D11_TEX2DMS_SRV :: struct
 {
 	UnusedField_NothingToDefine: UINT;
-};
+}
 
 D3D11_TEX2DMS_ARRAY_SRV :: struct
 {
 	FirstArraySlice: UINT;
 	ArraySize: UINT;
-};
+}
 
 D3D11_TEX3D_SRV :: struct
 {
 	MostDetailedMip: UINT;
 	MipLevels: UINT;
-};
+}
 
 D3D11_TEXCUBE_SRV :: struct
 {
 	MostDetailedMip: UINT;
 	MipLevels: UINT;
-};
+}
 
 D3D11_TEXCUBE_ARRAY_SRV :: struct
 {
@@ -510,49 +510,49 @@ D3D11_TEXCUBE_ARRAY_SRV :: struct
 	MipLevels: UINT;
 	First2DArrayFace: UINT;
 	NumCubes: UINT;
-};
+}
 
 D3D11_BUFFEREX_SRV :: struct
 {
 	FirstElement: UINT;
 	NumElements: UINT;
 	Flags: UINT;
-};
+}
 
 D3D11_TEX1D_DSV :: struct
 {
 	MipSlice: UINT;
-};
+}
 
 D3D11_TEX1D_ARRAY_DSV :: struct
 {
 	MipSlice: UINT;
 	FirstArraySlice: UINT;
 	ArraySize: UINT;
-};
+}
 
 D3D11_TEX2D_DSV :: struct
 {
 	MipSlice: UINT;
-};
+}
 
 D3D11_TEX2D_ARRAY_DSV :: struct
 {
 	MipSlice: UINT;
 	FirstArraySlice: UINT;
 	ArraySize: UINT;
-};
+}
 
 D3D11_TEX2DMS_DSV :: struct
 {
 	UnusedField_NothingToDefine: UINT;
-};
+}
 
 D3D11_TEX2DMS_ARRAY_DSV :: struct
 {
 	FirstArraySlice: UINT;
 	ArraySize: UINT;
-};
+}
 
 D3D11_DEPTH_STENCILOP_DESC :: struct
 {
@@ -560,7 +560,7 @@ D3D11_DEPTH_STENCILOP_DESC :: struct
 	StencilDepthFailOp: D3D11_STENCIL_OP;
 	StencilPassOp: D3D11_STENCIL_OP;
 	StencilFunc: D3D11_COMPARISON_FUNC;
-};
+}
 
 // Dumb types
 REFGUID	:: #alias ^GUID;
@@ -572,7 +572,7 @@ D3D11_CLEAR_FLAG :: enum : UINT
 {
 	D3D11_CLEAR_DEPTH = 0x1,
 	D3D11_CLEAR_STENCIL = 0x2
-};
+}
 
 D3D11_RESOURCE_MISC_FLAG :: enum : UINT
 {
@@ -595,13 +595,13 @@ D3D11_RESOURCE_MISC_FLAG :: enum : UINT
 	D3D11_RESOURCE_MISC_HW_PROTECTED = 0x80000,
 	D3D11_RESOURCE_MISC_SHARED_DISPLAYABLE,
 	D3D11_RESOURCE_MISC_SHARED_EXCLUSIVE_WRITER
-};
+}
 
 D3D11_CPU_ACCESS_FLAG :: enum : UINT
 {
 	D3D11_CPU_ACCESS_WRITE = 0x10000,
 	D3D11_CPU_ACCESS_READ  = 0x20000
-};
+}
 
 D3D_INCLUDE_TYPE :: enum : UINT
 {
@@ -610,7 +610,7 @@ D3D_INCLUDE_TYPE :: enum : UINT
 	D3D10_INCLUDE_LOCAL,
 	D3D10_INCLUDE_SYSTEM,
 	D3D_INCLUDE_FORCE_DWORD = 0X7FFFFFFF
-};
+}
 
 D3D11_BIND_FLAG :: enum : UINT
 {
@@ -624,7 +624,7 @@ D3D11_BIND_FLAG :: enum : UINT
 	D3D11_BIND_UNORDERED_ACCESS = 0x80,
 	D3D11_BIND_DECODER = 0x200,
 	D3D11_BIND_VIDEO_ENCODER = 0x400
-};
+}
 
 D3D11_CREATE_DEVICE_FLAG :: enum : UINT
 {
@@ -643,7 +643,7 @@ D3D11_DEVICE_CONTEXT_TYPE :: enum : UINT
 {
 	D3D11_DEVICE_CONTEXT_IMMEDIATE = 0,
 	D3D11_DEVICE_CONTEXT_DEFERRED
-};
+}
 
 D3D11_BLEND_OP :: enum : UINT
 {
@@ -652,7 +652,7 @@ D3D11_BLEND_OP :: enum : UINT
 	D3D11_BLEND_OP_REV_SUBTRACT = 3,
 	D3D11_BLEND_OP_MIN = 4,
 	D3D11_BLEND_OP_MAX = 5
-};
+}
 
 D3D11_BLEND :: enum : UINT
 {
@@ -673,7 +673,7 @@ D3D11_BLEND :: enum : UINT
 	D3D11_BLEND_INV_SRC1_COLOR = 17,
 	D3D11_BLEND_SRC1_ALPHA = 18,
 	D3D11_BLEND_INV_SRC1_ALPHA = 19
-};
+}
 
 D3D11_PRIMITIVE_TOPOLOGY :: enum : UINT
 {
@@ -771,7 +771,7 @@ D3D11_PRIMITIVE_TOPOLOGY :: enum : UINT
 	D3D11_PRIMITIVE_TOPOLOGY_30_CONTROL_POINT_PATCHLIST	= D3D_PRIMITIVE_TOPOLOGY_30_CONTROL_POINT_PATCHLIST,
 	D3D11_PRIMITIVE_TOPOLOGY_31_CONTROL_POINT_PATCHLIST	= D3D_PRIMITIVE_TOPOLOGY_31_CONTROL_POINT_PATCHLIST,
 	D3D11_PRIMITIVE_TOPOLOGY_32_CONTROL_POINT_PATCHLIST	= D3D_PRIMITIVE_TOPOLOGY_32_CONTROL_POINT_PATCHLIST
-};
+}
 
 D3D11_MAP :: enum : UINT
 {
@@ -780,7 +780,7 @@ D3D11_MAP :: enum : UINT
 	D3D11_MAP_READ_WRITE = 3,
 	D3D11_MAP_WRITE_DISCARD = 4,
 	D3D11_MAP_WRITE_NO_OVERWRITE = 5
-};
+}
 
 D3D11_RESOURCE_DIMENSION :: enum : UINT
 {
@@ -789,7 +789,7 @@ D3D11_RESOURCE_DIMENSION :: enum : UINT
 	D3D11_RESOURCE_DIMENSION_TEXTURE1D = 2,
 	D3D11_RESOURCE_DIMENSION_TEXTURE2D = 3,
 	D3D11_RESOURCE_DIMENSION_TEXTURE3D = 4
-};
+}
 
 D3D_DRIVER_TYPE :: enum : UINT
 {
@@ -799,7 +799,7 @@ D3D_DRIVER_TYPE :: enum : UINT
 	D3D_DRIVER_TYPE_NULL,
 	D3D_DRIVER_TYPE_SOFTWARE,
 	D3D_DRIVER_TYPE_WARP
-};
+}
 
 DXGI_MODE_ROTATION :: enum : UINT
 {
@@ -808,7 +808,7 @@ DXGI_MODE_ROTATION :: enum : UINT
 	DXGI_MODE_ROTATION_ROTATE90	= 2,
 	DXGI_MODE_ROTATION_ROTATE180   = 3,
 	DXGI_MODE_ROTATION_ROTATE270   = 4
-};
+}
 
 DXGI_FORMAT :: enum : UINT
 {
@@ -934,7 +934,7 @@ DXGI_FORMAT :: enum : UINT
 	DXGI_FORMAT_SAMPLER_FEEDBACK_MIN_MIP_OPAQUE,
 	DXGI_FORMAT_SAMPLER_FEEDBACK_MIP_REGION_USED_OPAQUE,
 	DXGI_FORMAT_FORCE_UINT = 0xffffffff
-};
+}
 
 D3D11_FILTER :: enum : UINT
 {
@@ -974,7 +974,7 @@ D3D11_FILTER :: enum : UINT
 	D3D11_FILTER_MAXIMUM_MIN_MAG_LINEAR_MIP_POINT = 0x194,
 	D3D11_FILTER_MAXIMUM_MIN_MAG_MIP_LINEAR = 0x195,
 	D3D11_FILTER_MAXIMUM_ANISOTROPIC = 0x1d5
-};
+}
 
 D3D11_COUNTER_TYPE :: enum : UINT
 {
@@ -982,7 +982,7 @@ D3D11_COUNTER_TYPE :: enum : UINT
 	D3D11_COUNTER_TYPE_UINT16  = 1,
 	D3D11_COUNTER_TYPE_UINT32  = 2,
 	D3D11_COUNTER_TYPE_UINT64  = 3
-};
+}
 
 D3D11_FEATURE :: enum : UINT
 {
@@ -1007,20 +1007,20 @@ D3D11_FEATURE :: enum : UINT
 	D3D11_FEATURE_SHADER_CACHE,
 	D3D11_FEATURE_D3D11_OPTIONS5,
 	D3D11_FEATURE_DISPLAYABLE
-};
+}
 
 D3D11_FILL_MODE :: enum : UINT
 {
 	D3D11_FILL_WIREFRAME = 2,
 	D3D11_FILL_SOLID = 3
-};
+}
 
 D3D11_CULL_MODE :: enum : UINT
 {
 	D3D11_CULL_NONE = 1,
 	D3D11_CULL_FRONT = 2,
 	D3D11_CULL_BACK = 3
-};
+}
 
 D3D11_USAGE :: enum : UINT
 {
@@ -1028,7 +1028,7 @@ D3D11_USAGE :: enum : UINT
 	D3D11_USAGE_IMMUTABLE = 1,
 	D3D11_USAGE_DYNAMIC = 2,
 	D3D11_USAGE_STAGING = 3
-};
+}
 
 D3D11_TEXTURE_ADDRESS_MODE :: enum : UINT
 {
@@ -1037,13 +1037,13 @@ D3D11_TEXTURE_ADDRESS_MODE :: enum : UINT
 	D3D11_TEXTURE_ADDRESS_CLAMP = 3,
 	D3D11_TEXTURE_ADDRESS_BORDER = 4,
 	D3D11_TEXTURE_ADDRESS_MIRROR_ONCE = 5
-};
+}
 
 D3D11_INPUT_CLASSIFICATION :: enum : UINT
 {
 	D3D11_INPUT_PER_VERTEX_DATA = 0,
 	D3D11_INPUT_PER_INSTANCE_DATA = 1
-};
+}
 
 D3D11_STENCIL_OP :: enum : UINT
 {
@@ -1055,7 +1055,7 @@ D3D11_STENCIL_OP :: enum : UINT
 	D3D11_STENCIL_OP_INVERT = 6,
 	D3D11_STENCIL_OP_INCR = 7,
 	D3D11_STENCIL_OP_DECR = 8
-};
+}
 
 D3D11_QUERY :: enum : UINT
 {
@@ -1075,18 +1075,18 @@ D3D11_QUERY :: enum : UINT
 	D3D11_QUERY_SO_OVERFLOW_PREDICATE_STREAM2,
 	D3D11_QUERY_SO_STATISTICS_STREAM3,
 	D3D11_QUERY_SO_OVERFLOW_PREDICATE_STREAM3
-};
+}
 
 D3D11_DEPTH_WRITE_MASK :: enum : UINT
 {
 	D3D11_DEPTH_WRITE_MASK_ZERO = 0,
 	D3D11_DEPTH_WRITE_MASK_ALL = 1
-};
+}
 
 D3D11_COUNTER :: enum : UINT
 {
 	D3D11_COUNTER_DEVICE_DEPENDENT_0 = 0x40000000
-};
+}
 
 D3D11_COMPARISON_FUNC :: enum : UINT
 {
@@ -1098,7 +1098,7 @@ D3D11_COMPARISON_FUNC :: enum : UINT
 	D3D11_COMPARISON_NOT_EQUAL = 6,
 	D3D11_COMPARISON_GREATER_EQUAL = 7,
 	D3D11_COMPARISON_ALWAYS = 8
-};
+}
 
 D3D11_UAV_DIMENSION :: enum : UINT
 {
@@ -1109,7 +1109,7 @@ D3D11_UAV_DIMENSION :: enum : UINT
 	D3D11_UAV_DIMENSION_TEXTURE2D = 4,
 	D3D11_UAV_DIMENSION_TEXTURE2DARRAY = 5,
 	D3D11_UAV_DIMENSION_TEXTURE3D = 8
-};
+}
 
 D3D11_RTV_DIMENSION :: enum : UINT
 {
@@ -1122,7 +1122,7 @@ D3D11_RTV_DIMENSION :: enum : UINT
 	D3D11_RTV_DIMENSION_TEXTURE2DMS = 6,
 	D3D11_RTV_DIMENSION_TEXTURE2DMSARRAY = 7,
 	D3D11_RTV_DIMENSION_TEXTURE3D = 8
-};
+}
 
 D3D11_SRV_DIMENSION :: enum : UINT
 {
@@ -1138,7 +1138,7 @@ D3D11_SRV_DIMENSION :: enum : UINT
 	D3D11_SRV_DIMENSION_TEXTURECUBE	   = 9,
 	D3D11_SRV_DIMENSION_TEXTURECUBEARRAY  = 10,
 	D3D11_SRV_DIMENSION_BUFFEREX		  = 11
-};
+}
 
 D3D11_DSV_DIMENSION :: enum : UINT
 {
@@ -1149,7 +1149,7 @@ D3D11_DSV_DIMENSION :: enum : UINT
 	D3D11_DSV_DIMENSION_TEXTURE2DARRAY = 4,
 	D3D11_DSV_DIMENSION_TEXTURE2DMS = 5,
 	D3D11_DSV_DIMENSION_TEXTURE2DMSARRAY = 6
-};
+}
 
 D3D_FEATURE_LEVEL :: enum : UINT
 {
@@ -1164,7 +1164,7 @@ D3D_FEATURE_LEVEL :: enum : UINT
 	D3D_FEATURE_LEVEL_12_0,
 	D3D_FEATURE_LEVEL_12_1,
 	D3D_FEATURE_LEVEL_12_2
-};
+}
 
 DXGI_MODE_SCANLINE_ORDER :: enum : UINT
 {
@@ -1172,14 +1172,14 @@ DXGI_MODE_SCANLINE_ORDER :: enum : UINT
 	DXGI_MODE_SCANLINE_ORDER_PROGRESSIVE	   = 1,
 	DXGI_MODE_SCANLINE_ORDER_UPPER_FIELD_FIRST = 2,
 	DXGI_MODE_SCANLINE_ORDER_LOWER_FIELD_FIRST = 3
-};
+}
 
 DXGI_MODE_SCALING :: enum : UINT
 {
 	DXGI_MODE_SCALING_UNSPECIFIED = 0,
 	DXGI_MODE_SCALING_CENTERED	= 1,
 	DXGI_MODE_SCALING_STRETCHED   = 2
-};
+}
 
 DXGI_SWAP_EFFECT :: enum : UINT
 {
@@ -1187,7 +1187,7 @@ DXGI_SWAP_EFFECT :: enum : UINT
 	DXGI_SWAP_EFFECT_SEQUENTIAL = 1,
 	DXGI_SWAP_EFFECT_FLIP_SEQUENTIAL = 3,
 	DXGI_SWAP_EFFECT_FLIP_DISCARD = 4
-};
+}
 
 DXGI_SWAP_CHAIN_FLAG :: enum : UINT
 {
@@ -1204,7 +1204,7 @@ DXGI_SWAP_CHAIN_FLAG :: enum : UINT
 	DXGI_SWAP_CHAIN_FLAG_HW_PROTECTED = 1024,
 	DXGI_SWAP_CHAIN_FLAG_ALLOW_TEARING = 2048,
 	DXGI_SWAP_CHAIN_FLAG_RESTRICTED_TO_ALL_HOLOGRAPHIC_DISPLAYS = 4096
-};
+}
 
 DXGI_USAGE :: UINT;
 DXGI_USAGE_SHADER_INPUT			:: 1 << 4;
@@ -1224,14 +1224,14 @@ D3D11_BOX :: struct
 	right: UINT;
 	bottom: UINT;
 	back: UINT;
-};
+}
 
 D3D11_BLEND_DESC :: struct
 {
 	AlphaToCoverageEnable: BOOL;
 	IndependentBlendEnable: BOOL;
 	RenderTarget: [8]D3D11_RENDER_TARGET_BLEND_DESC;
-};
+}
 
 D3D11_RENDER_TARGET_BLEND_DESC :: struct
 {
@@ -1243,13 +1243,13 @@ D3D11_RENDER_TARGET_BLEND_DESC :: struct
 	DestBlendAlpha: D3D11_BLEND;
 	BlendOpAlpha: D3D11_BLEND_OP;
 	RenderTargetWriteMask: UINT8;
-};
+}
 
 DXGI_RATIONAL :: struct
 {
 	Numerator : UINT;
 	Denominator : UINT;
-};
+}
 
 DXGI_SWAP_CHAIN_DESC :: struct
 {
@@ -1261,7 +1261,7 @@ DXGI_SWAP_CHAIN_DESC :: struct
 	Windowed: BOOL;
 	SwapEffect: DXGI_SWAP_EFFECT;
 	Flags: DXGI_SWAP_CHAIN_FLAG;
-};
+}
 
 DXGI_MODE_DESC :: struct
 {
@@ -1271,13 +1271,13 @@ DXGI_MODE_DESC :: struct
 	Format: DXGI_FORMAT;
 	ScanlineOrdering: DXGI_MODE_SCANLINE_ORDER;
 	Scaling: DXGI_MODE_SCALING;
-};
+}
 
 DXGI_SAMPLE_DESC :: struct
 {
 	Count : UINT;
 	Quality : UINT;
-};
+}
 
 // Procedures
 D3D11CreateDeviceAndSwapChain :: #external #convention(win64) (
@@ -1323,7 +1323,7 @@ IUnknown :: struct
 			this: ^IUnknown
 		) -> ULONG;
 	};
-};
+}
 
 ID3D11Device :: struct
 {
@@ -1570,7 +1570,7 @@ ID3D11Device :: struct
 			this: ^ID3D11Device
 		) -> UINT;
 	};
-};
+}
 
 ID3D11DeviceContext :: struct
 {
@@ -2229,7 +2229,7 @@ ID3D11DeviceContext :: struct
 			ppCommandList: ^^ID3D11CommandList
 		) -> HRESULT;
 	};
-};
+}
 
 ID3D11VertexShader :: struct
 {
@@ -2267,7 +2267,7 @@ ID3D11VertexShader :: struct
 			pData: ^IUnknown
 		) -> HRESULT;
 	};
-};
+}
 
 ID3D11PixelShader :: struct
 {
@@ -2305,7 +2305,7 @@ ID3D11PixelShader :: struct
 			pData: ^IUnknown
 		) -> HRESULT;
 	};
-};
+}
 
 ID3D11GeometryShader :: struct
 {
@@ -2343,7 +2343,7 @@ ID3D11GeometryShader :: struct
 			pData: ^IUnknown
 		) -> HRESULT;
 	};
-};
+}
 
 ID3D11DomainShader :: struct
 {
@@ -2381,7 +2381,7 @@ ID3D11DomainShader :: struct
 			pData: ^IUnknown
 		) -> HRESULT;
 	};
-};
+}
 
 ID3D11ComputeShader :: struct
 {
@@ -2419,7 +2419,7 @@ ID3D11ComputeShader :: struct
 			pData: ^IUnknown
 		) -> HRESULT;
 	};
-};
+}
 
 ID3D11InputLayout :: struct
 {
@@ -2457,7 +2457,7 @@ ID3D11InputLayout :: struct
 			pData: ^IUnknown
 		) -> HRESULT;
 	};
-};
+}
 
 ID3D11ClassInstance :: struct
 {
@@ -2513,7 +2513,7 @@ ID3D11ClassInstance :: struct
 			pBufferLength: ^SIZE_T
 		);
 	};
-};
+}
 
 ID3D11ClassLinkage :: struct
 {
@@ -2566,7 +2566,7 @@ ID3D11ClassLinkage :: struct
 			ppInstance: ^^ID3D11ClassInstance
 		) -> HRESULT;
 	};
-};
+}
 
 IDXGISwapChain :: struct
 {
@@ -2659,7 +2659,7 @@ IDXGISwapChain :: struct
 			pLastPresentCount: ^UINT
 		) -> HRESULT;
 	};
-};
+}
 
 IDXGIAdapter :: struct
 {
@@ -2712,7 +2712,7 @@ IDXGIAdapter :: struct
 			pUMDVersion: ^LARGE_INTEGER
 		) -> HRESULT;
 	};
-};
+}
 
 IDXGIOutput :: struct
 {
@@ -2803,7 +2803,7 @@ IDXGIOutput :: struct
 			pStats: ^DXGI_FRAME_STATISTICS
 		) -> HRESULT;
 	};
-};
+}
 
 ID3D11Resource :: struct
 {
@@ -2852,7 +2852,7 @@ ID3D11Resource :: struct
 			this: ^ID3D11Resource
 		) -> UINT;
 	};
-};
+}
 
 ID3D11Buffer :: struct
 {
@@ -2905,7 +2905,7 @@ ID3D11Buffer :: struct
 			pDesc: ^D3D11_BUFFER_DESC
 		);
 	};
-};
+}
 
 IDXGISurface :: struct
 {
@@ -2961,7 +2961,7 @@ IDXGISurface :: struct
 			This: ^IDXGISurface
 		) -> HRESULT;
 	};
-};
+}
 
 ID3D11ShaderResourceView :: struct
 {
@@ -3007,7 +3007,7 @@ ID3D11ShaderResourceView :: struct
 			pDesc: ^D3D11_SHADER_RESOURCE_VIEW_DESC
 		);
 	};
-};
+}
 
 ID3D11UnorderedAccessView :: struct
 {
@@ -3053,7 +3053,7 @@ ID3D11UnorderedAccessView :: struct
 			pDesc: ^D3D11_UNORDERED_ACCESS_VIEW_DESC
 		);
 	};
-};
+}
 
 ID3D11RenderTargetView :: struct
 {
@@ -3099,7 +3099,7 @@ ID3D11RenderTargetView :: struct
 			pDesc: ^D3D11_RENDER_TARGET_VIEW_DESC
 		);
 	};
-};
+}
 
 ID3D11DepthStencilView :: struct
 {
@@ -3145,7 +3145,7 @@ ID3D11DepthStencilView :: struct
 			pDesc: ^D3D11_DEPTH_STENCIL_VIEW_DESC
 		);
 	};
-};
+}
 
 ID3D11CommandList :: struct
 {
@@ -3186,7 +3186,7 @@ ID3D11CommandList :: struct
 			this: ^ID3D11CommandList
 		) -> UINT;
 	};
-};
+}
 
 ID3D11HullShader :: struct
 {
@@ -3224,7 +3224,7 @@ ID3D11HullShader :: struct
 			pData: ^IUnknown
 		) -> HRESULT;
 	};
-};
+}
 
 ID3D11SamplerState :: struct
 {
@@ -3266,7 +3266,7 @@ ID3D11SamplerState :: struct
 			pDesc: ^D3D11_SAMPLER_DESC
 		);
 	};
-};
+}
 
 ID3D11Texture1D :: struct
 {
@@ -3319,7 +3319,7 @@ ID3D11Texture1D :: struct
 			pDesc: ^D3D11_TEXTURE1D_DESC
 		);
 	};
-};
+}
 
 ID3D11Texture2D :: struct
 {
@@ -3372,7 +3372,7 @@ ID3D11Texture2D :: struct
 			pDesc: ^D3D11_TEXTURE2D_DESC
 		);
 	};
-};
+}
 
 ID3D11Texture3D :: struct
 {
@@ -3425,7 +3425,7 @@ ID3D11Texture3D :: struct
 			pDesc: ^D3D11_TEXTURE3D_DESC
 		);
 	};
-};
+}
 
 ID3D11BlendState :: struct
 {
@@ -3467,7 +3467,7 @@ ID3D11BlendState :: struct
 			pDesc: ^D3D11_BLEND_DESC
 		);
 	};
-};
+}
 
 ID3D11DepthStencilState :: struct
 {
@@ -3509,7 +3509,7 @@ ID3D11DepthStencilState :: struct
 			pDesc: ^D3D11_DEPTH_STENCIL_DESC
 		);
 	};
-};
+}
 
 ID3D11Asynchronous :: struct
 {
@@ -3550,7 +3550,7 @@ ID3D11Asynchronous :: struct
 			this: ^ID3D11Asynchronous
 		) -> UINT;
 	};
-};
+}
 
 ID3D11RasterizerState :: struct
 {
@@ -3592,7 +3592,7 @@ ID3D11RasterizerState :: struct
 			pDesc: ^D3D11_RASTERIZER_DESC
 		);
 	};
-};
+}
 
 ID3D11Query :: struct
 {
@@ -3637,7 +3637,7 @@ ID3D11Query :: struct
 			pDesc: ^D3D11_QUERY_DESC
 		);
 	};
-};
+}
 
 ID3D11Predicate :: struct
 {
@@ -3682,7 +3682,7 @@ ID3D11Predicate :: struct
 			pDesc: ^D3D11_QUERY_DESC
 		);
 	};
-};
+}
 
 ID3D11Counter :: struct
 {
@@ -3727,7 +3727,7 @@ ID3D11Counter :: struct
 			pDesc: ^D3D11_COUNTER_DESC
 		);
 	};
-};
+}
 
 ID3D10Blob :: struct
 {
@@ -3750,7 +3750,7 @@ ID3D10Blob :: struct
 			this: ^ID3D10Blob
 		) -> SIZE_T;
 	};
-};
+}
 ID3DBlob :: #alias ID3D10Blob;
 
 ID3DInclude :: struct
@@ -3769,7 +3769,7 @@ ID3DInclude :: struct
 			pData: ^void
 		);
 	};
-};
+}
 ID3D10Include :: #alias ID3DInclude;
 
 // IIDs

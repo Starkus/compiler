@@ -15,8 +15,7 @@ AnonParam :: (param : struct { three : s64; four : s64; }) -> s64
 
 Main :: (args : [] String) -> s64
 {
-	struct
-	{
+	struct {
 		foo : s32;
 		bar : s32;
 	};
@@ -24,27 +23,22 @@ Main :: (args : [] String) -> s64
 	foo = bar;
 	if (foo != 3 || bar != 3) return 1;
 
-	aStruct : struct
-	{
+	aStruct : struct {
 		a : f32;
 	};
 	aStruct.a = 5.0;
 	if aStruct.a != 5.0 return 1;
 
-	union
-	{
+	union {
 		asInt : s64;
 		asFloat : f64;
 	};
 	asFloat = 2.5;
 	if asFloat != 2.5 return 1;
 
-	struct
-	{
-		struct
-		{
-			struct
-			{
+	struct {
+		struct {
+			struct {
 				deep : s64;
 			};
 		};

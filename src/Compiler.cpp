@@ -290,9 +290,11 @@ foundFullName:
 	if (file == SYS_INVALID_FILE_HANDLE)
 		LogError(loc, TPrintF("Could not find source file \"%S\"", filename));
 
-	for (int i = 0; i < g_context->sourceFiles.size; ++i) {
+	for (int i = 1; i < g_context->sourceFiles.size; ++i) {
 		String currentFilename = g_context->sourceFiles[i].name;
 		FileHandle currentFile = SYSOpenFileRead(currentFilename);
+		if (currentFile == SYS_INVALID_FILE_HANDLE)
+			continue;
 
 		if (SYSAreSameFile(file, currentFile)) {
 			// Don't think we should to warn this...
@@ -363,15 +365,16 @@ int main(int argc, char **argv)
 
 	g_logFileHandle = SYSOpenFileWrite("output/log.txt"_s);
 
-	if (argc < 2) {
-		Print("Usage: compiler [options] <source file>\n");
+	if (argc < 2 && !SYSIsInputPipePresent()) {
+		LogErrorNoCrash({}, "Received no input files"_s);
+		LogNote({}, "Usage: compiler [options] <source file(s)>"_s);
 		return 1;
 	}
 
 #if USE_PROFILER_API
 	PerformanceAPI_LoadFrom(L"external/Superluminal/PerformanceAPI.dll", &performanceAPI);
 	if (performanceAPI.BeginEvent == nullptr) {
-		Print("ERROR! Couldn't load profiler API DLL!\n");
+		LogCompilerError({}, "Couldn't load profiler API DLL");
 		return 1;
 	}
 #endif
@@ -382,13 +385,13 @@ int main(int argc, char **argv)
 	++context->sourceFiles.size; // 0 is invalid file
 	DynamicArrayInit(&context->libsToLink, 8);
 
-	DynamicArray<String, LinearAllocator> inputFiles;
-	DynamicArrayInit(&inputFiles, 16);
-	*DynamicArrayAdd(&inputFiles) = "core/core.fab"_s;
+	DynamicArray<String, LinearAllocator> inputFileNames;
+	DynamicArrayInit(&inputFileNames, 16);
+	*DynamicArrayAdd(&inputFileNames) = "core/core.fab"_s;
 #if IS_WINDOWS
-	*DynamicArrayAdd(&inputFiles) = "core/core_windows.fab"_s;
+	*DynamicArrayAdd(&inputFileNames) = "core/core_windows.fab"_s;
 #else
-	*DynamicArrayAdd(&inputFiles) = "core/core_linux.fab"_s;
+	*DynamicArrayAdd(&inputFileNames) = "core/core_linux.fab"_s;
 #endif
 	context->config.useEscapeSequences = true;
 	for (int argIdx = 1; argIdx < argc; ++argIdx) {
@@ -412,9 +415,8 @@ int main(int argc, char **argv)
 				Print("Unknown option \"%s\"\n", arg);
 		}
 		else
-			*DynamicArrayAdd(&inputFiles) = CStrToString(arg);
+			*DynamicArrayAdd(&inputFileNames) = CStrToString(arg);
 	}
-	ASSERT(inputFiles.size > 2);
 
 	if (!context->config.silent)
 		TimerSplit("Initialization"_s);
@@ -426,8 +428,36 @@ int main(int argc, char **argv)
 	IRGenMain();
 	BackendMain();
 
-	for (int i = 0; i < inputFiles.size; ++i)
-		CompilerAddSourceFile(inputFiles[i], {});
+	// Allow passing source code through a pipe
+	if (SYSIsInputPipePresent()) {
+		SourceFile newSourceFile = { "<stdin>"_s, {} };
+		// Dynamic buffer of bytes
+		DynamicArray<u8, HeapAllocator> fileBuffer;
+		DynamicArrayInit(&fileBuffer, 1024);
+		// Read everything on stdin
+		while (true) {
+			u8 byte;
+			if (SYSReadFile(g_hStdin, &byte, 1) != 1)
+				break;
+			*DynamicArrayAdd(&fileBuffer) = byte;
+		}
+		newSourceFile.buffer = (char *)fileBuffer.data;
+		newSourceFile.size = fileBuffer.size;
+
+		u32 fileIdx;
+		{
+			ScopedLockSpin sourceFilesLock(&g_context->filesLock);
+			fileIdx = (u32)g_context->sourceFiles.size;
+			*DynamicArrayAdd(&g_context->sourceFiles) = newSourceFile;
+		}
+
+		ParseJobArgs *args = ALLOC(LinearAllocator, ParseJobArgs);
+		*args = { .fileIdx = fileIdx };
+		RequestNewJob(JOBTYPE_PARSE, ParseJobProc, (void *)args);
+	}
+
+	for (int i = 0; i < inputFileNames.size; ++i)
+		CompilerAddSourceFile(inputFileNames[i], {});
 
 	if (!context->config.silent)
 		TimerSplit("Create starting jobs"_s);

@@ -12,20 +12,20 @@ Compiler_Subsystems :: enum
 {
 	COMPILER_SUBSYSTEM_CONSOLE = 0,
 	COMPILER_SUBSYSTEM_WINDOWS = 1
-};
+}
 
 Compiler_Platforms :: enum
 {
 	COMPILER_PLATFORM_WINDOWS = 0,
 	COMPILER_PLATFORM_LINUX   = 1
-};
+}
 
 Compiler_Output_Types :: enum
 {
 	COMPILER_OUTPUT_EXECUTABLE      = 0,
 	COMPILER_OUTPUT_LIBRARY_STATIC  = 1,
 	COMPILER_OUTPUT_LIBRARY_DYNAMIC = 2
-};
+}
 
 #if !#defined(compiler_output_type)
 	compiler_output_type :: COMPILER_OUTPUT_EXECUTABLE;
@@ -35,13 +35,13 @@ String :: struct
 {
 	size : u64;
 	data : ^u8;
-};
+}
 
 Array :: struct
 {
 	size : u64;
 	data : ^void;
-};
+}
 
 TypeKind :: enum : u8
 {
@@ -53,32 +53,32 @@ TypeKind :: enum : u8
 	TypeKind_Array,
 	TypeKind_ProcedurePointer,
 	TypeKind_Alias
-};
+}
 TypeInfo :: struct
 {
 	typeKind : TypeKind;
 	size : u64;
-};
+}
 
 TypeInfoInteger :: struct
 {
 	using _typeInfo : TypeInfo;
 	isSigned : s32;
-};
+}
 
 TypeInfoStructMember :: struct
 {
 	name : String;
 	typeInfo : ^TypeInfo;
 	offset : u64;
-};
+}
 TypeInfoStruct :: struct
 {
 	using _typeInfo : TypeInfo;
 	name : String;
 	isUnion : s32;
 	members : [] TypeInfoStructMember;
-};
+}
 
 TypeInfoEnum :: struct
 {
@@ -87,33 +87,33 @@ TypeInfoEnum :: struct
 	typeInfo : ^TypeInfo;
 	names : [] String;
 	values : [] s64;
-};
+}
 
 TypeInfoPointer :: struct
 {
 	using _typeInfo : TypeInfo;
 	typeInfo : ^TypeInfo;
-};
+}
 
 TypeInfoArray :: struct
 {
 	using _typeInfo : TypeInfo;
 	count : u64;
 	elementTypeInfo : ^TypeInfo;
-};
+}
 
 TypeInfoProcedurePointer :: struct
 {
 	using _typeInfo : TypeInfo;
 	parameters : [] ^TypeInfo;
 	isVarargs : s32;
-};
+}
 
 TypeInfoAlias :: struct
 {
 	using _typeInfo : TypeInfo;
 	typeInfo : ^TypeInfo;
-};
+}
 
 Any :: struct
 {
@@ -132,7 +132,7 @@ Any :: struct
 		asF32 : f32;
 		asF64 : f64;
 	};
-};
+}
 
 Breakpoint :: #inline ()
 {

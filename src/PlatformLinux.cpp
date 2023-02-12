@@ -140,6 +140,11 @@ s64 SYSWriteFile(FileHandle fileHandle, void *buffer, s64 size)
 	return write(fileHandle, buffer, size);
 }
 
+s64 SYSReadFile(FileHandle file, void *buffer, u64 size)
+{
+	return read(file, buffer, size);
+}
+
 u64 SYSGetFileSize(FileHandle file)
 {
 	struct stat fileStat;
@@ -152,8 +157,7 @@ void SYSReadEntireFile(FileHandle file, const char **fileBuffer, u64 *fileSize,
 {
 	if (file == SYS_INVALID_FILE_HANDLE)
 		*fileBuffer = nullptr;
-	else
-	{
+	else {
 		*fileSize = SYSGetFileSize(file);
 		ASSERT(*fileSize);
 		char *buffer = (char *)allocFunc(*fileSize, 1);
@@ -554,6 +558,14 @@ void *SYSLoadDynamicLibrary(String filename)
 	String compilerPathRelative = SYSExpandPathCompilerRelative(TStringConcat("bin/"_s, filename));
 	// this string is null terminated
 	result = dlopen(compilerPathRelative.data, RTLD_LAZY);
+
+#if IS_LINUX
+	// Look in compiler path
+	String installPathRelative = TPrintF("/usr/lib/fabric/%S%c", filename, 0);
+	// this string is null terminated
+	result = dlopen(installPathRelative.data, RTLD_LAZY);
+#endif
+
 	return result;
 }
 
@@ -565,4 +577,9 @@ inline void *SYSGetProcAddress(void *lib, const char *procedureCStr)
 inline int SYSGetProcessorCount()
 {
 	return sysconf(_SC_NPROCESSORS_ONLN);
+}
+
+inline bool SYSIsInputPipePresent()
+{
+	return !isatty(STDIN_FILENO);
 }

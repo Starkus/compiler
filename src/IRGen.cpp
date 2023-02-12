@@ -1767,7 +1767,7 @@ void IRGenProcedure(IRContext *irContext, u32 procedureIdx, SourceLocation loc,
 
 IRValue IRGenFromExpression(IRContext *irContext, const ASTExpression *expression)
 {
-	IRValue result = {};
+	IRValue result = { IRVALUETYPE_INVALID };
 
 	switch (expression->nodeType) {
 	case ASTNODETYPE_BLOCK:

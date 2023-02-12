@@ -15,8 +15,8 @@ for %%f in (tests/*) do (
 	)
 )
 
-echo | set /p=Running error test wrongFilename.emi...
-bin\Compiler.exe errortests/wrongFilename.emi >NUL 2>NUL
+echo | set /p=Running error test wrongFilename.fab...
+bin\Compiler.exe errortests/wrongFilename.fab >NUL 2>NUL
 IF !ERRORLEVEL! EQU 0 echo [55GCompilation [31msucceded![0m
 IF !ERRORLEVEL! NEQ 0 echo [55GCompilation [32mfailed[0m
 

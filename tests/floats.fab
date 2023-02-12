@@ -61,17 +61,14 @@ Main :: (args : [] String) -> s64
 		" 2.08757232129817482790e-09",
 		"-1.13596475577881948265e-11"
 	};
-	for 0..13
-	{
-		union
-		{
+	for 0..13 {
+		union {
 			asFloat : f64;
 			asBytes : u64;
 		};
 		asFloat = someFloats[i];
 		diff := cast(s64)(asBytes - expectedHex[i]);
-		if (-4 > diff || diff > 4) // Give a little bit of slack
-		{
+		if (-4 > diff || diff > 4) { // Give a little bit of slack
 			Print("!!!INCORRECT PARSING\n");
 			return 1;
 		}

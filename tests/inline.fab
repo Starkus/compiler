@@ -22,7 +22,7 @@ Square :: struct
 {
 	side : f32;
 	area : f32;
-};
+}
 StructParam :: #inline (square : Square)
 {
 	square.area = square.side * square.side;

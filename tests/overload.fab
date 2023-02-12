@@ -6,7 +6,7 @@ Vector :: struct
 	x : f32;
 	y : f32;
 	z : f32;
-};
+}
 
 #operator + :: #inline (a : Vector, b : Vector) -> Vector
 {

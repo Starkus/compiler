@@ -6,13 +6,13 @@ Person :: struct
 	id : u64;
 	age : s32;
 	height : f32;
-};
+}
 
 Couple :: struct
 {
 	husband : Person;
 	wife : Person;
-};
+}
 
 structByValue :: (person : Person)
 {
@@ -27,13 +27,13 @@ structByPointer :: (person : ^Person)
 Aligned :: struct #align(32)
 {
 	oneByte: u8;
-};
+}
 
 // Pointer to self
 Node :: struct
 {
 	next : ^Node;
-};
+}
 
 Main :: (args : [] String) -> s64
 {
@@ -85,6 +85,9 @@ Main :: (args : [] String) -> s64
 	anAlignedStruct2: Aligned;
 	anAlignedStruct3: Aligned;
 	PrintF("Structs aligned to 32 bytes (0x20): % % %\n", ^anAlignedStruct1, ^anAlignedStruct2, ^anAlignedStruct3);
+
+	// Inline struct
+	foo: struct { a: s32; b: s32; } = { 1, 2 };
 
 	Print("Test ok\n");
 	return 0;

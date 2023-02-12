@@ -11,7 +11,7 @@ v2 :: union
 		x : f32; y : f32;
 	};
 	v : [2] f32;
-};
+}
 
 v3 :: union
 {
@@ -25,7 +25,7 @@ v3 :: union
 	};
 	xy : v2;
 	v : [3] f32;
-};
+}
 
 v4 :: union
 {
@@ -40,7 +40,7 @@ v4 :: union
 	xyz : v3;
 	xy  : v2;
 	v   : [4] f32;
-};
+}
 
 mat4 :: union
 {
@@ -52,7 +52,7 @@ mat4 :: union
 		m30 : f32; m31 : f32; m32 : f32; m33 : f32;
 	};
 	m : [16] f32;
-};
+}
 
 MAT4_IDENTITY :s mat4 =
 {
@@ -60,7 +60,7 @@ MAT4_IDENTITY :s mat4 =
 	0.0,	1.0,	0.0,	0.0,
 	0.0,	0.0,	1.0,	0.0,
 	0.0,	0.0,	0.0,	1.0
-};
+}
 
 Mat4Scale :: (a : mat4, b : f32) -> mat4
 {
@@ -605,7 +605,7 @@ Transform :: struct
 	translation : v3;
 	rotation : v4;
 	scale : v3;
-};
+}
 
 Mat4ColumnV3 :: (m : mat4, column : s32) -> v3
 {
