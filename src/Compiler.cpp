@@ -71,6 +71,12 @@ Array<Fiber, LinearAllocator> g_mainFibers;
 
 #include "Multithreading.cpp"
 
+// Mainly intended to print console escape sequences
+inline void PrintNoLog(String str)
+{
+	SYSWriteFile(g_hStdout, (void *)str.data, str.size);
+}
+
 s64 PrintString(String str)
 {
 #if IS_WINDOWS

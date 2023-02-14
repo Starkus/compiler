@@ -22,7 +22,7 @@ enum ConsoleColor {
 inline void ConsoleSetColor(ConsoleColor color, bool bright = false, bool underline = false)
 {
 	if (g_context->config.useEscapeSequences)
-		Print("\x1b[%d;%d;%dm", color, bright ? 1 : 22, underline ? 4 : 24);
+		PrintNoLog(TPrintF("\x1b[%d;%d;%dm", color, bright ? 1 : 22, underline ? 4 : 24));
 }
 
 FatSourceLocation ExpandSourceLocation(SourceLocation loc);
