@@ -127,16 +127,20 @@ inline void RWSpinlockLockForWrite(volatile u32 *lock)
 	}
 #else
 	// GCC/Clang
-	int oldLock = -1;
 retry:
-	int eax = 0;
+	// Request, to stop new read locks
+	if (!(*lock & RWSPINLOCK_WRITE_REQUESTED_BIT))
+		__atomic_or_fetch(lock, RWSPINLOCK_WRITE_REQUESTED_BIT);
+
+	int expected = RWSPINLOCK_WRITE_REQUESTED_BIT;
+	int desired = expected | RWSPINLOCK_WRITE_LOCKED;
 	int success;
 	asm volatile("xacquire lock cmpxchg %3, %1"
-					: "+a" (eax), "+m" (*lock), "=@cce" (success)
-					: "r" (oldLock) : "memory", "cc");
+					: "+a" (expected), "+m" (*lock), "=@cce" (success)
+					: "r" (desired) : "memory", "cc");
 	if (success) return;
 pause:
-	if (!*lock)
+	if ((*lock & RWSPINLOCK_LOCK_COUNT_MASK) == 0)
 		goto retry;
 	_mm_pause();
 	goto pause;
