@@ -244,6 +244,7 @@ struct Context
 	SLContainer<BucketArray<const TypeInfo, HeapAllocator, 1024>> typeTable; // Lock only to add
 
 	SLRWContainer<DynamicArray<TCScopeName, LinearAllocator>> tcGlobalNames;
+	MTQueue<TCScopeName> tcGlobalNamesToAdd;
 	RWContainer<DynamicArray<u32, LinearAllocator>> tcGlobalTypeIndices;
 	MXContainer<DynamicArray<DynamicArray<InlineCall, LinearAllocator>, LinearAllocator>> tcInlineCalls;
 
@@ -665,6 +666,7 @@ int main(int argc, char **argv)
 		LogError({}, "Errors were found. Aborting"_s);
 
 	ASSERT(MTQueueIsEmpty(&g_context->readyJobs));
+	ASSERT(MTQueueIsEmpty(&g_context->tcGlobalNamesToAdd));
 
 	for (int i = 0; i < g_context->jobs.unsafe.count; ++i) {
 		Job job = g_context->jobs.unsafe[i];

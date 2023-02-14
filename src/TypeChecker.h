@@ -297,6 +297,7 @@ struct TCStructJobArgs
 
 void GenerateTypeCheckJobs(ASTExpression *expression);
 void TCStructJobProc(void *args);
+void TCCommitGlobalNames();
 
 struct TCContext
 {

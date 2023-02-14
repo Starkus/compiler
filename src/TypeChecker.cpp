@@ -1511,57 +1511,78 @@ void TCAddScopeNames(TCContext *tcContext, ArrayView<TCScopeName> scopeNames)
 			newNames[i] = scopeNames[i];
 	}
 	else {
-		{
-			auto globalNames = g_context->tcGlobalNames.GetForWrite();
-
-			TCScopeName *newNames = DynamicArrayAddMany(&globalNames, scopeNames.size);
-			for (int i = 0; i < scopeNames.size; ++i)
-				newNames[i] = scopeNames[i];
-		}
-
-		// Check if any was added twice
-		{
-			Array<s8, ThreadAllocator> timesFound;
-			ArrayInit(&timesFound, scopeNames.size);
-			timesFound.size = scopeNames.size;
-			memset(timesFound.data, 0, timesFound.size * sizeof(s8));
-
-			auto globalNames = g_context->tcGlobalNames.GetForRead();
-
-			for (int globalNameIdx = 0; globalNameIdx < globalNames->size; ++globalNameIdx) {
-				const TCScopeName *currentName = &globalNames[globalNameIdx];
-				for (int inputIdx = 0; inputIdx < scopeNames.size; ++inputIdx) {
-					if (StringEquals(scopeNames[inputIdx].name, currentName->name)) {
-						if (timesFound[inputIdx]) {
-							LogErrorNoCrash(scopeNames[inputIdx].loc, TPrintF("Name \"%S\" already "
-										"assigned", scopeNames[inputIdx].name));
-							LogNote(currentName->loc, "First defined here"_s);
-							PANIC;
-						}
-						++timesFound[inputIdx];
-					}
-				}
-			}
-		}
-
-		// Wake up any jobs that were waiting for these names
-		auto jobsWaiting = g_context->waitingJobsByReason[YIELDREASON_UNKNOWN_IDENTIFIER].Get();
-		for (int i = 0; i < jobsWaiting->size; ) {
-			u32 jobIdx = jobsWaiting[i];
-			const Job *job = &g_context->jobs.unsafe[jobIdx];
-			for (int nameIdx = 0; nameIdx < scopeNames.size; ++nameIdx) {
-				if (StringEquals(job->yieldContext.identifier, scopeNames[nameIdx].name)) {
-					EnqueueReadyJob(jobIdx);
-					// Remove waiting job
-					DynamicArraySwapRemove(&jobsWaiting, i);
-					goto outerContinue;
-				}
-			}
-			++i; // Didn't remove waiting job
-outerContinue:
-			continue;
+		for (int i = 0; i < scopeNames.size; ++i) {
+			DEBUG_ONLY(Print("Enqueuing \"%S\"\n", scopeNames[i].name));
+			while (!MTQueueEnqueue(&g_context->tcGlobalNamesToAdd, scopeNames[i]))
+				TCCommitGlobalNames();
 		}
 	}
+}
+
+void TCCommitGlobalNames()
+{
+	DEBUG_ONLY(Print("Committing names\n"));
+	// @Speed: optimize
+	u64 firstAddedIdx;
+	u64 addedCount = 0;
+	{
+		auto globalNames = g_context->tcGlobalNames.GetForWrite();
+
+		firstAddedIdx = globalNames->size;
+
+		TCScopeName dequeue;
+		while (MTQueueDequeue(&g_context->tcGlobalNamesToAdd, &dequeue)) {
+			*DynamicArrayAdd(&globalNames) = dequeue;
+			++addedCount;
+		}
+	}
+
+	// Wake up any jobs that were waiting for these names
+	auto jobsWaiting = g_context->waitingJobsByReason[YIELDREASON_UNKNOWN_IDENTIFIER].Get();
+	for (int i = 0; i < jobsWaiting->size; ) {
+		u32 jobIdx = jobsWaiting[i];
+		const Job *job = &g_context->jobs.unsafe[jobIdx];
+		for (u64 nameIdx = firstAddedIdx; nameIdx < firstAddedIdx + addedCount; ++nameIdx) {
+			if (StringEquals(job->yieldContext.identifier, g_context->tcGlobalNames.unsafe[nameIdx].name)) {
+				DEBUG_ONLY(Print("Waking up job waiting for \"%S\"\n", job->yieldContext.identifier));
+				EnqueueReadyJob(jobIdx);
+				// Remove waiting job
+				DynamicArraySwapRemove(&jobsWaiting, i);
+				goto outerContinue;
+			}
+		}
+		++i; // Didn't remove waiting job
+outerContinue:
+		continue;
+	}
+
+	// @Todo
+#if 0
+	// Check if any was added twice
+	{
+		Array<s8, ThreadAllocator> timesFound;
+		ArrayInit(&timesFound, scopeNames.size);
+		timesFound.size = scopeNames.size;
+		memset(timesFound.data, 0, timesFound.size * sizeof(s8));
+
+		auto globalNames = g_context->tcGlobalNames.GetForRead();
+
+		for (int globalNameIdx = 0; globalNameIdx < globalNames->size; ++globalNameIdx) {
+			const TCScopeName *currentName = &globalNames[globalNameIdx];
+			for (int inputIdx = 0; inputIdx < scopeNames.size; ++inputIdx) {
+				if (StringEquals(scopeNames[inputIdx].name, currentName->name)) {
+					if (timesFound[inputIdx]) {
+						LogErrorNoCrash(scopeNames[inputIdx].loc, TPrintF("Name \"%S\" already "
+									"assigned", scopeNames[inputIdx].name));
+						LogNote(currentName->loc, "First defined here"_s);
+						PANIC;
+					}
+					++timesFound[inputIdx];
+				}
+			}
+		}
+	}
+#endif
 }
 
 void TypeCheckExpression(TCContext *tcContext, ASTExpression *expression);
@@ -5264,6 +5285,7 @@ void TypeCheckMain()
 		*ArrayAdd(&g_context->tcPrimitiveTypes) = scopeNamePrimitive;
 		*DynamicArrayAdd(&globalNames) = scopeNamePrimitive;
 	}
+	MTQueueInit<LinearAllocator>(&g_context->tcGlobalNamesToAdd, 128);
 
 	{
 		auto inlineCalls = g_context->tcInlineCalls.Get();
