@@ -4954,7 +4954,8 @@ void TCStructJobProc(void *args)
 			// Struct
 			if (t.size & (alignment - 1))
 				t.size = (t.size & ~(alignment - 1)) + alignment;
-			member.offset = t.size;
+			ASSERT(t.size <= S32_MAX);
+			member.offset = (s32)t.size;
 			t.size += memberSize;
 		}
 		else {

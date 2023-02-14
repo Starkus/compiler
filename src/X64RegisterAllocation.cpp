@@ -250,8 +250,9 @@ void DoLivenessAnalisisOnInstruction(X64Context *x64Context, X64Instruction *ins
 				constexpr u64 valueIndexSize = sizeof(x64Context->beInterferenceGraph.valueIndices[0]);
 				constexpr u64 remWordSize = sizeof(x64Context->beInterferenceGraph.removed[0]);
 				constexpr u64 edgesSize = sizeof(x64Context->beInterferenceGraph.edges[0]);
-				u64 oldCapacity = x64Context->beInterferenceGraph.capacity;
-				u64 newCapacity = oldCapacity * 2;
+				u32 oldCapacity = x64Context->beInterferenceGraph.capacity;
+				u32 newCapacity = oldCapacity * 2;
+				ASSERT(newCapacity > oldCapacity);
 				x64Context->beInterferenceGraph.capacity = newCapacity;
 				x64Context->beInterferenceGraph.valueIndices = (u32 *)
 						ThreadAllocator::Realloc(x64Context->beInterferenceGraph.valueIndices,

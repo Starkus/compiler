@@ -6,8 +6,7 @@ PI2    :: 6.283185307179586476925286766559;
 
 v2 :: union
 {
-	struct
-	{
+	struct {
 		x : f32; y : f32;
 	};
 	v : [2] f32;
@@ -15,12 +14,10 @@ v2 :: union
 
 v3 :: union
 {
-	struct
-	{
+	struct {
 		x : f32; y : f32; z : f32;
 	};
-	struct
-	{
+	struct {
 		r : f32; g : f32; b : f32;
 	};
 	xy : v2;
@@ -29,12 +26,10 @@ v3 :: union
 
 v4 :: union
 {
-	struct
-	{
+	struct {
 		x : f32; y : f32; z : f32; w : f32;
 	};
-	struct
-	{
+	struct {
 		r : f32; g : f32; b : f32; a : f32;
 	};
 	xyz : v3;
@@ -44,8 +39,7 @@ v4 :: union
 
 mat4 :: union
 {
-	struct
-	{
+	struct {
 		m00 : f32; m01 : f32; m02 : f32; m03 : f32;
 		m10 : f32; m11 : f32; m12 : f32; m13 : f32;
 		m20 : f32; m21 : f32; m22 : f32; m23 : f32;
@@ -60,12 +54,11 @@ MAT4_IDENTITY :s mat4 =
 	0.0,	1.0,	0.0,	0.0,
 	0.0,	0.0,	1.0,	0.0,
 	0.0,	0.0,	0.0,	1.0
-}
+};
 
 Mat4Scale :: (a : mat4, b : f32) -> mat4
 {
-	result : mat4 =
-	{
+	result : mat4 = {
 		a.m00 * b, a.m01 * b, a.m02 * b, a.m03 * b,
 		a.m10 * b, a.m11 * b, a.m12 * b, a.m13 * b,
 		a.m20 * b, a.m21 * b, a.m22 * b, a.m23 * b,
@@ -76,8 +69,7 @@ Mat4Scale :: (a : mat4, b : f32) -> mat4
 
 Mat4Divide :: (a : mat4, b : f32) -> mat4
 {
-	result : mat4 =
-	{
+	result : mat4 = {
 		a.m00 / b, a.m01 / b, a.m02 / b, a.m03 / b,
 		a.m10 / b, a.m11 / b, a.m12 / b, a.m13 / b,
 		a.m20 / b, a.m21 / b, a.m22 / b, a.m23 / b,
@@ -88,8 +80,7 @@ Mat4Divide :: (a : mat4, b : f32) -> mat4
 
 Mat4MakeTranslation :: (translation : v3, scale : f32 = 1.0) -> mat4
 {
-	result : mat4 =
-	{
+	result : mat4 = {
 		scale,	0.0,	0.0,	0.0,
 		0.0,	scale,	0.0,	0.0,
 		0.0,	0.0,	scale,	0.0,
@@ -100,8 +91,7 @@ Mat4MakeTranslation :: (translation : v3, scale : f32 = 1.0) -> mat4
 
 Mat4MakeScale :: (scale : f32) -> mat4
 {
-	result : mat4 =
-	{
+	result : mat4 = {
 		scale,	0.0,	0.0,	0.0,
 		0.0,	scale,	0.0,	0.0,
 		0.0,	0.0,	scale,	0.0,

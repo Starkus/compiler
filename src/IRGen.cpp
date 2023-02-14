@@ -158,7 +158,7 @@ inline IRValue IRValueValue(IRContext *irContext, u32 valueIdx)
 	return result;
 }
 
-inline IRValue IRValueMemory(u32 baseValueIdx, u32 typeTableIdx, s64 offset = 0)
+inline IRValue IRValueMemory(u32 baseValueIdx, u32 typeTableIdx, s32 offset = 0)
 {
 	IRValue result = {};
 	result.valueType = IRVALUETYPE_MEMORY;
@@ -434,7 +434,8 @@ IRValue IRDoMemberAccess(IRContext *irContext, SourceLocation loc, u32 structPtr
 				structValueName, structMember.name));
 #endif
 
-	s64 offset = structMember.offset;
+	ASSERT(structMember.offset <= S32_MAX);
+	s32 offset = structMember.offset;
 	IRValue result = IRValueMemory(structPtrValueIdx, structMember.typeTableIdx,
 			offset);
 	result = IRPointerToValue(irContext, loc, result);
@@ -476,8 +477,9 @@ IRValue IRDoArrayAccess(IRContext *irContext, SourceLocation loc, u32 arrayPtrVa
 	s64 elementSize = GetTypeInfo(elementTypeIdx).size;
 
 	if (indexValue.valueType == IRVALUETYPE_IMMEDIATE_INTEGER) {
-		return IRValueMemory(arrayPtrValueIdx, elementTypeIdx,
-				indexValue.immediate * elementSize);
+		s64 offset = indexValue.immediate * elementSize;
+		if (offset >= S32_MIN && offset <= S32_MAX)
+			return IRValueMemory(arrayPtrValueIdx, elementTypeIdx, (s32)offset);
 	}
 	else if ((indexValue.valueType == IRVALUETYPE_VALUE ||
 			indexValue.valueType == IRVALUETYPE_MEMORY) &&
@@ -490,7 +492,7 @@ IRValue IRDoArrayAccess(IRContext *irContext, SourceLocation loc, u32 arrayPtrVa
 
 		IRValue result = IRValueMemory(arrayPtrValueIdx, elementTypeIdx);
 		result.mem.indexValueIdx = indexForceReg.valueIdx;
-		result.mem.elementSize = elementSize;
+		result.mem.elementSize = (s32)elementSize;
 		return result;
 	}
 
@@ -2186,7 +2188,7 @@ IRValue IRGenFromExpression(IRContext *irContext, const ASTExpression *expressio
 			{
 				StructMember dataStructMember = {
 					.typeTableIdx = TYPETABLEIDX_U64,
-					.offset = g_pointerSize };
+					.offset = (u32)g_pointerSize };
 				IRValue dataMember = IRDoMemberAccess(irContext, astProcCall->loc,
 						arrayPtr.valueIdx, dataStructMember);
 				IRValue dataValue = pointerToBuffer;

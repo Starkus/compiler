@@ -44,20 +44,20 @@ Input :: struct {
 	left : bool;
 	right : bool;
 	shoot : bool;
-};
+}
 input :s Input;
 
 Enemy :: struct {
 	pos : v2;
 	life : s32;
-};
+}
 
 Particle :: struct {
 	pos : v2;
 	vel : v2;
 	life : f32;
 	duration : f32;
-};
+}
 
 ENEMY_WIDTH   :: 64.0;
 ENEMY_HEIGHT  :: 64.0;

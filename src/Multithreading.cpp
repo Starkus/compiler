@@ -47,15 +47,22 @@ inline void SpinlockUnlock(volatile u32 *locked)
 #endif
 }
 
-inline void RWSpinlockLockForRead(volatile s32 *lock)
+const u32 RWSPINLOCK_WRITE_REQUESTED_BIT = 0x40000000;
+const u32 RWSPINLOCK_WRITE_LOCKED		 = 0x80000000;
+const u32 RWSPINLOCK_LOCK_COUNT_MASK = ~(RWSPINLOCK_WRITE_REQUESTED_BIT | RWSPINLOCK_WRITE_LOCKED);
+const u32 RWSPINLOCK_READ_COUNT_MAX	 = RWSPINLOCK_LOCK_COUNT_MASK;
+
+inline void RWSpinlockLockForRead(volatile u32 *lock)
 {
+	PROFILER_SCOPE("RW Spinlock lock for read");
 #if IS_MSVC
 	for (;;) {
-		s32 expected = *lock;
-		if (expected >= 0) {
-			s32 desired = expected + 1;
-			if (_InterlockedCompareExchange_HLEAcquire((volatile long *)lock, desired, expected) ==
-					expected)
+		u32 expected = *lock;
+		if (expected < RWSPINLOCK_READ_COUNT_MAX) {
+			u32 desired = expected + 1;
+			u32 oldLock = (u32)_InterlockedCompareExchange_HLEAcquire((volatile long *)lock,
+					desired, expected);
+			if (oldLock == expected)
 				break;
 		}
 		_mm_pause();
@@ -63,9 +70,9 @@ inline void RWSpinlockLockForRead(volatile s32 *lock)
 #else
 	// GCC/Clang
 	for (;;) {
-		s32 expected = *lock;
-		if (expected >= 0) {
-			s32 desired = expected + 1;
+		u32 expected = *lock;
+		if (expected < RWSPINLOCK_READ_COUNT_MAX) {
+			u32 desired = expected + 1;
 			int success;
 			asm volatile(
 					"xacquire lock cmpxchg %3, %1"
@@ -78,9 +85,15 @@ inline void RWSpinlockLockForRead(volatile s32 *lock)
 #endif
 }
 
-inline void RWSpinlockUnlockForRead(volatile s32 *lock)
+inline void RWSpinlockUnlockForRead(volatile u32 *lock)
 {
-	ASSERT(*lock > 0);
+	PROFILER_SCOPE("RW Spinlock unlock for read");
+#if DEBUG_BUILD
+	u32 lockValue = *lock;
+	ASSERT((lockValue & RWSPINLOCK_LOCK_COUNT_MASK) > 0);
+	ASSERT((lockValue & RWSPINLOCK_WRITE_LOCKED) == 0);
+#endif
+
 #if IS_MSVC
 	// Don't know of a way to emit an 'xrelease lock dec' on MSVC...
 	_InterlockedExchangeAdd_HLERelease((volatile long *)lock, -1);
@@ -90,16 +103,24 @@ inline void RWSpinlockUnlockForRead(volatile s32 *lock)
 #endif
 }
 
-inline void RWSpinlockLockForWrite(volatile s32 *lock)
+inline void RWSpinlockLockForWrite(volatile u32 *lock)
 {
+	PROFILER_SCOPE("RW Spinlock lock for write");
 #if IS_MSVC
 	for (;;) {
-		long oldLock = _InterlockedCompareExchange_HLEAcquire((volatile long *)lock, -1, 0);
-		if (!oldLock)
+		// Request, to stop new read locks
+		if (!(*lock & RWSPINLOCK_WRITE_REQUESTED_BIT))
+			_InterlockedOr((volatile long *)lock, RWSPINLOCK_WRITE_REQUESTED_BIT);
+
+		u32 expected = RWSPINLOCK_WRITE_REQUESTED_BIT; // Only this bit
+		u32 desired = expected | RWSPINLOCK_WRITE_LOCKED;
+		u32 oldLock = (u32)_InterlockedCompareExchange_HLEAcquire((volatile long *)lock, desired,
+				expected);
+		if (oldLock == expected)
 			return;
 
 		for (;;) {
-			if (!*lock)
+			if ((*lock & RWSPINLOCK_LOCK_COUNT_MASK) == 0)
 				break;
 			_mm_pause();
 		}
@@ -122,9 +143,14 @@ pause:
 #endif
 }
 
-inline void RWSpinlockUnlockForWrite(volatile s32 *lock)
+inline void RWSpinlockUnlockForWrite(volatile u32 *lock)
 {
-	ASSERT(*lock == -1);
+	PROFILER_SCOPE("RW Spinlock unlock for write");
+#if DEBUG_BUILD
+	u32 lockValue = *lock;
+	ASSERT(lockValue & RWSPINLOCK_WRITE_LOCKED);
+#endif
+
 #if IS_MSVC
 	_Store_HLERelease((volatile long *)lock, 0);
 #else
@@ -316,7 +342,7 @@ class SLRWContainer
 {
 public:
 	T unsafe;
-	volatile s32 rwLock;
+	volatile u32 rwLock;
 
 	SLRWContainer() {
 		rwLock = 0;

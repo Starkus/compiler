@@ -174,7 +174,7 @@ s64 SYSWriteFile(FileHandle file, void *buffer, s64 size)
 	return writtenS64;
 }
 
-void SYSReadFile(FileHandle file, const char *buffer, u64 size)
+s64 SYSReadFile(FileHandle file, void *buffer, u64 size)
 {
 	DWORD bytesRead;
 	bool success = ReadFile(
@@ -796,5 +796,7 @@ inline int SYSGetProcessorCount()
 
 inline bool SYSIsInputPipePresent()
 {
-	_isatty(_fileno(stdin));
+	HANDLE stdIn = GetStdHandle(STD_INPUT_HANDLE);
+	DWORD type = GetFileType(stdIn);
+	return type == FILE_TYPE_PIPE || type == FILE_TYPE_DISK;
 }

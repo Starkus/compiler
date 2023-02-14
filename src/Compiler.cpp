@@ -374,7 +374,7 @@ int main(int argc, char **argv)
 #if USE_PROFILER_API
 	PerformanceAPI_LoadFrom(L"external/Superluminal/PerformanceAPI.dll", &performanceAPI);
 	if (performanceAPI.BeginEvent == nullptr) {
-		LogCompilerError({}, "Couldn't load profiler API DLL");
+		LogCompilerError({}, "Couldn't load profiler API DLL"_s);
 		return 1;
 	}
 #endif

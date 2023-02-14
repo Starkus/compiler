@@ -5,17 +5,19 @@ cls
 set ArgRelease=0
 set ArgProfile=0
 set ArgClang=0
+set ArgBuildLibs=0
 :args
 IF "%~1"=="" GOTO endargs
 IF "%~1"=="-r" set ArgRelease=1
 IF "%~1"=="-p" set ArgProfile=1
 IF "%~1"=="-clang" set ArgClang=1
+IF "%~1"=="-libs" set ArgBuildLibs=1
 SHIFT
 GOTO args
 :endargs
 
 set SourceFiles=..\src\Compiler.cpp
-set CompilerFlags=-nologo -GR- -GT -Oi -EHa- -W4 -FC -Z7 -I ..\external\ -std:c++latest -SIS_WINDOWS=1
+set CompilerFlags=-nologo -GR- -GT -Oi -EHa- -W4 -FC -Z7 -I ..\external\ -std:c++latest -DIS_WINDOWS=1
 set LinkerFlags=-opt:ref -incremental:no -debug:full DynamicCallWindows.obj
 set Libraries=user32.lib winmm.lib shell32.lib advapi32.lib ..\external\xed\xed.lib
 
@@ -43,6 +45,12 @@ IF NOT EXIST .\bin mkdir .\bin
 pushd .\bin
 
 set start=%time%
+IF "%ArgBuildLibs%"=="1" (
+	ml64 /nologo /c /Fo core.obj ..\src\AsmMemoryMasm.asm
+	lib /OUT:core.lib core.obj
+	link /OUT:core.dll /DLL /NOENTRY core.obj
+)
+
 ml64 /nologo /c /Fo DynamicCallWindows.obj ..\src\DynamicCallWindows.asm
 %Compiler% %CompilerFlags% %IgnoreWarnings% %SourceFiles% %Libraries% -link %LinkerFlags%
 set end=%time%

@@ -1,4 +1,4 @@
-void X64GenerateObjectFile()
+void X64GenerateObjectFile(String outputFilename)
 {
 	ProfilerBegin("Generating output image");
 	const int dataSectionIdx = 0;
@@ -304,23 +304,8 @@ void X64GenerateObjectFile()
 	OutputBufferPut(sizeof(dataSectionHeader), &dataSectionHeader);
 	OutputBufferPut(sizeof(codeSectionHeader), &codeSectionHeader);
 
-	String outputFilename, outputPath;
-	OutputType outputType;
-	DynamicArray<String, ThreadAllocator> exportedSymbols;
-	GetOutputInfo(&outputFilename, &outputPath, &outputType, &exportedSymbols);
-
 	OutputBufferWriteToFile(ChangeFilenameExtension(outputFilename, ".obj"_s));
 
 	if (!g_context->config.silent)
 		TimerSplit("Generating output image"_s);
-
-	// Call linker
-	String extraLinkerArguments = GetLinkerExtraArguments();
-
-	ProfilerBegin("Calling linker");
-	SYSRunLinker(outputPath, outputFilename, outputType, exportedSymbols, extraLinkerArguments,
-			g_context->config.silent);
-	if (!g_context->config.silent)
-		TimerSplit("Calling linker"_s);
-	ProfilerEnd();
 }

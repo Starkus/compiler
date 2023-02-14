@@ -473,7 +473,7 @@ inline u64 BitfieldCount(ArrayView<T> array)
 }
 
 // Specialization to use popcnt64
-inline u64 BitfieldCount(ArrayView<u64> array, u64 size)
+inline u64 BitfieldCount(ArrayView<u64> array)
 {
 	u64 count = 0;
 	u64 *end = array.data + array.size;

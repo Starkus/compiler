@@ -644,7 +644,7 @@ void X64CopyMemory(X64Context *x64Context, SourceLocation loc, IRValue dst, IRVa
 	if (size.valueType == IRVALUETYPE_IMMEDIATE_INTEGER) {
 		s64 sizeImm = size.immediate;
 
-		s64 copiedBytes = 0;
+		u32 copiedBytes = 0;
 		while (sizeImm - copiedBytes >= 16) {
 			X64Mov(x64Context, loc,
 					IRValueMemory(dstIdx, TYPETABLEIDX_128, copiedBytes),
@@ -913,7 +913,8 @@ Array<u32, ThreadAllocator> X64ReadyLinuxParameters(X64Context *x64Context, Sour
 			u64 origOffset = 0;
 			if (param.valueType == IRVALUETYPE_MEMORY)
 				origOffset = param.mem.offset;
-			IRValue paramPtr = IRValueMemory(param.valueIdx, param.typeTableIdx, origOffset);
+			ASSERT(origOffset <= S32_MAX);
+			IRValue paramPtr = IRValueMemory(param.valueIdx, param.typeTableIdx, (s32)origOffset);
 
 			int sizeLeft = (int)paramTypeInfo.size;
 			while (sizeLeft > 0) {
@@ -1717,7 +1718,7 @@ void X64ConvertInstruction(X64Context *x64Context, IRInstruction inst)
 		if (inst.zeroMemory.size.valueType == IRVALUETYPE_IMMEDIATE_INTEGER) {
 			s64 size = inst.zeroMemory.size.immediate;
 
-			s64 copiedBytes = 0;
+			u32 copiedBytes = 0;
 			if (size - copiedBytes >= 16) {
 				IRValue zeroXmmReg = X64IRValueNewValue(x64Context, "_zeroxmm"_s, TYPETABLEIDX_128,
 						VALUEFLAGS_FORCE_REGISTER);

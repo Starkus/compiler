@@ -65,7 +65,7 @@ struct StructMember
 	String name;
 	u32 typeTableIdx;
 	bool isUsing;
-	u64 offset;
+	u32 offset;
 };
 struct TypeInfoStruct
 {
