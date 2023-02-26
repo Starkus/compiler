@@ -94,6 +94,7 @@ struct TypeInfoArray
 
 struct ProcedureParameter {
 	u32 typeTableIdx;
+	bool isPolymorphic;
 	Constant defaultValue;
 };
 struct TypeInfoProcedure {

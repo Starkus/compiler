@@ -1107,19 +1107,25 @@ void X64ConvertInstruction(X64Context *x64Context, IRInstruction inst)
 		ASSERT(srcType.typeCategory != TYPECATEGORY_FLOATING);
 		ASSERT(dstType.size > srcType.size);
 
-		// MOVSXD and MOVSX are R-RM
-		IRValue tmp = X64IRValueNewValue(x64Context, "_movsxd_tmp"_s, dst.typeTableIdx,
-				VALUEFLAGS_FORCE_REGISTER);
-
-		X64InstructionType type;
-		if (srcType.size == 4)
-			type = X64_MOVSXD;
-		else {
-			ASSERT(srcType.size < 4);
-			type = X64_MOVSX;
+		if (src.valueType == IRVALUETYPE_IMMEDIATE_INTEGER) {
+			src.typeTableIdx = dst.typeTableIdx;
+			X64AddInstruction2(x64Context, inst.loc, X64_MOV, dst, src);
 		}
-		X64AddInstruction2(x64Context, inst.loc, type, tmp, src);
-		X64AddInstruction2(x64Context, inst.loc, X64_MOV, dst, tmp);
+		else {
+			// MOVSXD and MOVSX are R-RM
+			IRValue tmp = X64IRValueNewValue(x64Context, "_movsxd_tmp"_s, dst.typeTableIdx,
+					VALUEFLAGS_FORCE_REGISTER);
+
+			X64InstructionType type;
+			if (srcType.size == 4)
+				type = X64_MOVSXD;
+			else {
+				ASSERT(srcType.size < 4);
+				type = X64_MOVSX;
+			}
+			X64AddInstruction2(x64Context, inst.loc, type, tmp, src);
+			X64AddInstruction2(x64Context, inst.loc, X64_MOV, dst, tmp);
+		}
 		return;
 	}
 	case IRINSTRUCTIONTYPE_ZERO_EXTEND:
@@ -1132,24 +1138,30 @@ void X64ConvertInstruction(X64Context *x64Context, IRInstruction inst)
 		ASSERT(srcType.typeCategory != TYPECATEGORY_FLOATING);
 		ASSERT(dstType.size > srcType.size);
 
-		if (srcType.size == 4) {
-			// x86-64 automatically zero-extends 32 to 64 bits
-			// Since either operand could be memory, we first store the value in a 32-bit register
-			// then copy its 64-bit counterpart to dst.
-			IRValue tmp = X64IRValueNewValue(x64Context, "_zero_ext_tmp"_s, dst.typeTableIdx,
-					VALUEFLAGS_FORCE_REGISTER);
-			tmp.typeTableIdx = src.typeTableIdx;
-			X64AddInstruction2(x64Context, inst.loc, X64_MOV, tmp, src);
-			tmp.typeTableIdx = dst.typeTableIdx;
-			X64AddInstruction2(x64Context, inst.loc, X64_MOV, dst, tmp);
+		if (src.valueType == IRVALUETYPE_IMMEDIATE_INTEGER) {
+			src.typeTableIdx = dst.typeTableIdx;
+			X64AddInstruction2(x64Context, inst.loc, X64_MOV, dst, src);
 		}
 		else {
-			ASSERT(srcType.size < 4);
-			// MOVZXD is R-RM
-			IRValue tmp = X64IRValueNewValue(x64Context, "_movzx_tmp"_s, dst.typeTableIdx,
-					VALUEFLAGS_FORCE_REGISTER);
-			X64AddInstruction2(x64Context, inst.loc, X64_MOVZX, tmp, src);
-			X64AddInstruction2(x64Context, inst.loc, X64_MOV, dst, tmp);
+			if (srcType.size == 4) {
+				// x86-64 automatically zero-extends 32 to 64 bits
+				// Since either operand could be memory, we first store the value in a 32-bit register
+				// then copy its 64-bit counterpart to dst.
+				IRValue tmp = X64IRValueNewValue(x64Context, "_zero_ext_tmp"_s, dst.typeTableIdx,
+						VALUEFLAGS_FORCE_REGISTER);
+				tmp.typeTableIdx = src.typeTableIdx;
+				X64AddInstruction2(x64Context, inst.loc, X64_MOV, tmp, src);
+				tmp.typeTableIdx = dst.typeTableIdx;
+				X64AddInstruction2(x64Context, inst.loc, X64_MOV, dst, tmp);
+			}
+			else {
+				ASSERT(srcType.size < 4);
+				// MOVZXD is R-RM
+				IRValue tmp = X64IRValueNewValue(x64Context, "_movzx_tmp"_s, dst.typeTableIdx,
+						VALUEFLAGS_FORCE_REGISTER);
+				X64AddInstruction2(x64Context, inst.loc, X64_MOVZX, tmp, src);
+				X64AddInstruction2(x64Context, inst.loc, X64_MOV, dst, tmp);
+			}
 		}
 		return;
 	}

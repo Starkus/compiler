@@ -32,7 +32,7 @@ inline ASTExpression *PNewTreeNode(PContext *pContext)
 	return BucketArrayAdd(&pContext->astTreeNodes);
 }
 
-inline ASTType *NewASTType(PContext *pContext)
+inline ASTType *PNewASTType(PContext *pContext)
 {
 	return BucketArrayAdd(&pContext->astTypes);
 }
@@ -151,14 +151,14 @@ ASTType ParseType(PContext *pContext)
 		AssertToken(pContext->token, ']');
 		Advance(pContext);
 
-		astType.arrayType = NewASTType(pContext);
+		astType.arrayType = PNewASTType(pContext);
 		*astType.arrayType = ParseType(pContext);
 	} break;
 	case TOKEN_OP_POINTER_TO:
 	{
 		Advance(pContext);
 		astType.nodeType = ASTTYPENODETYPE_POINTER;
-		astType.pointedType = NewASTType(pContext);
+		astType.pointedType = PNewASTType(pContext);
 		*astType.pointedType = ParseType(pContext);
 	} break;
 	case TOKEN_KEYWORD_STRUCT:
@@ -187,6 +187,13 @@ ASTType ParseType(PContext *pContext)
 	{
 		astType.nodeType = ASTTYPENODETYPE_PROCEDURE;
 		astType.procedurePrototype = ParseProcedurePrototype(pContext);
+	} break;
+	case '$':
+	{
+		Advance(pContext);
+		astType.nodeType = ASTTYPENODETYPE_TYPE_ARGUMENT_DECLARATION;
+		astType.name = TokenToString(*pContext->token);
+		Advance(pContext);
 	} break;
 	default:
 	{
@@ -400,7 +407,7 @@ ASTVariableDeclaration ParseVariableDeclaration(PContext *pContext, ArrayView<St
 	}
 
 	if (pContext->token->type != TOKEN_OP_ASSIGNMENT) {
-		varDecl.astType = NewASTType(pContext);
+		varDecl.astType = PNewASTType(pContext);
 		*varDecl.astType = ParseType(pContext);
 	}
 
@@ -819,7 +826,7 @@ ASTStructMemberDeclaration ParseStructMemberDeclaration(PContext *pContext)
 	}
 
 	if (pContext->token->type != TOKEN_OP_ASSIGNMENT) {
-		structMem.astType = NewASTType(pContext);
+		structMem.astType = PNewASTType(pContext);
 		*structMem.astType = ParseType(pContext);
 		if (structMem.astType->nodeType == ASTTYPENODETYPE_INVALID)
 			LogError(pContext->token->loc, "Expected type"_s);
@@ -847,7 +854,7 @@ ASTEnumDeclaration ParseEnumDeclaration(PContext *pContext)
 
 	if (pContext->token->type == TOKEN_OP_VARIABLE_DECLARATION) {
 		Advance(pContext);
-		enumNode.astType = NewASTType(pContext);
+		enumNode.astType = PNewASTType(pContext);
 		*enumNode.astType = ParseType(pContext);
 	}
 
@@ -986,7 +993,7 @@ ASTProcedureParameter ParseProcedureParameter(PContext *pContext)
 	}
 
 	if (pContext->token->type != TOKEN_OP_ASSIGNMENT) {
-		astParameter.astType = NewASTType(pContext);
+		astParameter.astType = PNewASTType(pContext);
 		*astParameter.astType = ParseType(pContext);
 	}
 
@@ -1064,7 +1071,7 @@ ASTProcedurePrototype ParseProcedurePrototype(PContext *pContext)
 		DynamicArrayInit(&astPrototype.astReturnTypes, 4);
 
 loop:
-		ASTType *newASTType = NewASTType(pContext);
+		ASTType *newASTType = PNewASTType(pContext);
 		*newASTType = ParseType(pContext);
 		*DynamicArrayAdd(&astPrototype.astReturnTypes) = newASTType;
 		if (pContext->token->type == ',') {
@@ -1431,7 +1438,7 @@ ASTExpression ParseExpression(PContext *pContext, s32 precedence, bool isStateme
 		ASTVariableDeclaration varDecl = {};
 		varDecl.loc = pContext->token->loc;
 
-		varDecl.astType = NewASTType(pContext);
+		varDecl.astType = PNewASTType(pContext);
 		*varDecl.astType = ParseType(pContext); // This will parse the struct/union declaration.
 
 		if (pContext->token->type == TOKEN_OP_ASSIGNMENT) {

@@ -231,6 +231,8 @@ inline TypeInfo GetTypeInfo(u32 typeTableIdx)
 
 String TypeInfoToString(u32 typeTableIdx)
 {
+	if (typeTableIdx == TYPETABLEIDX_Anything)
+		return "<anything>"_s;
 	if (typeTableIdx == TYPETABLEIDX_VOID)
 		return "void"_s;
 	if (typeTableIdx == TYPETABLEIDX_INTEGER)
@@ -567,6 +569,9 @@ TypeCheckErrorCode CheckTypesMatch(u32 leftTypeIdx, u32 rightTypeIdx)
 	// Get rid of implicitly cast aliases
 	leftTypeIdx  = StripImplicitlyCastAliases(leftTypeIdx);
 	rightTypeIdx = StripImplicitlyCastAliases(rightTypeIdx);
+
+	if (leftTypeIdx == TYPETABLEIDX_Anything || rightTypeIdx == TYPETABLEIDX_Anything)
+		return TYPECHECK_COOL;
 
 	if ((leftTypeIdx == TYPETABLEIDX_VOID) != (rightTypeIdx == TYPETABLEIDX_VOID))
 		return TYPECHECK_TYPE_CATEGORY_MISMATCH;
@@ -1004,8 +1009,7 @@ bool AreTypeInfosEqual(TypeInfo a, TypeInfo b)
 	if (a.size != b.size)
 		return false;
 
-	switch (a.typeCategory)
-	{
+	switch (a.typeCategory) {
 	case TYPECATEGORY_NOT_READY:
 		return false;
 	case TYPECATEGORY_INTEGER:
@@ -1469,10 +1473,12 @@ u32 GetTypeInfoArrayOf(u32 inType, s64 count)
 	resultTypeInfo.arrayInfo.count = count;
 	if (count == 0)
 		resultTypeInfo.size = 8 + g_pointerSize;
-	else {
+	else if (inType > TYPETABLEIDX_Begin) {
 		s64 elementSize = GetTypeInfo(inType).size;
 		resultTypeInfo.size = elementSize * count;
 	}
+	else
+		resultTypeInfo.size = 0;
 	return FindOrAddTypeTableIdx(resultTypeInfo);
 }
 
@@ -1966,6 +1972,7 @@ u32 TypeCheckType(TCContext *tcContext, String name, SourceLocation loc, ASTType
 {
 	switch (astType->nodeType) {
 	case ASTTYPENODETYPE_IDENTIFIER:
+	case ASTTYPENODETYPE_TYPE_ARGUMENT_DECLARATION:
 	{
 		return FindTypeInStackByName(tcContext, astType->loc, astType->name);
 	} break;
@@ -1974,7 +1981,11 @@ u32 TypeCheckType(TCContext *tcContext, String name, SourceLocation loc, ASTType
 		u32 elementTypeIdx = TypeCheckType(tcContext, {}, loc, astType->arrayType);
 		s64 arrayCount = 0;
 		if (astType->arrayCountExp) {
+			// @Hack: we type check this multiple times sometimes when instantiating polymorphic
+			// procedures.
+			astType->arrayCountExp->typeTableIdx = TYPETABLEIDX_Unset;
 			TypeCheckExpression(tcContext, astType->arrayCountExp);
+
 			Constant constant = TryEvaluateConstant(astType->arrayCountExp);
 			if (constant.type == CONSTANTTYPE_INVALID)
 				LogError(loc, "Could not evaluate array count"_s);
@@ -2114,6 +2125,14 @@ u32 TypeCheckType(TCContext *tcContext, String name, SourceLocation loc, ASTType
 
 		return typeTableIdx;
 	} break;
+	// @Delete
+#if 0
+	case ASTTYPENODETYPE_TYPE_ARGUMENT_DECLARATION:
+	{
+		LogError(loc, "Unexpected polymorphic type. Polymorphic types are only allowed on "
+				"procedure parameter declarations."_s);
+	} break;
+#endif
 	default:
 		ASSERT(false);
 	}
@@ -2426,12 +2445,11 @@ void TypeCheckVariableDeclaration(TCContext *tcContext, ASTVariableDeclaration *
 
 void TypeCheckProcedureParameter(TCContext *tcContext, ASTProcedureParameter *astParam)
 {
-	if (astParam->astType) {
-		astParam->typeTableIdx = TypeCheckType(tcContext, {}, astParam->loc, astParam->astType);
-
-		if (astParam->typeTableIdx == TYPETABLEIDX_VOID)
-			LogError(astParam->loc, "Variable can't be of type void!"_s);
-	}
+	// @Check: who should report this error?
+	ASSERT(astParam->astType);
+	astParam->typeTableIdx = TypeCheckType(tcContext, {}, astParam->loc, astParam->astType);
+	if (astParam->typeTableIdx == TYPETABLEIDX_VOID)
+		LogError(astParam->loc, "Variable can't be of type void!"_s);
 
 	if (astParam->astInitialValue) {
 		TypeCheckExpression(tcContext, astParam->astInitialValue);
@@ -2499,17 +2517,141 @@ ReturnCheckResult TCCheckIfReturnsValue(ASTExpression *expression)
 	return RETURNCHECKRESULT_NEVER;
 }
 
+bool DoesTypeReferToPolymorphicType(ASTType *astType)
+{
+	switch (astType->nodeType) {
+	case ASTTYPENODETYPE_IDENTIFIER:
+		return false;
+	case ASTTYPENODETYPE_POINTER:
+		return DoesTypeReferToPolymorphicType(astType->pointedType);
+	case ASTTYPENODETYPE_STRUCT_DECLARATION:
+	case ASTTYPENODETYPE_UNION_DECLARATION:
+	{
+		ArrayView<ASTStructMemberDeclaration> members = astType->structDeclaration.members;
+		for (int memberIdx = 0; memberIdx < members.size; ++memberIdx) {
+			if (DoesTypeReferToPolymorphicType(members[memberIdx].astType))
+				return true;
+		}
+		return false;
+	}
+	case ASTTYPENODETYPE_ENUM_DECLARATION:
+		return DoesTypeReferToPolymorphicType(astType->enumDeclaration.astType);
+	case ASTTYPENODETYPE_ARRAY:
+		return DoesTypeReferToPolymorphicType(astType->arrayType);
+	case ASTTYPENODETYPE_PROCEDURE:
+	{
+		ArrayView<ASTProcedureParameter> params = astType->procedurePrototype.astParameters;
+		for (int paramIdx = 0; paramIdx < params.size; ++paramIdx) {
+			if (DoesTypeReferToPolymorphicType(params[paramIdx].astType))
+				return true;
+		}
+		ArrayView<ASTType *> returnTypes = astType->procedurePrototype.astReturnTypes;
+		for (int retIdx = 0; retIdx < returnTypes.size; ++retIdx) {
+			if (DoesTypeReferToPolymorphicType(returnTypes[retIdx]))
+				return true;
+		}
+		return false;
+	}
+	case ASTTYPENODETYPE_TYPE_ARGUMENT_DECLARATION:
+		return true;
+	}
+	ASSERT(!"Unexpected type category");
+}
+
+void TCFindAllPolymorphicTypesInASTType(ASTType *astType, SourceLocation loc,
+		DynamicArray<TCScopeName, ThreadAllocator> *scopeNames)
+{
+	switch (astType->nodeType) {
+	case ASTTYPENODETYPE_POINTER:
+		TCFindAllPolymorphicTypesInASTType(astType->pointedType, loc, scopeNames);
+		break;
+	case ASTTYPENODETYPE_STRUCT_DECLARATION:
+	case ASTTYPENODETYPE_UNION_DECLARATION:
+	{
+		ArrayView<ASTStructMemberDeclaration> members = astType->structDeclaration.members;
+		for (int memberIdx = 0; memberIdx < members.size; ++memberIdx)
+			TCFindAllPolymorphicTypesInASTType(members[memberIdx].astType, loc, scopeNames);
+	} break;
+	case ASTTYPENODETYPE_ENUM_DECLARATION:
+		TCFindAllPolymorphicTypesInASTType(astType->enumDeclaration.astType, loc, scopeNames);
+		break;
+	case ASTTYPENODETYPE_ARRAY:
+		TCFindAllPolymorphicTypesInASTType(astType->arrayType, loc, scopeNames);
+		break;
+	case ASTTYPENODETYPE_PROCEDURE:
+	{
+		ArrayView<ASTProcedureParameter> params = astType->procedurePrototype.astParameters;
+		for (int paramIdx = 0; paramIdx < params.size; ++paramIdx)
+			TCFindAllPolymorphicTypesInASTType(params[paramIdx].astType, loc, scopeNames);
+
+		ArrayView<ASTType *> returnTypes = astType->procedurePrototype.astReturnTypes;
+		for (int retIdx = 0; retIdx < returnTypes.size; ++retIdx)
+			TCFindAllPolymorphicTypesInASTType(returnTypes[retIdx], loc, scopeNames);
+	} break;
+	case ASTTYPENODETYPE_TYPE_ARGUMENT_DECLARATION:
+	{
+		if (!scopeNames->size)
+			DynamicArrayInit(scopeNames, 2);
+
+
+		StaticDefinition newStaticDef = {};
+		newStaticDef.definitionType = STATICDEFINITIONTYPE_TYPE;
+		newStaticDef.name = astType->name;
+		newStaticDef.typeTableIdx = TYPETABLEIDX_Unset;
+		u32 newStaticDefIdx = NewStaticDefinition(&newStaticDef);
+
+		TCScopeName newScopeName = {};
+		newScopeName.type = NAMETYPE_STATIC_DEFINITION;
+		newScopeName.loc = loc;
+		newScopeName.staticDefinitionIdx = newStaticDefIdx;
+		newScopeName.name = astType->name;
+		*DynamicArrayAdd(scopeNames) = newScopeName;
+	} break;
+	}
+}
+
+void TCAddPlaceholderTypesForProcedurePrototype(TCContext *tcContext,
+		ASTProcedurePrototype *astPrototype)
+{
+	// Scope names for polymorphic types
+	ArrayView<ASTProcedureParameter> astParameters = astPrototype->astParameters;
+	{
+		DynamicArray<TCScopeName, ThreadAllocator> polymorphicTypesScopeNames = {};
+
+		StaticDefinition newStaticDef = {};
+		newStaticDef.definitionType = STATICDEFINITIONTYPE_TYPE;
+		newStaticDef.typeTableIdx = TYPETABLEIDX_Anything;
+
+		TCScopeName newScopeName;
+		newScopeName.type = NAMETYPE_STATIC_DEFINITION;
+
+		for (int i = 0; i < astParameters.size; ++i) {
+			const ASTProcedureParameter *astParameter = &astParameters[i];
+			TCFindAllPolymorphicTypesInASTType(astParameter->astType, astParameter->loc,
+					&polymorphicTypesScopeNames);
+		}
+		for (int i = 0; i < polymorphicTypesScopeNames.size; ++i) {
+			StaticDefinition staticDef =
+				GetStaticDefinition(polymorphicTypesScopeNames[i].staticDefinitionIdx);
+			staticDef.typeTableIdx = TYPETABLEIDX_Anything;
+			UpdateStaticDefinition(polymorphicTypesScopeNames[i].staticDefinitionIdx, &staticDef);
+		}
+		if (polymorphicTypesScopeNames.size)
+			TCAddScopeNames(tcContext, polymorphicTypesScopeNames);
+	}
+}
+
 bool TypeCheckProcedurePrototype(TCContext *tcContext, ASTProcedurePrototype *astPrototype)
 {
 	// Parameters
 	bool beginOptionalParameters = false;
 	for (int i = 0; i < astPrototype->astParameters.size; ++i) {
-		TypeCheckProcedureParameter(tcContext, &astPrototype->astParameters[i]);
+		ASTProcedureParameter *astParam = &astPrototype->astParameters[i];
+		TypeCheckProcedureParameter(tcContext, astParam);
 
-		ASTProcedureParameter astParameter = astPrototype->astParameters[i];
-		if (!astParameter.astInitialValue) {
+		if (!astParam->astInitialValue) {
 			if (beginOptionalParameters)
-				LogError(astParameter.loc,
+				LogError(astParam->loc,
 						"Non-optional parameter after optional parameter found!"_s);
 		}
 		else
@@ -2551,14 +2693,16 @@ TypeInfo TypeInfoFromASTProcedurePrototype(ASTProcedurePrototype *astPrototype)
 
 		// Parameters
 		for (int i = 0; i < astParametersCount; ++i) {
-			ASTProcedureParameter astParameter = astPrototype->astParameters[i];
+			ASTProcedureParameter astParam = astPrototype->astParameters[i];
 
 			ProcedureParameter procParam = {};
-			procParam.typeTableIdx = astParameter.typeTableIdx;
-			if (astParameter.astInitialValue) {
-				procParam.defaultValue = TryEvaluateConstant(astParameter.astInitialValue);
+			procParam.typeTableIdx = astParam.typeTableIdx;
+			if (DoesTypeReferToPolymorphicType(astParam.astType))
+				procParam.isPolymorphic = true;
+			if (astParam.astInitialValue) {
+				procParam.defaultValue = TryEvaluateConstant(astParam.astInitialValue);
 				if (procParam.defaultValue.type == CONSTANTTYPE_INVALID)
-					LogError(astParameter.astInitialValue->any.loc,
+					LogError(astParam.astInitialValue->any.loc,
 							"Failed to evaluate constant in default parameter"_s);
 			}
 			*DynamicArrayAdd(&parameters) = procParam;
@@ -2580,7 +2724,70 @@ TypeInfo TypeInfoFromASTProcedurePrototype(ASTProcedurePrototype *astPrototype)
 	return t;
 }
 
-ASTExpression TCInlineProcedureCopyTreeBranch(TCContext *tcContext, const ASTExpression *expression)
+ASTExpression TCCopyASTBranch(TCContext *tcContext, const ASTExpression *expression);
+
+ASTType TCCopyASTType(TCContext *tcContext, const ASTType *astType)
+{
+	ASTType result = *astType;
+
+	switch (astType->nodeType) {
+	case ASTTYPENODETYPE_POINTER:
+	{
+		ASTType *newASTType = ALLOC(LinearAllocator, ASTType);
+		*newASTType = TCCopyASTType(tcContext, astType->pointedType);
+		result.pointedType = newASTType;
+	} break;
+	case ASTTYPENODETYPE_STRUCT_DECLARATION:
+	case ASTTYPENODETYPE_UNION_DECLARATION:
+	{
+		ArrayView<const ASTStructMemberDeclaration> members = astType->structDeclaration.members;
+		for (int memberIdx = 0; memberIdx < members.size; ++memberIdx) {
+			ASTType *newASTType = ALLOC(LinearAllocator, ASTType);
+			*newASTType = TCCopyASTType(tcContext, members[memberIdx].astType);
+			result.structDeclaration.members[memberIdx].astType = newASTType;
+		}
+		break;
+	}
+	case ASTTYPENODETYPE_ENUM_DECLARATION:
+	{
+		ASTType *newASTType = ALLOC(LinearAllocator, ASTType);
+		*newASTType = TCCopyASTType(tcContext, astType->enumDeclaration.astType);
+		result.enumDeclaration.astType = newASTType;
+	} break;
+	case ASTTYPENODETYPE_ARRAY:
+	{
+		ASTType *newASTType = ALLOC(LinearAllocator, ASTType);
+		*newASTType = TCCopyASTType(tcContext, astType->arrayType);
+		result.arrayType = newASTType;
+
+		if (result.arrayCountExp) {
+			ASTExpression *newArrayCountExp = TCNewTreeNode();
+			*newArrayCountExp = TCCopyASTBranch(tcContext, result.arrayCountExp);
+			result.arrayCountExp = newArrayCountExp;
+		}
+	} break;
+	case ASTTYPENODETYPE_PROCEDURE:
+	{
+		ArrayView<const ASTProcedureParameter> params = astType->procedurePrototype.astParameters;
+		for (int paramIdx = 0; paramIdx < params.size; ++paramIdx) {
+			ASTType *newASTType = ALLOC(LinearAllocator, ASTType);
+			*newASTType = TCCopyASTType(tcContext, params[paramIdx].astType);
+			result.procedurePrototype.astParameters[paramIdx].astType = newASTType;
+		}
+		ArrayView<ASTType * const> returnTypes = astType->procedurePrototype.astReturnTypes;
+		for (int retIdx = 0; retIdx < returnTypes.size; ++retIdx) {
+			ASTType *newASTType = ALLOC(LinearAllocator, ASTType);
+			*newASTType = TCCopyASTType(tcContext, returnTypes[retIdx]);
+			result.procedurePrototype.astReturnTypes[retIdx] = newASTType;
+		}
+		break;
+	}
+	}
+
+	return result;
+}
+
+ASTExpression TCCopyASTBranch(TCContext *tcContext, const ASTExpression *expression)
 {
 	ASTExpression result;
 	result.nodeType = expression->nodeType;
@@ -2596,7 +2803,7 @@ ASTExpression TCInlineProcedureCopyTreeBranch(TCContext *tcContext, const ASTExp
 		TCPushScope(tcContext);
 
 		for (int i = 0; i < expression->block.statements.size; ++i) {
-			ASTExpression statement = TCInlineProcedureCopyTreeBranch(tcContext,
+			ASTExpression statement = TCCopyASTBranch(tcContext,
 					&expression->block.statements[i]);
 			if (statement.nodeType != ASTNODETYPE_INVALID)
 				*DynamicArrayAdd(&astBlock.statements) = statement;
@@ -2610,6 +2817,10 @@ ASTExpression TCInlineProcedureCopyTreeBranch(TCContext *tcContext, const ASTExp
 	case ASTNODETYPE_VARIABLE_DECLARATION:
 	{
 		ASTVariableDeclaration varDecl = expression->variableDeclaration;
+
+		ASTType *newASTType = ALLOC(LinearAllocator, ASTType);
+		*newASTType = TCCopyASTType(tcContext, varDecl.astType);
+		varDecl.astType = newASTType;
 
 		u32 flags = (g_context->config.dontPromoteMemoryToRegisters ? VALUEFLAGS_FORCE_MEMORY : 0) |
 					(varDecl.isStatic   ? VALUEFLAGS_ON_STATIC_STORAGE : 0) |
@@ -2660,7 +2871,7 @@ ASTExpression TCInlineProcedureCopyTreeBranch(TCContext *tcContext, const ASTExp
 
 		if (varDecl.astInitialValue) {
 			ASTExpression *astInitialValue = TCNewTreeNode();
-			*astInitialValue = TCInlineProcedureCopyTreeBranch(tcContext, varDecl.astInitialValue);
+			*astInitialValue = TCCopyASTBranch(tcContext, varDecl.astInitialValue);
 			varDecl.astInitialValue = astInitialValue;
 		}
 
@@ -2721,21 +2932,21 @@ ASTExpression TCInlineProcedureCopyTreeBranch(TCContext *tcContext, const ASTExp
 	case ASTNODETYPE_RETURN:
 	{
 		ASTExpression *e = TCNewTreeNode();
-		*e = TCInlineProcedureCopyTreeBranch(tcContext, expression->returnNode.expression);
+		*e = TCCopyASTBranch(tcContext, expression->returnNode.expression);
 		result.returnNode.expression = e;
 		return result;
 	}
 	case ASTNODETYPE_DEFER:
 	{
 		ASTExpression *e = TCNewTreeNode();
-		*e = TCInlineProcedureCopyTreeBranch(tcContext, expression->deferNode.expression);
+		*e = TCCopyASTBranch(tcContext, expression->deferNode.expression);
 		result.deferNode.expression = e;
 		return result;
 	}
 	case ASTNODETYPE_USING:
 	{
 		ASTExpression *usingExp = TCNewTreeNode();
-		*usingExp = TCInlineProcedureCopyTreeBranch(tcContext, expression->usingNode.expression);
+		*usingExp = TCCopyASTBranch(tcContext, expression->usingNode.expression);
 
 		if (usingExp->nodeType == ASTNODETYPE_VARIABLE_DECLARATION)
 		{
@@ -2767,13 +2978,13 @@ ASTExpression TCInlineProcedureCopyTreeBranch(TCContext *tcContext, const ASTExp
 			DynamicArrayInit(&astProcCall.arguments, argCount);
 			for (int argIdx = 0; argIdx < argCount; ++argIdx) {
 				ASTExpression *arg = TCNewTreeNode();
-				*arg = TCInlineProcedureCopyTreeBranch(tcContext, original.arguments[argIdx]);
+				*arg = TCCopyASTBranch(tcContext, original.arguments[argIdx]);
 				*DynamicArrayAdd(&astProcCall.arguments) = arg;
 			}
 		}
 
 		ASTExpression *exp = TCNewTreeNode();
-		*exp = TCInlineProcedureCopyTreeBranch(tcContext, original.procedureExpression);
+		*exp = TCCopyASTBranch(tcContext, original.procedureExpression);
 
 		result.procedureCall = astProcCall;
 		return result;
@@ -2782,7 +2993,7 @@ ASTExpression TCInlineProcedureCopyTreeBranch(TCContext *tcContext, const ASTExp
 	{
 		ASTUnaryOperation astUnary = expression->unaryOperation;
 		ASTExpression *e = TCNewTreeNode();
-		*e = TCInlineProcedureCopyTreeBranch(tcContext, expression->unaryOperation.expression);
+		*e = TCCopyASTBranch(tcContext, expression->unaryOperation.expression);
 		astUnary.expression = e;
 		result.unaryOperation = astUnary;
 		return result;
@@ -2792,13 +3003,13 @@ ASTExpression TCInlineProcedureCopyTreeBranch(TCContext *tcContext, const ASTExp
 		ASTBinaryOperation astBinary = expression->binaryOperation;
 		ASTExpression *l = TCNewTreeNode();
 		ASTExpression *r = TCNewTreeNode();
-		*l = TCInlineProcedureCopyTreeBranch(tcContext, expression->binaryOperation.leftHand);
+		*l = TCCopyASTBranch(tcContext, expression->binaryOperation.leftHand);
 
 		// For member access we can just copy
 		if (expression->binaryOperation.op == TOKEN_OP_MEMBER_ACCESS)
 			*r = *expression->binaryOperation.rightHand;
 		else
-			*r = TCInlineProcedureCopyTreeBranch(tcContext, expression->binaryOperation.rightHand);
+			*r = TCCopyASTBranch(tcContext, expression->binaryOperation.rightHand);
 
 		astBinary.leftHand = l;
 		astBinary.rightHand = r;
@@ -2813,7 +3024,7 @@ ASTExpression TCInlineProcedureCopyTreeBranch(TCContext *tcContext, const ASTExp
 			ArrayInit(&astLiteral.members, expression->literal.members.size);
 			for (int memberIdx = 0; memberIdx < expression->literal.members.size; ++memberIdx) {
 				ASTExpression *e = TCNewTreeNode();
-				*e = TCInlineProcedureCopyTreeBranch(tcContext,
+				*e = TCCopyASTBranch(tcContext,
 						expression->literal.members[memberIdx]);
 				*ArrayAdd(&astLiteral.members) = e;
 			}
@@ -2827,16 +3038,16 @@ ASTExpression TCInlineProcedureCopyTreeBranch(TCContext *tcContext, const ASTExp
 		ASTIf astIf = expression->ifNode;
 
 		ASTExpression *e = TCNewTreeNode();
-		*e = TCInlineProcedureCopyTreeBranch(tcContext, expression->ifNode.condition);
+		*e = TCCopyASTBranch(tcContext, expression->ifNode.condition);
 		astIf.condition = e;
 
 		e = TCNewTreeNode();
-		*e = TCInlineProcedureCopyTreeBranch(tcContext, expression->ifNode.body);
+		*e = TCCopyASTBranch(tcContext, expression->ifNode.body);
 		astIf.body = e;
 
 		if (expression->ifNode.elseBody) {
 			e = TCNewTreeNode();
-			*e = TCInlineProcedureCopyTreeBranch(tcContext, expression->ifNode.elseBody);
+			*e = TCCopyASTBranch(tcContext, expression->ifNode.elseBody);
 			astIf.elseBody = e;
 		}
 
@@ -2848,11 +3059,11 @@ ASTExpression TCInlineProcedureCopyTreeBranch(TCContext *tcContext, const ASTExp
 		ASTWhile astWhile = expression->whileNode;
 
 		ASTExpression *e = TCNewTreeNode();
-		*e = TCInlineProcedureCopyTreeBranch(tcContext, expression->whileNode.condition);
+		*e = TCCopyASTBranch(tcContext, expression->whileNode.condition);
 		astWhile.condition = e;
 
 		e = TCNewTreeNode();
-		*e = TCInlineProcedureCopyTreeBranch(tcContext, expression->whileNode.body);
+		*e = TCCopyASTBranch(tcContext, expression->whileNode.body);
 		astWhile.body = e;
 
 		result.whileNode = astWhile;
@@ -2863,7 +3074,7 @@ ASTExpression TCInlineProcedureCopyTreeBranch(TCContext *tcContext, const ASTExp
 		ASTFor astFor = expression->forNode;
 
 		ASTExpression *e = TCNewTreeNode();
-		*e = TCInlineProcedureCopyTreeBranch(tcContext, astFor.range);
+		*e = TCCopyASTBranch(tcContext, astFor.range);
 		astFor.range = e;
 
 		TCPushScope(tcContext);
@@ -2916,7 +3127,7 @@ ASTExpression TCInlineProcedureCopyTreeBranch(TCContext *tcContext, const ASTExp
 		TCAddScopeNames(tcContext, scopeNamesToAdd);
 
 		e = TCNewTreeNode();
-		*e = TCInlineProcedureCopyTreeBranch(tcContext, expression->forNode.body);
+		*e = TCCopyASTBranch(tcContext, expression->forNode.body);
 		astFor.body = e;
 
 		TCPopScope(tcContext);
@@ -2927,17 +3138,30 @@ ASTExpression TCInlineProcedureCopyTreeBranch(TCContext *tcContext, const ASTExp
 	case ASTNODETYPE_BREAK:
 	case ASTNODETYPE_CONTINUE:
 	case ASTNODETYPE_TYPE:
-	case ASTNODETYPE_TYPEOF:
-	case ASTNODETYPE_SIZEOF:
 	case ASTNODETYPE_GARBAGE:
 	{
 		return *expression;
 	}
+	case ASTNODETYPE_TYPEOF:
+	{
+		ASTExpression *e = TCNewTreeNode();
+		*e = TCCopyASTBranch(tcContext, expression->typeOfNode.expression);
+		result.typeOfNode.expression = e;
+		return result;
+	}
+	case ASTNODETYPE_SIZEOF:
+	{
+		ASTExpression *e = TCNewTreeNode();
+		*e = TCCopyASTBranch(tcContext, expression->sizeOfNode.expression);
+		result.sizeOfNode.expression = e;
+		return result;
+	}
 	case ASTNODETYPE_CAST:
 	{
 		ASTExpression *e = TCNewTreeNode();
-		*e = TCInlineProcedureCopyTreeBranch(tcContext, expression->castNode.expression);
+		*e = TCCopyASTBranch(tcContext, expression->castNode.expression);
 		result.castNode.expression = e;
+		result.castNode.astType = TCCopyASTType(tcContext, &expression->castNode.astType);
 		return result;
 	}
 	case ASTNODETYPE_INTRINSIC:
@@ -2947,7 +3171,7 @@ ASTExpression TCInlineProcedureCopyTreeBranch(TCContext *tcContext, const ASTExp
 		if (argCount) {
 			DynamicArrayInit(&astIntrinsic.arguments, argCount);
 			for (int argIdx = 0; argIdx < argCount; ++argIdx) {
-				*DynamicArrayAdd(&astIntrinsic.arguments) = TCInlineProcedureCopyTreeBranch(tcContext,
+				*DynamicArrayAdd(&astIntrinsic.arguments) = TCCopyASTBranch(tcContext,
 						&expression->intrinsic.arguments[argIdx]);
 			}
 		}
@@ -3065,7 +3289,7 @@ bool TCPushParametersAndInlineProcedureCall(TCContext *tcContext, ASTProcedureCa
 	TCAddParametersToScope(tcContext, astProcCall->inlineParameterValues, &proc.astPrototype);
 
 	ASTExpression *e = TCNewTreeNode();
-	*e = TCInlineProcedureCopyTreeBranch(tcContext, proc.astBody);
+	*e = TCCopyASTBranch(tcContext, proc.astBody);
 	astProcCall->astBodyInlineCopy = e;
 
 	TCPopScope(tcContext);
@@ -3396,6 +3620,195 @@ tryAgain:
 	return true;
 }
 
+u32 TCInstantiateProcedure(TCContext *tcContext, u32 procedureIdx, ArrayView<u32> givenTypes)
+{
+	Procedure proc = GetProcedureRead(procedureIdx);
+
+	// @Improve: this is no better than C++ name mangling
+	for (int i = 0; i < givenTypes.size; ++i)
+		proc.name = TPrintF("%S_%u", proc.name, givenTypes[i]);
+
+	// Copy ASTTypes
+	{
+		ArrayView<ASTProcedureParameter> oldAstParameters = proc.astPrototype.astParameters;
+		DynamicArrayInit(&proc.astPrototype.astParameters, oldAstParameters.size);
+		for (int i = 0; i < oldAstParameters.size; ++i) {
+			ASTProcedureParameter *astParameter = DynamicArrayAdd(&proc.astPrototype.astParameters);
+			*astParameter = oldAstParameters[i];
+			ASTType *newASTType = ALLOC(LinearAllocator, ASTType);
+			*newASTType = TCCopyASTType(tcContext, oldAstParameters[i].astType);
+			astParameter->astType = newASTType;
+		}
+		ArrayView<ASTType *> oldAstReturnTypes = proc.astPrototype.astReturnTypes;
+		DynamicArrayInit(&proc.astPrototype.astReturnTypes, oldAstReturnTypes.size);
+		for (int i = 0; i < oldAstReturnTypes.size; ++i) {
+			ASTType **astReturnType = DynamicArrayAdd(&proc.astPrototype.astReturnTypes);
+			ASTType *newASTType = ALLOC(LinearAllocator, ASTType);
+			*newASTType = TCCopyASTType(tcContext, oldAstReturnTypes[i]);
+			*astReturnType = newASTType;
+		}
+	}
+
+	TCContext procedureContext = *tcContext;
+	BucketArrayInit(&procedureContext.localValues);
+	*BucketArrayAdd(&procedureContext.localValues) = {}; // No value number 0?
+	DynamicArrayInit(&procedureContext.scopeStack, 8);
+
+	procedureContext.onStaticContext = false;
+
+	TCPushScope(&procedureContext);
+
+	// Scope names for polymorphic types
+	{
+		ArrayView<ASTProcedureParameter> astParameters = proc.astPrototype.astParameters;
+		DynamicArray<TCScopeName, ThreadAllocator> polymorphicTypesScopeNames = {};
+
+		StaticDefinition newStaticDef = {};
+		newStaticDef.definitionType = STATICDEFINITIONTYPE_TYPE;
+
+		TCScopeName newScopeName;
+		newScopeName.type = NAMETYPE_STATIC_DEFINITION;
+
+		for (int i = 0, currentInType = 0; i < astParameters.size; ++i) {
+			const ASTProcedureParameter *astParameter = &astParameters[i];
+			TCFindAllPolymorphicTypesInASTType(astParameter->astType, astParameter->loc,
+					&polymorphicTypesScopeNames);
+		}
+		ASSERT(polymorphicTypesScopeNames.size == givenTypes.size);
+		for (int i = 0; i < givenTypes.size; ++i) {
+			StaticDefinition staticDef =
+				GetStaticDefinition(polymorphicTypesScopeNames[i].staticDefinitionIdx);
+			staticDef.typeTableIdx = givenTypes[i];
+			UpdateStaticDefinition(polymorphicTypesScopeNames[i].staticDefinitionIdx, &staticDef);
+		}
+		if (polymorphicTypesScopeNames.size)
+			TCAddScopeNames(&procedureContext, polymorphicTypesScopeNames);
+	}
+
+	TypeCheckProcedurePrototype(&procedureContext, &proc.astPrototype);
+	TypeInfo t = TypeInfoFromASTProcedurePrototype(&proc.astPrototype);
+	proc.typeTableIdx = FindOrAddTypeTableIdx(t);
+	u32 newProcIdx = NewProcedure(proc, false);
+
+	// Parameters
+	ArrayView<ASTProcedureParameter> astParameters = proc.astPrototype.astParameters;
+	for (int i = 0; i < astParameters.size; ++i) {
+		const ASTProcedureParameter *astParameter = &astParameters[i];
+		u32 paramValueIdx = TCNewValue(&procedureContext, astParameter->name, astParameter->typeTableIdx, 0);
+		*DynamicArrayAdd(&proc.parameterValues) = paramValueIdx;
+	}
+	// Varargs array
+	if (proc.astPrototype.isVarargs) {
+		static u32 arrayTableIdx = GetTypeInfoArrayOf(TYPETABLEIDX_ANY_STRUCT, 0);
+
+		u32 valueIdx = TCNewValue(&procedureContext, proc.astPrototype.varargsName, arrayTableIdx, 0);
+		*DynamicArrayAdd(&proc.parameterValues) = valueIdx;
+	}
+
+	TCAddParametersToScope(&procedureContext, proc.parameterValues, &proc.astPrototype);
+
+	if (proc.astPrototype.returnTypeIndices.size) {
+		ArrayInit(&proc.returnValueIndices, proc.astPrototype.returnTypeIndices.size);
+		for (int i = 0; i < proc.astPrototype.returnTypeIndices.size; ++i)
+			*ArrayAdd(&proc.returnValueIndices) = TCNewValue(&procedureContext, "_returnValue"_s,
+				proc.astPrototype.returnTypeIndices[i], 0);
+	}
+
+	procedureContext.currentProcedureIdx = newProcIdx;
+	procedureContext.currentReturnTypes = t.procedureInfo.returnTypeIndices;
+
+	// Deep-copy the body syntax tree
+	{
+		ASTExpression *astBodyCopy = TCNewTreeNode();
+		*astBodyCopy = TCCopyASTBranch(&procedureContext, proc.astBody);
+		proc.astBody = astBodyCopy;
+	}
+
+	TypeCheckExpression(&procedureContext, proc.astBody);
+
+	proc.isBodyTypeChecked = true;
+
+	UpdateProcedure(newProcIdx, &proc);
+
+	// Wake up any jobs that were waiting for this proc body
+	WakeUpAllByIndex(YIELDREASON_PROC_BODY_NOT_READY, newProcIdx);
+
+	TCPopScope(&procedureContext);
+
+	// Code gen!
+	{
+		IRJobArgs *args = ALLOC(LinearAllocator, IRJobArgs);
+		*args = {
+			.procedureIdx = newProcIdx,
+			.localValues = procedureContext.localValues,
+			.expression = nullptr
+		};
+		RequestNewJob(JOBTYPE_CODEGEN, IRJobProcedure, (void *)args);
+	}
+
+	return newProcIdx;
+}
+
+void TCExtractPolymorphicTypes(ASTType *astType, u32 givenTypeIdx,
+		DynamicArray<u32, ThreadAllocator> *polymorphicTypes)
+{
+	// First these that don't need the type info
+	if (astType->nodeType == ASTTYPENODETYPE_IDENTIFIER)
+		return;
+	if (astType->nodeType == ASTTYPENODETYPE_TYPE_ARGUMENT_DECLARATION) {
+		if (polymorphicTypes->size == 0)
+			DynamicArrayInit(polymorphicTypes, 2);
+		*DynamicArrayAdd(polymorphicTypes) = InferType(givenTypeIdx);
+		return;
+	}
+
+	TypeInfo typeInfo = GetTypeInfo(givenTypeIdx);
+
+	switch (astType->nodeType) {
+	case ASTTYPENODETYPE_POINTER:
+		ASSERT(typeInfo.typeCategory == TYPECATEGORY_POINTER);
+		TCExtractPolymorphicTypes(astType->pointedType, typeInfo.pointerInfo.pointedTypeTableIdx,
+				polymorphicTypes);
+		break;
+	case ASTTYPENODETYPE_STRUCT_DECLARATION:
+	case ASTTYPENODETYPE_UNION_DECLARATION:
+	{
+		ASSERT(typeInfo.typeCategory == TYPECATEGORY_STRUCT ||
+			   typeInfo.typeCategory == TYPECATEGORY_UNION);
+		int memberCount = astType->structDeclaration.members.size;
+		ASSERT(typeInfo.structInfo.members.size == memberCount);
+		for (int memberIdx = 0; memberIdx < memberCount; ++memberIdx) {
+			ASTStructMemberDeclaration *astMember = &astType->structDeclaration.members[memberIdx];
+			u32 memberTypeIdx = typeInfo.structInfo.members[memberIdx].typeTableIdx;
+			TCExtractPolymorphicTypes(astMember->astType, memberTypeIdx, polymorphicTypes);
+		}
+	} break;
+	case ASTTYPENODETYPE_ENUM_DECLARATION:
+		ASSERT(typeInfo.typeCategory == TYPECATEGORY_ENUM);
+		TCExtractPolymorphicTypes(astType->enumDeclaration.astType,
+				typeInfo.enumInfo.typeTableIdx, polymorphicTypes);
+		break;
+	case ASTTYPENODETYPE_ARRAY:
+		ASSERT(typeInfo.typeCategory == TYPECATEGORY_ARRAY);
+		TCExtractPolymorphicTypes(astType->arrayType, typeInfo.arrayInfo.elementTypeTableIdx,
+				polymorphicTypes);
+		break;
+	case ASTTYPENODETYPE_PROCEDURE:
+	{
+		ASSERT(typeInfo.typeCategory == TYPECATEGORY_PROCEDURE);
+		ArrayView<ASTProcedureParameter> astParameters = astType->procedurePrototype.astParameters;
+		ASSERT(astParameters.size == typeInfo.procedureInfo.parameters.size);
+		for (int paramIdx = 0; paramIdx < astParameters.size; ++paramIdx) {
+			ASTProcedureParameter *astParam = &astParameters[paramIdx];
+			u32 paramTypeIdx = typeInfo.procedureInfo.parameters[paramIdx].typeTableIdx;
+			TCExtractPolymorphicTypes(astParam->astType, paramTypeIdx, polymorphicTypes);
+		}
+	} break;
+	default:
+		ASSERT(false);
+	}
+}
+
 void GenerateTypeCheckJobs(ASTExpression *expression);
 void TypeCheckExpression(TCContext *tcContext, ASTExpression *expression)
 {
@@ -3445,28 +3858,31 @@ void TypeCheckExpression(TCContext *tcContext, ASTExpression *expression)
 		switch (astStaticDef->expression->nodeType) {
 		case ASTNODETYPE_PROCEDURE_DECLARATION:
 		{
-			TCContext procedureContext = *tcContext;
-			BucketArrayInit(&procedureContext.localValues);
-			*BucketArrayAdd(&procedureContext.localValues) = {}; // No value number 0?
-			// Don't allocate a new array if old is empty.
-			if (tcContext->scopeStack.size)
-				DynamicArrayInit(&procedureContext.scopeStack, 8);
-
-			procedureContext.onStaticContext = false;
+			// Set up a workspace scope, we'll add things like polymorphic types to it.
+			TCPushScope(tcContext);
 
 			ASTProcedureDeclaration *astProcDecl = &astStaticDef->expression->procedureDeclaration;
 			ASTProcedurePrototype *astPrototype = &astProcDecl->prototype;
 
-			TypeCheckProcedurePrototype(&procedureContext, astPrototype);
+			TCAddPlaceholderTypesForProcedurePrototype(tcContext, astPrototype);
+			TypeCheckProcedurePrototype(tcContext, astPrototype);
 			TypeInfo t = TypeInfoFromASTProcedurePrototype(astPrototype);
+
+			bool isPolymorphic = false;
+			for (int i = 0; i < t.procedureInfo.parameters.size; ++i) {
+				if (t.procedureInfo.parameters[i].isPolymorphic) {
+					isPolymorphic = true;
+					break;
+				}
+			}
 
 			u32 typeTableIdx = FindOrAddTypeTableIdx(t);
 			astStaticDef->expression->typeTableIdx = typeTableIdx;
+			expression->typeTableIdx = typeTableIdx;
 
 			Procedure procedure = {};
-			procedure.typeTableIdx = TYPETABLEIDX_Unset;
-			procedure.name = astProcDecl->name;
 			procedure.typeTableIdx = typeTableIdx;
+			procedure.name = astProcDecl->name;
 			procedure.astBody = astProcDecl->astBody;
 			procedure.isInline = astProcDecl->isInline;
 			procedure.isExported = astProcDecl->isExported;
@@ -3476,11 +3892,10 @@ void TypeCheckExpression(TCContext *tcContext, ASTExpression *expression)
 			astProcDecl->procedureIdx = procedureIdx;
 
 			StaticDefinition newStaticDef = {};
-			newStaticDef.typeTableIdx = TYPETABLEIDX_Unset;
+			newStaticDef.typeTableIdx = typeTableIdx;
 			newStaticDef.name = *GetVariableName(astStaticDef, 0);
 			newStaticDef.definitionType = STATICDEFINITIONTYPE_PROCEDURE;
 			newStaticDef.procedureIdx = procedureIdx;
-			newStaticDef.typeTableIdx = typeTableIdx;
 
 			u32 newStaticDefIdx = NewStaticDefinition(&newStaticDef);
 			astStaticDef->staticDefinitionIdx = newStaticDefIdx;
@@ -3498,14 +3913,38 @@ void TypeCheckExpression(TCContext *tcContext, ASTExpression *expression)
 					newScopeName.name = *GetVariableName(astStaticDef, i);
 					*ArrayAdd(&scopeNamesToAdd) = newScopeName;
 				}
-				TCAddScopeNames(&procedureContext, scopeNamesToAdd);
+				TCAddScopeNames(tcContext, scopeNamesToAdd);
 			}
 
-			TCPushScope(&procedureContext);
-
 			if (procedure.astBody) {
+				// Check all paths return
+				if (t.procedureInfo.returnTypeIndices.size) {
+					ReturnCheckResult result = TCCheckIfReturnsValue(procedure.astBody);
+					if (result == RETURNCHECKRESULT_SOMETIMES)
+						LogError(expression->any.loc, "Procedure doesn't always return a value"_s);
+					else if (result == RETURNCHECKRESULT_NEVER)
+						LogError(expression->any.loc, "Procedure has to return a value"_s);
+				}
+			}
+
+			if (procedure.astBody && !isPolymorphic) {
+				TCContext procedureContext = *tcContext;
+				BucketArrayInit(&procedureContext.localValues);
+				*BucketArrayAdd(&procedureContext.localValues) = {}; // No value number 0?
+				DynamicArrayInit(&procedureContext.scopeStack, 8);
+
+				TCPushScope(&procedureContext);
+
+				procedureContext.onStaticContext = false;
+
+				// Copy top-most scope to this context (our workspace scope)
+				{
+					TCScope *topScope = TCGetTopMostScope(tcContext);
+					TCAddScopeNames(&procedureContext, topScope->names);
+				}
+
 				// Parameters
-				ArrayView<ASTProcedureParameter> astParameters = astPrototype->astParameters;
+				ArrayView<ASTProcedureParameter> astParameters = procedure.astPrototype.astParameters;
 				for (int i = 0; i < astParameters.size; ++i) {
 					const ASTProcedureParameter *astParameter = &astParameters[i];
 					u32 paramValueIdx = TCNewValue(&procedureContext, astParameter->name, astParameter->typeTableIdx, 0);
@@ -3532,28 +3971,15 @@ void TypeCheckExpression(TCContext *tcContext, ASTExpression *expression)
 				procedureContext.currentReturnTypes = t.procedureInfo.returnTypeIndices;
 
 				TypeCheckExpression(&procedureContext, procedure.astBody);
-			}
-			procedure.isBodyTypeChecked = true;
 
-			UpdateProcedure(procedureIdx, &procedure);
+				procedure.isBodyTypeChecked = true;
 
-			// Wake up any jobs that were waiting for this procedure body
-			WakeUpAllByIndex(YIELDREASON_PROC_BODY_NOT_READY, procedureIdx);
+				UpdateProcedure(procedureIdx, &procedure);
 
-			expression->typeTableIdx = procedure.typeTableIdx;
-			TCPopScope(&procedureContext);
+				// Wake up any jobs that were waiting for this procedure body
+				WakeUpAllByIndex(YIELDREASON_PROC_BODY_NOT_READY, procedureIdx);
 
-			if (procedure.astBody)
-			{
-				// Check all paths return
-				if (t.procedureInfo.returnTypeIndices.size)
-				{
-					ReturnCheckResult result = TCCheckIfReturnsValue(procedure.astBody);
-					if (result == RETURNCHECKRESULT_SOMETIMES)
-						LogError(expression->any.loc, "Procedure doesn't always return a value"_s);
-					else if (result == RETURNCHECKRESULT_NEVER)
-						LogError(expression->any.loc, "Procedure has to return a value"_s);
-				}
+				TCPopScope(&procedureContext);
 
 				// Code gen!
 				{
@@ -3565,6 +3991,23 @@ void TypeCheckExpression(TCContext *tcContext, ASTExpression *expression)
 					};
 					RequestNewJob(JOBTYPE_CODEGEN, IRJobProcedure, (void *)args);
 				}
+			}
+			TCPopScope(tcContext);
+
+			// Add scope name
+			{
+				Array<TCScopeName, ThreadAllocator> scopeNamesToAdd;
+				ArrayInit(&scopeNamesToAdd, astStaticDef->nameCount);
+
+				TCScopeName newScopeName;
+				newScopeName.type = NAMETYPE_STATIC_DEFINITION;
+				newScopeName.staticDefinitionIdx = newStaticDefIdx;
+				newScopeName.loc = astStaticDef->loc;
+				for (u32 i = 0; i < astStaticDef->nameCount; ++i) {
+					newScopeName.name = *GetVariableName(astStaticDef, i);
+					*ArrayAdd(&scopeNamesToAdd) = newScopeName;
+				}
+				TCAddScopeNames(tcContext, scopeNamesToAdd);
 			}
 		} break;
 		case ASTNODETYPE_TYPE:
@@ -3811,6 +4254,7 @@ void TypeCheckExpression(TCContext *tcContext, ASTExpression *expression)
 
 				procedureIdx = staticDefinition.procedureIdx;
 				Procedure proc = GetProcedureRead(procedureIdx);
+
 				if ((proc.isInline || astProcCall->inlineType == CALLINLINETYPE_ALWAYS_INLINE) &&
 						astProcCall->inlineType != CALLINLINETYPE_NEVER_INLINE) {
 
@@ -3846,17 +4290,17 @@ void TypeCheckExpression(TCContext *tcContext, ASTExpression *expression)
 			TypeCheckExpression(tcContext, arg);
 		}
 
-		astProcCall->callType = callType;
-		astProcCall->procedureIdx = procedureIdx;
-		astProcCall->procedureTypeIdx = procedureTypeIdx;
+		String errorProcedureName = {};
+		if (astProcExp->nodeType == ASTNODETYPE_IDENTIFIER)
+			errorProcedureName = TPrintF(" \"%S\"", astProcExp->identifier.string);
 
 		ASSERT(GetTypeInfo(procedureTypeIdx).typeCategory == TYPECATEGORY_PROCEDURE);
 		TypeInfoProcedure procTypeInfo = GetTypeInfo(procedureTypeIdx).procedureInfo;
+		s64 totalArguments = procTypeInfo.parameters.size;
 
-		if (procTypeInfo.returnTypeIndices.size == 0)
-			expression->typeTableIdx = TYPETABLEIDX_VOID;
-		else if (procTypeInfo.returnTypeIndices.size == 1)
-			expression->typeTableIdx = procTypeInfo.returnTypeIndices[0];
+		astProcCall->callType = callType;
+		astProcCall->procedureIdx = procedureIdx;
+		astProcCall->procedureTypeIdx = procedureTypeIdx;
 
 		// Type check arguments
 		s64 requiredArguments = 0;
@@ -3865,11 +4309,6 @@ void TypeCheckExpression(TCContext *tcContext, ASTExpression *expression)
 				++requiredArguments;
 		}
 
-		String errorProcedureName = {};
-		if (astProcExp->nodeType == ASTNODETYPE_IDENTIFIER)
-			errorProcedureName = TPrintF(" \"%S\"", astProcExp->identifier.string);
-
-		s64 totalArguments = procTypeInfo.parameters.size;
 		if (procTypeInfo.isVarargs) {
 			if (requiredArguments > givenArguments)
 				LogError(astProcExp->any.loc,
@@ -3896,11 +4335,34 @@ void TypeCheckExpression(TCContext *tcContext, ASTExpression *expression)
 			arg->typeTableIdx = typeCheckResult.rightTypeIdx;
 
 			if (typeCheckResult.errorCode != TYPECHECK_COOL) {
+				String paramName = {};
+				if (callType == CALLTYPE_STATIC)
+					paramName = TPrintF(" \"%S\"",
+							GetProcedureRead(procedureIdx).astPrototype.astParameters[argIdx].name);
 				String paramStr = TypeInfoToString(paramTypeIdx);
 				String givenStr = TypeInfoToString(arg->typeTableIdx);
 				LogError(arg->any.loc, TPrintF("When calling procedure%S: type of "
-							"parameter #%d didn't match (parameter is %S but %S was given)",
-							errorProcedureName, argIdx, paramStr, givenStr));
+							"parameter %d%S didn't match (parameter is %S but %S was given)",
+							errorProcedureName, argIdx+1, paramName, paramStr, givenStr));
+			}
+		}
+
+		if (callType == CALLTYPE_STATIC) {
+			DynamicArray<u32, ThreadAllocator> polymorphicTypes = {};
+
+			Procedure proc = GetProcedureRead(procedureIdx);
+			s64 argsToCheck = Min(givenArguments, totalArguments);
+			for (int argIdx = 0; argIdx < argsToCheck; ++argIdx) {
+				ASTExpression *arg = astProcCall->arguments[argIdx];
+				TCExtractPolymorphicTypes(proc.astPrototype.astParameters[argIdx].astType,
+						arg->typeTableIdx, &polymorphicTypes);
+			}
+
+			if (polymorphicTypes.size) {
+				u32 newProcIdx = TCInstantiateProcedure(tcContext, procedureIdx, polymorphicTypes);
+				astProcCall->procedureIdx = newProcIdx;
+				astProcCall->procedureTypeIdx = GetProcedureRead(newProcIdx).typeTableIdx;
+				procTypeInfo = GetTypeInfo(astProcCall->procedureTypeIdx).procedureInfo;
 			}
 		}
 
@@ -3911,6 +4373,11 @@ void TypeCheckExpression(TCContext *tcContext, ASTExpression *expression)
 			if (inferred != arg->typeTableIdx)
 				InferTypesInExpression(arg, inferred);
 		}
+
+		if (procTypeInfo.returnTypeIndices.size == 0)
+			expression->typeTableIdx = TYPETABLEIDX_VOID;
+		else if (procTypeInfo.returnTypeIndices.size == 1)
+			expression->typeTableIdx = procTypeInfo.returnTypeIndices[0];
 
 		TCPushParametersAndInlineProcedureCall(tcContext, astProcCall);
 	} break;

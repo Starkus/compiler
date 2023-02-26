@@ -130,7 +130,7 @@ inline void RWSpinlockLockForWrite(volatile u32 *lock)
 retry:
 	// Request, to stop new read locks
 	if (!(*lock & RWSPINLOCK_WRITE_REQUESTED_BIT))
-		__atomic_or_fetch(lock, RWSPINLOCK_WRITE_REQUESTED_BIT);
+		__atomic_or_fetch(lock, RWSPINLOCK_WRITE_REQUESTED_BIT, __ATOMIC_ACQUIRE);
 
 	int expected = RWSPINLOCK_WRITE_REQUESTED_BIT;
 	int desired = expected | RWSPINLOCK_WRITE_LOCKED;

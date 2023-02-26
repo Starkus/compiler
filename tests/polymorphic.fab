@@ -1,0 +1,47 @@
+#include "core/basic.fab";
+#include "core/print.fab";
+
+GetSize :: (something: $T) -> u64
+{
+	return sizeof(something);
+}
+
+Max :: (a: $T, b: T) -> T
+{
+	if a > b return a; else return b;
+}
+
+GetAtIndex :: (array: []$ElementType, i: u64) -> ElementType
+{
+	return array[i];
+}
+
+Main :: (args: [] String) -> s64
+{
+	foo: s32;
+	sizeOfFoo := GetSize(foo);
+	PrintF("Size of foo is %\n", sizeOfFoo);
+
+	// Reuse proc instance
+	sizeOfFoo = GetSize(foo);
+
+	bar: s16;
+	sizeOfBar := GetSize(bar);
+	PrintF("Size of bar is %\n", sizeOfBar);
+
+	small: s8 = 4;
+	large: s8 = 7;
+	max := Max(small, large);
+	PrintF("Max of % and % is %\n", small, large, max);
+
+	anArray: [7] u64;
+	for anArray @it = cast(u64)i * 4;
+	at3 := GetAtIndex(anArray, 3);
+	PrintF("anArray[3] is %\n", at3);
+
+	//GetAtIndex(foo, bar);
+
+	Max(cast(s32)5, cast(u16)6);
+
+	return 0;
+}
