@@ -473,6 +473,11 @@ inline s32 AtomicIncrementGetNew(volatile s32 *destination)
 	return __atomic_add_fetch(destination, 1, __ATOMIC_SEQ_CST);
 }
 
+inline s32 AtomicAddGetNew(volatile s32 *destination, s32 addend)
+{
+	return __atomic_add_fetch(destination, addend, __ATOMIC_SEQ_CST);
+}
+
 // Fibers!
 // @Improve: infinite storage for fibers
 ucontext_t fiberContexts[8192];

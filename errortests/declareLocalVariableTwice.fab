@@ -1,0 +1,6 @@
+Main :: (args: [] String) -> s64
+{
+	foo := 1;
+	foo := 2;
+	return 0;
+}

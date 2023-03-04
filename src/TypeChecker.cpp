@@ -361,7 +361,7 @@ TCScopeName FindGlobalName(SourceLocation loc, String name)
 	RWSpinlockLockForRead(&g_context->tcGlobalNames.rwLock);
 	{
 		auto &globalNames = g_context->tcGlobalNames.unsafe;
-		for (int i = 0; i < globalNames.size; ++i) {
+		for (int i = 0; i < globalNames.count; ++i) {
 			const TCScopeName *currentName = &globalNames[i];
 			if (StringEquals(name, currentName->name)) {
 				RWSpinlockUnlockForRead(&g_context->tcGlobalNames.rwLock);
@@ -378,7 +378,7 @@ TCScopeName FindGlobalName(SourceLocation loc, String name)
 	RWSpinlockLockForRead(&g_context->tcGlobalNames.rwLock);
 	{
 		auto &globalNames = g_context->tcGlobalNames.unsafe;
-		for (int i = 0; i < globalNames.size; ++i) {
+		for (int i = 0; i < globalNames.count; ++i) {
 			const TCScopeName *currentName = &globalNames[i];
 			if (StringEquals(name, currentName->name)) {
 				RWSpinlockUnlockForRead(&g_context->tcGlobalNames.rwLock);
@@ -1510,41 +1510,46 @@ void TCAddScopeNames(TCContext *tcContext, ArrayView<TCScopeName> scopeNames)
 		for (int i = 0; i < scopeNames.size; ++i)
 			newNames[i] = scopeNames[i];
 	}
-	else {
-		for (int i = 0; i < scopeNames.size; ++i) {
-			DEBUG_ONLY(Print("Enqueuing \"%S\"\n", scopeNames[i].name));
-			while (!MTQueueEnqueue(&g_context->tcGlobalNamesToAdd, scopeNames[i]))
+	else for (int i = 0; i < scopeNames.size; ++i) {
+		while (!MTQueueEnqueue(&g_context->tcGlobalNamesToAdd, scopeNames[i])) {
+			// If queue is full try to commit some names.
+			if (SpinlockTryLock(&g_context->tcGlobalNamesCommitLock)) {
 				TCCommitGlobalNames();
+				SpinlockUnlock(&g_context->tcGlobalNamesCommitLock);
+			}
 		}
 	}
 }
 
 void TCCommitGlobalNames()
 {
-	DEBUG_ONLY(Print("Committing names\n"));
 	// @Speed: optimize
 	u64 firstAddedIdx;
-	u64 addedCount = 0;
+	u64 globalNamesCount;
 	{
 		auto globalNames = g_context->tcGlobalNames.GetForWrite();
 
-		firstAddedIdx = globalNames->size;
+		firstAddedIdx = globalNames->count;
+		globalNamesCount = firstAddedIdx;
 
 		TCScopeName dequeue;
 		while (MTQueueDequeue(&g_context->tcGlobalNamesToAdd, &dequeue)) {
-			*DynamicArrayAdd(&globalNames) = dequeue;
-			++addedCount;
+			*BucketArrayAdd(&globalNames) = dequeue;
+			++globalNamesCount;
 		}
 	}
+
+	// No need to lock because we'll just read names added up to this point, and names never
+	// change.
+	auto &globalNames = g_context->tcGlobalNames.unsafe;
 
 	// Wake up any jobs that were waiting for these names
 	auto jobsWaiting = g_context->waitingJobsByReason[YIELDREASON_UNKNOWN_IDENTIFIER].Get();
 	for (int i = 0; i < jobsWaiting->size; ) {
 		u32 jobIdx = jobsWaiting[i];
 		const Job *job = &g_context->jobs.unsafe[jobIdx];
-		for (u64 nameIdx = firstAddedIdx; nameIdx < firstAddedIdx + addedCount; ++nameIdx) {
-			if (StringEquals(job->yieldContext.identifier, g_context->tcGlobalNames.unsafe[nameIdx].name)) {
-				DEBUG_ONLY(Print("Waking up job waiting for \"%S\"\n", job->yieldContext.identifier));
+		for (u64 nameIdx = firstAddedIdx; nameIdx < globalNamesCount; ++nameIdx) {
+			if (StringEquals(job->yieldContext.identifier, globalNames[nameIdx].name)) {
 				EnqueueReadyJob(jobIdx);
 				// Remove waiting job
 				DynamicArraySwapRemove(&jobsWaiting, i);
@@ -1556,33 +1561,24 @@ outerContinue:
 		continue;
 	}
 
-	// @Todo
-#if 0
 	// Check if any was added twice
-	{
-		Array<s8, ThreadAllocator> timesFound;
-		ArrayInit(&timesFound, scopeNames.size);
-		timesFound.size = scopeNames.size;
-		memset(timesFound.data, 0, timesFound.size * sizeof(s8));
-
-		auto globalNames = g_context->tcGlobalNames.GetForRead();
-
-		for (int globalNameIdx = 0; globalNameIdx < globalNames->size; ++globalNameIdx) {
-			const TCScopeName *currentName = &globalNames[globalNameIdx];
-			for (int inputIdx = 0; inputIdx < scopeNames.size; ++inputIdx) {
-				if (StringEquals(scopeNames[inputIdx].name, currentName->name)) {
-					if (timesFound[inputIdx]) {
-						LogErrorNoCrash(scopeNames[inputIdx].loc, TPrintF("Name \"%S\" already "
-									"assigned", scopeNames[inputIdx].name));
-						LogNote(currentName->loc, "First defined here"_s);
-						PANIC;
-					}
-					++timesFound[inputIdx];
-				}
+	for (u64 allNameIdx = 0; allNameIdx < globalNamesCount; ++allNameIdx) {
+		const TCScopeName *allName = &globalNames[allNameIdx];
+		// Iterate over the new names only. We assume all the old ones are unique.
+		// Notice we don't assume we didn't just add the same name twice, new names still compare
+		// against each other.
+		// @Speed: avoid checking pairs of new names twice (a==b and b==a).
+		for (u64 addedNameIdx = firstAddedIdx; addedNameIdx < globalNamesCount; ++addedNameIdx) {
+			if (addedNameIdx == allNameIdx) continue;
+			const TCScopeName *addedName = &globalNames[addedNameIdx];
+			if (StringEquals(addedName->name, allName->name)) {
+				LogErrorNoCrash(addedName->loc, TPrintF("Name \"%S\" already "
+							"assigned", addedName->name));
+				LogNote(allName->loc, "First defined here"_s);
+				PANIC;
 			}
 		}
 	}
-#endif
 }
 
 void TypeCheckExpression(TCContext *tcContext, ASTExpression *expression);
@@ -4744,7 +4740,7 @@ void TypeCheckExpression(TCContext *tcContext, ASTExpression *expression)
 		// Global scope
 		{
 			auto globalNames = g_context->tcGlobalNames.GetForRead();
-			for (int i = 0; i < globalNames->size; ++i) {
+			for (int i = 0; i < globalNames->count; ++i) {
 				const TCScopeName *currentName = &globalNames[i];
 				if (StringEquals(identifier, currentName->name)) {
 					isDefined = true;
@@ -4757,7 +4753,7 @@ void TypeCheckExpression(TCContext *tcContext, ASTExpression *expression)
 		{
 			auto globalNames = g_context->tcGlobalNames.GetForRead();
 			// @Improve: resume loop at the last index we checked?
-			for (int i = 0; i < globalNames->size; ++i) {
+			for (int i = 0; i < globalNames->count; ++i) {
 				const TCScopeName *currentName = &globalNames[i];
 				if (StringEquals(identifier, currentName->name)) {
 					isDefined = true;
@@ -4819,11 +4815,7 @@ void TCJobProc(void *args)
 	tcContext->onStaticContext = true;
 	tcContext->currentReturnTypes = {};
 
-	Job *runningJob = GetCurrentJob();
-	runningJob->state = JOBSTATE_RUNNING;
-#if DEBUG_BUILD
-	runningJob->loc = expression->any.loc;
-
+#if DEBUG_BUILD || USE_PROFILER_API
 	String jobDescription = "TC:???"_s;
 	switch (expression->nodeType) {
 	case ASTNODETYPE_STATIC_DEFINITION:
@@ -4855,27 +4847,36 @@ void TCJobProc(void *args)
 		jobDescription = "TC:Static if"_s;
 		break;
 	}
+#endif
+
+	ProfilerBegin("Running job", StringToCStr(jobDescription, ThreadAllocator::Alloc),
+			PROFILER_COLOR(204, 178, 10));
+
+	Job *runningJob = GetCurrentJob();
+	runningJob->state = JOBSTATE_RUNNING;
+#if DEBUG_BUILD
+	runningJob->loc = expression->any.loc;
 	runningJob->description = jobDescription;
 #endif
 
 	switch (expression->nodeType) {
 	case ASTNODETYPE_VARIABLE_DECLARATION:
-	{
-	} break;
+		break;
 	case ASTNODETYPE_STATIC_DEFINITION:
 	case ASTNODETYPE_RUN:
 	case ASTNODETYPE_INCLUDE:
 	case ASTNODETYPE_LINKLIB:
 	case ASTNODETYPE_IF_STATIC:
 	case ASTNODETYPE_OPERATOR_OVERLOAD:
-	{
 		DynamicArrayInit(&tcContext->scopeStack, 8);
-	} break;
+		break;
 	default:
 		PANIC;
 	}
 
 	TypeCheckExpression(tcContext, expression);
+
+	ProfilerEnd();
 
 	FinishCurrentJob();
 }
@@ -4920,10 +4921,17 @@ void TCStructJobProc(void *args)
 	tcContext->onStaticContext = true;
 	tcContext->currentReturnTypes = {};
 
+#if DEBUG_BUILD || USE_PROFILER_API
+	String jobDescription = SNPrintF(96, "TC:Members of struct \"%S\"", argsStruct->name);
+#endif
+
+	ProfilerBegin("Running job", StringToCStr(jobDescription, ThreadAllocator::Alloc),
+			PROFILER_COLOR(178, 204, 10));
+
 	Job *runningJob = GetCurrentJob();
 	runningJob->state = JOBSTATE_RUNNING;
 #if DEBUG_BUILD
-	runningJob->description = SNPrintF(96, "TC:Struct \"%S\"", argsStruct->name);
+	runningJob->description = jobDescription;
 #endif
 
 	u32 typeTableIdx = argsStruct->typeTableIdx;
@@ -5009,6 +5017,8 @@ void TCStructJobProc(void *args)
 
 	// Wake up any jobs that were waiting for this type
 	WakeUpAllByIndex(YIELDREASON_TYPE_NOT_READY, typeTableIdx);
+
+	ProfilerEnd();
 
 	FinishCurrentJob();
 }
@@ -5219,7 +5229,7 @@ void TypeCheckMain()
 		ArrayInit(&g_context->tcPrimitiveTypes, TYPETABLEIDX_PrimitiveEnd -
 				TYPETABLEIDX_PrimitiveBegin);
 
-		DynamicArrayInit(&globalNames, 64);
+		BucketArrayInit(&globalNames);
 
 		TCScopeName scopeNamePrimitive;
 		scopeNamePrimitive.type = NAMETYPE_PRIMITIVE;
@@ -5228,62 +5238,62 @@ void TypeCheckMain()
 		scopeNamePrimitive.name = "s8"_s;
 		scopeNamePrimitive.primitiveTypeTableIdx = TYPETABLEIDX_S8;
 		*ArrayAdd(&g_context->tcPrimitiveTypes) = scopeNamePrimitive;
-		*DynamicArrayAdd(&globalNames) = scopeNamePrimitive;
+		*BucketArrayAdd(&globalNames) = scopeNamePrimitive;
 
 		scopeNamePrimitive.name = "s16"_s;
 		scopeNamePrimitive.primitiveTypeTableIdx = TYPETABLEIDX_S16;
 		*ArrayAdd(&g_context->tcPrimitiveTypes) = scopeNamePrimitive;
-		*DynamicArrayAdd(&globalNames) = scopeNamePrimitive;
+		*BucketArrayAdd(&globalNames) = scopeNamePrimitive;
 
 		scopeNamePrimitive.name = "s32"_s;
 		scopeNamePrimitive.primitiveTypeTableIdx = TYPETABLEIDX_S32;
 		*ArrayAdd(&g_context->tcPrimitiveTypes) = scopeNamePrimitive;
-		*DynamicArrayAdd(&globalNames) = scopeNamePrimitive;
+		*BucketArrayAdd(&globalNames) = scopeNamePrimitive;
 
 		scopeNamePrimitive.name = "s64"_s;
 		scopeNamePrimitive.primitiveTypeTableIdx = TYPETABLEIDX_S64;
 		*ArrayAdd(&g_context->tcPrimitiveTypes) = scopeNamePrimitive;
-		*DynamicArrayAdd(&globalNames) = scopeNamePrimitive;
+		*BucketArrayAdd(&globalNames) = scopeNamePrimitive;
 
 		scopeNamePrimitive.name = "u8"_s;
 		scopeNamePrimitive.primitiveTypeTableIdx = TYPETABLEIDX_U8;
 		*ArrayAdd(&g_context->tcPrimitiveTypes) = scopeNamePrimitive;
-		*DynamicArrayAdd(&globalNames) = scopeNamePrimitive;
+		*BucketArrayAdd(&globalNames) = scopeNamePrimitive;
 
 		scopeNamePrimitive.name = "u16"_s;
 		scopeNamePrimitive.primitiveTypeTableIdx = TYPETABLEIDX_U16;
 		*ArrayAdd(&g_context->tcPrimitiveTypes) = scopeNamePrimitive;
-		*DynamicArrayAdd(&globalNames) = scopeNamePrimitive;
+		*BucketArrayAdd(&globalNames) = scopeNamePrimitive;
 
 		scopeNamePrimitive.name = "u32"_s;
 		scopeNamePrimitive.primitiveTypeTableIdx = TYPETABLEIDX_U32;
 		*ArrayAdd(&g_context->tcPrimitiveTypes) = scopeNamePrimitive;
-		*DynamicArrayAdd(&globalNames) = scopeNamePrimitive;
+		*BucketArrayAdd(&globalNames) = scopeNamePrimitive;
 
 		scopeNamePrimitive.name = "u64"_s;
 		scopeNamePrimitive.primitiveTypeTableIdx = TYPETABLEIDX_U64;
 		*ArrayAdd(&g_context->tcPrimitiveTypes) = scopeNamePrimitive;
-		*DynamicArrayAdd(&globalNames) = scopeNamePrimitive;
+		*BucketArrayAdd(&globalNames) = scopeNamePrimitive;
 
 		scopeNamePrimitive.name = "f32"_s;
 		scopeNamePrimitive.primitiveTypeTableIdx = TYPETABLEIDX_F32;
 		*ArrayAdd(&g_context->tcPrimitiveTypes) = scopeNamePrimitive;
-		*DynamicArrayAdd(&globalNames) = scopeNamePrimitive;
+		*BucketArrayAdd(&globalNames) = scopeNamePrimitive;
 
 		scopeNamePrimitive.name = "f64"_s;
 		scopeNamePrimitive.primitiveTypeTableIdx = TYPETABLEIDX_F64;
 		*ArrayAdd(&g_context->tcPrimitiveTypes) = scopeNamePrimitive;
-		*DynamicArrayAdd(&globalNames) = scopeNamePrimitive;
+		*BucketArrayAdd(&globalNames) = scopeNamePrimitive;
 
 		scopeNamePrimitive.name = "bool"_s;
 		scopeNamePrimitive.primitiveTypeTableIdx = TYPETABLEIDX_BOOL;
 		*ArrayAdd(&g_context->tcPrimitiveTypes) = scopeNamePrimitive;
-		*DynamicArrayAdd(&globalNames) = scopeNamePrimitive;
+		*BucketArrayAdd(&globalNames) = scopeNamePrimitive;
 
 		scopeNamePrimitive.name = "void"_s;
 		scopeNamePrimitive.primitiveTypeTableIdx = TYPETABLEIDX_VOID;
 		*ArrayAdd(&g_context->tcPrimitiveTypes) = scopeNamePrimitive;
-		*DynamicArrayAdd(&globalNames) = scopeNamePrimitive;
+		*BucketArrayAdd(&globalNames) = scopeNamePrimitive;
 	}
 	MTQueueInit<LinearAllocator>(&g_context->tcGlobalNamesToAdd, 128);
 

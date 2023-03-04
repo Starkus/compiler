@@ -12,6 +12,23 @@ typedef uint64_t u64;
 typedef float f32;
 typedef double f64;
 
+#include "Config.h"
+
+#if ENABLE_STATS
+struct {
+	volatile s32 jobSwitches;
+	volatile s32 dynamicArrayReallocs;
+	volatile s32 threadAllocReallocWaste;
+	volatile s32 linearAllocReallocWaste;
+	volatile s32 hashSetMapHit0;
+	volatile s32 hashSetMapHit1;
+	volatile s32 hashSetMapHit2;
+	volatile s32 hashSetMapHit3;
+	volatile s32 hashSetMapHitMore;
+	volatile s32 hashSetMapRehashes;
+} g_stats = {};
+#endif
+
 #if IS_WINDOWS
 #include "PlatformWindows.h"
 #elif IS_LINUX
@@ -33,7 +50,6 @@ PerformanceAPI_Functions performanceAPI;
 #endif
 #include "Profiler.cpp"
 
-#include "Config.h"
 #include "Maths.h"
 #include "Multithreading.h"
 #include "Containers.h"
@@ -243,8 +259,9 @@ struct Context
 	/* Don't add types to the type table by hand without checking what AddType() does! */
 	SLContainer<BucketArray<const TypeInfo, HeapAllocator, 1024>> typeTable; // Lock only to add
 
-	SLRWContainer<DynamicArray<TCScopeName, LinearAllocator>> tcGlobalNames;
+	SLRWContainer<BucketArray<TCScopeName, HeapAllocator, 1024>> tcGlobalNames;
 	MTQueue<TCScopeName> tcGlobalNamesToAdd;
+	volatile u32 tcGlobalNamesCommitLock; // Lock so multiple threads don't try to commit names at once.
 	RWContainer<DynamicArray<u32, LinearAllocator>> tcGlobalTypeIndices;
 	MXContainer<DynamicArray<DynamicArray<InlineCall, LinearAllocator>, LinearAllocator>> tcInlineCalls;
 
@@ -513,7 +530,7 @@ int main(int argc, char **argv)
 #if DEBUG_BUILD
 			LogNote(job->loc, TPrintF("On job: \"%S\"", job->description));
 			auto &globalNames = context->tcGlobalNames.unsafe;
-			for (int nameIdx = 0; nameIdx < globalNames.size; ++nameIdx) {
+			for (int nameIdx = 0; nameIdx < globalNames.count; ++nameIdx) {
 				const TCScopeName *currentName = &globalNames[nameIdx];
 				if (StringEquals(yieldContext.identifier, currentName->name))
 					LogCompilerError(currentName->loc, "Identifier is there!"_s);
@@ -677,6 +694,22 @@ int main(int argc, char **argv)
 
 	if (!g_context->config.silent) {
 		TimerSplit("Done"_s);
+
+#if ENABLE_STATS
+		Print("STATS:\n");
+		Print("  Job switches: %d\n", g_stats.jobSwitches);
+		Print("  Thread allocator bytes wasted by realloc: 0x%X\n", g_stats.threadAllocReallocWaste);
+		Print("  Linear allocator bytes used: 0x%X\n", (u64)g_memory->linearMemPtr - (u64)g_memory->linearMem);
+		Print("  Linear allocator bytes wasted by realloc: 0x%X\n", g_stats.linearAllocReallocWaste);
+		Print("  Dynamic array reallocs: %d\n", g_stats.dynamicArrayReallocs);
+		Print("  Hash set/map hits: %d\n", g_stats.hashSetMapHit0);
+		Print("  Hash set/map hits 2 its: %d\n", g_stats.hashSetMapHit1);
+		Print("  Hash set/map hits 3 its: %d\n", g_stats.hashSetMapHit2);
+		Print("  Hash set/map hits 4 its: %d\n", g_stats.hashSetMapHit3);
+		Print("  Hash set/map hits 5+ its: %d\n", g_stats.hashSetMapHitMore);
+		Print("  Hash set/map rehashes: %d\n", g_stats.hashSetMapRehashes);
+#endif
+
 		ConsoleSetColor(CONSOLE_GREEN_TXT);
 		Print("Compilation success\n");
 		ConsoleSetColor(CONSOLE_RESET_COLOR);

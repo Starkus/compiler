@@ -1782,10 +1782,17 @@ void ParseJobProc(void *args)
 	BucketArrayInit(&pContext->astTreeNodes);
 	BucketArrayInit(&pContext->astTypes);
 
+#if DEBUG_BUILD || USE_PROFILER_API
+	String jobDescription = SStringConcat("P:"_s, g_context->sourceFiles[fileIdx].name);
+#endif
+
+	ProfilerBegin("Running job", StringToCStr(jobDescription, ThreadAllocator::Alloc),
+			PROFILER_COLOR(20, 178, 10));
+
 	Job *runningJob = GetCurrentJob();
 	runningJob->state = JOBSTATE_RUNNING;
 #if DEBUG_BUILD
-	runningJob->description = SStringConcat("P:"_s, g_context->sourceFiles[fileIdx].name);
+	runningJob->description = jobDescription;
 #endif
 
 	TokenizeFile(pContext, fileIdx);
@@ -1802,6 +1809,8 @@ void ParseJobProc(void *args)
 
 	if (g_context->config.logAST)
 		PrintAST(pContext);
+
+	ProfilerEnd();
 
 	FinishCurrentJob();
 }

@@ -187,6 +187,10 @@ T *DynamicArrayAdd(DynamicArray<T, A> *array)
 		array->data = (T*)A::Realloc(array->data, array->capacity * sizeof(T),
 				newCapacity * sizeof(T), alignof(T));
 		array->capacity = newCapacity;
+
+#if ENABLE_STATS
+		AtomicIncrementGetNew(&g_stats.dynamicArrayReallocs);
+#endif
 	}
 	return &array->data[array->size++];
 }
@@ -201,6 +205,10 @@ T *DynamicArrayAddMT(DynamicArray<T, A> *array, T value)
 		array->data = (T*)A::Realloc(array->data, array->capacity * sizeof(T),
 				newCapacity * sizeof(T), alignof(T));
 		array->capacity = newCapacity;
+
+#if ENABLE_STATS
+		AtomicIncrementGetNew(&g_stats.dynamicArrayReallocs);
+#endif
 	}
 	T *result = &array->data[array->size];
 	*result = value;
@@ -219,6 +227,10 @@ T *DynamicArrayAddMany(DynamicArray<T, A> *array, s64 count)
 		array->data = (T*)A::Realloc(array->data, array->capacity * sizeof(T),
 				newCapacity * sizeof(T), alignof(T));
 		array->capacity = newCapacity;
+
+#if ENABLE_STATS
+		AtomicIncrementGetNew(&g_stats.dynamicArrayReallocs);
+#endif
 	}
 
 	T *first = &array->data[array->size];
@@ -238,6 +250,10 @@ bool DynamicArrayAddUnique(DynamicArray<T, A> *array, T value)
 		array->data = (T*)A::Realloc(array->data, array->capacity * sizeof(T),
 				newCapacity * sizeof(T), alignof(T));
 		array->capacity = newCapacity;
+
+#if ENABLE_STATS
+		AtomicIncrementGetNew(&g_stats.dynamicArrayReallocs);
+#endif
 	}
 	array->data[array->size++] = value;
 	return true;
@@ -558,8 +574,18 @@ bool HashSetHas(HashSet<K,A> hashSet, K key)
 		if (!HashSetSlotOccupied(hashSet, slotIdx))
 			return false;
 		foundKey = keys[slotIdx];
-		if (foundKey == key)
+		if (foundKey == key) {
+#if ENABLE_STATS
+			switch (iterations) {
+			case 0:  AtomicIncrementGetNew(&g_stats.hashSetMapHit0); break;
+			case 1:  AtomicIncrementGetNew(&g_stats.hashSetMapHit1); break;
+			case 2:  AtomicIncrementGetNew(&g_stats.hashSetMapHit2); break;
+			case 3:  AtomicIncrementGetNew(&g_stats.hashSetMapHit3); break;
+			default: AtomicIncrementGetNew(&g_stats.hashSetMapHitMore); break;
+			};
+#endif
 			return true;
+		}
 		slotIdx = (slotIdx + 1) & mask;
 	}
 	return false;
@@ -601,6 +627,10 @@ void HashSetRehash(HashSet<K,A> *hashSet)
 			HashSetAdd(hashSet, oldKeys[slotIdx]);
 
 	A::Free(oldBookkeep);
+
+#if ENABLE_STATS
+	AtomicIncrementGetNew(&g_stats.hashSetMapRehashes);
+#endif
 }
 
 template <typename K, typename A>
@@ -614,13 +644,23 @@ bool HashSetAdd(HashSet<K,A> *hashSet, K key)
 
 	K foundKey;
 	u32 maxIterationsSquared = hashSet->capacity;
-	for (u32 iteration = 0; iteration * iteration < maxIterationsSquared; ++iteration)
+	for (u32 iterations = 0; iterations * iterations < maxIterationsSquared; ++iterations)
 	{
 		if (!HashSetSlotOccupied(*hashSet, slotIdx))
 			goto add;
 		foundKey = keys[slotIdx];
-		if (foundKey == key)
+		if (foundKey == key) {
+#if ENABLE_STATS
+			switch (iterations) {
+			case 0:  AtomicIncrementGetNew(&g_stats.hashSetMapHit0); break;
+			case 1:  AtomicIncrementGetNew(&g_stats.hashSetMapHit1); break;
+			case 2:  AtomicIncrementGetNew(&g_stats.hashSetMapHit2); break;
+			case 3:  AtomicIncrementGetNew(&g_stats.hashSetMapHit3); break;
+			default: AtomicIncrementGetNew(&g_stats.hashSetMapHitMore); break;
+			};
+#endif
 			return false;
+		}
 		slotIdx = (slotIdx + 1) & mask;
 	}
 
@@ -729,8 +769,18 @@ V *HashMapGet(HashMap<K,V,A> hashMap, K key)
 		if (!HashMapSlotOccupied(hashMap, slotIdx))
 			break;
 		foundKey = keys[slotIdx];
-		if (foundKey == key)
+		if (foundKey == key) {
+#if ENABLE_STATS
+			switch (iterations) {
+			case 0:  AtomicIncrementGetNew(&g_stats.hashSetMapHit0); break;
+			case 1:  AtomicIncrementGetNew(&g_stats.hashSetMapHit1); break;
+			case 2:  AtomicIncrementGetNew(&g_stats.hashSetMapHit2); break;
+			case 3:  AtomicIncrementGetNew(&g_stats.hashSetMapHit3); break;
+			default: AtomicIncrementGetNew(&g_stats.hashSetMapHitMore); break;
+			};
+#endif
 			return &values[slotIdx];
+		}
 		slotIdx = (slotIdx + 1) & mask;
 	}
 	return nullptr;
@@ -751,6 +801,10 @@ void HashMapRehash(HashMap<K,V,A> *hashMap)
 			*HashMapGetOrAdd(hashMap, oldKeys[i]) = oldValues[i];
 
 	A::Free(oldBookkeep);
+
+#if ENABLE_STATS
+	AtomicIncrementGetNew(&g_stats.hashSetMapRehashes);
+#endif
 }
 
 template <typename K, typename V, typename A>
@@ -765,13 +819,23 @@ V *HashMapGetOrAdd(HashMap<K,V,A> *hashMap, K key)
 
 	K foundKey;
 	u32 maxIterationsSquared = hashMap->capacity;
-	for (u32 iteration = 0; iteration * iteration < maxIterationsSquared; ++iteration)
+	for (u32 iterations = 0; iterations * iterations < maxIterationsSquared; ++iterations)
 	{
 		if (!HashMapSlotOccupied(*hashMap, slotIdx))
 			goto add;
 		foundKey = keys[slotIdx];
-		if (foundKey == key)
+		if (foundKey == key) {
+#if ENABLE_STATS
+			switch (iterations) {
+			case 0:  AtomicIncrementGetNew(&g_stats.hashSetMapHit0); break;
+			case 1:  AtomicIncrementGetNew(&g_stats.hashSetMapHit1); break;
+			case 2:  AtomicIncrementGetNew(&g_stats.hashSetMapHit2); break;
+			case 3:  AtomicIncrementGetNew(&g_stats.hashSetMapHit3); break;
+			default: AtomicIncrementGetNew(&g_stats.hashSetMapHitMore); break;
+			};
+#endif
 			return &values[slotIdx];
+		}
 		slotIdx = (slotIdx + 1) & mask;
 	}
 
@@ -898,13 +962,15 @@ bool MTQueueEnqueue(MTQueue<T> *queue, T item)
 {
 	SpinlockLock(&queue->tailLock);
 	u32 tail = queue->tail;
-	if (tail + 1 == queue->head) {
+	u32 newTail = (tail + 1) % queue->capacity;
+	if (newTail == queue->head) {
+		// Full
 		SpinlockUnlock(&queue->tailLock);
 		return false;
 	}
 	else {
 		queue->buffer[tail] = item;
-		queue->tail = (tail + 1) % queue->capacity;
+		queue->tail = newTail;
 		SpinlockUnlock(&queue->tailLock);
 		return true;
 	}

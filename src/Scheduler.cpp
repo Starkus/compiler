@@ -170,8 +170,10 @@ loop:
 			nextJobIdx = dequeue;
 			goto switchFiber;
 		}
-		else if (!MTQueueIsEmpty(&g_context->tcGlobalNamesToAdd)) {
+		else if (!MTQueueIsEmpty(&g_context->tcGlobalNamesToAdd) &&
+				SpinlockTryLock(&g_context->tcGlobalNamesCommitLock)) {
 			TCCommitGlobalNames();
+			SpinlockUnlock(&g_context->tcGlobalNamesCommitLock);
 			continue;
 		}
 		else {
@@ -296,6 +298,10 @@ inline void SwitchJob(YieldReason yieldReason, YieldContext yieldContext)
 
 	Job *previousJob = GetCurrentJob();
 	ASSERT(previousJob->state == JOBSTATE_RUNNING);
+
+#if ENABLE_STATS
+	AtomicIncrementGetNew(&g_stats.jobSwitches);
+#endif
 
 	previousJob->fiber = SYSGetCurrentFiber();
 	previousJob->yieldContext = yieldContext;

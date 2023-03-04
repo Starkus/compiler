@@ -1,3 +1,4 @@
+* Recursive lock for Print? To (set console color -> print) atomically.
 * Tan() is failing for some inputs (or is the number printing wrong?) anyways, improve trig test to
 	fail if the results are unexpected.
 * Detect unreachable code and log error.

@@ -53,6 +53,10 @@ void *LinearAllocator::Realloc(void *ptr, u64 oldSize, u64 newSize, int alignmen
 	if (ptr)
 		memcpy(newBlock, ptr, oldSize);
 
+#if ENABLE_STATS
+	AtomicAddGetNew(&g_stats.linearAllocReallocWaste, (s32)oldSize);
+#endif
+
 	return newBlock;
 }
 void LinearAllocator::Free(void *ptr)
@@ -88,6 +92,10 @@ void *ThreadAllocator::Realloc(void *ptr, u64 oldSize, u64 newSize, int alignmen
 	void *newBlock = Alloc(newSize, alignment);
 	if (ptr)
 		memcpy(newBlock, ptr, oldSize);
+
+#if ENABLE_STATS
+	AtomicAddGetNew(&g_stats.threadAllocReallocWaste, (s32)oldSize);
+#endif
 
 	return newBlock;
 }

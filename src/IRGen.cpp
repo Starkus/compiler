@@ -2773,10 +2773,17 @@ void IRJobProcedure(void *args)
 	irContext->returnValueIndices = GetProcedureRead(procedureIdx).returnValueIndices;
 	irContext->shouldReturnValueIdx = U32_MAX;
 
+#if DEBUG_BUILD || USE_PROFILER_API
+	String jobDescription = SStringConcat("IR:"_s, GetProcedureRead(procedureIdx).name);
+#endif
+
+	ProfilerBegin("Running job", StringToCStr(jobDescription, ThreadAllocator::Alloc),
+			PROFILER_COLOR(10, 0, 170));
+
 	Job *runningJob = GetCurrentJob();
 	runningJob->state = JOBSTATE_RUNNING;
 #if DEBUG_BUILD
-	runningJob->description = SStringConcat("IR:"_s, GetProcedureRead(procedureIdx).name);
+	runningJob->description = jobDescription;
 #endif
 
 	ASSERT(GetProcedureRead(procedureIdx).astBody != nullptr);
@@ -2799,6 +2806,8 @@ void IRJobProcedure(void *args)
 
 	BackendJobProc(irContext, procedureIdx);
 
+	ProfilerEnd();
+
 	FinishCurrentJob();
 }
 
@@ -2808,13 +2817,22 @@ void IRJobExpression(void *args)
 
 	IRContext *irContext = ALLOC(LinearAllocator, IRContext);
 
+#if DEBUG_BUILD || USE_PROFILER_API
+	String jobDescription = "IR:Expression"_s;
+#endif
+
+	ProfilerBegin("Running job", StringToCStr(jobDescription, ThreadAllocator::Alloc),
+			PROFILER_COLOR(10, 30, 170));
+
 	Job *runningJob = GetCurrentJob();
 	runningJob->state = JOBSTATE_RUNNING;
 #if DEBUG_BUILD
-	runningJob->description = "IR:Expression"_s;
+	runningJob->description = jobDescription;
 #endif
 
 	IRGenFromExpression(irContext, argsStruct->expression);
+
+	ProfilerEnd();
 
 	FinishCurrentJob();
 }
