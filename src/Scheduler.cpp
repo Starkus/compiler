@@ -148,7 +148,7 @@ void SchedulerProc(void *args)
 			// before calling SwitchJob!
 			*DynamicArrayAdd(&g_context->waitingJobsByReason[YIELDREASON_TYPE_NOT_READY].unsafe) =
 				previousJobIdx;
-			SYSMutexUnlock(g_context->waitingJobsByReason[YIELDREASON_TYPE_NOT_READY].lock);
+			SpinlockUnlock(&g_context->waitingJobsByReason[YIELDREASON_TYPE_NOT_READY].lock);
 		} break;
 		default:
 			ASSERTF(false, "Previous fiber is %llx, reason is %d", previousJob->fiber,

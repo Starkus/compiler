@@ -226,7 +226,7 @@ struct Context
 	SLContainer<BucketArray<Job, HeapAllocator, 512>> jobs; // Lock to add
 	MTQueue<u32> readyJobs;
 	volatile s32 failedJobsCount;
-	MXContainer<DynamicArray<u32, HeapAllocator>> waitingJobsByReason[YIELDREASON_Count];
+	SLContainer<DynamicArray<u32, HeapAllocator>> waitingJobsByReason[YIELDREASON_Count];
 
 	volatile u32 threadStatesLock;
 	Array<ThreadState, HeapAllocator> threadStates;

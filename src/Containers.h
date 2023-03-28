@@ -7,7 +7,7 @@ struct ArrayView
 	T &operator[](s64 idx)
 	{
 #if DEBUG_BUILD
-		ASSERT(idx >= 0 && (u64)idx < size);
+		ASSERT((u64)idx < size);
 #endif
 		return data[idx];
 	}
@@ -33,7 +33,8 @@ struct Array
 	T &operator[](s64 idx)
 	{
 #if DEBUG_BUILD
-		ASSERT(idx >= 0 && (u64)idx < _capacity);
+		ASSERT((u64)idx < size);
+		ASSERT((u64)idx < _capacity);
 #endif
 		return data[idx];
 	}
@@ -41,7 +42,8 @@ struct Array
 	const T &operator[](s64 idx) const
 	{
 #if DEBUG_BUILD
-		ASSERT(idx >= 0 && (u64)idx < _capacity);
+		ASSERT((u64)idx < size);
+		ASSERT((u64)idx < _capacity);
 #endif
 		return data[idx];
 	}

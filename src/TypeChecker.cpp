@@ -210,7 +210,7 @@ inline TypeInfo GetTypeInfo(u32 typeTableIdx)
 	// waiting list.
 	// We lock the list of jobs here instead of the type table because no one locks the type table
 	// to read it.
-	SYSMutexLock(g_context->waitingJobsByReason[YIELDREASON_TYPE_NOT_READY].lock);
+	SpinlockLock(&g_context->waitingJobsByReason[YIELDREASON_TYPE_NOT_READY].lock);
 	result = typeTable[typeTableIdx];
 
 	if (result.typeCategory == TYPECATEGORY_NOT_READY) {
@@ -218,14 +218,14 @@ inline TypeInfo GetTypeInfo(u32 typeTableIdx)
 		// waiting list, so we don't miss waking it up when updating the type.
 		SwitchJob(YIELDREASON_TYPE_NOT_READY, { .index = typeTableIdx });
 		// Lock again!
-		SYSMutexLock(g_context->waitingJobsByReason[YIELDREASON_TYPE_NOT_READY].lock);
+		SpinlockLock(&g_context->waitingJobsByReason[YIELDREASON_TYPE_NOT_READY].lock);
 
 		result = typeTable[typeTableIdx];
 		if (result.typeCategory == TYPECATEGORY_NOT_READY)
 			LogCompilerError({}, "Bad job resume"_s);
 	}
 
-	SYSMutexUnlock(g_context->waitingJobsByReason[YIELDREASON_TYPE_NOT_READY].lock);
+	SpinlockUnlock(&g_context->waitingJobsByReason[YIELDREASON_TYPE_NOT_READY].lock);
 	return result;
 }
 
@@ -1418,8 +1418,9 @@ inline u32 AddType(TypeInfo typeInfo)
 	return typeTableIdx;
 }
 
-u32 FindOrAddTypeTableIdx(TypeInfo typeInfo)
+u32 FindOrAddTypeTableIdx(TypeInfo typeInfo, u32 checkAfterIdx = TYPETABLEIDX_Begin)
 {
+	u32 alreadyChecked;
 	{
 		// Optimize most frequent path. Read without locking.
 		auto &typeTable = g_context->typeTable.unsafe;
@@ -1430,6 +1431,7 @@ u32 FindOrAddTypeTableIdx(TypeInfo typeInfo)
 			if (AreTypeInfosEqual(typeInfo, t))
 				return i;
 		}
+		alreadyChecked = tableSize;
 	}
 	{
 		// Check it didn't get added when we released the lock
@@ -1438,7 +1440,7 @@ u32 FindOrAddTypeTableIdx(TypeInfo typeInfo)
 		auto &typeTable = g_context->typeTable.unsafe;
 
 		u32 tableSize = (u32)typeTable.count;
-		for (u32 i = 0; i < tableSize; ++i) {
+		for (u32 i = checkAfterIdx + 1; i < tableSize; ++i) {
 			TypeInfo t = typeTable[i];
 			if (AreTypeInfosEqual(typeInfo, t)) {
 				SpinlockUnlock(&g_context->typeTable.lock);
@@ -1458,7 +1460,9 @@ u32 GetTypeInfoPointerOf(u32 inType)
 	resultTypeInfo.typeCategory = TYPECATEGORY_POINTER;
 	resultTypeInfo.size = g_pointerSize;
 	resultTypeInfo.pointerInfo.pointedTypeTableIdx = inType;
-	return FindOrAddTypeTableIdx(resultTypeInfo);
+	u32 result = FindOrAddTypeTableIdx(resultTypeInfo, inType);
+	//Print("Pointer to %S found at distance %d (%u)\n", TypeInfoToString(inType), result - inType, result);
+	return result;
 }
 
 u32 GetTypeInfoArrayOf(u32 inType, s64 count)
@@ -1473,7 +1477,7 @@ u32 GetTypeInfoArrayOf(u32 inType, s64 count)
 		s64 elementSize = GetTypeInfo(inType).size;
 		resultTypeInfo.size = elementSize * count;
 	}
-	return FindOrAddTypeTableIdx(resultTypeInfo);
+	return FindOrAddTypeTableIdx(resultTypeInfo, inType);
 }
 
 u32 TypeCheckType(TCContext *tcContext, String name, SourceLocation loc, ASTType *astType);
@@ -1631,15 +1635,23 @@ u32 TypeCheckStructDeclaration(TCContext *tcContext, String name, bool isUnion,
 		TypeInfo t = {
 			.typeCategory = TYPECATEGORY_NOT_READY,
 			.alignment = alignment,
-			.structInfo = {
-				.name = name
-			}
+			.structInfo = { .name = name }
 		};
 		typeTableIdx = AddType(t);
 
 		// Allocate static data but don't fill it
+		// Note that AddType() didn't allocate or fill this because the type category was NOT_READY.
 		AllocateStaticData(g_context->typeTable.unsafe[typeTableIdx].valueIdx,
 				sizeof(UserFacingTypeInfoStruct), 8);
+
+		// Declare pointer to struct type so it is close to struct type
+		TypeInfo tp = {
+			.typeCategory = TYPECATEGORY_POINTER,
+			.size = g_pointerSize,
+			.pointerInfo = { .pointedTypeTableIdx = typeTableIdx }
+		};
+		SpinlockLock(&g_context->typeTable.lock);
+		AddType(tp);
 	}
 
 	TCScope *stackTop = TCGetTopMostScope(tcContext);
@@ -4338,7 +4350,7 @@ void TypeCheckExpression(TCContext *tcContext, ASTExpression *expression)
 			expression->typeTableIdx = TYPETABLEIDX_StructLiteral;
 			break;
 		case LITERALTYPE_CSTR:
-			expression->typeTableIdx = GetTypeInfoPointerOf(TYPETABLEIDX_S8);
+			expression->typeTableIdx = TYPETABLEIDX_S8_PTR;
 			break;
 		default:
 			ASSERT(!"Unexpected literal type");
@@ -4482,7 +4494,7 @@ void TypeCheckExpression(TCContext *tcContext, ASTExpression *expression)
 	{
 		TypeCheckExpression(tcContext, expression->typeOfNode.expression);
 
-		static u32 typeInfoPointerTypeIdx = GetTypeInfoPointerOf(TYPETABLEIDX_TYPE_INFO_STRUCT);
+		static u32 typeInfoPointerTypeIdx = TYPETABLEIDX_TYPE_INFO_STRUCT_PTR;
 		expression->typeTableIdx = typeInfoPointerTypeIdx;
 	} break;
 	case ASTNODETYPE_SIZEOF:
@@ -5205,6 +5217,88 @@ void TypeCheckMain()
 		typeTableFast[TYPETABLEIDX_TYPE_INFO_PROCEDURE_STRUCT] = t;
 		t.valueIdx = NewGlobalValue("_typeInfo_type_info_alias_struct"_s, TYPETABLEIDX_Unset, VALUEFLAGS_ON_STATIC_STORAGE);
 		typeTableFast[TYPETABLEIDX_TYPE_INFO_ALIAS_STRUCT] = t;
+
+		// Pointers
+		TypeInfo tp = {};
+		tp.size = g_pointerSize;
+		tp.typeCategory = TYPECATEGORY_POINTER;
+
+		tp.pointerInfo.pointedTypeTableIdx = TYPETABLEIDX_S8;
+		tp.valueIdx = NewGlobalValue("_typeInfo_s8_ptr"_s, TYPETABLEIDX_Unset, VALUEFLAGS_ON_STATIC_STORAGE);
+		typeTableFast[TYPETABLEIDX_S8_PTR] = tp;
+		tp.pointerInfo.pointedTypeTableIdx = TYPETABLEIDX_S16;
+		tp.valueIdx = NewGlobalValue("_typeInfo_s16_ptr"_s, TYPETABLEIDX_Unset, VALUEFLAGS_ON_STATIC_STORAGE);
+		typeTableFast[TYPETABLEIDX_S16_PTR] = tp;
+		tp.pointerInfo.pointedTypeTableIdx = TYPETABLEIDX_S32;
+		tp.valueIdx = NewGlobalValue("_typeInfo_s32_ptr"_s, TYPETABLEIDX_Unset, VALUEFLAGS_ON_STATIC_STORAGE);
+		typeTableFast[TYPETABLEIDX_S32_PTR] = tp;
+		tp.pointerInfo.pointedTypeTableIdx = TYPETABLEIDX_S64;
+		tp.valueIdx = NewGlobalValue("_typeInfo_s64_ptr"_s, TYPETABLEIDX_Unset, VALUEFLAGS_ON_STATIC_STORAGE);
+		typeTableFast[TYPETABLEIDX_S64_PTR] = tp;
+
+		tp.pointerInfo.pointedTypeTableIdx = TYPETABLEIDX_U8;
+		tp.valueIdx = NewGlobalValue("_typeInfo_u8_ptr"_s, TYPETABLEIDX_Unset, VALUEFLAGS_ON_STATIC_STORAGE);
+		typeTableFast[TYPETABLEIDX_U8_PTR]  = tp;
+		tp.pointerInfo.pointedTypeTableIdx = TYPETABLEIDX_U16;
+		tp.valueIdx = NewGlobalValue("_typeInfo_u16_ptr"_s, TYPETABLEIDX_Unset, VALUEFLAGS_ON_STATIC_STORAGE);
+		typeTableFast[TYPETABLEIDX_U16_PTR] = tp;
+		tp.pointerInfo.pointedTypeTableIdx = TYPETABLEIDX_U32;
+		tp.valueIdx = NewGlobalValue("_typeInfo_u32_ptr"_s, TYPETABLEIDX_Unset, VALUEFLAGS_ON_STATIC_STORAGE);
+		typeTableFast[TYPETABLEIDX_U32_PTR] = tp;
+		tp.pointerInfo.pointedTypeTableIdx = TYPETABLEIDX_U64;
+		tp.valueIdx = NewGlobalValue("_typeInfo_u64_ptr"_s, TYPETABLEIDX_Unset, VALUEFLAGS_ON_STATIC_STORAGE);
+		typeTableFast[TYPETABLEIDX_U64_PTR] = tp;
+
+		tp.pointerInfo.pointedTypeTableIdx = TYPETABLEIDX_F32;
+		tp.valueIdx = NewGlobalValue("_typeInfo_f32_ptr"_s, TYPETABLEIDX_Unset, VALUEFLAGS_ON_STATIC_STORAGE);
+		typeTableFast[TYPETABLEIDX_F32_PTR] = tp;
+		tp.pointerInfo.pointedTypeTableIdx = TYPETABLEIDX_F64;
+		tp.valueIdx = NewGlobalValue("_typeInfo_f64_ptr"_s, TYPETABLEIDX_Unset, VALUEFLAGS_ON_STATIC_STORAGE);
+		typeTableFast[TYPETABLEIDX_F64_PTR] = tp;
+
+		tp.pointerInfo.pointedTypeTableIdx = TYPETABLEIDX_BOOL;
+		tp.valueIdx = NewGlobalValue("_typeInfo_bool_ptr"_s, TYPETABLEIDX_Unset, VALUEFLAGS_ON_STATIC_STORAGE);
+		typeTableFast[TYPETABLEIDX_BOOL_PTR]  = tp;
+		tp.pointerInfo.pointedTypeTableIdx = TYPETABLEIDX_VOID;
+		tp.valueIdx = NewGlobalValue("_typeInfo_void_ptr"_s, TYPETABLEIDX_Unset, VALUEFLAGS_ON_STATIC_STORAGE);
+		typeTableFast[TYPETABLEIDX_VOID_PTR] = tp;
+
+		tp.pointerInfo.pointedTypeTableIdx = TYPETABLEIDX_STRING_STRUCT;
+		tp.valueIdx = NewGlobalValue("_typeInfo_string_struct_ptr"_s, TYPETABLEIDX_Unset, VALUEFLAGS_ON_STATIC_STORAGE);
+		typeTableFast[TYPETABLEIDX_STRING_STRUCT_PTR] = tp;
+		tp.pointerInfo.pointedTypeTableIdx = TYPETABLEIDX_ARRAY_STRUCT;
+		tp.valueIdx = NewGlobalValue("_typeInfo_array_struct_ptr"_s, TYPETABLEIDX_Unset, VALUEFLAGS_ON_STATIC_STORAGE);
+		typeTableFast[TYPETABLEIDX_ARRAY_STRUCT_PTR] = tp;
+		tp.pointerInfo.pointedTypeTableIdx = TYPETABLEIDX_ANY_STRUCT;
+		tp.valueIdx = NewGlobalValue("_typeInfo_any_struct_ptr"_s, TYPETABLEIDX_Unset, VALUEFLAGS_ON_STATIC_STORAGE);
+		typeTableFast[TYPETABLEIDX_ANY_STRUCT_PTR] = tp;
+		tp.pointerInfo.pointedTypeTableIdx = TYPETABLEIDX_TYPE_INFO_STRUCT;
+		tp.valueIdx = NewGlobalValue("_typeInfo_type_info_struct_ptr"_s, TYPETABLEIDX_Unset, VALUEFLAGS_ON_STATIC_STORAGE);
+		typeTableFast[TYPETABLEIDX_TYPE_INFO_STRUCT_PTR] = tp;
+		tp.pointerInfo.pointedTypeTableIdx = TYPETABLEIDX_TYPE_INFO_INTEGER_STRUCT;
+		tp.valueIdx = NewGlobalValue("_typeInfo_type_info_integer_struct_ptr"_s, TYPETABLEIDX_Unset, VALUEFLAGS_ON_STATIC_STORAGE);
+		typeTableFast[TYPETABLEIDX_TYPE_INFO_INTEGER_STRUCT_PTR] = tp;
+		tp.pointerInfo.pointedTypeTableIdx = TYPETABLEIDX_TYPE_INFO_STRUCT_MEMBER_STRUCT;
+		tp.valueIdx = NewGlobalValue("_typeInfo_type_info_struct_member_struct_ptr"_s, TYPETABLEIDX_Unset, VALUEFLAGS_ON_STATIC_STORAGE);
+		typeTableFast[TYPETABLEIDX_TYPE_INFO_STRUCT_MEMBER_STRUCT_PTR] = tp;
+		tp.pointerInfo.pointedTypeTableIdx = TYPETABLEIDX_TYPE_INFO_STRUCT_STRUCT;
+		tp.valueIdx = NewGlobalValue("_typeInfo_type_info_struct_struct_ptr"_s, TYPETABLEIDX_Unset, VALUEFLAGS_ON_STATIC_STORAGE);
+		typeTableFast[TYPETABLEIDX_TYPE_INFO_STRUCT_STRUCT_PTR] = tp;
+		tp.pointerInfo.pointedTypeTableIdx = TYPETABLEIDX_TYPE_INFO_ENUM_STRUCT;
+		tp.valueIdx = NewGlobalValue("_typeInfo_type_info_enum_struct_ptr"_s, TYPETABLEIDX_Unset, VALUEFLAGS_ON_STATIC_STORAGE);
+		typeTableFast[TYPETABLEIDX_TYPE_INFO_ENUM_STRUCT_PTR] = tp;
+		tp.pointerInfo.pointedTypeTableIdx = TYPETABLEIDX_TYPE_INFO_POINTER_STRUCT;
+		tp.valueIdx = NewGlobalValue("_typeInfo_type_info_pointer_struct_ptr"_s, TYPETABLEIDX_Unset, VALUEFLAGS_ON_STATIC_STORAGE);
+		typeTableFast[TYPETABLEIDX_TYPE_INFO_POINTER_STRUCT_PTR] = tp;
+		tp.pointerInfo.pointedTypeTableIdx = TYPETABLEIDX_TYPE_INFO_ARRAY_STRUCT;
+		tp.valueIdx = NewGlobalValue("_typeInfo_type_info_array_struct_ptr"_s, TYPETABLEIDX_Unset, VALUEFLAGS_ON_STATIC_STORAGE);
+		typeTableFast[TYPETABLEIDX_TYPE_INFO_ARRAY_STRUCT_PTR] = tp;
+		tp.pointerInfo.pointedTypeTableIdx = TYPETABLEIDX_TYPE_INFO_PROCEDURE_STRUCT;
+		tp.valueIdx = NewGlobalValue("_typeInfo_type_info_procedure_struct_ptr"_s, TYPETABLEIDX_Unset, VALUEFLAGS_ON_STATIC_STORAGE);
+		typeTableFast[TYPETABLEIDX_TYPE_INFO_PROCEDURE_STRUCT_PTR] = tp;
+		tp.pointerInfo.pointedTypeTableIdx = TYPETABLEIDX_TYPE_INFO_ALIAS_STRUCT;
+		tp.valueIdx = NewGlobalValue("_typeInfo_type_info_alias_struct_ptr"_s, TYPETABLEIDX_Unset, VALUEFLAGS_ON_STATIC_STORAGE);
+		typeTableFast[TYPETABLEIDX_TYPE_INFO_ALIAS_STRUCT_PTR] = tp;
 
 		SpinlockUnlock(&g_context->typeTable.lock);
 

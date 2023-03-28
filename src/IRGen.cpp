@@ -197,8 +197,8 @@ IRValue IRValueImmediateString(String string)
 		}
 		// Create a new one
 		u32 idx = (u32)stringCount;
-		u32 globalValueIdx = NewGlobalValue(SNPrintF(8, "_str%u", idx),
-				GetTypeInfoPointerOf(TYPETABLEIDX_U8), VALUEFLAGS_ON_STATIC_STORAGE);
+		u32 globalValueIdx = NewGlobalValue(SNPrintF(8, "_str%u", idx), TYPETABLEIDX_U8_PTR,
+				VALUEFLAGS_ON_STATIC_STORAGE);
 		String staticDataStr = CopyStringToStaticData(string);
 
 		{
@@ -218,7 +218,7 @@ IRValue IRPointerToValue(IRContext *irContext, SourceLocation loc, IRValue in);
 
 IRValue IRValueImmediateCStr(IRContext *irContext, String string)
 {
-	u32 charPtrTypeIdx = GetTypeInfoPointerOf(TYPETABLEIDX_U8);
+	u32 charPtrTypeIdx = TYPETABLEIDX_U8_PTR;
 	if (string.size == 0)
 		return IRValueImmediate(0, charPtrTypeIdx);
 
@@ -364,9 +364,8 @@ inline IRValue IRValueNewValue(IRContext *irContext, String name, u32 typeTableI
 
 inline IRValue IRValueTypeOf(u32 typeTableIdx)
 {
-	static u32 typeInfoPointerTypeIdx = GetTypeInfoPointerOf(TYPETABLEIDX_TYPE_INFO_STRUCT);
 	u32 typeValueIdx = GetTypeInfo(typeTableIdx).valueIdx;
-	return IRValueValue(typeValueIdx, typeInfoPointerTypeIdx);
+	return IRValueValue(typeValueIdx, TYPETABLEIDX_TYPE_INFO_STRUCT_PTR);
 }
 
 IRValue IRDereferenceValue(IRContext *irContext, SourceLocation loc, IRValue in)
@@ -584,7 +583,7 @@ IRValue IRDoCast(IRContext *irContext, SourceLocation loc, IRValue srcValue, u32
 		IRValue dataMember = IRDoMemberAccess(irContext, loc, dstPtr.valueIdx,
 				stringTypeInfo.structInfo.members[1]);
 
-		u32 charPtrTypeIdx = GetTypeInfoPointerOf(TYPETABLEIDX_U8);
+		u32 charPtrTypeIdx = TYPETABLEIDX_U8_PTR;
 		srcValue.typeTableIdx = charPtrTypeIdx;
 		IRInstruction dataSetInst = {
 			.type = IRINSTRUCTIONTYPE_LOAD_EFFECTIVE_ADDRESS,
@@ -633,10 +632,9 @@ IRValue IRDoCast(IRContext *irContext, SourceLocation loc, IRValue srcValue, u32
 		*IRAddInstruction(irContext) = typeAssignInst;
 
 		// Access data member
-		static u32 voidPtrTypeIdx = GetTypeInfoPointerOf(TYPETABLEIDX_VOID);
 		IRValue dataMember = IRDoMemberAccess(irContext, loc, resultPtr.valueIdx,
 				anyTypeInfo.structInfo.members[1]);
-		dataMember.typeTableIdx = voidPtrTypeIdx;
+		dataMember.typeTableIdx = TYPETABLEIDX_VOID_PTR;
 
 		IRValue dataValue = srcValue;
 		TypeInfo dataTypeInfo = GetTypeInfo(srcValue.typeTableIdx);
@@ -1458,7 +1456,6 @@ IRValue IRDoInlineProcedureCall(IRContext *irContext, ASTProcedureCall astProcCa
 
 	// Varargs
 	if (isVarargs) {
-		static u32 anyPointerTypeIdx = GetTypeInfoPointerOf(TYPETABLEIDX_ANY_STRUCT);
 		static u32 arrayOfAnyTypeIdx = GetTypeInfoArrayOf(TYPETABLEIDX_ANY_STRUCT, 0);
 
 		s64 varargsCount = astProcCall.arguments.size - procParamCount;
@@ -1508,7 +1505,7 @@ IRValue IRDoInlineProcedureCall(IRContext *irContext, ASTProcedureCall astProcCa
 			}
 		}
 		else
-			pointerToBuffer = IRValueImmediate(0, GetTypeInfoPointerOf(anyPointerTypeIdx));
+			pointerToBuffer = IRValueImmediate(0, GetTypeInfoPointerOf(TYPETABLEIDX_ANY_STRUCT_PTR));
 
 		// By now we should have the buffer with all the varargs as Any structs.
 		// Now we put it into a dynamic array struct.
@@ -2104,7 +2101,6 @@ IRValue IRGenFromExpression(IRContext *irContext, const ASTExpression *expressio
 		{
 			s64 varargsCount = astProcCall->arguments.size - procParamCount;
 
-			static u32 anyPointerTypeIdx = GetTypeInfoPointerOf(TYPETABLEIDX_ANY_STRUCT);
 			static u32 arrayOfAnyTypeIdx = GetTypeInfoArrayOf(TYPETABLEIDX_ANY_STRUCT, 0);
 
 			if (varargsCount == 1)
@@ -2158,7 +2154,7 @@ IRValue IRGenFromExpression(IRContext *irContext, const ASTExpression *expressio
 			}
 			else {
 				varargsCount = 0; // Can be negative
-				pointerToBuffer = IRValueImmediate(0, anyPointerTypeIdx);
+				pointerToBuffer = IRValueImmediate(0, TYPETABLEIDX_ANY_STRUCT_PTR);
 			}
 
 			// By now we should have the buffer with all the varargs as Any structs.
@@ -2176,7 +2172,7 @@ IRValue IRGenFromExpression(IRContext *irContext, const ASTExpression *expressio
 			// Size
 			{
 				StructMember sizeStructMember = {
-					.typeTableIdx = GetTypeInfoPointerOf(TYPETABLEIDX_U8),
+					.typeTableIdx = TYPETABLEIDX_U8_PTR,
 					.offset = 0 };
 				IRValue sizeMember = IRDoMemberAccess(irContext, astProcCall->loc,
 						arrayPtr.valueIdx, sizeStructMember);
@@ -2441,7 +2437,7 @@ skipGeneratingVarargsArray:
 			if (rangeTypeInfo.arrayInfo.count == 0 || arrayValue.typeTableIdx == TYPETABLEIDX_STRING_STRUCT) {
 				// Compare with size member
 				StructMember sizeMember = {
-					.typeTableIdx = GetTypeInfoPointerOf(TYPETABLEIDX_U8),
+					.typeTableIdx = TYPETABLEIDX_U8_PTR,
 					.offset = 0 };
 				to = IRDoMemberAccess(irContext, astFor->loc, ptrToArray.valueIdx, sizeMember);
 			}
@@ -2550,7 +2546,7 @@ skipGeneratingVarargsArray:
 
 		{
 			StructMember sizeMember = {
-				.typeTableIdx = GetTypeInfoPointerOf(TYPETABLEIDX_U8),
+				.typeTableIdx = TYPETABLEIDX_U8_PTR,
 				.offset = 0 };
 
 			sizeValue = IRDoMemberAccess(irContext, loc, ptrToArray.valueIdx, sizeMember);
@@ -2741,8 +2737,8 @@ void IRGenMain()
 		auto &stringLiterals = g_context->stringLiterals.unsafe;
 		BucketArrayInit(&stringLiterals);
 		// Empty string
-		u32 globalValueIdx = NewGlobalValue("_emptystr"_s,
-				GetTypeInfoPointerOf(TYPETABLEIDX_U8), VALUEFLAGS_ON_STATIC_STORAGE);
+		u32 globalValueIdx = NewGlobalValue("_emptystr"_s, TYPETABLEIDX_U8_PTR,
+				VALUEFLAGS_ON_STATIC_STORAGE);
 		*BucketArrayAdd(&stringLiterals) = { globalValueIdx, {} };
 	}
 	{

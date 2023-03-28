@@ -712,10 +712,8 @@ Array<u32, ThreadAllocator> X64ReadyWin64Parameters(X64Context *x64Context, Sour
 		TypeInfo paramType = GetTypeInfo(paramTypeIdx);
 
 		if (isCaller && X64WinABIShouldPassByCopy(paramTypeIdx)) {
-			static u32 voidPtrTypeIdx = GetTypeInfoPointerOf(TYPETABLEIDX_VOID);
-
 			u32 tmpValueIdx = X64NewValue(x64Context, "paramcpy"_s, paramTypeIdx, 0);
-			IRValue tmpValue = IRValueValue(tmpValueIdx, voidPtrTypeIdx);
+			IRValue tmpValue = IRValueValue(tmpValueIdx, TYPETABLEIDX_VOID_PTR);
 
 			X64Instruction pushInst = { loc, X64_Push_Value };
 			pushInst.valueIdx = tmpValueIdx;
@@ -1171,11 +1169,9 @@ void X64ConvertInstruction(X64Context *x64Context, IRInstruction inst)
 	}
 	case IRINSTRUCTIONTYPE_LOAD_EFFECTIVE_ADDRESS:
 	{
-		static u32 voidPtrTypeIdx = GetTypeInfoPointerOf(TYPETABLEIDX_VOID);
-
 		IRValue dst = inst.assignment.dst;
 		IRValue src = inst.assignment.src;
-		src.typeTableIdx = voidPtrTypeIdx;
+		src.typeTableIdx = TYPETABLEIDX_VOID_PTR;
 		if (src.valueType == IRVALUETYPE_IMMEDIATE_INTEGER) {
 			X64Mov(x64Context, inst.loc, dst, src);
 		}
@@ -1551,16 +1547,12 @@ void X64ConvertInstruction(X64Context *x64Context, IRInstruction inst)
 
 		bool isReturnByCopy = false;
 
-		if (callingConvention != CC_DEFAULT && inst.procedureCall.returnValues.size)
-		{
+		if (callingConvention != CC_DEFAULT && inst.procedureCall.returnValues.size) {
 			IRValue returnValue = inst.procedureCall.returnValues[0];
 			isReturnByCopy = IRShouldPassByCopy(returnValue.typeTableIdx);
-			if (isReturnByCopy)
-			{
-				static u32 voidPtrTypeIdx = GetTypeInfoPointerOf(TYPETABLEIDX_VOID);
-
+			if (isReturnByCopy) {
 				u32 tmpValueIdx = X64NewValue(x64Context, "returncpy"_s, returnValue.typeTableIdx, 0);
-				IRValue tmpValue = IRValueValue(tmpValueIdx, voidPtrTypeIdx);
+				IRValue tmpValue = IRValueValue(tmpValueIdx, TYPETABLEIDX_VOID_PTR);
 
 				X64Instruction pushInst = { inst.loc, X64_Push_Value };
 				pushInst.valueIdx = tmpValueIdx;
