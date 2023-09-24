@@ -1305,7 +1305,15 @@ ASTExpression ParseExpression(PContext *pContext, s32 precedence, bool isStateme
 
 		result.nodeType = ASTNODETYPE_TYPEOF;
 		result.typeOfNode.expression = PNewTreeNode(pContext);
-		*result.typeOfNode.expression = ParseExpression(pContext, precedence, false);
+		if (pContext->token->type == '(') {
+			// If there are parenthesis, grab _only_ the expression inside.
+			Advance(pContext);
+			*result.typeOfNode.expression = ParseExpression(pContext, -1, false);
+			AssertToken(pContext->token, ')');
+			Advance(pContext);
+		}
+		else
+			*result.typeOfNode.expression = ParseExpression(pContext, precedence, false);
 	} break;
 	case TOKEN_KEYWORD_SIZEOF:
 	{
@@ -1314,7 +1322,15 @@ ASTExpression ParseExpression(PContext *pContext, s32 precedence, bool isStateme
 
 		result.nodeType = ASTNODETYPE_SIZEOF;
 		result.sizeOfNode.expression = PNewTreeNode(pContext);
-		*result.sizeOfNode.expression = ParseExpression(pContext, precedence, false);
+		if (pContext->token->type == '(') {
+			// If there are parenthesis, grab _only_ the expression inside.
+			Advance(pContext);
+			*result.sizeOfNode.expression = ParseExpression(pContext, -1, false);
+			AssertToken(pContext->token, ')');
+			Advance(pContext);
+		}
+		else
+			*result.sizeOfNode.expression = ParseExpression(pContext, precedence, false);
 	} break;
 	case TOKEN_DIRECTIVE_DEFINED:
 	{
@@ -1347,8 +1363,17 @@ ASTExpression ParseExpression(PContext *pContext, s32 precedence, bool isStateme
 		Advance(pContext);
 
 		result.castNode.expression = PNewTreeNode(pContext);
-		int castPrecedence = GetOperatorPrecedence(TOKEN_KEYWORD_CAST);
-		*result.castNode.expression = ParseExpression(pContext, castPrecedence, false);
+		if (pContext->token->type == '(') {
+			// If there are parenthesis, grab _only_ the expression inside.
+			Advance(pContext);
+			*result.castNode.expression = ParseExpression(pContext, -1, false);
+			AssertToken(pContext->token, ')');
+			Advance(pContext);
+		}
+		else {
+			int castPrecedence = GetOperatorPrecedence(TOKEN_KEYWORD_CAST);
+			*result.castNode.expression = ParseExpression(pContext, castPrecedence, false);
+		}
 	} break;
 	case TOKEN_DIRECTIVE_INTRINSIC:
 	{

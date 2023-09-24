@@ -54,7 +54,7 @@ Vertex :: struct
 {
 	position: v3;
 	color: v4;
-};
+}
 
 Main :: (args : [] String) -> s64
 {

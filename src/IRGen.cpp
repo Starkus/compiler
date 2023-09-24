@@ -1655,7 +1655,16 @@ void IRFillValueWithGroupLiteral(IRContext *irContext, IRValue value, ASTLiteral
 			StructMember currentMember = currentStructTypeInfo.structInfo.members[currentFrame.idx];
 			TypeCategory memberTypeCat = GetTypeInfo(currentMember.typeTableIdx).typeCategory;
 
-			if (memberTypeCat == TYPECATEGORY_STRUCT || memberTypeCat == TYPECATEGORY_UNION) {
+			ASTExpression *literalMemberExp = nullptr;
+			if (memberIdx < nonNamedCount)
+				literalMemberExp = astLiteral.members[memberIdx];
+
+			bool isAnotherASTGroupLiteral = literalMemberExp != nullptr &&
+				literalMemberExp->nodeType == ASTNODETYPE_LITERAL &&
+				literalMemberExp->literal.type == LITERALTYPE_GROUP;
+
+			if (!isAnotherASTGroupLiteral &&
+				(memberTypeCat == TYPECATEGORY_STRUCT || memberTypeCat == TYPECATEGORY_UNION)) {
 				// Push struct frame
 				++structStack[structStack.size - 1].idx;
 				IRValue innerStructValue = IRDoMemberAccess(irContext, loc,
@@ -1667,7 +1676,6 @@ void IRFillValueWithGroupLiteral(IRContext *irContext, IRValue value, ASTLiteral
 			IRValue memberValue = IRDoMemberAccess(irContext, loc, innerStructPtr.valueIdx, currentMember);
 			IRValue src;
 			if (memberIdx < nonNamedCount) {
-				ASTExpression *literalMemberExp = astLiteral.members[memberIdx];
 				src = IRGenFromExpression(irContext, literalMemberExp);
 			}
 			else {
@@ -2320,6 +2328,10 @@ skipGeneratingVarargsArray:
 			ASSERT(!"Unexpected literal type");
 		}
 		break;
+	} break;
+	case ASTNODETYPE_RUN:
+	{
+		result = IRValueFromConstant(expression->runNode.result);
 	} break;
 	case ASTNODETYPE_IF:
 	{

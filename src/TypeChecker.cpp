@@ -833,6 +833,25 @@ TypeCheckResult CheckTypesMatchAndSpecialize(u32 leftTypeIdx, ASTExpression *rig
 	TypeCheckResult result = { TYPECHECK_COOL, leftTypeIdx, rightTypeIdx };
 
 	if (rightTypeIdx == TYPETABLEIDX_StructLiteral) {
+		/*
+		Documentation!
+
+		Here we resolve a bag of things inside curly braces {} into struct/array literals, according
+		to what types we have on the left hand side. Here are the rules the code is supposed to
+		follow while doing so.
+
+		Arrays:
+		This one is easy, we interpret the literal as a comma-separated list of values. Regardless
+		of the type of each element or how many nested braces there may be.
+
+		Structs/unions:
+		With structs it's a little more complicated. We do recurse into struct members inside the
+		lhs struct, even if there are no explicit recursive braces on the rhs. The idea is that
+		things like 3D vectors, which are often constructed as a union of structs, can still be
+		represented simply like {x,y,z}.
+		*/
+
+		// Important: keep this symmetrical with the logic over at IRGen!
 		ASSERT(rightHand->nodeType == ASTNODETYPE_LITERAL);
 		ASSERT(rightHand->literal.type == LITERALTYPE_GROUP);
 
@@ -851,7 +870,9 @@ TypeCheckResult CheckTypesMatchAndSpecialize(u32 leftTypeIdx, ASTExpression *rig
 			*DynamicArrayAdd(&structStack) = { structTypeIdx, 0 };
 
 			int memberIdx = 0;
+			// Non-named members
 			while (memberIdx < rightHand->literal.members.size) {
+				ASTExpression *literalMemberExp = rightHand->literal.members[memberIdx];
 				StructStackFrame currentFrame = structStack[structStack.size - 1];
 				TypeInfo currentStructTypeInfo = GetTypeInfo(currentFrame.structTypeIdx);
 
@@ -859,7 +880,9 @@ TypeCheckResult CheckTypesMatchAndSpecialize(u32 leftTypeIdx, ASTExpression *rig
 					// Pop struct frame
 					--structStack.size;
 					if (structStack.size == 0)
-						LogError(rightHand->any.loc, "Too many values in struct literal"_s);
+						LogError(rightHand->any.loc, TPrintF("Too many values in struct literal, "
+								"while fitting struct %S",
+								TypeInfoToString(currentFrame.structTypeIdx)));
 					continue;
 				}
 
@@ -867,14 +890,22 @@ TypeCheckResult CheckTypesMatchAndSpecialize(u32 leftTypeIdx, ASTExpression *rig
 					currentStructTypeInfo.structInfo.members[currentFrame.idx].typeTableIdx;
 				TypeInfo currentMemberTypeInfo = GetTypeInfo(currentMemberTypeIdx);
 
-				if (currentMemberTypeInfo.typeCategory == TYPECATEGORY_STRUCT ||
-					currentMemberTypeInfo.typeCategory == TYPECATEGORY_UNION) {
+				// We don't try to dive into more members when there is an explicit set of braces
+				// delimiting a member. Otherwise, something like:
+				// { { x, y, z }, { a, b }, { r, g, b } }
+				// gets interpreted as a flat string of values, which can be incorrect:
+				// { x, y, z, a, b, r, g, b }
+				bool isAnotherASTGroupLiteral = literalMemberExp->nodeType == ASTNODETYPE_LITERAL &&
+					literalMemberExp->literal.type == LITERALTYPE_GROUP;
+
+				if (!isAnotherASTGroupLiteral &&
+					(currentMemberTypeInfo.typeCategory == TYPECATEGORY_STRUCT ||
+					 currentMemberTypeInfo.typeCategory == TYPECATEGORY_UNION)) {
 					// Push struct frame
 					structStack[structStack.size++] = { currentMemberTypeIdx, 0 };
 					continue;
 				}
 
-				ASTExpression *literalMemberExp = rightHand->literal.members[memberIdx];
 				if (literalMemberExp->nodeType == ASTNODETYPE_BINARY_OPERATION &&
 					literalMemberExp->binaryOperation.op == TOKEN_OP_ASSIGNMENT)
 					// Named member assignments handled in next loop
@@ -894,6 +925,7 @@ TypeCheckResult CheckTypesMatchAndSpecialize(u32 leftTypeIdx, ASTExpression *rig
 				++memberIdx;
 			}
 
+			// Named members
 			for (; memberIdx < rightHand->literal.members.size; ++memberIdx) {
 				ASTExpression *literalMemberExp = rightHand->literal.members[memberIdx];
 				if (literalMemberExp->nodeType != ASTNODETYPE_BINARY_OPERATION ||
@@ -925,7 +957,9 @@ TypeCheckResult CheckTypesMatchAndSpecialize(u32 leftTypeIdx, ASTExpression *rig
 		}
 		else if (structTypeInfo.typeCategory == TYPECATEGORY_ARRAY) {
 			if (structTypeInfo.arrayInfo.count < rightHand->literal.members.size)
-				LogError(rightHand->any.loc, "Too many values in array literal"_s);
+				LogError(rightHand->any.loc, TPrintF("Too many values in array literal: %d on "
+						"left side, %d on right side.", structTypeInfo.arrayInfo.count,
+						rightHand->literal.members.size));
 
 			for (int memberIdx = 0; memberIdx < rightHand->literal.members.size; ++memberIdx) {
 				ASTExpression *literalMemberExp = rightHand->literal.members[memberIdx];
@@ -949,7 +983,9 @@ TypeCheckResult CheckTypesMatchAndSpecialize(u32 leftTypeIdx, ASTExpression *rig
 			result.rightTypeIdx = structTypeIdx;
 		}
 		else
-			ASSERT(false);
+			LogCompilerError(rightHand->any.loc, TPrintF("Group literal found but left hand "
+					"side was neither struct or array: left is \"%S\"",
+					TypeInfoToString(structTypeIdx)));
 	}
 	else if (rightTypeIdx == TYPETABLEIDX_Anything) {
 		if (leftTypeIdx == TYPETABLEIDX_Anything)
@@ -1679,6 +1715,7 @@ u32 TypeCheckStructDeclaration(TCContext *tcContext, String name, bool isUnion,
 Constant ConstantFromCTRegister(CTRegister ctRegister, u32 typeTableIdx)
 {
 	Constant result;
+	result.typeTableIdx = typeTableIdx;
 	switch (typeTableIdx) {
 	case TYPETABLEIDX_S8:
 	case TYPETABLEIDX_S16:
