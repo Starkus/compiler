@@ -388,6 +388,19 @@ inline String StringExpand(SmallString smallString) {
 	};
 }
 
+String FilenameWithoutPath(String filename)
+{
+	String result = filename;
+	const char *c = filename.data;
+	for (int i = 0; i < filename.size; ++i, ++c) {
+		if (*c == '/' || *c == '\\') {
+			result.data = c + 1;
+			result.size = filename.size - i;
+		}
+	}
+	return result;
+}
+
 // newExtension should start with . for the case where filename doesn't have one
 String ChangeFilenameExtension(String filename, String newExtension)
 {

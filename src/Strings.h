@@ -40,6 +40,7 @@ inline String TStringConcat(String a, String b);
 inline String SStringConcat(String a, String b);
 const char *StringToCStr(String str, void *(*allocFunc)(u64, int));
 String CStrToString(const char *cstr);
+String FilenameWithoutPath(String filename);
 String ChangeFilenameExtension(String filename, String newExtension);
 void ChangeFilenameExtensionInPlace(char *buffer, const char *newExtension);
 inline bool StringEquals(String a, String b);

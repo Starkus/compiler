@@ -1832,8 +1832,11 @@ void ParseJobProc(void *args)
 		GenerateTypeCheckJobs(statement);
 	}
 
-	if (g_context->config.logAST)
-		PrintAST(pContext);
+	if (g_context->config.logAST) {
+		String filename = FilenameWithoutPath(g_context->sourceFiles[fileIdx].name);
+		filename = ChangeFilenameExtension(filename, ""_s);
+		PrintAST(pContext, filename);
+	}
 
 	ProfilerEnd();
 

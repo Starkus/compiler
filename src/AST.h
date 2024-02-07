@@ -232,8 +232,19 @@ enum CallingConvention : u8
 	CC_LINUX64
 };
 
+struct ASTProcedureParameter : ASTBase
+{
+	String name;
+	ASTExpression *astInitialValue;
+	ASTType *astType;
+	bool isUsing;
+
+	// TypeCheck
+	u32 valueIdx;
+	u32 typeTableIdx;
+};
+
 struct ASTType;
-struct ASTProcedureParameter;
 struct ASTProcedurePrototype : ASTBase
 {
 	DynamicArray<ASTProcedureParameter, LinearAllocator> astParameters;
@@ -303,18 +314,6 @@ struct ASTVariableDeclaration : ASTBase
 		u32 typeIdx;
 		u32 *arrayOfTypeIndices;
 	};
-};
-
-struct ASTProcedureParameter : ASTBase
-{
-	String name;
-	ASTExpression *astInitialValue;
-	ASTType *astType;
-	bool isUsing;
-
-	// TypeCheck
-	u32 valueIdx;
-	u32 typeTableIdx;
 };
 
 struct ASTProcedureDeclaration : ASTBase
