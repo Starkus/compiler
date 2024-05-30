@@ -1,7 +1,6 @@
-u32 IRNewValue(IRContext *irContext, u32 typeTableIdx, u32 flags, u32 immitateValueIdx = U32_MAX)
+u32 IRNewValue(IRContext *irContext, u32 typeTableIdx, u32 flags)
 {
-	ASSERT(typeTableIdx != 0);
-	ASSERT(!(flags & VALUEFLAGS_TRY_IMMITATE) || immitateValueIdx != U32_MAX);
+	ASSERT(typeTableIdx > TYPETABLEIDX_Unset);
 
 	u64 idx = irContext->localValues->count;
 	Value *result = BucketArrayAdd(irContext->localValues);
@@ -10,17 +9,14 @@ u32 IRNewValue(IRContext *irContext, u32 typeTableIdx, u32 flags, u32 immitateVa
 #endif
 	result->typeTableIdx = typeTableIdx;
 	result->flags = flags;
-	result->tryImmitateValueIdx = immitateValueIdx;
-	result->allocatedRegister = U32_MAX;
 
 	ASSERT(idx < U32_MAX);
 	return (u32)idx;
 }
 
-u32 IRNewValue(IRContext *irContext, String name, u32 typeTableIdx, u32 flags, u32 immitateValueIdx = U32_MAX)
+u32 IRNewValue(IRContext *irContext, String name, u32 typeTableIdx, u32 flags)
 {
-	ASSERT(typeTableIdx != 0);
-	ASSERT(!(flags & VALUEFLAGS_TRY_IMMITATE) || immitateValueIdx != U32_MAX);
+	ASSERT(typeTableIdx > TYPETABLEIDX_Unset);
 
 	u64 idx = irContext->localValues->count;
 	Value *result = BucketArrayAdd(irContext->localValues);
@@ -31,8 +27,6 @@ u32 IRNewValue(IRContext *irContext, String name, u32 typeTableIdx, u32 flags, u
 #endif
 	result->typeTableIdx = typeTableIdx;
 	result->flags = flags;
-	result->tryImmitateValueIdx = immitateValueIdx;
-	result->allocatedRegister = U32_MAX;
 
 	ASSERT(idx < U32_MAX);
 	return (u32)idx;
@@ -40,8 +34,7 @@ u32 IRNewValue(IRContext *irContext, String name, u32 typeTableIdx, u32 flags, u
 
 u32 IRNewValue(IRContext *irContext, Value value)
 {
-	ASSERT(value.typeTableIdx != 0);
-	ASSERT(!(value.flags & VALUEFLAGS_TRY_IMMITATE) || value.tryImmitateValueIdx != U32_MAX);
+	ASSERT(value.typeTableIdx > TYPETABLEIDX_Unset);
 
 	u64 idx = irContext->localValues->count;
 	Value *result = BucketArrayAdd(irContext->localValues);
@@ -339,9 +332,9 @@ inline IRValue IRValueProcedure(u32 procedureIdx)
 	return result;
 }
 
-inline IRValue IRValueNewValue(IRContext *irContext, u32 typeTableIdx, u32 flags, u32 immitateValueIdx = 0)
+inline IRValue IRValueNewValue(IRContext *irContext, u32 typeTableIdx, u32 flags)
 {
-	u32 newValueIdx = IRNewValue(irContext, typeTableIdx, flags, immitateValueIdx);
+	u32 newValueIdx = IRNewValue(irContext, typeTableIdx, flags);
 
 	IRValue result = {};
 	result.valueType = IRVALUETYPE_VALUE;
@@ -350,10 +343,9 @@ inline IRValue IRValueNewValue(IRContext *irContext, u32 typeTableIdx, u32 flags
 	return result;
 }
 
-inline IRValue IRValueNewValue(IRContext *irContext, String name, u32 typeTableIdx, u32 flags,
-		u32 immitateValueIdx = 0)
+inline IRValue IRValueNewValue(IRContext *irContext, String name, u32 typeTableIdx, u32 flags)
 {
-	u32 newValueIdx = IRNewValue(irContext, name, typeTableIdx, flags, immitateValueIdx);
+	u32 newValueIdx = IRNewValue(irContext, name, typeTableIdx, flags);
 
 	IRValue result = {};
 	result.valueType = IRVALUETYPE_VALUE;
@@ -380,8 +372,7 @@ IRValue IRDereferenceValue(IRContext *irContext, SourceLocation loc, IRValue in)
 	if (in.valueType == IRVALUETYPE_VALUE)
 		return IRValueMemory(in.valueIdx, pointedTypeIdx);
 	else if (in.valueType == IRVALUETYPE_MEMORY) {
-		u32 newValueIdx = IRNewValue(irContext, in.typeTableIdx, VALUEFLAGS_TRY_IMMITATE,
-				in.mem.baseValueIdx);
+		u32 newValueIdx = IRNewValue(irContext, in.typeTableIdx, 0);
 		IRValue value = IRValueValue(newValueIdx, in.typeTableIdx);
 #if DEBUG_BUILD
 		String name = SStringConcat("_deref_"_s, IRGetValue(irContext, in.mem.baseValueIdx).name);
@@ -485,8 +476,7 @@ IRValue IRDoArrayAccess(IRContext *irContext, SourceLocation loc, u32 arrayPtrVa
 			CountOnes64(elementSize) == 1 && elementSize <= 8) {
 		// @Todo: move x64 specifics like element size limitations and force to register to x64
 		// backend.
-		IRValue indexForceReg = IRValueNewValue(irContext, "_idx"_s, TYPETABLEIDX_S64,
-				VALUEFLAGS_FORCE_REGISTER | VALUEFLAGS_TRY_IMMITATE, indexValue.valueIdx);
+		IRValue indexForceReg = IRValueNewValue(irContext, "_idx"_s, TYPETABLEIDX_S64, 0);
 		IRDoAssignment(irContext, loc, indexForceReg, indexValue);
 
 		IRValue result = IRValueMemory(arrayPtrValueIdx, elementTypeIdx);
@@ -901,33 +891,12 @@ IRValue IRInstructionFromBinaryOperation(IRContext *irContext, const ASTExpressi
 	if (expression->binaryOperation.op == TOKEN_OP_MEMBER_ACCESS) {
 		IRValue irValue = IRGenFromExpression(irContext, leftHand);
 
-		IRValue structPtr;
+		IRValue structPtr = irValue;
 
+		// Get pointer to struct, if not already a pointer.
+		// (remember that, what would be . and -> in C are both . in this language)
 		TypeInfo structTypeInfo = GetTypeInfo(irValue.typeTableIdx);
-		if (structTypeInfo.typeCategory == TYPECATEGORY_POINTER) {
-			// Dereference the pointer to the struct
-			u32 newValueIdx = IRNewValue(irContext, irValue.typeTableIdx,
-					VALUEFLAGS_FORCE_REGISTER);
-			IRValue newValue = IRValueValue(newValueIdx, irValue.typeTableIdx);
-
-#if DEBUG_BUILD
-			String valueName = IRGetValue(irContext, irValue.valueIdx).name; 
-			IRAddComment(irContext, loc, SNPrintF(64, "Dereference struct pointer \"%S\"", valueName));
-			String name = SStringConcat("_derefstrctptr_"_s, valueName);
-			IRGetLocalValue(irContext, newValueIdx)->name = name;
-#endif
-
-			IRInstruction inst = {};
-			inst.type = IRINSTRUCTIONTYPE_ASSIGNMENT;
-			inst.loc = expression->any.loc;
-			inst.assignment.dst = newValue;
-			inst.assignment.src = irValue;
-			*IRAddInstruction(irContext) = inst;
-
-			u32 pointedTypeIdx = structTypeInfo.pointerInfo.pointedTypeTableIdx;
-			structPtr = IRValueValue(newValueIdx, pointedTypeIdx);
-		}
-		else
+		if (structTypeInfo.typeCategory != TYPECATEGORY_POINTER)
 			structPtr = IRPointerToValue(irContext, loc, irValue);
 
 		ASSERT(rightHand->nodeType == ASTNODETYPE_IDENTIFIER);
@@ -1216,16 +1185,6 @@ IRValue IRInstructionFromBinaryOperation(IRContext *irContext, const ASTExpressi
 			IRGetLocalValue(irContext, tempValueIdx)->name = "_binaryop_cast"_s;
 #endif
 			out = IRValueValue(tempValueIdx, expression->typeTableIdx);
-		}
-
-		// Hint for register allocation to try and allocate left and out in the same register
-		if (out.valueType == IRVALUETYPE_VALUE &&
-			left.valueType == IRVALUETYPE_VALUE)
-		{
-			Value v = IRGetValue(irContext, left.valueIdx);
-			v.flags |= VALUEFLAGS_TRY_IMMITATE;
-			v.tryImmitateValueIdx = out.valueIdx;
-			IRUpdateValue(irContext, left.valueIdx, &v);
 		}
 
 		inst.binaryOperation.out = out;

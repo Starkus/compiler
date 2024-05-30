@@ -4,6 +4,41 @@ extern "C" {
 }
 #endif
 
+enum ValueAllocationFlags
+{
+	VALUEALLOCATIONFLAGS_IS_USED              = 0x1,
+	VALUEALLOCATIONFLAGS_FORCE_REGISTER       = 0x2,
+	VALUEALLOCATIONFLAGS_FORCE_MEMORY         = 0x4,
+	VALUEALLOCATIONFLAGS_IS_MEMORY            = 0x8,
+	VALUEALLOCATIONFLAGS_IS_ALLOCATED         = 0x10,
+	VALUEALLOCATIONFLAGS_ON_STATIC_STORAGE    = 0x20,
+	VALUEALLOCATIONFLAGS_BASE_RELATIVE        = 0x40,
+	VALUEALLOCATIONFLAGS_HAS_PUSH_INSTRUCTION = 0x80
+};
+struct ValueAllocation
+{
+	u32 valueIdx;
+	u32 flags;
+	union {
+		s32 allocatedRegister;
+		s32 stackOffset;
+		SmallString externalSymbolName;
+	};
+};
+
+struct X64ValueContext
+{
+	struct CoalescingScore {
+		struct {
+			u32 valueIdx;
+			u32 score;
+		} entries[4];
+	};
+	BucketArray<Value, LinearAllocator, 256> *localValues;
+	HashMap<u32, ValueAllocation, LinearAllocator> valueAllocations;
+	HashMap<u32, CoalescingScore, LinearAllocator> coalescingGraph;
+};
+
 enum X64OperandType
 {
 	OPERANDTYPE_NONE      = 0,
@@ -178,6 +213,7 @@ struct BEFinalProcedure
 	BucketArray<X64Instruction, LinearAllocator, 1024> instructions;
 	u64 stackSize;
 	BucketArray<Value, LinearAllocator, 256> localValues;
+	HashMap<u32, ValueAllocation, LinearAllocator> valueAllocations;
 };
 typedef BEFinalProcedure X64FinalProcedure;
 
@@ -477,6 +513,9 @@ IRValue x64Registers[X64REGISTER_Count] = {
 	XMM8,	XMM9,	XMM10,	XMM11,
 	XMM12,	XMM13,	XMM14,	XMM15
 };
+
+ValueAllocation x64GlobalValueAllocation;
+ValueAllocation x64RegisterAllocations[X64REGISTER_Count];
 
 #if USE_OWN_ASSEMBLER
 xed_reg_enum_t x64RegisterToXED[X64REGISTER_Count] = {
@@ -895,7 +934,7 @@ String x64LinuxSyscallNames[] =
 struct X64Context
 {
 	u32 procedureIdx;
-	BucketArray<Value, LinearAllocator, 256> *localValues;
+	X64ValueContext valueContext;
 	BucketArray<IRInstruction, LinearAllocator, 256> *irInstructions;
 	ArrayView<u32> returnValueIndices;
 	BucketArray<BEInstruction, LinearAllocator, 1024> beInstructions;

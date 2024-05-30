@@ -26,6 +26,8 @@ struct {
 	volatile s32 hashSetMapHit3;
 	volatile s32 hashSetMapHitMore;
 	volatile s32 hashSetMapRehashes;
+	volatile s32 coalescingSuccesses;
+	volatile s32 movsRemoved;
 } g_stats = {};
 #endif
 
@@ -389,12 +391,6 @@ int main(int argc, char **argv)
 
 	g_logFileHandle = SYSOpenFileWrite("output/log.txt"_s);
 
-	if (argc < 2 && !SYSIsInputPipePresent()) {
-		LogErrorNoCrash({}, "Received no input files"_s);
-		LogNote({}, "Usage: compiler [options] <source file(s)>"_s);
-		return 1;
-	}
-
 #if USE_PROFILER_API
 	PerformanceAPI_LoadFrom(L"external/Superluminal/PerformanceAPI.dll", &performanceAPI);
 	if (performanceAPI.BeginEvent == nullptr) {
@@ -440,6 +436,12 @@ int main(int argc, char **argv)
 		}
 		else
 			*DynamicArrayAdd(&inputFileNames) = CStrToString(arg);
+	}
+
+	if (argc < 2 && !SYSIsInputPipePresent()) {
+		LogErrorNoCrash({}, "Received no input files"_s);
+		LogNote({}, "Usage: compiler [options] <source file(s)>"_s);
+		return 1;
 	}
 
 	if (!context->config.silent)
@@ -708,6 +710,8 @@ int main(int argc, char **argv)
 		Print("  Hash set/map hits 4 its: %d\n", g_stats.hashSetMapHit3);
 		Print("  Hash set/map hits 5+ its: %d\n", g_stats.hashSetMapHitMore);
 		Print("  Hash set/map rehashes: %d\n", g_stats.hashSetMapRehashes);
+		Print("  Registers coalesced: %d\n", g_stats.coalescingSuccesses);
+		Print("  MOVs removed: %d\n", g_stats.movsRemoved);
 #endif
 
 		ConsoleSetColor(CONSOLE_GREEN_TXT);

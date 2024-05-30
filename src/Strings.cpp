@@ -26,7 +26,7 @@ inline String SStringConcat(String a, String b)
 const char *StringToCStr(String str, void *(*allocFunc)(u64, int))
 {
 	char *buffer = (char *)allocFunc(str.size + 1, 1);
-	strncpy(buffer, str.data, str.size);
+	memcpy(buffer, str.data, str.size);
 	buffer[str.size] = 0;
 	return buffer;
 }

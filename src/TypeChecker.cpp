@@ -10,10 +10,10 @@ inline String GetValueName(Value value)
 #endif
 }
 
-u32 TCNewValue(TCContext *tcContext, u32 typeTableIdx, u32 flags, u32 immitateValueIdx = U32_MAX)
+u32 TCNewValue(TCContext *tcContext, u32 typeTableIdx, u32 flags)
 {
 	ASSERT(typeTableIdx != 0);
-	ASSERT(!(flags & VALUEFLAGS_TRY_IMMITATE) || immitateValueIdx != U32_MAX);
+	ASSERT(typeTableIdx > TYPETABLEIDX_Unset);
 
 	u64 idx = tcContext->localValues.count;
 	Value *result = BucketArrayAdd(&tcContext->localValues);
@@ -22,16 +22,15 @@ u32 TCNewValue(TCContext *tcContext, u32 typeTableIdx, u32 flags, u32 immitateVa
 #endif
 	result->typeTableIdx = typeTableIdx;
 	result->flags = flags;
-	result->tryImmitateValueIdx = immitateValueIdx;
 
 	ASSERT(idx < U32_MAX);
 	return (u32)idx;
 }
 
-u32 TCNewValue(TCContext *tcContext, String name, u32 typeTableIdx, u32 flags, u32 immitateValueIdx = U32_MAX)
+u32 TCNewValue(TCContext *tcContext, String name, u32 typeTableIdx, u32 flags)
 {
 	ASSERT(typeTableIdx != 0);
-	ASSERT(!(flags & VALUEFLAGS_TRY_IMMITATE) || immitateValueIdx != U32_MAX);
+	ASSERT(typeTableIdx > TYPETABLEIDX_Unset);
 
 	u64 idx = tcContext->localValues.count;
 	Value *result = BucketArrayAdd(&tcContext->localValues);
@@ -42,7 +41,6 @@ u32 TCNewValue(TCContext *tcContext, String name, u32 typeTableIdx, u32 flags, u
 #endif
 	result->typeTableIdx = typeTableIdx;
 	result->flags = flags;
-	result->tryImmitateValueIdx = immitateValueIdx;
 
 	ASSERT(idx < U32_MAX);
 	return (u32)idx;
@@ -51,7 +49,7 @@ u32 TCNewValue(TCContext *tcContext, String name, u32 typeTableIdx, u32 flags, u
 u32 TCNewValue(TCContext *tcContext, Value value)
 {
 	ASSERT(value.typeTableIdx != 0);
-	ASSERT(!(value.flags & VALUEFLAGS_TRY_IMMITATE) || value.tryImmitateValueIdx != U32_MAX);
+	ASSERT(value.typeTableIdx > TYPETABLEIDX_Unset);
 
 	u64 idx = tcContext->localValues.count;
 	Value *result = BucketArrayAdd(&tcContext->localValues);
@@ -68,9 +66,9 @@ inline Value *TCGetValue(TCContext *tcContext, u32 valueIdx)
 	return &tcContext->localValues[valueIdx];
 }
 
-u32 NewGlobalValue(u32 typeTableIdx, u32 flags, u32 immitateValueIdx = U32_MAX) {
+u32 NewGlobalValue(u32 typeTableIdx, u32 flags)
+{
 	ASSERT(typeTableIdx != 0);
-	ASSERT(!(flags & VALUEFLAGS_TRY_IMMITATE) || immitateValueIdx != U32_MAX);
 
 	auto globalValues = g_context->globalValues.GetForWrite();
 
@@ -81,7 +79,6 @@ u32 NewGlobalValue(u32 typeTableIdx, u32 flags, u32 immitateValueIdx = U32_MAX) 
 #endif
 	result->typeTableIdx = typeTableIdx;
 	result->flags = flags;
-	result->tryImmitateValueIdx = immitateValueIdx;
 	result->externalSymbolName = {};
 
 	ASSERT(idx < U32_MAX);
@@ -89,10 +86,9 @@ u32 NewGlobalValue(u32 typeTableIdx, u32 flags, u32 immitateValueIdx = U32_MAX) 
 	return (u32)idx;
 }
 
-u32 NewGlobalValue(String name, u32 typeTableIdx, u32 flags,
-		u32 immitateValueIdx = U32_MAX) {
+u32 NewGlobalValue(String name, u32 typeTableIdx, u32 flags)
+{
 	ASSERT(typeTableIdx != 0);
-	ASSERT(!(flags & VALUEFLAGS_TRY_IMMITATE) || immitateValueIdx != U32_MAX);
 
 	auto globalValues = g_context->globalValues.GetForWrite();
 
@@ -103,7 +99,6 @@ u32 NewGlobalValue(String name, u32 typeTableIdx, u32 flags,
 #endif
 	result->typeTableIdx = typeTableIdx;
 	result->flags = flags;
-	result->tryImmitateValueIdx = immitateValueIdx;
 	result->externalSymbolName = StringMinify(name);
 
 	ASSERT(idx < U32_MAX);
@@ -113,7 +108,6 @@ u32 NewGlobalValue(String name, u32 typeTableIdx, u32 flags,
 
 u32 NewGlobalValue(Value value) {
 	ASSERT(value.typeTableIdx != 0);
-	ASSERT(!(value.flags & VALUEFLAGS_TRY_IMMITATE) || value.tryImmitateValueIdx != U32_MAX);
 
 	auto globalValues = g_context->globalValues.GetForWrite();
 
