@@ -2640,7 +2640,7 @@ TypeInfo TypeInfoFromASTProcedurePrototype(ASTProcedurePrototype *astPrototype)
 	return t;
 }
 
-ASTExpression TCInlineProcedureCopyTreeBranch(TCContext *tcContext, const ASTExpression *expression)
+ASTExpression TCDeepCopyTreeBranch(TCContext *tcContext, const ASTExpression *expression)
 {
 	ASTExpression result;
 	result.nodeType = expression->nodeType;
@@ -2656,7 +2656,7 @@ ASTExpression TCInlineProcedureCopyTreeBranch(TCContext *tcContext, const ASTExp
 		TCPushScope(tcContext);
 
 		for (int i = 0; i < expression->block.statements.size; ++i) {
-			ASTExpression statement = TCInlineProcedureCopyTreeBranch(tcContext,
+			ASTExpression statement = TCDeepCopyTreeBranch(tcContext,
 					&expression->block.statements[i]);
 			if (statement.nodeType != ASTNODETYPE_INVALID)
 				*DynamicArrayAdd(&astBlock.statements) = statement;
@@ -2720,7 +2720,7 @@ ASTExpression TCInlineProcedureCopyTreeBranch(TCContext *tcContext, const ASTExp
 
 		if (varDecl.astInitialValue) {
 			ASTExpression *astInitialValue = TCNewTreeNode();
-			*astInitialValue = TCInlineProcedureCopyTreeBranch(tcContext, varDecl.astInitialValue);
+			*astInitialValue = TCDeepCopyTreeBranch(tcContext, varDecl.astInitialValue);
 			varDecl.astInitialValue = astInitialValue;
 		}
 
@@ -2781,21 +2781,21 @@ ASTExpression TCInlineProcedureCopyTreeBranch(TCContext *tcContext, const ASTExp
 	case ASTNODETYPE_RETURN:
 	{
 		ASTExpression *e = TCNewTreeNode();
-		*e = TCInlineProcedureCopyTreeBranch(tcContext, expression->returnNode.expression);
+		*e = TCDeepCopyTreeBranch(tcContext, expression->returnNode.expression);
 		result.returnNode.expression = e;
 		return result;
 	}
 	case ASTNODETYPE_DEFER:
 	{
 		ASTExpression *e = TCNewTreeNode();
-		*e = TCInlineProcedureCopyTreeBranch(tcContext, expression->deferNode.expression);
+		*e = TCDeepCopyTreeBranch(tcContext, expression->deferNode.expression);
 		result.deferNode.expression = e;
 		return result;
 	}
 	case ASTNODETYPE_USING:
 	{
 		ASTExpression *usingExp = TCNewTreeNode();
-		*usingExp = TCInlineProcedureCopyTreeBranch(tcContext, expression->usingNode.expression);
+		*usingExp = TCDeepCopyTreeBranch(tcContext, expression->usingNode.expression);
 
 		if (usingExp->nodeType == ASTNODETYPE_VARIABLE_DECLARATION)
 		{
@@ -2827,13 +2827,13 @@ ASTExpression TCInlineProcedureCopyTreeBranch(TCContext *tcContext, const ASTExp
 			DynamicArrayInit(&astProcCall.arguments, argCount);
 			for (int argIdx = 0; argIdx < argCount; ++argIdx) {
 				ASTExpression *arg = TCNewTreeNode();
-				*arg = TCInlineProcedureCopyTreeBranch(tcContext, original.arguments[argIdx]);
+				*arg = TCDeepCopyTreeBranch(tcContext, original.arguments[argIdx]);
 				*DynamicArrayAdd(&astProcCall.arguments) = arg;
 			}
 		}
 
 		ASTExpression *exp = TCNewTreeNode();
-		*exp = TCInlineProcedureCopyTreeBranch(tcContext, original.procedureExpression);
+		*exp = TCDeepCopyTreeBranch(tcContext, original.procedureExpression);
 
 		result.procedureCall = astProcCall;
 		return result;
@@ -2842,7 +2842,7 @@ ASTExpression TCInlineProcedureCopyTreeBranch(TCContext *tcContext, const ASTExp
 	{
 		ASTUnaryOperation astUnary = expression->unaryOperation;
 		ASTExpression *e = TCNewTreeNode();
-		*e = TCInlineProcedureCopyTreeBranch(tcContext, expression->unaryOperation.expression);
+		*e = TCDeepCopyTreeBranch(tcContext, expression->unaryOperation.expression);
 		astUnary.expression = e;
 		result.unaryOperation = astUnary;
 		return result;
@@ -2852,13 +2852,13 @@ ASTExpression TCInlineProcedureCopyTreeBranch(TCContext *tcContext, const ASTExp
 		ASTBinaryOperation astBinary = expression->binaryOperation;
 		ASTExpression *l = TCNewTreeNode();
 		ASTExpression *r = TCNewTreeNode();
-		*l = TCInlineProcedureCopyTreeBranch(tcContext, expression->binaryOperation.leftHand);
+		*l = TCDeepCopyTreeBranch(tcContext, expression->binaryOperation.leftHand);
 
 		// For member access we can just copy
 		if (expression->binaryOperation.op == TOKEN_OP_MEMBER_ACCESS)
 			*r = *expression->binaryOperation.rightHand;
 		else
-			*r = TCInlineProcedureCopyTreeBranch(tcContext, expression->binaryOperation.rightHand);
+			*r = TCDeepCopyTreeBranch(tcContext, expression->binaryOperation.rightHand);
 
 		astBinary.leftHand = l;
 		astBinary.rightHand = r;
@@ -2873,7 +2873,7 @@ ASTExpression TCInlineProcedureCopyTreeBranch(TCContext *tcContext, const ASTExp
 			ArrayInit(&astLiteral.members, expression->literal.members.size);
 			for (int memberIdx = 0; memberIdx < expression->literal.members.size; ++memberIdx) {
 				ASTExpression *e = TCNewTreeNode();
-				*e = TCInlineProcedureCopyTreeBranch(tcContext,
+				*e = TCDeepCopyTreeBranch(tcContext,
 						expression->literal.members[memberIdx]);
 				*ArrayAdd(&astLiteral.members) = e;
 			}
@@ -2887,16 +2887,16 @@ ASTExpression TCInlineProcedureCopyTreeBranch(TCContext *tcContext, const ASTExp
 		ASTIf astIf = expression->ifNode;
 
 		ASTExpression *e = TCNewTreeNode();
-		*e = TCInlineProcedureCopyTreeBranch(tcContext, expression->ifNode.condition);
+		*e = TCDeepCopyTreeBranch(tcContext, expression->ifNode.condition);
 		astIf.condition = e;
 
 		e = TCNewTreeNode();
-		*e = TCInlineProcedureCopyTreeBranch(tcContext, expression->ifNode.body);
+		*e = TCDeepCopyTreeBranch(tcContext, expression->ifNode.body);
 		astIf.body = e;
 
 		if (expression->ifNode.elseBody) {
 			e = TCNewTreeNode();
-			*e = TCInlineProcedureCopyTreeBranch(tcContext, expression->ifNode.elseBody);
+			*e = TCDeepCopyTreeBranch(tcContext, expression->ifNode.elseBody);
 			astIf.elseBody = e;
 		}
 
@@ -2908,11 +2908,11 @@ ASTExpression TCInlineProcedureCopyTreeBranch(TCContext *tcContext, const ASTExp
 		ASTWhile astWhile = expression->whileNode;
 
 		ASTExpression *e = TCNewTreeNode();
-		*e = TCInlineProcedureCopyTreeBranch(tcContext, expression->whileNode.condition);
+		*e = TCDeepCopyTreeBranch(tcContext, expression->whileNode.condition);
 		astWhile.condition = e;
 
 		e = TCNewTreeNode();
-		*e = TCInlineProcedureCopyTreeBranch(tcContext, expression->whileNode.body);
+		*e = TCDeepCopyTreeBranch(tcContext, expression->whileNode.body);
 		astWhile.body = e;
 
 		result.whileNode = astWhile;
@@ -2923,7 +2923,7 @@ ASTExpression TCInlineProcedureCopyTreeBranch(TCContext *tcContext, const ASTExp
 		ASTFor astFor = expression->forNode;
 
 		ASTExpression *e = TCNewTreeNode();
-		*e = TCInlineProcedureCopyTreeBranch(tcContext, astFor.range);
+		*e = TCDeepCopyTreeBranch(tcContext, astFor.range);
 		astFor.range = e;
 
 		TCPushScope(tcContext);
@@ -2976,7 +2976,7 @@ ASTExpression TCInlineProcedureCopyTreeBranch(TCContext *tcContext, const ASTExp
 		TCAddScopeNames(tcContext, scopeNamesToAdd);
 
 		e = TCNewTreeNode();
-		*e = TCInlineProcedureCopyTreeBranch(tcContext, expression->forNode.body);
+		*e = TCDeepCopyTreeBranch(tcContext, expression->forNode.body);
 		astFor.body = e;
 
 		TCPopScope(tcContext);
@@ -2996,7 +2996,7 @@ ASTExpression TCInlineProcedureCopyTreeBranch(TCContext *tcContext, const ASTExp
 	case ASTNODETYPE_CAST:
 	{
 		ASTExpression *e = TCNewTreeNode();
-		*e = TCInlineProcedureCopyTreeBranch(tcContext, expression->castNode.expression);
+		*e = TCDeepCopyTreeBranch(tcContext, expression->castNode.expression);
 		result.castNode.expression = e;
 		return result;
 	}
@@ -3007,7 +3007,7 @@ ASTExpression TCInlineProcedureCopyTreeBranch(TCContext *tcContext, const ASTExp
 		if (argCount) {
 			DynamicArrayInit(&astIntrinsic.arguments, argCount);
 			for (int argIdx = 0; argIdx < argCount; ++argIdx) {
-				*DynamicArrayAdd(&astIntrinsic.arguments) = TCInlineProcedureCopyTreeBranch(tcContext,
+				*DynamicArrayAdd(&astIntrinsic.arguments) = TCDeepCopyTreeBranch(tcContext,
 						&expression->intrinsic.arguments[argIdx]);
 			}
 		}
@@ -3125,7 +3125,7 @@ bool TCPushParametersAndInlineProcedureCall(TCContext *tcContext, ASTProcedureCa
 	TCAddParametersToScope(tcContext, astProcCall->inlineParameterValues, &proc.astPrototype);
 
 	ASTExpression *e = TCNewTreeNode();
-	*e = TCInlineProcedureCopyTreeBranch(tcContext, proc.astBody);
+	*e = TCDeepCopyTreeBranch(tcContext, proc.astBody);
 	astProcCall->astBodyInlineCopy = e;
 
 	TCPopScope(tcContext);
