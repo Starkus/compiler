@@ -26,7 +26,7 @@ inline String SStringConcat(String a, String b)
 const char *StringToCStr(String str, void *(*allocFunc)(u64, int))
 {
 	char *buffer = (char *)allocFunc(str.size + 1, 1);
-	strncpy(buffer, str.data, str.size);
+	memcpy(buffer, str.data, str.size);
 	buffer[str.size] = 0;
 	return buffer;
 }
@@ -386,6 +386,19 @@ inline String StringExpand(SmallString smallString) {
 		.size = smallString.qword >> 48,
 		.data = (const char *)(smallString.qword & 0x0000FFFFFFFFFFFF)
 	};
+}
+
+String FilenameWithoutPath(String filename)
+{
+	String result = filename;
+	const char *c = filename.data;
+	for (int i = 0; i < filename.size; ++i, ++c) {
+		if (*c == '/' || *c == '\\') {
+			result.data = c + 1;
+			result.size = filename.size - i;
+		}
+	}
+	return result;
 }
 
 // newExtension should start with . for the case where filename doesn't have one

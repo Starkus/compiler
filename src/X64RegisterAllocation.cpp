@@ -47,13 +47,16 @@ BasicBlock *PushBasicBlock(X64Context *x64Context, BasicBlock *currentBasicBlock
 bool CanBeRegister(X64Context *x64Context, u32 valueIdx)
 {
 	Value v = X64GetValue(x64Context, valueIdx);
-	if ((v.flags & (VALUEFLAGS_IS_MEMORY | VALUEFLAGS_IS_ALLOCATED)) == VALUEFLAGS_IS_ALLOCATED)
+	ValueAllocation alloc = *X64GetValueAlloc(&x64Context->valueContext, valueIdx);
+	if ((alloc.flags & (VALUEALLOCATIONFLAGS_IS_MEMORY | VALUEALLOCATIONFLAGS_IS_ALLOCATED)) ==
+			VALUEALLOCATIONFLAGS_IS_ALLOCATED)
 		// Allocated on register
 		return true;
 	if (valueIdx & VALUE_GLOBAL_BIT)
 		return false; // Global values can't be registers (other than physical registers, checked above)
-	if (v.flags & (VALUEFLAGS_FORCE_MEMORY | VALUEFLAGS_ON_STATIC_STORAGE |
-				VALUEFLAGS_IS_EXTERNAL))
+	if (v.flags * VALUEFLAGS_IS_EXTERNAL)
+		return false;
+	if (alloc.flags & (VALUEALLOCATIONFLAGS_FORCE_MEMORY | VALUEALLOCATIONFLAGS_ON_STATIC_STORAGE))
 		return false;
 	if (v.typeTableIdx == TYPETABLEIDX_128)
 		return true;
@@ -70,7 +73,7 @@ bool CanBeRegister(X64Context *x64Context, u32 valueIdx)
 
 inline bool AddValue(X64Context *x64Context, u32 valueIdx, DynamicArray<u32, ThreadAllocator> *array)
 {
-	X64SetValueFlags(x64Context, valueIdx, VALUEFLAGS_IS_USED);
+	X64SetAllocationFlags(&x64Context->valueContext, valueIdx, VALUEALLOCATIONFLAGS_IS_USED);
 
 	// Nonsense to take these into account
 	if (!CanBeRegister(x64Context, valueIdx)) {
@@ -130,12 +133,10 @@ inline bool IsXMMFast(X64Context *x64Context, u32 valueIdx)
 void DoLivenessAnalisisOnInstruction(X64Context *x64Context, X64Instruction *inst,
 		DynamicArray<u32, ThreadAllocator> *liveValues)
 {
-	Procedure *proc = &g_context->procedures.unsafe[x64Context->procedureIdx];
-
 	if (g_context->config.logAllocationInfo) {
 		if (inst->type != X64_Patch && inst->type != X64_Patch_Many) {
 			Print("\t");
-			s64 s = Print("%S", X64InstructionToStr(*inst, proc->localValues));
+			s64 s = Print("%S", X64InstructionToStr(*inst, &x64Context->valueContext));
 			if (s < 40) {
 				char buffer[40];
 				memset(buffer, ' ', sizeof(buffer));
@@ -144,7 +145,7 @@ void DoLivenessAnalisisOnInstruction(X64Context *x64Context, X64Instruction *ins
 			}
 			for (int i = 0; i < liveValues->size; ++i)
 				Print("%S, ", X64IRValueToStr(X64IRValueValue(x64Context, (*liveValues)[i]),
-							proc->localValues));
+							&x64Context->valueContext));
 			Print("\n");
 		}
 	}
@@ -207,7 +208,7 @@ void DoLivenessAnalisisOnInstruction(X64Context *x64Context, X64Instruction *ins
 	case X64_Push_Value:
 	{
 		// @Improve: This sucks a little bit.
-		X64SetValueFlags(x64Context, inst->valueIdx, VALUEFLAGS_HAS_PUSH_INSTRUCTION);
+		X64SetAllocationFlags(&x64Context->valueContext, inst->valueIdx, VALUEALLOCATIONFLAGS_HAS_PUSH_INSTRUCTION);
 	} break;
 	case X64_Patch:
 	case X64_Patch_Many:
@@ -347,8 +348,6 @@ void DoLivenessAnalisis(X64Context *x64Context, BasicBlock *basicBlock,
 
 void GenerateBasicBlocks(X64Context *x64Context)
 {
-	Procedure *proc = &g_context->procedures.unsafe[x64Context->procedureIdx];
-
 	if (g_context->config.logAllocationInfo)
 		Print("GENERATING BASIC BLOCKS FOR %S\n",
 				GetProcedureRead(x64Context->procedureIdx).name);
@@ -360,7 +359,7 @@ void GenerateBasicBlocks(X64Context *x64Context)
 		X64Instruction inst = x64Context->beInstructions[instructionIdx];
 
 		if (g_context->config.logAllocationInfo)
-			Print("\t%S\n", X64InstructionToStr(inst, proc->localValues));
+			Print("\t%S\n", X64InstructionToStr(inst, &x64Context->valueContext));
 
 		if (inst.type >= X64_Jump_Begin && inst.type <= X64_Jump_End) {
 			if (g_context->config.logAllocationInfo)
@@ -450,10 +449,11 @@ void ResolveStackOffsets(X64Context *x64Context)
 	for (int spillIdx = 0; spillIdx < x64Context->spilledValues.size; ++spillIdx) {
 		u32 valueIdx = x64Context->spilledValues[spillIdx];
 		Value *value = X64GetLocalValue(x64Context, valueIdx);
-		ASSERT(!(value->flags & VALUEFLAGS_IS_ALLOCATED));
+		ValueAllocation *alloc = X64GetValueAlloc(&x64Context->valueContext, valueIdx);
+		ASSERT(!(alloc->flags & VALUEALLOCATIONFLAGS_IS_ALLOCATED));
 
 		// If the value has properly scoped allocation don't dumbly spill into stack.
-		if (value->flags & VALUEFLAGS_HAS_PUSH_INSTRUCTION)
+		if (alloc->flags & VALUEALLOCATIONFLAGS_HAS_PUSH_INSTRUCTION)
 			continue;
 
 		u64 size = GetTypeInfo(value->typeTableIdx).size;
@@ -461,8 +461,8 @@ void ResolveStackOffsets(X64Context *x64Context)
 		if (stackCursor & (alignment - 1))
 			stackCursor = (stackCursor + alignment) & ~(alignment - 1);
 		ASSERT(stackCursor < S32_MAX);
-		value->stackOffset = (s32)stackCursor;
-		value->flags |= VALUEFLAGS_IS_ALLOCATED | VALUEFLAGS_IS_MEMORY;
+		alloc->stackOffset = (s32)stackCursor;
+		alloc->flags |= VALUEALLOCATIONFLAGS_IS_ALLOCATED | VALUEALLOCATIONFLAGS_IS_MEMORY;
 		stackCursor += size;
 	}
 
@@ -475,13 +475,14 @@ void ResolveStackOffsets(X64Context *x64Context)
 		case X64_Push_Value:
 		{
 			Value *value = X64GetLocalValue(x64Context, inst->valueIdx);
-			ASSERT(value->flags & VALUEFLAGS_HAS_PUSH_INSTRUCTION);
-			if (value->flags & VALUEFLAGS_IS_ALLOCATED) {
-				ASSERT(!(value->flags & VALUEFLAGS_IS_MEMORY));
+			ValueAllocation *alloc = X64GetValueAlloc(&x64Context->valueContext, inst->valueIdx);
+			ASSERT(alloc->flags & VALUEALLOCATIONFLAGS_HAS_PUSH_INSTRUCTION);
+			if (alloc->flags & VALUEALLOCATIONFLAGS_IS_ALLOCATED) {
+				ASSERT(!(alloc->flags & VALUEALLOCATIONFLAGS_IS_MEMORY));
 				goto next;
 			}
 			// We don't allocate static values, the assembler/linker does.
-			ASSERT(!(value->flags & VALUEFLAGS_ON_STATIC_STORAGE));
+			ASSERT(!(alloc->flags & VALUEALLOCATIONFLAGS_ON_STATIC_STORAGE));
 			ASSERT(!(value->flags & VALUEFLAGS_IS_EXTERNAL));
 
 			u64 size = GetTypeInfo(value->typeTableIdx).size;
@@ -489,8 +490,8 @@ void ResolveStackOffsets(X64Context *x64Context)
 			if (stackCursor & (alignment - 1))
 				stackCursor = (stackCursor + alignment) & ~(alignment - 1);
 			ASSERT(stackCursor < S32_MAX);
-			value->stackOffset = (s32)stackCursor;
-			value->flags |= VALUEFLAGS_IS_ALLOCATED | VALUEFLAGS_IS_MEMORY;
+			alloc->stackOffset = (s32)stackCursor;
+			alloc->flags |= VALUEALLOCATIONFLAGS_IS_ALLOCATED | VALUEALLOCATIONFLAGS_IS_MEMORY;
 			stackCursor += size;
 		} break;
 		case X64_Push_Scope:
@@ -518,11 +519,13 @@ next:
 inline u64 BitIfRegister(X64Context *x64Context, IRValue irValue)
 {
 	if (irValue.valueType == IRVALUETYPE_VALUE || irValue.valueType == IRVALUETYPE_MEMORY) {
-		Value value = X64GetValue(x64Context, irValue.valueIdx);
-		if ((value.flags & (VALUEFLAGS_IS_USED | VALUEFLAGS_IS_ALLOCATED | VALUEFLAGS_IS_MEMORY)) ==
-				(VALUEFLAGS_IS_USED | VALUEFLAGS_IS_ALLOCATED)) {
-			ASSERT(value.allocatedRegister < 64);
-			return 1ull << value.allocatedRegister;
+		ValueAllocation *a = X64GetValueAlloc(&x64Context->valueContext, irValue.valueIdx);
+		if ((a->flags & (VALUEALLOCATIONFLAGS_IS_USED |
+						VALUEALLOCATIONFLAGS_IS_ALLOCATED |
+						VALUEALLOCATIONFLAGS_IS_MEMORY)) ==
+				(VALUEALLOCATIONFLAGS_IS_USED | VALUEALLOCATIONFLAGS_IS_ALLOCATED)) {
+			ASSERT(a->allocatedRegister < 64);
+			return 1ull << a->allocatedRegister;
 		}
 	}
 	return 0;
@@ -537,10 +540,12 @@ inline u64 RegisterSavingInstruction(X64Context *x64Context, X64Instruction *ins
 		// Caller save registers
 		u64 liveRegisterBits = 0;
 		for (int i = 0; i < inst->liveValues.size; ++i) {
-			Value v = X64GetValue(x64Context, inst->liveValues[i]);
-			if ((v.flags & (VALUEFLAGS_IS_USED | VALUEFLAGS_IS_ALLOCATED | VALUEFLAGS_IS_MEMORY)) ==
-					(VALUEFLAGS_IS_USED | VALUEFLAGS_IS_ALLOCATED))
-				liveRegisterBits |= (1ull << v.allocatedRegister);
+			ValueAllocation *a = X64GetValueAlloc(&x64Context->valueContext, inst->liveValues[i]);
+			if ((a->flags & (VALUEALLOCATIONFLAGS_IS_USED |
+							VALUEALLOCATIONFLAGS_IS_ALLOCATED |
+							VALUEALLOCATIONFLAGS_IS_MEMORY)) ==
+					(VALUEALLOCATIONFLAGS_IS_USED | VALUEALLOCATIONFLAGS_IS_ALLOCATED))
+				liveRegisterBits |= (1ull << a->allocatedRegister);
 		}
 
 		u64 usedCalleeSaveRegisters = callerSaveRegisters & liveRegisterBits;
@@ -551,9 +556,11 @@ inline u64 RegisterSavingInstruction(X64Context *x64Context, X64Instruction *ins
 		int count = 0;
 		for (int i = 0; i < 64; ++i) {
 			if (usedCalleeSaveRegisters & (1ull << i)) {
-				u32 newValueIdx = X64NewValue(x64Context, "_save_reg"_s, TYPETABLEIDX_S64,
-						VALUEFLAGS_IS_USED | VALUEFLAGS_FORCE_MEMORY |
-						VALUEFLAGS_HAS_PUSH_INSTRUCTION);
+				u32 newValueIdx = X64NewValue(x64Context, "_save_reg"_s, TYPETABLEIDX_S64);
+				X64SetAllocationFlags(&x64Context->valueContext, newValueIdx,
+						VALUEALLOCATIONFLAGS_IS_USED |
+						VALUEALLOCATIONFLAGS_FORCE_MEMORY |
+						VALUEALLOCATIONFLAGS_HAS_PUSH_INSTRUCTION);
 
 				IRValue reg = x64Registers[i];
 
@@ -589,6 +596,8 @@ inline u64 RegisterSavingInstruction(X64Context *x64Context, X64Instruction *ins
 void X64AllocateRegisters(X64Context *x64Context)
 {
 	Procedure *proc = &g_context->procedures.unsafe[x64Context->procedureIdx];
+
+	X64ValueContext *valueContext = &x64Context->valueContext;
 
 	BucketArrayInit(&x64Context->beBasicBlocks);
 
@@ -664,13 +673,13 @@ void X64AllocateRegisters(X64Context *x64Context)
 			u32 currentNodeValueIdx = interferenceGraph.valueIndices[nodeIdx];
 			HashSet<u32, ThreadAllocator> currentNodeEdges = interferenceGraph.edges[nodeIdx];
 			Print("Value %S coexists with: ", X64IRValueToStr(
-						X64IRValueValue(x64Context, currentNodeValueIdx), proc->localValues));
+						X64IRValueValue(x64Context, currentNodeValueIdx), &x64Context->valueContext));
 
 			u32 *keys = HashSetKeys(currentNodeEdges);
 			for (u32 slotIdx = 0; slotIdx < currentNodeEdges.capacity; ++slotIdx)
 				if (HashSetSlotOccupied(currentNodeEdges, slotIdx))
 					Print("%S, ", X64IRValueToStr(
-								X64IRValueValue(x64Context, keys[slotIdx]), proc->localValues));
+								X64IRValueValue(x64Context, keys[slotIdx]), &x64Context->valueContext));
 			Print("\n");
 		}
 	}
@@ -703,8 +712,8 @@ void X64AllocateRegisters(X64Context *x64Context)
 			// Skip physical register values
 			if (valueIdx >= RAX.valueIdx && valueIdx <= XMM15.valueIdx)
 				continue;
-			u32 vFlags = X64GetLocalValue(x64Context, valueIdx)->flags;
-			if (vFlags & VALUEFLAGS_FORCE_REGISTER)
+			u32 vFlags = X64GetValueAlloc(&x64Context->valueContext, valueIdx)->flags;
+			if (vFlags & VALUEALLOCATIONFLAGS_FORCE_REGISTER)
 				continue;
 
 			s64 edgeCount = HashSetCount(interferenceGraph.edges[nodeIdx]);
@@ -743,7 +752,7 @@ gotNodeToRemove:
 				HashSetHas(*edges, valueIdx)) {
 				// The only allocated things thus far should be physical register values and stack
 				// parameter values.
-				ASSERT(!(X64GetLocalValue(x64Context, valueIdx)->flags & VALUEFLAGS_IS_ALLOCATED));
+				ASSERT(!(X64GetValueAlloc(&x64Context->valueContext, valueIdx)->flags & VALUEALLOCATIONFLAGS_IS_ALLOCATED));
 				HashSetRemove(edges, valueIdx);
 			}
 		}
@@ -759,82 +768,75 @@ gotNodeToRemove:
 		if (valueIdx >= RAX.valueIdx && valueIdx <= XMM15.valueIdx)
 			continue;
 
-		Value *v = X64GetLocalValue(x64Context, valueIdx);
+		Value value = X64GetValue(x64Context, valueIdx);
+		ValueAllocation *alloc = X64GetValueAlloc(&x64Context->valueContext, valueIdx);
 		const HashSet<u32, ThreadAllocator> edges = interferenceGraph.edges[currentNodeIdx];
 		const u32 *edgesKeys = HashSetKeys(edges);
 
 		// We don't allocate static values, the assembler/linker does.
-		ASSERT(!(v->flags & VALUEFLAGS_ON_STATIC_STORAGE));
-		ASSERT(!(v->flags & VALUEFLAGS_IS_EXTERNAL));
+		ASSERT(!(alloc->flags & VALUEALLOCATIONFLAGS_ON_STATIC_STORAGE));
+		ASSERT(!(value.flags & VALUEFLAGS_IS_EXTERNAL));
 
-		if (v->flags & VALUEFLAGS_IS_ALLOCATED)
+		if (alloc->flags & VALUEALLOCATIONFLAGS_IS_ALLOCATED)
 			continue;
 
 		bool isXMM = BitfieldGetBit(x64Context->valueIsXmmBits, valueIdx);
 
-		if (v->flags & VALUEFLAGS_TRY_IMMITATE) {
-			u32 immitateValueIdx = v->tryImmitateValueIdx;
+		u32 coalesceValueIdx = X64GetTopCoalescingScore(x64Context, valueIdx);
+		if (coalesceValueIdx != U32_MAX) {
+			bool isOtherXMM = false;
+			if (coalesceValueIdx >= RAX.valueIdx && coalesceValueIdx <= XMM15.valueIdx)
+				isOtherXMM = coalesceValueIdx >= XMM0.valueIdx;
+			else if ((coalesceValueIdx & VALUE_GLOBAL_BIT) == 0)
+				isOtherXMM = BitfieldGetBit(x64Context->valueIsXmmBits, coalesceValueIdx);
+			else
+				// Can't coalesce with a global value
+				goto skipCoalescion;
 
-			// Can't immitate a global value
-			if (immitateValueIdx & VALUE_GLOBAL_BIT)
-				goto skipImmitate;
+			ValueAllocation *coalAlloc = X64GetValueAlloc(&x64Context->valueContext, coalesceValueIdx);
 
-			Value *immitateValue = X64GetLocalValue(x64Context, immitateValueIdx);
-#if 0
-			while (immitateValue->flags & VALUEFLAGS_TRY_IMMITATE &&
-				   immitateValueIdx != immitateValue->tryImmitateValueIdx)
-			{
-				immitateValueIdx = immitateValue->tryImmitateValueIdx;
-				immitateValue = X64GetLocalValue(x64Context, immitateValueIdx);
-			}
-#endif
-
-			if ((immitateValue->flags & VALUEFLAGS_IS_ALLOCATED) &&
-			  !(immitateValue->flags & VALUEFLAGS_IS_MEMORY)) {
-				bool isOtherXMM = BitfieldGetBit(x64Context->valueIsXmmBits, immitateValueIdx);
+			if ((coalAlloc->flags & VALUEALLOCATIONFLAGS_IS_ALLOCATED) &&
+			  !(coalAlloc->flags & VALUEALLOCATIONFLAGS_IS_MEMORY)) {
 				if (isXMM != isOtherXMM)
-					goto skipImmitate;
+					goto skipCoalescion;
 
 				// Check the candidate is not used on any edge, and that the value we're trying
 				// to copy doesn't coexist with this one.
-				s32 candidate = immitateValue->allocatedRegister;
-				if (HashSetHas(edges, immitateValueIdx))
-					goto skipImmitate;
+				s32 candidate = coalAlloc->allocatedRegister;
+				if (HashSetHas(edges, coalesceValueIdx))
+					goto skipCoalescion;
 
 				for (u32 slotIdx = 0; slotIdx < edges.capacity; ++slotIdx) {
 					if (!HashSetSlotOccupied(edges, slotIdx))
 						continue;
-					Value edgeValue = X64GetValue(x64Context, edgesKeys[slotIdx]);
-					if (!(edgeValue.flags & VALUEFLAGS_IS_ALLOCATED) ||
-						  edgeValue.flags & VALUEFLAGS_IS_MEMORY)
+					ValueAllocation *edgeValue = X64GetValueAlloc(&x64Context->valueContext, edgesKeys[slotIdx]);
+					if (!(edgeValue->flags & VALUEALLOCATIONFLAGS_IS_ALLOCATED) ||
+						  edgeValue->flags & VALUEALLOCATIONFLAGS_IS_MEMORY)
 						continue;
-					if (edgeValue.allocatedRegister == candidate)
-						goto skipImmitate;
+					if (edgeValue->allocatedRegister == candidate)
+						goto skipCoalescion;
 				}
 
-				v->allocatedRegister = candidate;
-				v->flags &= ~VALUEFLAGS_IS_MEMORY;
-				v->flags |= VALUEFLAGS_IS_ALLOCATED;
+				alloc->allocatedRegister = candidate;
+				alloc->flags &= ~VALUEALLOCATIONFLAGS_IS_MEMORY;
+				alloc->flags |= VALUEALLOCATIONFLAGS_IS_ALLOCATED;
+#if ENABLE_STATS
+				AtomicIncrementGetNew(&g_stats.coalescingSuccesses);
+#endif
 				continue;
 			}
-			else if (!(immitateValue->flags & VALUEFLAGS_IS_ALLOCATED) &&
-					 !(immitateValue->flags & VALUEFLAGS_TRY_IMMITATE) &&
-					 CanBeRegister(x64Context, immitateValueIdx)) {
-				immitateValue->flags |= VALUEFLAGS_TRY_IMMITATE;
-				immitateValue->tryImmitateValueIdx = valueIdx;
-			}
 		}
-skipImmitate:
+skipCoalescion:
 
 		int max = isXMM ? availableRegistersFP : availableRegisters;
 		u64 usedRegisters = 0;
 		for (u32 slotIdx = 0; slotIdx < edges.capacity; ++slotIdx) {
 			if (!HashSetSlotOccupied(edges, slotIdx))
 				continue;
-			Value edgeValue = X64GetValue(x64Context, edgesKeys[slotIdx]);
-			if ((edgeValue.flags & VALUEFLAGS_IS_ALLOCATED) &&
-			   !(edgeValue.flags & VALUEFLAGS_IS_MEMORY))
-				usedRegisters |= 1ull << edgeValue.allocatedRegister;
+			ValueAllocation *edgeValue = X64GetValueAlloc(&x64Context->valueContext, edgesKeys[slotIdx]);
+			if ((edgeValue->flags & VALUEALLOCATIONFLAGS_IS_ALLOCATED) &&
+			   !(edgeValue->flags & VALUEALLOCATIONFLAGS_IS_MEMORY))
+				usedRegisters |= 1ull << edgeValue->allocatedRegister;
 		}
 		for (int candidateIdx = 0; candidateIdx < max; ++candidateIdx) {
 			X64Register candidate = (X64Register)(isXMM ? XMM0_idx + candidateIdx :
@@ -842,20 +844,21 @@ skipImmitate:
 			u64 registerBit = 1ull << candidate;
 			if (!(usedRegisters & registerBit)) {
 #if DEBUG_BUILD
+				Value *v = X64GetLocalValue(x64Context, valueIdx);
 				TypeInfo t = GetTypeInfo(StripAllAliases(v->typeTableIdx));
 				if (t.typeCategory == TYPECATEGORY_FLOATING || t.size > 8)
 					ASSERT(candidate >= XMM0_idx);
 				else
 					ASSERT(candidate < XMM0_idx);
 #endif
-				v->allocatedRegister = candidate;
-				v->flags &= ~VALUEFLAGS_IS_MEMORY;
-				v->flags |= VALUEFLAGS_IS_ALLOCATED;
+				alloc->allocatedRegister = candidate;
+				alloc->flags &= ~VALUEALLOCATIONFLAGS_IS_MEMORY;
+				alloc->flags |= VALUEALLOCATIONFLAGS_IS_ALLOCATED;
 				break;
 			}
 		}
-		if (!(v->flags & VALUEFLAGS_IS_ALLOCATED)) {
-			if (v->flags & VALUEFLAGS_FORCE_REGISTER) {
+		if (!(alloc->flags & VALUEALLOCATIONFLAGS_IS_ALLOCATED)) {
+			if (alloc->flags & VALUEALLOCATIONFLAGS_FORCE_REGISTER) {
 				ASSERT(!"Can't allocate value to register!");
 				continue;
 			}
@@ -933,8 +936,9 @@ skipImmitate:
 
 	for (int i = 0; i < 64; ++i) {
 		if (usedCallerSaveRegisters & (1ull << i)) {
-			u32 newValueIdx = X64NewValue(x64Context, "_save_reg"_s, TYPETABLEIDX_S64,
-					VALUEFLAGS_IS_USED | VALUEFLAGS_FORCE_MEMORY);
+			u32 newValueIdx = X64NewValue(x64Context, "_save_reg"_s, TYPETABLEIDX_S64);
+			X64SetAllocationFlags(valueContext, newValueIdx,
+					VALUEALLOCATIONFLAGS_IS_USED | VALUEALLOCATIONFLAGS_FORCE_MEMORY);
 			*DynamicArrayAdd(&x64Context->spilledValues) = newValueIdx;
 
 			IRValue reg = x64Registers[i];

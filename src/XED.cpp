@@ -1,5 +1,29 @@
-xed_encoder_operand_t X64IRValueToXEDOperand(SourceLocation loc, IRValue value,
-		Relocation *displacementRelocation, BucketArrayView<Value> localValues)
+struct XEDContext
+{
+	BucketArrayView<Value> localValues;
+	HashMap<u32, ValueAllocation, LinearAllocator> valueAllocations;
+};
+
+ValueAllocation XEDGetValueAlloc(XEDContext *xedContext, u32 valueIdx)
+{
+	if (valueIdx >= RAX.valueIdx && valueIdx < RAX.valueIdx + X64REGISTER_Count)
+		return x64RegisterAllocations[valueIdx - RAX.valueIdx];
+	else if ((valueIdx & VALUE_GLOBAL_BIT) != 0)
+		return x64GlobalValueAllocation;
+	else
+		return *HashMapGet(xedContext->valueAllocations, valueIdx);
+}
+
+Value XEDGetValue(XEDContext *xedContext, u32 valueIdx)
+{
+	if (valueIdx & VALUE_GLOBAL_BIT)
+		return GetGlobalValue(valueIdx);
+	else
+		return xedContext->localValues[valueIdx];
+}
+
+xed_encoder_operand_t X64IRValueToXEDOperand(XEDContext *xedContext, SourceLocation loc, IRValue value,
+		Relocation *displacementRelocation)
 {
 	ASSERT(value.valueType != IRVALUETYPE_IMMEDIATE_FLOAT);
 	ASSERT(value.valueType != IRVALUETYPE_IMMEDIATE_STRING);
@@ -10,7 +34,6 @@ xed_encoder_operand_t X64IRValueToXEDOperand(SourceLocation loc, IRValue value,
 	TypeInfo typeInfo = GetTypeInfo(StripAllAliases(value.typeTableIdx));
 	bool isXMM;
 	size = typeInfo.size;
-	Value v;
 	s64 offset = 0;
 
 	int bitWidth = (int)size * 8;
@@ -32,13 +55,13 @@ xed_encoder_operand_t X64IRValueToXEDOperand(SourceLocation loc, IRValue value,
 	if (value.valueType == IRVALUETYPE_MEMORY)
 		offset = value.mem.offset;
 
-	if (value.valueIdx & VALUE_GLOBAL_BIT)
-		v = GetGlobalValue(value.valueIdx);
-	else
-		v = localValues[value.valueIdx];
+	Value v = XEDGetValue(xedContext, value.valueIdx);
+	ValueAllocation alloc = XEDGetValueAlloc(xedContext, value.valueIdx);
 
-	if (v.flags & (VALUEFLAGS_ON_STATIC_STORAGE | VALUEFLAGS_IS_EXTERNAL)) {
-		if (!(v.flags & VALUEFLAGS_IS_EXTERNAL)) {
+	bool isExternal = v.flags & VALUEFLAGS_IS_EXTERNAL;
+	bool isStatic = alloc.flags & VALUEALLOCATIONFLAGS_ON_STATIC_STORAGE;
+	if (isStatic || isExternal) {
+		if (!isExternal) {
 			// There can only be one displacement per instruction
 			ASSERT(displacementRelocation->type == RELOCATIONTYPE_INVALID);
 			displacementRelocation->type = RELOCATIONTYPE_STATIC_DATA;
@@ -56,12 +79,12 @@ xed_encoder_operand_t X64IRValueToXEDOperand(SourceLocation loc, IRValue value,
 
 	isXMM = typeInfo.size > 8 || typeInfo.typeCategory == TYPECATEGORY_FLOATING;
 
-	ASSERT(v.flags & VALUEFLAGS_IS_ALLOCATED);
-	if (v.flags & VALUEFLAGS_IS_MEMORY) {
-		ASSERT(!(v.flags & VALUEFLAGS_FORCE_REGISTER));
-		offset += v.stackOffset;
+	ASSERT(alloc.flags & VALUEALLOCATIONFLAGS_IS_ALLOCATED);
+	if (alloc.flags & VALUEALLOCATIONFLAGS_IS_MEMORY) {
+		ASSERT(!(alloc.flags & VALUEALLOCATIONFLAGS_FORCE_REGISTER));
+		offset += alloc.stackOffset;
 		xed_reg_enum_t base;
-		if (v.flags & VALUEFLAGS_BASE_RELATIVE)
+		if (alloc.flags & VALUEALLOCATIONFLAGS_BASE_RELATIVE)
 			base = XED_REG_RBP;
 		else
 			base = XED_REG_RSP;
@@ -73,8 +96,8 @@ xed_encoder_operand_t X64IRValueToXEDOperand(SourceLocation loc, IRValue value,
 		result = xed_mem_bd(base, xed_disp(offset, offsetWidth), bitWidth);
 	}
 	else if (value.valueType == IRVALUETYPE_MEMORY) {
-		ASSERTF(v.allocatedRegister <= R15_idx, "Value \"%S\" not allocated to GP register!", v.name);
-		xed_reg_enum_t base = x64RegisterToXED[v.allocatedRegister];
+		ASSERTF(alloc.allocatedRegister <= R15_idx, "Value \"%S\" not allocated to GP register!", v.name);
+		xed_reg_enum_t base = x64RegisterToXED[alloc.allocatedRegister];
 
 		int offsetWidth = 32;
 		if ((s8)offset == offset)
@@ -83,7 +106,7 @@ xed_encoder_operand_t X64IRValueToXEDOperand(SourceLocation loc, IRValue value,
 		result = xed_mem_bd(base, xed_disp(offset, offsetWidth), bitWidth);
 	}
 	else if (!isXMM) {
-		if (v.allocatedRegister >= XMM0_idx)
+		if (alloc.allocatedRegister >= XMM0_idx)
 #if DEBUG_BUILD
 			LogCompilerError(loc, TPrintF("Value \"%S\" not allocated to GP register!",
 						v.name));
@@ -93,13 +116,13 @@ xed_encoder_operand_t X64IRValueToXEDOperand(SourceLocation loc, IRValue value,
 		xed_reg_enum_t reg;
 		switch (size) {
 		case 8:
-			reg = x64RegisterToXED  [v.allocatedRegister]; break;
+			reg = x64RegisterToXED  [alloc.allocatedRegister]; break;
 		case 4:
-			reg = x64RegisterToXED32[v.allocatedRegister]; break;
+			reg = x64RegisterToXED32[alloc.allocatedRegister]; break;
 		case 2:
-			reg = x64RegisterToXED16[v.allocatedRegister]; break;
+			reg = x64RegisterToXED16[alloc.allocatedRegister]; break;
 		case 1:
-			reg = x64RegisterToXED8 [v.allocatedRegister]; break;
+			reg = x64RegisterToXED8 [alloc.allocatedRegister]; break;
 		default:
 			ASSERTF(false, "Invalid size for a register!");
 		}
@@ -108,13 +131,13 @@ xed_encoder_operand_t X64IRValueToXEDOperand(SourceLocation loc, IRValue value,
 	}
 	else {
 #if DEBUG_BUILD
-		ASSERTF(v.allocatedRegister >= XMM0_idx && v.allocatedRegister <= XMM15_idx,
+		ASSERTF(alloc.allocatedRegister >= XMM0_idx && alloc.allocatedRegister <= XMM15_idx,
 				"Value \"%S\" not allocated to XMM register!", v.name);
 #else
-		ASSERTF(v.allocatedRegister >= XMM0_idx && v.allocatedRegister <= XMM15_idx,
+		ASSERTF(alloc.allocatedRegister >= XMM0_idx && alloc.allocatedRegister <= XMM15_idx,
 				"Value not allocated to XMM register!");
 #endif
-		result = xed_reg(x64RegisterToXED[v.allocatedRegister]);
+		result = xed_reg(x64RegisterToXED[alloc.allocatedRegister]);
 	}
 
 doIndexScale:
@@ -122,10 +145,10 @@ doIndexScale:
 		result.u.mem.disp.displacement_bits = 0;
 	if (value.valueType == IRVALUETYPE_MEMORY && value.mem.elementSize > 0) {
 		ASSERT(!(value.valueIdx & VALUE_GLOBAL_BIT));
-		Value indexValue = localValues[value.mem.indexValueIdx];
-		ASSERT(indexValue.flags & VALUEFLAGS_IS_ALLOCATED);
-		ASSERT(!(indexValue.flags & VALUEFLAGS_IS_MEMORY));
-		xed_reg_enum_t xedIndex = x64RegisterToXED[indexValue.allocatedRegister];
+		ValueAllocation indexValueAlloc = XEDGetValueAlloc(xedContext, value.mem.indexValueIdx);
+		ASSERT(indexValueAlloc.flags & VALUEALLOCATIONFLAGS_IS_ALLOCATED);
+		ASSERT(!(indexValueAlloc.flags & VALUEALLOCATIONFLAGS_IS_MEMORY));
+		xed_reg_enum_t xedIndex = x64RegisterToXED[indexValueAlloc.allocatedRegister];
 
 		ASSERT(result.type == XED_ENCODER_OPERAND_TYPE_MEM);
 		result.u.mem.index = xedIndex;
@@ -135,7 +158,7 @@ doIndexScale:
 	return result;
 }
 
-int X64EncodeInstruction(X64Instruction x64Inst, BucketArrayView<Value> localValues, u8 *buffer)
+int X64EncodeInstruction(XEDContext *xedContext, X64Instruction x64Inst, u8 *buffer)
 {
 	Relocation displacementRelocation = {};
 
@@ -172,8 +195,8 @@ int X64EncodeInstruction(X64Instruction x64Inst, BucketArrayView<Value> localVal
 	}
 	case X64_CALL_Indirect:
 	{
-		xed_encoder_operand_t dst = X64IRValueToXEDOperand(x64Inst.loc,
-				x64Inst.procedureIRValue, &displacementRelocation, localValues);
+		xed_encoder_operand_t dst = X64IRValueToXEDOperand(xedContext, x64Inst.loc,
+				x64Inst.procedureIRValue, &displacementRelocation);
 		xed_inst1(&inst, dstate64, xedIClass, 64, dst);
 		goto encode;
 	}
@@ -256,30 +279,30 @@ inst0:
 inst1:
 	{
 		int bitWidth = (int)GetTypeInfo(x64Inst.dst.typeTableIdx).size * 8;
-		xed_encoder_operand_t dst = X64IRValueToXEDOperand(x64Inst.loc, x64Inst.dst,
-				&displacementRelocation, localValues);
+		xed_encoder_operand_t dst = X64IRValueToXEDOperand(xedContext, x64Inst.loc, x64Inst.dst,
+				&displacementRelocation);
 		xed_inst1(&inst, dstate64, xedIClass, bitWidth, dst);
 		goto encode;
 	}
 inst2:
 	{
 		int bitWidth = (int)GetTypeInfo(x64Inst.dst.typeTableIdx).size * 8;
-		xed_encoder_operand_t dst = X64IRValueToXEDOperand(x64Inst.loc, x64Inst.dst,
-				&displacementRelocation, localValues);
-		xed_encoder_operand_t src = X64IRValueToXEDOperand(x64Inst.loc, x64Inst.src,
-				&displacementRelocation, localValues);
+		xed_encoder_operand_t dst = X64IRValueToXEDOperand(xedContext, x64Inst.loc, x64Inst.dst,
+				&displacementRelocation);
+		xed_encoder_operand_t src = X64IRValueToXEDOperand(xedContext, x64Inst.loc, x64Inst.src,
+				&displacementRelocation);
 		xed_inst2(&inst, dstate64, xedIClass, bitWidth, dst, src);
 		goto encode;
 	}
 inst3:
 	{
 		int bitWidth = (int)GetTypeInfo(x64Inst.dst.typeTableIdx).size * 8;
-		xed_encoder_operand_t dst  = X64IRValueToXEDOperand(x64Inst.loc, x64Inst.dst,
-				&displacementRelocation, localValues);
-		xed_encoder_operand_t src  = X64IRValueToXEDOperand(x64Inst.loc, x64Inst.src,
-				&displacementRelocation, localValues);
-		xed_encoder_operand_t src2 = X64IRValueToXEDOperand(x64Inst.loc, x64Inst.src2,
-				&displacementRelocation, localValues);
+		xed_encoder_operand_t dst  = X64IRValueToXEDOperand(xedContext, x64Inst.loc, x64Inst.dst,
+				&displacementRelocation);
+		xed_encoder_operand_t src  = X64IRValueToXEDOperand(xedContext, x64Inst.loc, x64Inst.src,
+				&displacementRelocation);
+		xed_encoder_operand_t src2 = X64IRValueToXEDOperand(xedContext, x64Inst.loc, x64Inst.src2,
+				&displacementRelocation);
 		xed_inst3(&inst, dstate64, xedIClass, bitWidth, dst, src, src2);
 		goto encode;
 	}
@@ -308,10 +331,16 @@ encode:
 
 void X64EncodeAllInstructions()
 {
+	XEDContext ctx = {};
+	XEDContext *xedContext = &ctx;
+
 	auto beFinalProcedureData = g_context->beFinalProcedureData.GetForRead();
 	int procCount = (int)beFinalProcedureData->size;
 	for (int finalProcIdx = 0; finalProcIdx < procCount; ++finalProcIdx) {
 		X64FinalProcedure finalProc = beFinalProcedureData[finalProcIdx];
+
+		xedContext->localValues = finalProc.localValues;
+		xedContext->valueAllocations = finalProc.valueAllocations;
 
 		g_procedureAddresses[finalProc.procedureIdx] = g_context->outputBufferOffset;
 
@@ -319,31 +348,31 @@ void X64EncodeAllInstructions()
 		int bytes;
 
 		// push rbp
-		bytes = X64EncodeInstruction({ {}, X64_PUSH, RBP }, {}, buffer);
+		bytes = X64EncodeInstruction(xedContext, { {}, X64_PUSH, RBP }, buffer);
 		OutputBufferPut(bytes, buffer);
 		// mov rbp, rsp
-		bytes = X64EncodeInstruction({ {}, X64_MOV, RBP, RSP }, {}, buffer);
+		bytes = X64EncodeInstruction(xedContext, { {}, X64_MOV, RBP, RSP }, buffer);
 		OutputBufferPut(bytes, buffer);
 		if (finalProc.stackSize > 0) {
 			// sub rsp, $stack_size
-			bytes = X64EncodeInstruction({ {}, X64_SUB, RSP,
-					IRValueImmediate(finalProc.stackSize, TYPETABLEIDX_U32) }, {}, buffer);
+			bytes = X64EncodeInstruction(xedContext, { {}, X64_SUB, RSP,
+					IRValueImmediate(finalProc.stackSize, TYPETABLEIDX_U32) }, buffer);
 			OutputBufferPut(bytes, buffer);
 		}
 
 		X64InstructionStream stream = X64InstructionStreamBegin(&finalProc.instructions);
 		X64Instruction *inst = X64InstructionStreamAdvance(&stream);
 		while (inst) {
-			bytes = X64EncodeInstruction(*inst, finalProc.localValues, buffer);
+			bytes = X64EncodeInstruction(xedContext, *inst, buffer);
 			OutputBufferPut(bytes, buffer);
 			inst = X64InstructionStreamAdvance(&stream);
 		}
 
 		// leave
-		bytes = X64EncodeInstruction({ {}, X64_LEAVE }, {}, buffer);
+		bytes = X64EncodeInstruction(xedContext, { {}, X64_LEAVE }, buffer);
 		OutputBufferPut(bytes, buffer);
 		// ret
-		bytes = X64EncodeInstruction({ {}, X64_RET }, {}, buffer);
+		bytes = X64EncodeInstruction(xedContext, { {}, X64_RET }, buffer);
 		OutputBufferPut(bytes, buffer);
 	}
 }

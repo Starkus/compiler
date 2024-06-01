@@ -758,6 +758,11 @@ inline s32 AtomicIncrementGetNew(volatile s32 *destination)
 	return _InterlockedIncrement((LONG volatile *)destination);
 }
 
+inline s32 AtomicAddGetNew(volatile s32 *destination, s32 addend)
+{
+	return InterlockedAdd((LONG volatile *)destination, addend);
+}
+
 extern "C" u64 SYSCallProcedureDynamically_windowscc(void *start, u64 argCount, void *argValues);
 
 extern "C" u64 SYSCallProcedureDynamically_linuxcc(void *start, u64 gpArgCount, void *gpArgValues,

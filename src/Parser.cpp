@@ -1312,7 +1312,15 @@ ASTExpression ParseExpression(PContext *pContext, s32 precedence, bool isStateme
 
 		result.nodeType = ASTNODETYPE_TYPEOF;
 		result.typeOfNode.expression = PNewTreeNode(pContext);
-		*result.typeOfNode.expression = ParseExpression(pContext, precedence, false);
+		if (pContext->token->type == '(') {
+			// If there are parenthesis, grab _only_ the expression inside.
+			Advance(pContext);
+			*result.typeOfNode.expression = ParseExpression(pContext, -1, false);
+			AssertToken(pContext->token, ')');
+			Advance(pContext);
+		}
+		else
+			*result.typeOfNode.expression = ParseExpression(pContext, precedence, false);
 	} break;
 	case TOKEN_KEYWORD_SIZEOF:
 	{
@@ -1321,7 +1329,15 @@ ASTExpression ParseExpression(PContext *pContext, s32 precedence, bool isStateme
 
 		result.nodeType = ASTNODETYPE_SIZEOF;
 		result.sizeOfNode.expression = PNewTreeNode(pContext);
-		*result.sizeOfNode.expression = ParseExpression(pContext, precedence, false);
+		if (pContext->token->type == '(') {
+			// If there are parenthesis, grab _only_ the expression inside.
+			Advance(pContext);
+			*result.sizeOfNode.expression = ParseExpression(pContext, -1, false);
+			AssertToken(pContext->token, ')');
+			Advance(pContext);
+		}
+		else
+			*result.sizeOfNode.expression = ParseExpression(pContext, precedence, false);
 	} break;
 	case TOKEN_DIRECTIVE_DEFINED:
 	{
@@ -1354,8 +1370,17 @@ ASTExpression ParseExpression(PContext *pContext, s32 precedence, bool isStateme
 		Advance(pContext);
 
 		result.castNode.expression = PNewTreeNode(pContext);
-		int castPrecedence = GetOperatorPrecedence(TOKEN_KEYWORD_CAST);
-		*result.castNode.expression = ParseExpression(pContext, castPrecedence, false);
+		if (pContext->token->type == '(') {
+			// If there are parenthesis, grab _only_ the expression inside.
+			Advance(pContext);
+			*result.castNode.expression = ParseExpression(pContext, -1, false);
+			AssertToken(pContext->token, ')');
+			Advance(pContext);
+		}
+		else {
+			int castPrecedence = GetOperatorPrecedence(TOKEN_KEYWORD_CAST);
+			*result.castNode.expression = ParseExpression(pContext, castPrecedence, false);
+		}
 	} break;
 	case TOKEN_DIRECTIVE_INTRINSIC:
 	{
@@ -1789,10 +1814,17 @@ void ParseJobProc(void *args)
 	BucketArrayInit(&pContext->astTreeNodes);
 	BucketArrayInit(&pContext->astTypes);
 
+#if DEBUG_BUILD || USE_PROFILER_API
+	String jobDescription = SStringConcat("P:"_s, g_context->sourceFiles[fileIdx].name);
+#endif
+
+	ProfilerBegin("Running job", StringToCStr(jobDescription, ThreadAllocator::Alloc),
+			PROFILER_COLOR(20, 178, 10));
+
 	Job *runningJob = GetCurrentJob();
 	runningJob->state = JOBSTATE_RUNNING;
 #if DEBUG_BUILD
-	runningJob->description = SStringConcat("P:"_s, g_context->sourceFiles[fileIdx].name);
+	runningJob->description = jobDescription;
 #endif
 
 	TokenizeFile(pContext, fileIdx);
@@ -1807,8 +1839,13 @@ void ParseJobProc(void *args)
 		GenerateTypeCheckJobs(statement);
 	}
 
-	if (g_context->config.logAST)
-		PrintAST(pContext);
+	if (g_context->config.logAST) {
+		String filename = FilenameWithoutPath(g_context->sourceFiles[fileIdx].name);
+		filename = ChangeFilenameExtension(filename, ""_s);
+		PrintAST(pContext, filename);
+	}
+
+	ProfilerEnd();
 
 	FinishCurrentJob();
 }

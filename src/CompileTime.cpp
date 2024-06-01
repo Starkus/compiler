@@ -193,17 +193,22 @@ void *GetExternalProcedureAddress(String name)
 	const char *procCStr = StringToCStr(name, ThreadAllocator::Alloc);
 	auto ctLibs = g_context->ctExternalLibraries.Get();
 	while (true) {
-		for (int i = 0; i < ctLibs->size; ++i) {
+		for (int i = 0; i < ctLibs->size; ) {
 			CTLibrary *lib = &ctLibs[i];
 			if (!lib->address) {
 				lib->address = SYSLoadDynamicLibrary(lib->name);
-				if (!lib->address)
+				if (!lib->address) {
 					LogWarning(lib->loc, TPrintF("Could not load \"%S\" at "
 								"compile time", lib->name));
+					// Remove so we don't keep warning about this library.
+					DynamicArraySwapRemove(&ctLibs, i);
+					continue;
+				}
 			}
 			void *procStart = SYSGetProcAddress(lib->address, procCStr);
 			if (procStart)
 				return procStart;
+			++i;
 		}
 		SwitchJob(YIELDREASON_NEED_DYNAMIC_LIBRARY, { .identifier = name });
 		// Lock again!

@@ -35,6 +35,23 @@ pause:
 #endif
 }
 
+inline bool SpinlockTryLock(volatile u32 *locked)
+{
+#if IS_MSVC
+	long oldLocked = _InterlockedCompareExchange_HLEAcquire((volatile long *)locked, 1, 0);
+	return !oldLocked;
+#else
+	// GCC/Clang
+	int oldLocked = 1;
+	int eax = 0;
+	int success;
+	asm volatile("xacquire lock cmpxchg %3, %1"
+					: "+a" (eax), "+m" (*locked), "=@cce" (success)
+					: "r" (oldLocked) : "memory", "cc");
+	return success;
+#endif
+}
+
 inline void SpinlockUnlock(volatile u32 *locked)
 {
 	ASSERT(*locked == 1);

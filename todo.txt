@@ -1,3 +1,7 @@
+* Only warn about not found dlls when a procedure wasn't found.
+* When we have polymorphism, remove sizeof (and countof if I decided to add that) in favor of a
+* user-code alternative. Only typeof should be really necessary.
+* Recursive lock for Print? To (set console color -> print) atomically.
 * Tan() is failing for some inputs (or is the number printing wrong?) anyways, improve trig test to
 	fail if the results are unexpected.
 * Detect unreachable code and log error.

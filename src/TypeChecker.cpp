@@ -10,10 +10,10 @@ inline String GetValueName(Value value)
 #endif
 }
 
-u32 TCNewValue(TCContext *tcContext, u32 typeTableIdx, u32 flags, u32 immitateValueIdx = U32_MAX)
+u32 TCNewValue(TCContext *tcContext, u32 typeTableIdx, u32 flags)
 {
 	ASSERT(typeTableIdx != 0);
-	ASSERT(!(flags & VALUEFLAGS_TRY_IMMITATE) || immitateValueIdx != U32_MAX);
+	ASSERT(typeTableIdx > TYPETABLEIDX_Unset);
 
 	u64 idx = tcContext->localValues.count;
 	Value *result = BucketArrayAdd(&tcContext->localValues);
@@ -22,16 +22,15 @@ u32 TCNewValue(TCContext *tcContext, u32 typeTableIdx, u32 flags, u32 immitateVa
 #endif
 	result->typeTableIdx = typeTableIdx;
 	result->flags = flags;
-	result->tryImmitateValueIdx = immitateValueIdx;
 
 	ASSERT(idx < U32_MAX);
 	return (u32)idx;
 }
 
-u32 TCNewValue(TCContext *tcContext, String name, u32 typeTableIdx, u32 flags, u32 immitateValueIdx = U32_MAX)
+u32 TCNewValue(TCContext *tcContext, String name, u32 typeTableIdx, u32 flags)
 {
 	ASSERT(typeTableIdx != 0);
-	ASSERT(!(flags & VALUEFLAGS_TRY_IMMITATE) || immitateValueIdx != U32_MAX);
+	ASSERT(typeTableIdx > TYPETABLEIDX_Unset);
 
 	u64 idx = tcContext->localValues.count;
 	Value *result = BucketArrayAdd(&tcContext->localValues);
@@ -42,7 +41,6 @@ u32 TCNewValue(TCContext *tcContext, String name, u32 typeTableIdx, u32 flags, u
 #endif
 	result->typeTableIdx = typeTableIdx;
 	result->flags = flags;
-	result->tryImmitateValueIdx = immitateValueIdx;
 
 	ASSERT(idx < U32_MAX);
 	return (u32)idx;
@@ -51,7 +49,7 @@ u32 TCNewValue(TCContext *tcContext, String name, u32 typeTableIdx, u32 flags, u
 u32 TCNewValue(TCContext *tcContext, Value value)
 {
 	ASSERT(value.typeTableIdx != 0);
-	ASSERT(!(value.flags & VALUEFLAGS_TRY_IMMITATE) || value.tryImmitateValueIdx != U32_MAX);
+	ASSERT(value.typeTableIdx > TYPETABLEIDX_Unset);
 
 	u64 idx = tcContext->localValues.count;
 	Value *result = BucketArrayAdd(&tcContext->localValues);
@@ -68,9 +66,9 @@ inline Value *TCGetValue(TCContext *tcContext, u32 valueIdx)
 	return &tcContext->localValues[valueIdx];
 }
 
-u32 NewGlobalValue(u32 typeTableIdx, u32 flags, u32 immitateValueIdx = U32_MAX) {
+u32 NewGlobalValue(u32 typeTableIdx, u32 flags)
+{
 	ASSERT(typeTableIdx != 0);
-	ASSERT(!(flags & VALUEFLAGS_TRY_IMMITATE) || immitateValueIdx != U32_MAX);
 
 	auto globalValues = g_context->globalValues.GetForWrite();
 
@@ -81,7 +79,6 @@ u32 NewGlobalValue(u32 typeTableIdx, u32 flags, u32 immitateValueIdx = U32_MAX) 
 #endif
 	result->typeTableIdx = typeTableIdx;
 	result->flags = flags;
-	result->tryImmitateValueIdx = immitateValueIdx;
 	result->externalSymbolName = {};
 
 	ASSERT(idx < U32_MAX);
@@ -89,10 +86,9 @@ u32 NewGlobalValue(u32 typeTableIdx, u32 flags, u32 immitateValueIdx = U32_MAX) 
 	return (u32)idx;
 }
 
-u32 NewGlobalValue(String name, u32 typeTableIdx, u32 flags,
-		u32 immitateValueIdx = U32_MAX) {
+u32 NewGlobalValue(String name, u32 typeTableIdx, u32 flags)
+{
 	ASSERT(typeTableIdx != 0);
-	ASSERT(!(flags & VALUEFLAGS_TRY_IMMITATE) || immitateValueIdx != U32_MAX);
 
 	auto globalValues = g_context->globalValues.GetForWrite();
 
@@ -103,7 +99,6 @@ u32 NewGlobalValue(String name, u32 typeTableIdx, u32 flags,
 #endif
 	result->typeTableIdx = typeTableIdx;
 	result->flags = flags;
-	result->tryImmitateValueIdx = immitateValueIdx;
 	result->externalSymbolName = StringMinify(name);
 
 	ASSERT(idx < U32_MAX);
@@ -113,7 +108,6 @@ u32 NewGlobalValue(String name, u32 typeTableIdx, u32 flags,
 
 u32 NewGlobalValue(Value value) {
 	ASSERT(value.typeTableIdx != 0);
-	ASSERT(!(value.flags & VALUEFLAGS_TRY_IMMITATE) || value.tryImmitateValueIdx != U32_MAX);
 
 	auto globalValues = g_context->globalValues.GetForWrite();
 
@@ -210,7 +204,7 @@ inline TypeInfo GetTypeInfo(u32 typeTableIdx)
 	// waiting list.
 	// We lock the list of jobs here instead of the type table because no one locks the type table
 	// to read it.
-	SYSMutexLock(g_context->waitingJobsByReason[YIELDREASON_TYPE_NOT_READY].lock);
+	SpinlockLock(&g_context->waitingJobsByReason[YIELDREASON_TYPE_NOT_READY].lock);
 	result = typeTable[typeTableIdx];
 
 	if (result.typeCategory == TYPECATEGORY_NOT_READY) {
@@ -218,14 +212,14 @@ inline TypeInfo GetTypeInfo(u32 typeTableIdx)
 		// waiting list, so we don't miss waking it up when updating the type.
 		SwitchJob(YIELDREASON_TYPE_NOT_READY, { .index = typeTableIdx });
 		// Lock again!
-		SYSMutexLock(g_context->waitingJobsByReason[YIELDREASON_TYPE_NOT_READY].lock);
+		SpinlockLock(&g_context->waitingJobsByReason[YIELDREASON_TYPE_NOT_READY].lock);
 
 		result = typeTable[typeTableIdx];
 		if (result.typeCategory == TYPECATEGORY_NOT_READY)
 			LogCompilerError({}, "Bad job resume"_s);
 	}
 
-	SYSMutexUnlock(g_context->waitingJobsByReason[YIELDREASON_TYPE_NOT_READY].lock);
+	SpinlockUnlock(&g_context->waitingJobsByReason[YIELDREASON_TYPE_NOT_READY].lock);
 	return result;
 }
 
@@ -363,7 +357,7 @@ TCScopeName FindGlobalName(SourceLocation loc, String name)
 	RWSpinlockLockForRead(&g_context->tcGlobalNames.rwLock);
 	{
 		auto &globalNames = g_context->tcGlobalNames.unsafe;
-		for (int i = 0; i < globalNames.size; ++i) {
+		for (int i = 0; i < globalNames.count; ++i) {
 			const TCScopeName *currentName = &globalNames[i];
 			if (StringEquals(name, currentName->name)) {
 				RWSpinlockUnlockForRead(&g_context->tcGlobalNames.rwLock);
@@ -380,7 +374,7 @@ TCScopeName FindGlobalName(SourceLocation loc, String name)
 	RWSpinlockLockForRead(&g_context->tcGlobalNames.rwLock);
 	{
 		auto &globalNames = g_context->tcGlobalNames.unsafe;
-		for (int i = 0; i < globalNames.size; ++i) {
+		for (int i = 0; i < globalNames.count; ++i) {
 			const TCScopeName *currentName = &globalNames[i];
 			if (StringEquals(name, currentName->name)) {
 				RWSpinlockUnlockForRead(&g_context->tcGlobalNames.rwLock);
@@ -838,6 +832,25 @@ TypeCheckResult CheckTypesMatchAndSpecialize(u32 leftTypeIdx, ASTExpression *rig
 	TypeCheckResult result = { TYPECHECK_COOL, leftTypeIdx, rightTypeIdx };
 
 	if (rightTypeIdx == TYPETABLEIDX_StructLiteral) {
+		/*
+		Documentation!
+
+		Here we resolve a bag of things inside curly braces {} into struct/array literals, according
+		to what types we have on the left hand side. Here are the rules the code is supposed to
+		follow while doing so.
+
+		Arrays:
+		This one is easy, we interpret the literal as a comma-separated list of values. Regardless
+		of the type of each element or how many nested braces there may be.
+
+		Structs/unions:
+		With structs it's a little more complicated. We do recurse into struct members inside the
+		lhs struct, even if there are no explicit recursive braces on the rhs. The idea is that
+		things like 3D vectors, which are often constructed as a union of structs, can still be
+		represented simply like {x,y,z}.
+		*/
+
+		// Important: keep this symmetrical with the logic over at IRGen!
 		ASSERT(rightHand->nodeType == ASTNODETYPE_LITERAL);
 		ASSERT(rightHand->literal.type == LITERALTYPE_GROUP);
 
@@ -856,7 +869,9 @@ TypeCheckResult CheckTypesMatchAndSpecialize(u32 leftTypeIdx, ASTExpression *rig
 			*DynamicArrayAdd(&structStack) = { structTypeIdx, 0 };
 
 			int memberIdx = 0;
+			// Non-named members
 			while (memberIdx < rightHand->literal.members.size) {
+				ASTExpression *literalMemberExp = rightHand->literal.members[memberIdx];
 				StructStackFrame currentFrame = structStack[structStack.size - 1];
 				TypeInfo currentStructTypeInfo = GetTypeInfo(currentFrame.structTypeIdx);
 
@@ -864,7 +879,9 @@ TypeCheckResult CheckTypesMatchAndSpecialize(u32 leftTypeIdx, ASTExpression *rig
 					// Pop struct frame
 					--structStack.size;
 					if (structStack.size == 0)
-						LogError(rightHand->any.loc, "Too many values in struct literal"_s);
+						LogError(rightHand->any.loc, TPrintF("Too many values in struct literal, "
+								"while fitting struct %S",
+								TypeInfoToString(currentFrame.structTypeIdx)));
 					continue;
 				}
 
@@ -872,14 +889,22 @@ TypeCheckResult CheckTypesMatchAndSpecialize(u32 leftTypeIdx, ASTExpression *rig
 					currentStructTypeInfo.structInfo.members[currentFrame.idx].typeTableIdx;
 				TypeInfo currentMemberTypeInfo = GetTypeInfo(currentMemberTypeIdx);
 
-				if (currentMemberTypeInfo.typeCategory == TYPECATEGORY_STRUCT ||
-					currentMemberTypeInfo.typeCategory == TYPECATEGORY_UNION) {
+				// We don't try to dive into more members when there is an explicit set of braces
+				// delimiting a member. Otherwise, something like:
+				// { { x, y, z }, { a, b }, { r, g, b } }
+				// gets interpreted as a flat string of values, which can be incorrect:
+				// { x, y, z, a, b, r, g, b }
+				bool isAnotherASTGroupLiteral = literalMemberExp->nodeType == ASTNODETYPE_LITERAL &&
+					literalMemberExp->literal.type == LITERALTYPE_GROUP;
+
+				if (!isAnotherASTGroupLiteral &&
+					(currentMemberTypeInfo.typeCategory == TYPECATEGORY_STRUCT ||
+					 currentMemberTypeInfo.typeCategory == TYPECATEGORY_UNION)) {
 					// Push struct frame
 					structStack[structStack.size++] = { currentMemberTypeIdx, 0 };
 					continue;
 				}
 
-				ASTExpression *literalMemberExp = rightHand->literal.members[memberIdx];
 				if (literalMemberExp->nodeType == ASTNODETYPE_BINARY_OPERATION &&
 					literalMemberExp->binaryOperation.op == TOKEN_OP_ASSIGNMENT)
 					// Named member assignments handled in next loop
@@ -899,6 +924,7 @@ TypeCheckResult CheckTypesMatchAndSpecialize(u32 leftTypeIdx, ASTExpression *rig
 				++memberIdx;
 			}
 
+			// Named members
 			for (; memberIdx < rightHand->literal.members.size; ++memberIdx) {
 				ASTExpression *literalMemberExp = rightHand->literal.members[memberIdx];
 				if (literalMemberExp->nodeType != ASTNODETYPE_BINARY_OPERATION ||
@@ -930,7 +956,9 @@ TypeCheckResult CheckTypesMatchAndSpecialize(u32 leftTypeIdx, ASTExpression *rig
 		}
 		else if (structTypeInfo.typeCategory == TYPECATEGORY_ARRAY) {
 			if (structTypeInfo.arrayInfo.count < rightHand->literal.members.size)
-				LogError(rightHand->any.loc, "Too many values in array literal"_s);
+				LogError(rightHand->any.loc, TPrintF("Too many values in array literal: %d on "
+						"left side, %d on right side.", structTypeInfo.arrayInfo.count,
+						rightHand->literal.members.size));
 
 			for (int memberIdx = 0; memberIdx < rightHand->literal.members.size; ++memberIdx) {
 				ASTExpression *literalMemberExp = rightHand->literal.members[memberIdx];
@@ -954,7 +982,9 @@ TypeCheckResult CheckTypesMatchAndSpecialize(u32 leftTypeIdx, ASTExpression *rig
 			result.rightTypeIdx = structTypeIdx;
 		}
 		else
-			ASSERT(false);
+			LogCompilerError(rightHand->any.loc, TPrintF("Group literal found but left hand "
+					"side was neither struct or array: left is \"%S\"",
+					TypeInfoToString(structTypeIdx)));
 	}
 	else if (rightTypeIdx == TYPETABLEIDX_Anything) {
 		if (leftTypeIdx == TYPETABLEIDX_Anything)
@@ -1422,8 +1452,9 @@ inline u32 AddType(TypeInfo typeInfo)
 	return typeTableIdx;
 }
 
-u32 FindOrAddTypeTableIdx(TypeInfo typeInfo)
+u32 FindOrAddTypeTableIdx(TypeInfo typeInfo, u32 checkAfterIdx = TYPETABLEIDX_Begin)
 {
+	u32 alreadyChecked;
 	{
 		// Optimize most frequent path. Read without locking.
 		auto &typeTable = g_context->typeTable.unsafe;
@@ -1434,6 +1465,7 @@ u32 FindOrAddTypeTableIdx(TypeInfo typeInfo)
 			if (AreTypeInfosEqual(typeInfo, t))
 				return i;
 		}
+		alreadyChecked = tableSize;
 	}
 	{
 		// Check it didn't get added when we released the lock
@@ -1442,7 +1474,7 @@ u32 FindOrAddTypeTableIdx(TypeInfo typeInfo)
 		auto &typeTable = g_context->typeTable.unsafe;
 
 		u32 tableSize = (u32)typeTable.count;
-		for (u32 i = 0; i < tableSize; ++i) {
+		for (u32 i = checkAfterIdx + 1; i < tableSize; ++i) {
 			TypeInfo t = typeTable[i];
 			if (AreTypeInfosEqual(typeInfo, t)) {
 				SpinlockUnlock(&g_context->typeTable.lock);
@@ -1462,7 +1494,9 @@ u32 GetTypeInfoPointerOf(u32 inType)
 	resultTypeInfo.typeCategory = TYPECATEGORY_POINTER;
 	resultTypeInfo.size = g_pointerSize;
 	resultTypeInfo.pointerInfo.pointedTypeTableIdx = inType;
-	return FindOrAddTypeTableIdx(resultTypeInfo);
+	u32 result = FindOrAddTypeTableIdx(resultTypeInfo, inType);
+	//Print("Pointer to %S found at distance %d (%u)\n", TypeInfoToString(inType), result - inType, result);
+	return result;
 }
 
 u32 GetTypeInfoArrayOf(u32 inType, s64 count)
@@ -1477,9 +1511,7 @@ u32 GetTypeInfoArrayOf(u32 inType, s64 count)
 		s64 elementSize = GetTypeInfo(inType).size;
 		resultTypeInfo.size = elementSize * count;
 	}
-	else
-		resultTypeInfo.size = 0;
-	return FindOrAddTypeTableIdx(resultTypeInfo);
+	return FindOrAddTypeTableIdx(resultTypeInfo, inType);
 }
 
 u32 TypeCheckType(TCContext *tcContext, String name, SourceLocation loc, ASTType *astType);
@@ -1516,56 +1548,73 @@ void TCAddScopeNames(TCContext *tcContext, ArrayView<TCScopeName> scopeNames)
 		for (int i = 0; i < scopeNames.size; ++i)
 			newNames[i] = scopeNames[i];
 	}
-	else {
-		{
-			auto globalNames = g_context->tcGlobalNames.GetForWrite();
-
-			TCScopeName *newNames = DynamicArrayAddMany(&globalNames, scopeNames.size);
-			for (int i = 0; i < scopeNames.size; ++i)
-				newNames[i] = scopeNames[i];
-		}
-
-		// Check if any was added twice
-		{
-			Array<s8, ThreadAllocator> timesFound;
-			ArrayInit(&timesFound, scopeNames.size);
-			timesFound.size = scopeNames.size;
-			memset(timesFound.data, 0, timesFound.size * sizeof(s8));
-
-			auto globalNames = g_context->tcGlobalNames.GetForRead();
-
-			for (int globalNameIdx = 0; globalNameIdx < globalNames->size; ++globalNameIdx) {
-				const TCScopeName *currentName = &globalNames[globalNameIdx];
-				for (int inputIdx = 0; inputIdx < scopeNames.size; ++inputIdx) {
-					if (StringEquals(scopeNames[inputIdx].name, currentName->name)) {
-						if (timesFound[inputIdx]) {
-							LogErrorNoCrash(scopeNames[inputIdx].loc, TPrintF("Name \"%S\" already "
-										"assigned", scopeNames[inputIdx].name));
-							LogNote(currentName->loc, "First defined here"_s);
-							PANIC;
-						}
-						++timesFound[inputIdx];
-					}
-				}
+	else for (int i = 0; i < scopeNames.size; ++i) {
+		while (!MTQueueEnqueue(&g_context->tcGlobalNamesToAdd, scopeNames[i])) {
+			// If queue is full try to commit some names.
+			if (SpinlockTryLock(&g_context->tcGlobalNamesCommitLock)) {
+				TCCommitGlobalNames();
+				SpinlockUnlock(&g_context->tcGlobalNamesCommitLock);
 			}
 		}
+	}
+}
 
-		// Wake up any jobs that were waiting for these names
-		auto jobsWaiting = g_context->waitingJobsByReason[YIELDREASON_UNKNOWN_IDENTIFIER].Get();
-		for (int i = 0; i < jobsWaiting->size; ) {
-			u32 jobIdx = jobsWaiting[i];
-			const Job *job = &g_context->jobs.unsafe[jobIdx];
-			for (int nameIdx = 0; nameIdx < scopeNames.size; ++nameIdx) {
-				if (StringEquals(job->yieldContext.identifier, scopeNames[nameIdx].name)) {
-					EnqueueReadyJob(jobIdx);
-					// Remove waiting job
-					DynamicArraySwapRemove(&jobsWaiting, i);
-					goto outerContinue;
-				}
+void TCCommitGlobalNames()
+{
+	// @Speed: optimize
+	u64 firstAddedIdx;
+	u64 globalNamesCount;
+	{
+		auto globalNames = g_context->tcGlobalNames.GetForWrite();
+
+		firstAddedIdx = globalNames->count;
+		globalNamesCount = firstAddedIdx;
+
+		TCScopeName dequeue;
+		while (MTQueueDequeue(&g_context->tcGlobalNamesToAdd, &dequeue)) {
+			*BucketArrayAdd(&globalNames) = dequeue;
+			++globalNamesCount;
+		}
+	}
+
+	// No need to lock because we'll just read names added up to this point, and names never
+	// change.
+	auto &globalNames = g_context->tcGlobalNames.unsafe;
+
+	// Wake up any jobs that were waiting for these names
+	auto jobsWaiting = g_context->waitingJobsByReason[YIELDREASON_UNKNOWN_IDENTIFIER].Get();
+	for (int i = 0; i < jobsWaiting->size; ) {
+		u32 jobIdx = jobsWaiting[i];
+		const Job *job = &g_context->jobs.unsafe[jobIdx];
+		for (u64 nameIdx = firstAddedIdx; nameIdx < globalNamesCount; ++nameIdx) {
+			if (StringEquals(job->yieldContext.identifier, globalNames[nameIdx].name)) {
+				EnqueueReadyJob(jobIdx);
+				// Remove waiting job
+				DynamicArraySwapRemove(&jobsWaiting, i);
+				goto outerContinue;
 			}
-			++i; // Didn't remove waiting job
+		}
+		++i; // Didn't remove waiting job
 outerContinue:
-			continue;
+		continue;
+	}
+
+	// Check if any was added twice
+	for (u64 allNameIdx = 0; allNameIdx < globalNamesCount; ++allNameIdx) {
+		const TCScopeName *allName = &globalNames[allNameIdx];
+		// Iterate over the new names only. We assume all the old ones are unique.
+		// Notice we don't assume we didn't just add the same name twice, new names still compare
+		// against each other.
+		// @Speed: avoid checking pairs of new names twice (a==b and b==a).
+		for (u64 addedNameIdx = firstAddedIdx; addedNameIdx < globalNamesCount; ++addedNameIdx) {
+			if (addedNameIdx == allNameIdx) continue;
+			const TCScopeName *addedName = &globalNames[addedNameIdx];
+			if (StringEquals(addedName->name, allName->name)) {
+				LogErrorNoCrash(addedName->loc, TPrintF("Name \"%S\" already "
+							"assigned", addedName->name));
+				LogNote(allName->loc, "First defined here"_s);
+				PANIC;
+			}
 		}
 	}
 }
@@ -1620,15 +1669,23 @@ u32 TypeCheckStructDeclaration(TCContext *tcContext, String name, bool isUnion,
 		TypeInfo t = {
 			.typeCategory = TYPECATEGORY_NOT_READY,
 			.alignment = alignment,
-			.structInfo = {
-				.name = name
-			}
+			.structInfo = { .name = name }
 		};
 		typeTableIdx = AddType(t);
 
 		// Allocate static data but don't fill it
+		// Note that AddType() didn't allocate or fill this because the type category was NOT_READY.
 		AllocateStaticData(g_context->typeTable.unsafe[typeTableIdx].valueIdx,
 				sizeof(UserFacingTypeInfoStruct), 8);
+
+		// Declare pointer to struct type so it is close to struct type
+		TypeInfo tp = {
+			.typeCategory = TYPECATEGORY_POINTER,
+			.size = g_pointerSize,
+			.pointerInfo = { .pointedTypeTableIdx = typeTableIdx }
+		};
+		SpinlockLock(&g_context->typeTable.lock);
+		AddType(tp);
 	}
 
 	TCScope *stackTop = TCGetTopMostScope(tcContext);
@@ -1656,6 +1713,7 @@ u32 TypeCheckStructDeclaration(TCContext *tcContext, String name, bool isUnion,
 Constant ConstantFromCTRegister(CTRegister ctRegister, u32 typeTableIdx)
 {
 	Constant result;
+	result.typeTableIdx = typeTableIdx;
 	switch (typeTableIdx) {
 	case TYPETABLEIDX_S8:
 	case TYPETABLEIDX_S16:
@@ -2725,7 +2783,7 @@ TypeInfo TypeInfoFromASTProcedurePrototype(ASTProcedurePrototype *astPrototype)
 	return t;
 }
 
-ASTExpression TCCopyASTBranch(TCContext *tcContext, const ASTExpression *expression);
+ASTExpression TCDeepCopyTreeBranch(TCContext *tcContext, const ASTExpression *expression);
 
 ASTType TCCopyASTType(TCContext *tcContext, const ASTType *astType)
 {
@@ -2763,7 +2821,7 @@ ASTType TCCopyASTType(TCContext *tcContext, const ASTType *astType)
 
 		if (result.arrayCountExp) {
 			ASTExpression *newArrayCountExp = TCNewTreeNode();
-			*newArrayCountExp = TCCopyASTBranch(tcContext, result.arrayCountExp);
+			*newArrayCountExp = TCDeepCopyTreeBranch(tcContext, result.arrayCountExp);
 			result.arrayCountExp = newArrayCountExp;
 		}
 	} break;
@@ -2788,7 +2846,7 @@ ASTType TCCopyASTType(TCContext *tcContext, const ASTType *astType)
 	return result;
 }
 
-ASTExpression TCCopyASTBranch(TCContext *tcContext, const ASTExpression *expression)
+ASTExpression TCDeepCopyTreeBranch(TCContext *tcContext, const ASTExpression *expression)
 {
 	ASTExpression result;
 	result.nodeType = expression->nodeType;
@@ -2804,7 +2862,7 @@ ASTExpression TCCopyASTBranch(TCContext *tcContext, const ASTExpression *express
 		TCPushScope(tcContext);
 
 		for (int i = 0; i < expression->block.statements.size; ++i) {
-			ASTExpression statement = TCCopyASTBranch(tcContext,
+			ASTExpression statement = TCDeepCopyTreeBranch(tcContext,
 					&expression->block.statements[i]);
 			if (statement.nodeType != ASTNODETYPE_INVALID)
 				*DynamicArrayAdd(&astBlock.statements) = statement;
@@ -2872,7 +2930,7 @@ ASTExpression TCCopyASTBranch(TCContext *tcContext, const ASTExpression *express
 
 		if (varDecl.astInitialValue) {
 			ASTExpression *astInitialValue = TCNewTreeNode();
-			*astInitialValue = TCCopyASTBranch(tcContext, varDecl.astInitialValue);
+			*astInitialValue = TCDeepCopyTreeBranch(tcContext, varDecl.astInitialValue);
 			varDecl.astInitialValue = astInitialValue;
 		}
 
@@ -2933,21 +2991,21 @@ ASTExpression TCCopyASTBranch(TCContext *tcContext, const ASTExpression *express
 	case ASTNODETYPE_RETURN:
 	{
 		ASTExpression *e = TCNewTreeNode();
-		*e = TCCopyASTBranch(tcContext, expression->returnNode.expression);
+		*e = TCDeepCopyTreeBranch(tcContext, expression->returnNode.expression);
 		result.returnNode.expression = e;
 		return result;
 	}
 	case ASTNODETYPE_DEFER:
 	{
 		ASTExpression *e = TCNewTreeNode();
-		*e = TCCopyASTBranch(tcContext, expression->deferNode.expression);
+		*e = TCDeepCopyTreeBranch(tcContext, expression->deferNode.expression);
 		result.deferNode.expression = e;
 		return result;
 	}
 	case ASTNODETYPE_USING:
 	{
 		ASTExpression *usingExp = TCNewTreeNode();
-		*usingExp = TCCopyASTBranch(tcContext, expression->usingNode.expression);
+		*usingExp = TCDeepCopyTreeBranch(tcContext, expression->usingNode.expression);
 
 		if (usingExp->nodeType == ASTNODETYPE_VARIABLE_DECLARATION)
 		{
@@ -2979,13 +3037,13 @@ ASTExpression TCCopyASTBranch(TCContext *tcContext, const ASTExpression *express
 			DynamicArrayInit(&astProcCall.arguments, argCount);
 			for (int argIdx = 0; argIdx < argCount; ++argIdx) {
 				ASTExpression *arg = TCNewTreeNode();
-				*arg = TCCopyASTBranch(tcContext, original.arguments[argIdx]);
+				*arg = TCDeepCopyTreeBranch(tcContext, original.arguments[argIdx]);
 				*DynamicArrayAdd(&astProcCall.arguments) = arg;
 			}
 		}
 
 		ASTExpression *exp = TCNewTreeNode();
-		*exp = TCCopyASTBranch(tcContext, original.procedureExpression);
+		*exp = TCDeepCopyTreeBranch(tcContext, original.procedureExpression);
 
 		result.procedureCall = astProcCall;
 		return result;
@@ -2994,7 +3052,7 @@ ASTExpression TCCopyASTBranch(TCContext *tcContext, const ASTExpression *express
 	{
 		ASTUnaryOperation astUnary = expression->unaryOperation;
 		ASTExpression *e = TCNewTreeNode();
-		*e = TCCopyASTBranch(tcContext, expression->unaryOperation.expression);
+		*e = TCDeepCopyTreeBranch(tcContext, expression->unaryOperation.expression);
 		astUnary.expression = e;
 		result.unaryOperation = astUnary;
 		return result;
@@ -3004,13 +3062,13 @@ ASTExpression TCCopyASTBranch(TCContext *tcContext, const ASTExpression *express
 		ASTBinaryOperation astBinary = expression->binaryOperation;
 		ASTExpression *l = TCNewTreeNode();
 		ASTExpression *r = TCNewTreeNode();
-		*l = TCCopyASTBranch(tcContext, expression->binaryOperation.leftHand);
+		*l = TCDeepCopyTreeBranch(tcContext, expression->binaryOperation.leftHand);
 
 		// For member access we can just copy
 		if (expression->binaryOperation.op == TOKEN_OP_MEMBER_ACCESS)
 			*r = *expression->binaryOperation.rightHand;
 		else
-			*r = TCCopyASTBranch(tcContext, expression->binaryOperation.rightHand);
+			*r = TCDeepCopyTreeBranch(tcContext, expression->binaryOperation.rightHand);
 
 		astBinary.leftHand = l;
 		astBinary.rightHand = r;
@@ -3025,8 +3083,7 @@ ASTExpression TCCopyASTBranch(TCContext *tcContext, const ASTExpression *express
 			ArrayInit(&astLiteral.members, expression->literal.members.size);
 			for (int memberIdx = 0; memberIdx < expression->literal.members.size; ++memberIdx) {
 				ASTExpression *e = TCNewTreeNode();
-				*e = TCCopyASTBranch(tcContext,
-						expression->literal.members[memberIdx]);
+				*e = TCDeepCopyTreeBranch(tcContext, expression->literal.members[memberIdx]);
 				*ArrayAdd(&astLiteral.members) = e;
 			}
 		}
@@ -3039,16 +3096,16 @@ ASTExpression TCCopyASTBranch(TCContext *tcContext, const ASTExpression *express
 		ASTIf astIf = expression->ifNode;
 
 		ASTExpression *e = TCNewTreeNode();
-		*e = TCCopyASTBranch(tcContext, expression->ifNode.condition);
+		*e = TCDeepCopyTreeBranch(tcContext, expression->ifNode.condition);
 		astIf.condition = e;
 
 		e = TCNewTreeNode();
-		*e = TCCopyASTBranch(tcContext, expression->ifNode.body);
+		*e = TCDeepCopyTreeBranch(tcContext, expression->ifNode.body);
 		astIf.body = e;
 
 		if (expression->ifNode.elseBody) {
 			e = TCNewTreeNode();
-			*e = TCCopyASTBranch(tcContext, expression->ifNode.elseBody);
+			*e = TCDeepCopyTreeBranch(tcContext, expression->ifNode.elseBody);
 			astIf.elseBody = e;
 		}
 
@@ -3060,11 +3117,11 @@ ASTExpression TCCopyASTBranch(TCContext *tcContext, const ASTExpression *express
 		ASTWhile astWhile = expression->whileNode;
 
 		ASTExpression *e = TCNewTreeNode();
-		*e = TCCopyASTBranch(tcContext, expression->whileNode.condition);
+		*e = TCDeepCopyTreeBranch(tcContext, expression->whileNode.condition);
 		astWhile.condition = e;
 
 		e = TCNewTreeNode();
-		*e = TCCopyASTBranch(tcContext, expression->whileNode.body);
+		*e = TCDeepCopyTreeBranch(tcContext, expression->whileNode.body);
 		astWhile.body = e;
 
 		result.whileNode = astWhile;
@@ -3075,7 +3132,7 @@ ASTExpression TCCopyASTBranch(TCContext *tcContext, const ASTExpression *express
 		ASTFor astFor = expression->forNode;
 
 		ASTExpression *e = TCNewTreeNode();
-		*e = TCCopyASTBranch(tcContext, astFor.range);
+		*e = TCDeepCopyTreeBranch(tcContext, astFor.range);
 		astFor.range = e;
 
 		TCPushScope(tcContext);
@@ -3128,7 +3185,7 @@ ASTExpression TCCopyASTBranch(TCContext *tcContext, const ASTExpression *express
 		TCAddScopeNames(tcContext, scopeNamesToAdd);
 
 		e = TCNewTreeNode();
-		*e = TCCopyASTBranch(tcContext, expression->forNode.body);
+		*e = TCDeepCopyTreeBranch(tcContext, expression->forNode.body);
 		astFor.body = e;
 
 		TCPopScope(tcContext);
@@ -3146,21 +3203,21 @@ ASTExpression TCCopyASTBranch(TCContext *tcContext, const ASTExpression *express
 	case ASTNODETYPE_TYPEOF:
 	{
 		ASTExpression *e = TCNewTreeNode();
-		*e = TCCopyASTBranch(tcContext, expression->typeOfNode.expression);
+		*e = TCDeepCopyTreeBranch(tcContext, expression->typeOfNode.expression);
 		result.typeOfNode.expression = e;
 		return result;
 	}
 	case ASTNODETYPE_SIZEOF:
 	{
 		ASTExpression *e = TCNewTreeNode();
-		*e = TCCopyASTBranch(tcContext, expression->sizeOfNode.expression);
+		*e = TCDeepCopyTreeBranch(tcContext, expression->sizeOfNode.expression);
 		result.sizeOfNode.expression = e;
 		return result;
 	}
 	case ASTNODETYPE_CAST:
 	{
 		ASTExpression *e = TCNewTreeNode();
-		*e = TCCopyASTBranch(tcContext, expression->castNode.expression);
+		*e = TCDeepCopyTreeBranch(tcContext, expression->castNode.expression);
 		result.castNode.expression = e;
 		result.castNode.astType = TCCopyASTType(tcContext, &expression->castNode.astType);
 		return result;
@@ -3172,7 +3229,7 @@ ASTExpression TCCopyASTBranch(TCContext *tcContext, const ASTExpression *express
 		if (argCount) {
 			DynamicArrayInit(&astIntrinsic.arguments, argCount);
 			for (int argIdx = 0; argIdx < argCount; ++argIdx) {
-				*DynamicArrayAdd(&astIntrinsic.arguments) = TCCopyASTBranch(tcContext,
+				*DynamicArrayAdd(&astIntrinsic.arguments) = TCDeepCopyTreeBranch(tcContext,
 						&expression->intrinsic.arguments[argIdx]);
 			}
 		}
@@ -3290,7 +3347,7 @@ bool TCPushParametersAndInlineProcedureCall(TCContext *tcContext, ASTProcedureCa
 	TCAddParametersToScope(tcContext, astProcCall->inlineParameterValues, &proc.astPrototype);
 
 	ASTExpression *e = TCNewTreeNode();
-	*e = TCCopyASTBranch(tcContext, proc.astBody);
+	*e = TCDeepCopyTreeBranch(tcContext, proc.astBody);
 	astProcCall->astBodyInlineCopy = e;
 
 	TCPopScope(tcContext);
@@ -3721,7 +3778,7 @@ u32 TCInstantiateProcedure(TCContext *tcContext, u32 procedureIdx, ArrayView<u32
 	// Deep-copy the body syntax tree
 	{
 		ASTExpression *astBodyCopy = TCNewTreeNode();
-		*astBodyCopy = TCCopyASTBranch(&procedureContext, proc.astBody);
+		*astBodyCopy = TCDeepCopyTreeBranch(&procedureContext, proc.astBody);
 		proc.astBody = astBodyCopy;
 	}
 
@@ -4789,7 +4846,7 @@ void TypeCheckExpression(TCContext *tcContext, ASTExpression *expression)
 			expression->typeTableIdx = TYPETABLEIDX_StructLiteral;
 			break;
 		case LITERALTYPE_CSTR:
-			expression->typeTableIdx = GetTypeInfoPointerOf(TYPETABLEIDX_S8);
+			expression->typeTableIdx = TYPETABLEIDX_S8_PTR;
 			break;
 		default:
 			ASSERT(!"Unexpected literal type");
@@ -4933,7 +4990,7 @@ void TypeCheckExpression(TCContext *tcContext, ASTExpression *expression)
 	{
 		TypeCheckExpression(tcContext, expression->typeOfNode.expression);
 
-		static u32 typeInfoPointerTypeIdx = GetTypeInfoPointerOf(TYPETABLEIDX_TYPE_INFO_STRUCT);
+		static u32 typeInfoPointerTypeIdx = TYPETABLEIDX_TYPE_INFO_STRUCT_PTR;
 		expression->typeTableIdx = typeInfoPointerTypeIdx;
 	} break;
 	case ASTNODETYPE_SIZEOF:
@@ -5191,7 +5248,7 @@ void TypeCheckExpression(TCContext *tcContext, ASTExpression *expression)
 		// Global scope
 		{
 			auto globalNames = g_context->tcGlobalNames.GetForRead();
-			for (int i = 0; i < globalNames->size; ++i) {
+			for (int i = 0; i < globalNames->count; ++i) {
 				const TCScopeName *currentName = &globalNames[i];
 				if (StringEquals(identifier, currentName->name)) {
 					isDefined = true;
@@ -5204,7 +5261,7 @@ void TypeCheckExpression(TCContext *tcContext, ASTExpression *expression)
 		{
 			auto globalNames = g_context->tcGlobalNames.GetForRead();
 			// @Improve: resume loop at the last index we checked?
-			for (int i = 0; i < globalNames->size; ++i) {
+			for (int i = 0; i < globalNames->count; ++i) {
 				const TCScopeName *currentName = &globalNames[i];
 				if (StringEquals(identifier, currentName->name)) {
 					isDefined = true;
@@ -5266,11 +5323,7 @@ void TCJobProc(void *args)
 	tcContext->onStaticContext = true;
 	tcContext->currentReturnTypes = {};
 
-	Job *runningJob = GetCurrentJob();
-	runningJob->state = JOBSTATE_RUNNING;
-#if DEBUG_BUILD
-	runningJob->loc = expression->any.loc;
-
+#if DEBUG_BUILD || USE_PROFILER_API
 	String jobDescription = "TC:???"_s;
 	switch (expression->nodeType) {
 	case ASTNODETYPE_STATIC_DEFINITION:
@@ -5302,27 +5355,36 @@ void TCJobProc(void *args)
 		jobDescription = "TC:Static if"_s;
 		break;
 	}
+#endif
+
+	ProfilerBegin("Running job", StringToCStr(jobDescription, ThreadAllocator::Alloc),
+			PROFILER_COLOR(204, 178, 10));
+
+	Job *runningJob = GetCurrentJob();
+	runningJob->state = JOBSTATE_RUNNING;
+#if DEBUG_BUILD
+	runningJob->loc = expression->any.loc;
 	runningJob->description = jobDescription;
 #endif
 
 	switch (expression->nodeType) {
 	case ASTNODETYPE_VARIABLE_DECLARATION:
-	{
-	} break;
+		break;
 	case ASTNODETYPE_STATIC_DEFINITION:
 	case ASTNODETYPE_RUN:
 	case ASTNODETYPE_INCLUDE:
 	case ASTNODETYPE_LINKLIB:
 	case ASTNODETYPE_IF_STATIC:
 	case ASTNODETYPE_OPERATOR_OVERLOAD:
-	{
 		DynamicArrayInit(&tcContext->scopeStack, 8);
-	} break;
+		break;
 	default:
 		PANIC;
 	}
 
 	TypeCheckExpression(tcContext, expression);
+
+	ProfilerEnd();
 
 	FinishCurrentJob();
 }
@@ -5367,10 +5429,17 @@ void TCStructJobProc(void *args)
 	tcContext->onStaticContext = true;
 	tcContext->currentReturnTypes = {};
 
+#if DEBUG_BUILD || USE_PROFILER_API
+	String jobDescription = SNPrintF(96, "TC:Members of struct \"%S\"", argsStruct->name);
+#endif
+
+	ProfilerBegin("Running job", StringToCStr(jobDescription, ThreadAllocator::Alloc),
+			PROFILER_COLOR(178, 204, 10));
+
 	Job *runningJob = GetCurrentJob();
 	runningJob->state = JOBSTATE_RUNNING;
 #if DEBUG_BUILD
-	runningJob->description = SNPrintF(96, "TC:Struct \"%S\"", argsStruct->name);
+	runningJob->description = jobDescription;
 #endif
 
 	u32 typeTableIdx = argsStruct->typeTableIdx;
@@ -5456,6 +5525,8 @@ void TCStructJobProc(void *args)
 
 	// Wake up any jobs that were waiting for this type
 	WakeUpAllByIndex(YIELDREASON_TYPE_NOT_READY, typeTableIdx);
+
+	ProfilerEnd();
 
 	FinishCurrentJob();
 }
@@ -5643,6 +5714,88 @@ void TypeCheckMain()
 		t.valueIdx = NewGlobalValue("_typeInfo_type_info_alias_struct"_s, TYPETABLEIDX_Unset, VALUEFLAGS_ON_STATIC_STORAGE);
 		typeTableFast[TYPETABLEIDX_TYPE_INFO_ALIAS_STRUCT] = t;
 
+		// Pointers
+		TypeInfo tp = {};
+		tp.size = g_pointerSize;
+		tp.typeCategory = TYPECATEGORY_POINTER;
+
+		tp.pointerInfo.pointedTypeTableIdx = TYPETABLEIDX_S8;
+		tp.valueIdx = NewGlobalValue("_typeInfo_s8_ptr"_s, TYPETABLEIDX_Unset, VALUEFLAGS_ON_STATIC_STORAGE);
+		typeTableFast[TYPETABLEIDX_S8_PTR] = tp;
+		tp.pointerInfo.pointedTypeTableIdx = TYPETABLEIDX_S16;
+		tp.valueIdx = NewGlobalValue("_typeInfo_s16_ptr"_s, TYPETABLEIDX_Unset, VALUEFLAGS_ON_STATIC_STORAGE);
+		typeTableFast[TYPETABLEIDX_S16_PTR] = tp;
+		tp.pointerInfo.pointedTypeTableIdx = TYPETABLEIDX_S32;
+		tp.valueIdx = NewGlobalValue("_typeInfo_s32_ptr"_s, TYPETABLEIDX_Unset, VALUEFLAGS_ON_STATIC_STORAGE);
+		typeTableFast[TYPETABLEIDX_S32_PTR] = tp;
+		tp.pointerInfo.pointedTypeTableIdx = TYPETABLEIDX_S64;
+		tp.valueIdx = NewGlobalValue("_typeInfo_s64_ptr"_s, TYPETABLEIDX_Unset, VALUEFLAGS_ON_STATIC_STORAGE);
+		typeTableFast[TYPETABLEIDX_S64_PTR] = tp;
+
+		tp.pointerInfo.pointedTypeTableIdx = TYPETABLEIDX_U8;
+		tp.valueIdx = NewGlobalValue("_typeInfo_u8_ptr"_s, TYPETABLEIDX_Unset, VALUEFLAGS_ON_STATIC_STORAGE);
+		typeTableFast[TYPETABLEIDX_U8_PTR]  = tp;
+		tp.pointerInfo.pointedTypeTableIdx = TYPETABLEIDX_U16;
+		tp.valueIdx = NewGlobalValue("_typeInfo_u16_ptr"_s, TYPETABLEIDX_Unset, VALUEFLAGS_ON_STATIC_STORAGE);
+		typeTableFast[TYPETABLEIDX_U16_PTR] = tp;
+		tp.pointerInfo.pointedTypeTableIdx = TYPETABLEIDX_U32;
+		tp.valueIdx = NewGlobalValue("_typeInfo_u32_ptr"_s, TYPETABLEIDX_Unset, VALUEFLAGS_ON_STATIC_STORAGE);
+		typeTableFast[TYPETABLEIDX_U32_PTR] = tp;
+		tp.pointerInfo.pointedTypeTableIdx = TYPETABLEIDX_U64;
+		tp.valueIdx = NewGlobalValue("_typeInfo_u64_ptr"_s, TYPETABLEIDX_Unset, VALUEFLAGS_ON_STATIC_STORAGE);
+		typeTableFast[TYPETABLEIDX_U64_PTR] = tp;
+
+		tp.pointerInfo.pointedTypeTableIdx = TYPETABLEIDX_F32;
+		tp.valueIdx = NewGlobalValue("_typeInfo_f32_ptr"_s, TYPETABLEIDX_Unset, VALUEFLAGS_ON_STATIC_STORAGE);
+		typeTableFast[TYPETABLEIDX_F32_PTR] = tp;
+		tp.pointerInfo.pointedTypeTableIdx = TYPETABLEIDX_F64;
+		tp.valueIdx = NewGlobalValue("_typeInfo_f64_ptr"_s, TYPETABLEIDX_Unset, VALUEFLAGS_ON_STATIC_STORAGE);
+		typeTableFast[TYPETABLEIDX_F64_PTR] = tp;
+
+		tp.pointerInfo.pointedTypeTableIdx = TYPETABLEIDX_BOOL;
+		tp.valueIdx = NewGlobalValue("_typeInfo_bool_ptr"_s, TYPETABLEIDX_Unset, VALUEFLAGS_ON_STATIC_STORAGE);
+		typeTableFast[TYPETABLEIDX_BOOL_PTR]  = tp;
+		tp.pointerInfo.pointedTypeTableIdx = TYPETABLEIDX_VOID;
+		tp.valueIdx = NewGlobalValue("_typeInfo_void_ptr"_s, TYPETABLEIDX_Unset, VALUEFLAGS_ON_STATIC_STORAGE);
+		typeTableFast[TYPETABLEIDX_VOID_PTR] = tp;
+
+		tp.pointerInfo.pointedTypeTableIdx = TYPETABLEIDX_STRING_STRUCT;
+		tp.valueIdx = NewGlobalValue("_typeInfo_string_struct_ptr"_s, TYPETABLEIDX_Unset, VALUEFLAGS_ON_STATIC_STORAGE);
+		typeTableFast[TYPETABLEIDX_STRING_STRUCT_PTR] = tp;
+		tp.pointerInfo.pointedTypeTableIdx = TYPETABLEIDX_ARRAY_STRUCT;
+		tp.valueIdx = NewGlobalValue("_typeInfo_array_struct_ptr"_s, TYPETABLEIDX_Unset, VALUEFLAGS_ON_STATIC_STORAGE);
+		typeTableFast[TYPETABLEIDX_ARRAY_STRUCT_PTR] = tp;
+		tp.pointerInfo.pointedTypeTableIdx = TYPETABLEIDX_ANY_STRUCT;
+		tp.valueIdx = NewGlobalValue("_typeInfo_any_struct_ptr"_s, TYPETABLEIDX_Unset, VALUEFLAGS_ON_STATIC_STORAGE);
+		typeTableFast[TYPETABLEIDX_ANY_STRUCT_PTR] = tp;
+		tp.pointerInfo.pointedTypeTableIdx = TYPETABLEIDX_TYPE_INFO_STRUCT;
+		tp.valueIdx = NewGlobalValue("_typeInfo_type_info_struct_ptr"_s, TYPETABLEIDX_Unset, VALUEFLAGS_ON_STATIC_STORAGE);
+		typeTableFast[TYPETABLEIDX_TYPE_INFO_STRUCT_PTR] = tp;
+		tp.pointerInfo.pointedTypeTableIdx = TYPETABLEIDX_TYPE_INFO_INTEGER_STRUCT;
+		tp.valueIdx = NewGlobalValue("_typeInfo_type_info_integer_struct_ptr"_s, TYPETABLEIDX_Unset, VALUEFLAGS_ON_STATIC_STORAGE);
+		typeTableFast[TYPETABLEIDX_TYPE_INFO_INTEGER_STRUCT_PTR] = tp;
+		tp.pointerInfo.pointedTypeTableIdx = TYPETABLEIDX_TYPE_INFO_STRUCT_MEMBER_STRUCT;
+		tp.valueIdx = NewGlobalValue("_typeInfo_type_info_struct_member_struct_ptr"_s, TYPETABLEIDX_Unset, VALUEFLAGS_ON_STATIC_STORAGE);
+		typeTableFast[TYPETABLEIDX_TYPE_INFO_STRUCT_MEMBER_STRUCT_PTR] = tp;
+		tp.pointerInfo.pointedTypeTableIdx = TYPETABLEIDX_TYPE_INFO_STRUCT_STRUCT;
+		tp.valueIdx = NewGlobalValue("_typeInfo_type_info_struct_struct_ptr"_s, TYPETABLEIDX_Unset, VALUEFLAGS_ON_STATIC_STORAGE);
+		typeTableFast[TYPETABLEIDX_TYPE_INFO_STRUCT_STRUCT_PTR] = tp;
+		tp.pointerInfo.pointedTypeTableIdx = TYPETABLEIDX_TYPE_INFO_ENUM_STRUCT;
+		tp.valueIdx = NewGlobalValue("_typeInfo_type_info_enum_struct_ptr"_s, TYPETABLEIDX_Unset, VALUEFLAGS_ON_STATIC_STORAGE);
+		typeTableFast[TYPETABLEIDX_TYPE_INFO_ENUM_STRUCT_PTR] = tp;
+		tp.pointerInfo.pointedTypeTableIdx = TYPETABLEIDX_TYPE_INFO_POINTER_STRUCT;
+		tp.valueIdx = NewGlobalValue("_typeInfo_type_info_pointer_struct_ptr"_s, TYPETABLEIDX_Unset, VALUEFLAGS_ON_STATIC_STORAGE);
+		typeTableFast[TYPETABLEIDX_TYPE_INFO_POINTER_STRUCT_PTR] = tp;
+		tp.pointerInfo.pointedTypeTableIdx = TYPETABLEIDX_TYPE_INFO_ARRAY_STRUCT;
+		tp.valueIdx = NewGlobalValue("_typeInfo_type_info_array_struct_ptr"_s, TYPETABLEIDX_Unset, VALUEFLAGS_ON_STATIC_STORAGE);
+		typeTableFast[TYPETABLEIDX_TYPE_INFO_ARRAY_STRUCT_PTR] = tp;
+		tp.pointerInfo.pointedTypeTableIdx = TYPETABLEIDX_TYPE_INFO_PROCEDURE_STRUCT;
+		tp.valueIdx = NewGlobalValue("_typeInfo_type_info_procedure_struct_ptr"_s, TYPETABLEIDX_Unset, VALUEFLAGS_ON_STATIC_STORAGE);
+		typeTableFast[TYPETABLEIDX_TYPE_INFO_PROCEDURE_STRUCT_PTR] = tp;
+		tp.pointerInfo.pointedTypeTableIdx = TYPETABLEIDX_TYPE_INFO_ALIAS_STRUCT;
+		tp.valueIdx = NewGlobalValue("_typeInfo_type_info_alias_struct_ptr"_s, TYPETABLEIDX_Unset, VALUEFLAGS_ON_STATIC_STORAGE);
+		typeTableFast[TYPETABLEIDX_TYPE_INFO_ALIAS_STRUCT_PTR] = tp;
+
 		SpinlockUnlock(&g_context->typeTable.lock);
 
 		for (int i = TYPETABLEIDX_PrimitiveBegin; i < TYPETABLEIDX_PrimitiveEnd; ++i)
@@ -5666,7 +5819,7 @@ void TypeCheckMain()
 		ArrayInit(&g_context->tcPrimitiveTypes, TYPETABLEIDX_PrimitiveEnd -
 				TYPETABLEIDX_PrimitiveBegin);
 
-		DynamicArrayInit(&globalNames, 64);
+		BucketArrayInit(&globalNames);
 
 		TCScopeName scopeNamePrimitive;
 		scopeNamePrimitive.type = NAMETYPE_PRIMITIVE;
@@ -5675,63 +5828,64 @@ void TypeCheckMain()
 		scopeNamePrimitive.name = "s8"_s;
 		scopeNamePrimitive.primitiveTypeTableIdx = TYPETABLEIDX_S8;
 		*ArrayAdd(&g_context->tcPrimitiveTypes) = scopeNamePrimitive;
-		*DynamicArrayAdd(&globalNames) = scopeNamePrimitive;
+		*BucketArrayAdd(&globalNames) = scopeNamePrimitive;
 
 		scopeNamePrimitive.name = "s16"_s;
 		scopeNamePrimitive.primitiveTypeTableIdx = TYPETABLEIDX_S16;
 		*ArrayAdd(&g_context->tcPrimitiveTypes) = scopeNamePrimitive;
-		*DynamicArrayAdd(&globalNames) = scopeNamePrimitive;
+		*BucketArrayAdd(&globalNames) = scopeNamePrimitive;
 
 		scopeNamePrimitive.name = "s32"_s;
 		scopeNamePrimitive.primitiveTypeTableIdx = TYPETABLEIDX_S32;
 		*ArrayAdd(&g_context->tcPrimitiveTypes) = scopeNamePrimitive;
-		*DynamicArrayAdd(&globalNames) = scopeNamePrimitive;
+		*BucketArrayAdd(&globalNames) = scopeNamePrimitive;
 
 		scopeNamePrimitive.name = "s64"_s;
 		scopeNamePrimitive.primitiveTypeTableIdx = TYPETABLEIDX_S64;
 		*ArrayAdd(&g_context->tcPrimitiveTypes) = scopeNamePrimitive;
-		*DynamicArrayAdd(&globalNames) = scopeNamePrimitive;
+		*BucketArrayAdd(&globalNames) = scopeNamePrimitive;
 
 		scopeNamePrimitive.name = "u8"_s;
 		scopeNamePrimitive.primitiveTypeTableIdx = TYPETABLEIDX_U8;
 		*ArrayAdd(&g_context->tcPrimitiveTypes) = scopeNamePrimitive;
-		*DynamicArrayAdd(&globalNames) = scopeNamePrimitive;
+		*BucketArrayAdd(&globalNames) = scopeNamePrimitive;
 
 		scopeNamePrimitive.name = "u16"_s;
 		scopeNamePrimitive.primitiveTypeTableIdx = TYPETABLEIDX_U16;
 		*ArrayAdd(&g_context->tcPrimitiveTypes) = scopeNamePrimitive;
-		*DynamicArrayAdd(&globalNames) = scopeNamePrimitive;
+		*BucketArrayAdd(&globalNames) = scopeNamePrimitive;
 
 		scopeNamePrimitive.name = "u32"_s;
 		scopeNamePrimitive.primitiveTypeTableIdx = TYPETABLEIDX_U32;
 		*ArrayAdd(&g_context->tcPrimitiveTypes) = scopeNamePrimitive;
-		*DynamicArrayAdd(&globalNames) = scopeNamePrimitive;
+		*BucketArrayAdd(&globalNames) = scopeNamePrimitive;
 
 		scopeNamePrimitive.name = "u64"_s;
 		scopeNamePrimitive.primitiveTypeTableIdx = TYPETABLEIDX_U64;
 		*ArrayAdd(&g_context->tcPrimitiveTypes) = scopeNamePrimitive;
-		*DynamicArrayAdd(&globalNames) = scopeNamePrimitive;
+		*BucketArrayAdd(&globalNames) = scopeNamePrimitive;
 
 		scopeNamePrimitive.name = "f32"_s;
 		scopeNamePrimitive.primitiveTypeTableIdx = TYPETABLEIDX_F32;
 		*ArrayAdd(&g_context->tcPrimitiveTypes) = scopeNamePrimitive;
-		*DynamicArrayAdd(&globalNames) = scopeNamePrimitive;
+		*BucketArrayAdd(&globalNames) = scopeNamePrimitive;
 
 		scopeNamePrimitive.name = "f64"_s;
 		scopeNamePrimitive.primitiveTypeTableIdx = TYPETABLEIDX_F64;
 		*ArrayAdd(&g_context->tcPrimitiveTypes) = scopeNamePrimitive;
-		*DynamicArrayAdd(&globalNames) = scopeNamePrimitive;
+		*BucketArrayAdd(&globalNames) = scopeNamePrimitive;
 
 		scopeNamePrimitive.name = "bool"_s;
 		scopeNamePrimitive.primitiveTypeTableIdx = TYPETABLEIDX_BOOL;
 		*ArrayAdd(&g_context->tcPrimitiveTypes) = scopeNamePrimitive;
-		*DynamicArrayAdd(&globalNames) = scopeNamePrimitive;
+		*BucketArrayAdd(&globalNames) = scopeNamePrimitive;
 
 		scopeNamePrimitive.name = "void"_s;
 		scopeNamePrimitive.primitiveTypeTableIdx = TYPETABLEIDX_VOID;
 		*ArrayAdd(&g_context->tcPrimitiveTypes) = scopeNamePrimitive;
-		*DynamicArrayAdd(&globalNames) = scopeNamePrimitive;
+		*BucketArrayAdd(&globalNames) = scopeNamePrimitive;
 	}
+	MTQueueInit<LinearAllocator>(&g_context->tcGlobalNamesToAdd, 128);
 
 	{
 		auto inlineCalls = g_context->tcInlineCalls.Get();

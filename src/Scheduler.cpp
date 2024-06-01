@@ -148,7 +148,7 @@ void SchedulerProc(void *args)
 			// before calling SwitchJob!
 			*DynamicArrayAdd(&g_context->waitingJobsByReason[YIELDREASON_TYPE_NOT_READY].unsafe) =
 				previousJobIdx;
-			SYSMutexUnlock(g_context->waitingJobsByReason[YIELDREASON_TYPE_NOT_READY].lock);
+			SpinlockUnlock(&g_context->waitingJobsByReason[YIELDREASON_TYPE_NOT_READY].lock);
 		} break;
 		default:
 			ASSERTF(false, "Previous fiber is %llx, reason is %d", previousJob->fiber,
@@ -170,6 +170,12 @@ loop:
 			nextJobIdx = dequeue;
 			goto switchFiber;
 		}
+		else if (!MTQueueIsEmpty(&g_context->tcGlobalNamesToAdd) &&
+				SpinlockTryLock(&g_context->tcGlobalNamesCommitLock)) {
+			TCCommitGlobalNames();
+			SpinlockUnlock(&g_context->tcGlobalNamesCommitLock);
+			continue;
+		}
 		else {
 			bool triggerStop = true;
 			SpinlockLock(&g_context->threadStatesLock);
@@ -180,6 +186,11 @@ loop:
 					triggerStop = false;
 					goto okWontStop;
 				}
+			}
+			// If nothing's running but there are things in queues, don't give up either.
+			if (!MTQueueIsEmpty(&g_context->tcGlobalNamesToAdd)) {
+				triggerStop = false;
+				goto okWontStop;
 			}
 			// We make threads give up in order. If any thread before this one hasn't given up,
 			// don't give up.
@@ -287,6 +298,10 @@ inline void SwitchJob(YieldReason yieldReason, YieldContext yieldContext)
 
 	Job *previousJob = GetCurrentJob();
 	ASSERT(previousJob->state == JOBSTATE_RUNNING);
+
+#if ENABLE_STATS
+	AtomicIncrementGetNew(&g_stats.jobSwitches);
+#endif
 
 	previousJob->fiber = SYSGetCurrentFiber();
 	previousJob->yieldContext = yieldContext;
