@@ -38,10 +38,13 @@ Main :: (args: [] String) -> s64
 	for anArray @it = cast(u64)i * 4;
 	at3 := GetAtIndex(anArray, 3);
 	PrintF("anArray[3] is %\n", at3);
+	PrintF("Type of at3 is %\n", @typeof(at3));
 
-	//GetAtIndex(foo, bar);
+	//GetAtIndex(foo, bar); // This should not compile
 
 	Max(cast(s32)5, cast(u16)6);
+
+	//Max(cast(s16)5, cast(u32)6); // This should not compile
 
 	return 0;
 }

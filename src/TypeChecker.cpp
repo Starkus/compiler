@@ -4421,6 +4421,30 @@ void TypeCheckExpression(TCContext *tcContext, ASTExpression *expression)
 				astProcCall->procedureIdx = newProcIdx;
 				astProcCall->procedureTypeIdx = GetProcedureRead(newProcIdx).typeTableIdx;
 				procTypeInfo = GetTypeInfo(astProcCall->procedureTypeIdx).procedureInfo;
+
+				// Re-check argument types
+				for (int argIdx = 0; argIdx < argsToCheck; ++argIdx) {
+					ASTExpression *arg = astProcCall->arguments[argIdx];
+					u32 paramTypeIdx = procTypeInfo.parameters[argIdx].typeTableIdx;
+					TypeCheckErrorCode typeCheckError = CheckTypesMatch(paramTypeIdx, arg->typeTableIdx);
+
+					if (typeCheckError != TYPECHECK_COOL) {
+						String paramName = TPrintF(" \"%S\"",
+									GetProcedureRead(procedureIdx).astPrototype.astParameters[argIdx].name);
+						String paramStr = TypeInfoToString(paramTypeIdx);
+						String givenStr = TypeInfoToString(arg->typeTableIdx);
+						LogErrorNoCrash(arg->any.loc, TPrintF("When calling procedure%S: type of "
+									"parameter %d%S didn't match (parameter is %S but %S was given)",
+									errorProcedureName, argIdx+1, paramName, paramStr, givenStr));
+
+						String procName = GetProcedureRead(procedureIdx).name;
+						String procTypeStr = TypeInfoToString(astProcCall->procedureTypeIdx);
+						LogNote(astProcCall->loc, TPrintF("Calling polymorphic procedure instance: %S%S",
+									procName, procTypeStr));
+
+						PANIC;
+					}
+				}
 			}
 		}
 
@@ -5634,6 +5658,16 @@ void TypeCheckMain()
 		TypeInfo *typeTableFast = (TypeInfo *)typeTable.buckets[0];
 
 		TypeInfo t = {};
+		t.typeCategory = TYPECATEGORY_INVALID;
+
+		t.size = 0;
+		t.valueIdx = NewGlobalValue("<anything>"_s, TYPETABLEIDX_Unset, VALUEFLAGS_ON_STATIC_STORAGE);
+		typeTableFast[TYPETABLEIDX_Anything]  = t;
+		t.valueIdx = NewGlobalValue("<struct literal>"_s, TYPETABLEIDX_Unset, VALUEFLAGS_ON_STATIC_STORAGE);
+		typeTableFast[TYPETABLEIDX_StructLiteral]  = t;
+		t.valueIdx = NewGlobalValue("<unset>"_s, TYPETABLEIDX_Unset, VALUEFLAGS_ON_STATIC_STORAGE);
+		typeTableFast[TYPETABLEIDX_Unset]  = t;
+
 		t.typeCategory = TYPECATEGORY_INTEGER;
 		t.integerInfo.isSigned = true;
 
@@ -5797,6 +5831,10 @@ void TypeCheckMain()
 		typeTableFast[TYPETABLEIDX_TYPE_INFO_ALIAS_STRUCT_PTR] = tp;
 
 		SpinlockUnlock(&g_context->typeTable.lock);
+
+		for (int i = 1; i <= TYPETABLEIDX_Unset; ++i)
+			// Yeah this needs a job context but it shouldn't need to yield to do this
+			WriteUserFacingTypeInfoToStaticData(typeTableFast[i]);
 
 		for (int i = TYPETABLEIDX_PrimitiveBegin; i < TYPETABLEIDX_PrimitiveEnd; ++i)
 			// Yeah this needs a job context but it shouldn't need to yield to do this
