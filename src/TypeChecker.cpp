@@ -2556,6 +2556,7 @@ bool DoesTypeReferToPolymorphicType(ASTType *astType)
 		return true;
 	}
 	ASSERT(!"Unexpected type category");
+	return false;
 }
 
 void TCFindAllPolymorphicTypesInASTType(ASTType *astType, SourceLocation loc,
@@ -3669,7 +3670,7 @@ u32 TCInstantiateProcedure(TCContext *tcContext, u32 procedureIdx, ArrayView<u32
 		TCScopeName newScopeName;
 		newScopeName.type = NAMETYPE_STATIC_DEFINITION;
 
-		for (int i = 0, currentInType = 0; i < astParameters.size; ++i) {
+		for (int i = 0; i < astParameters.size; ++i) {
 			const ASTProcedureParameter *astParameter = &astParameters[i];
 			TCFindAllPolymorphicTypesInASTType(astParameter->astType, astParameter->loc,
 					&polymorphicTypesScopeNames);
@@ -3775,7 +3776,7 @@ void TCExtractPolymorphicTypes(ASTType *astType, u32 givenTypeIdx,
 	{
 		ASSERT(typeInfo.typeCategory == TYPECATEGORY_STRUCT ||
 			   typeInfo.typeCategory == TYPECATEGORY_UNION);
-		int memberCount = astType->structDeclaration.members.size;
+		u64 memberCount = astType->structDeclaration.members.size;
 		ASSERT(typeInfo.structInfo.members.size == memberCount);
 		for (int memberIdx = 0; memberIdx < memberCount; ++memberIdx) {
 			ASTStructMemberDeclaration *astMember = &astType->structDeclaration.members[memberIdx];
@@ -4351,8 +4352,8 @@ void TypeCheckExpression(TCContext *tcContext, ASTExpression *expression)
 			DynamicArray<u32, ThreadAllocator> polymorphicTypes = {};
 
 			Procedure proc = GetProcedureRead(procedureIdx);
-			s64 argsToCheck = Min(givenArguments, totalArguments);
-			for (int argIdx = 0; argIdx < argsToCheck; ++argIdx) {
+			s64 argsToCheck_ = Min(givenArguments, totalArguments);
+			for (int argIdx = 0; argIdx < argsToCheck_; ++argIdx) {
 				ASTExpression *arg = astProcCall->arguments[argIdx];
 				TCExtractPolymorphicTypes(proc.astPrototype.astParameters[argIdx].astType,
 						arg->typeTableIdx, &polymorphicTypes);
