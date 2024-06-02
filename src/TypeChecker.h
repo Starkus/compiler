@@ -209,6 +209,19 @@ struct OperatorOverload
 	u32 procedureIdx;
 };
 
+struct PolymorphicProcedureInstance
+{
+	u32 procedureIdx;
+	// @Todo: handle odd case where there are many many polymorphic types
+	FixedArray<u32, 4> polymorphicTypeIndices;
+};
+
+struct PolymorphicProcedure
+{
+	u32 procedureIdx;
+	DynamicArray<PolymorphicProcedureInstance, LinearAllocator> instances;
+};
+
 struct TCScopeName
 {
 	NameType type;

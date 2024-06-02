@@ -182,9 +182,8 @@ void __LogRange(SourceLocation locBegin, SourceLocation locEnd, String str, Stri
 	__Log(loc, str, "NOTE:"_s,			 CONSOLE_WHITE_TXT,		true  DEBUG_ONLY(, __FILE__, __func__, __LINE__)); \
 } while (0)
 
-#define LogCompilerError(loc, str) do {\
+#define LogCompilerErrorNoCrash(loc, str) do {\
 	__Log(loc, str, "COMPILER ERROR:"_s, CONSOLE_RED_TXT,		true  DEBUG_ONLY(, __FILE__, __func__, __LINE__)); \
-	PANIC; \
 } while (0)
 
 #define Log2(locBegin, locEnd, str) do {\
@@ -202,6 +201,11 @@ void __LogRange(SourceLocation locBegin, SourceLocation locEnd, String str, Stri
 #define Log2Note(locBegin, locEnd, str) do {\
 	__LogRange(locBegin, locEnd, str, "NOTE:"_s,	CONSOLE_WHITE_TXT,	 true  DEBUG_ONLY(, __FILE__, __func__, __LINE__)); \
 } while (0)
+
+#define LogCompilerError(loc, str) do {\
+	LogCompilerErrorNoCrash(loc, str); \
+	PANIC; \
+} while(0)
 
 #if EXIT_ON_FIRST_ERROR
 #define LogError(loc, str) do {\

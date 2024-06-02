@@ -3678,8 +3678,72 @@ tryAgain:
 	return true;
 }
 
-u32 TCInstantiateProcedure(TCContext *tcContext, u32 procedureIdx, ArrayView<u32> givenTypes)
+u32 TCInstantiateProcedure(TCContext *tcContext, u32 procedureIdx, ArrayView<u32> givenTypesRaw)
 {
+	Array<u32, ThreadAllocator> givenTypes;
+	ArrayInit(&givenTypes, givenTypesRaw.size);
+	for (int i = 0; i < givenTypesRaw.size; ++i) {
+		*ArrayAdd(&givenTypes) = StripImplicitlyCastAliases(givenTypesRaw[i]);
+	}
+	// Try to find an existing instance first
+	u32 polyIdx, polyInstIdx;
+	{
+		PolymorphicProcedure *poly = nullptr;
+		auto polyInstances = g_context->polymorphicProcedures.GetForWrite();
+
+		for (polyIdx = 0; polyIdx < polyInstances->size; ++polyIdx) {
+			PolymorphicProcedure *curPoly = &polyInstances[polyIdx];
+			if (curPoly->procedureIdx == procedureIdx) {
+				poly = curPoly;
+				break;
+			}
+		}
+		if (!poly)
+			goto noMatchingInstance;
+
+		for (polyInstIdx = 0; polyInstIdx < poly->instances.size; ++polyInstIdx) {
+			const PolymorphicProcedureInstance *instance = &poly->instances[polyInstIdx];
+			for (int polyTypeIdx = 0; polyTypeIdx < instance->polymorphicTypeIndices.size; ++polyTypeIdx) {
+				if (instance->polymorphicTypeIndices[polyTypeIdx] != givenTypes[polyTypeIdx]) {
+					goto next;
+				}
+			}
+
+			if (instance->procedureIdx == U32_MAX) {
+				// Wait for procedure to be created
+				SwitchJob(YIELDREASON_POLYMORPHIC_PROC_NOT_CREATED, {
+						.polyInstance = {
+							.procedureIdx = procedureIdx,
+							.instanceIdx = u32(polyInstIdx) }
+						});
+				// Lock again!
+				SYSLockForRead(&g_context->polymorphicProcedures.rwLock);
+
+				poly = &polyInstances[polyIdx];
+				instance = &poly->instances[polyInstIdx];
+
+				if (instance->procedureIdx == U32_MAX)
+					LogCompilerError({}, "Bad job resume"_s);
+			}
+
+			return instance->procedureIdx;
+next:
+			continue;
+		}
+noMatchingInstance:
+		if (!poly) {
+			polyIdx = u32(polyInstances->size);
+			poly = DynamicArrayAdd(&polyInstances);
+			*poly = { .procedureIdx = procedureIdx };
+			DynamicArrayInit(&poly->instances, 16);
+		}
+		polyInstIdx = u32(poly->instances.size);
+		PolymorphicProcedureInstance *newInstance = DynamicArrayAdd(&poly->instances);
+		*newInstance = { .procedureIdx = U32_MAX }; // We didn't create the procedure yet.
+		for (int i = 0; i < givenTypes.size; ++i)
+			*FixedArrayAdd(&newInstance->polymorphicTypeIndices) = givenTypes[i];
+	}
+
 	Procedure proc = GetProcedureRead(procedureIdx);
 
 	// @Improve: this is no better than C++ name mangling
@@ -3747,6 +3811,33 @@ u32 TCInstantiateProcedure(TCContext *tcContext, u32 procedureIdx, ArrayView<u32
 	TypeInfo t = TypeInfoFromASTProcedurePrototype(&proc.astPrototype);
 	proc.typeTableIdx = FindOrAddTypeTableIdx(t);
 	u32 newProcIdx = NewProcedure(proc, false);
+
+	// Update register with the new procedure index.
+	{
+		PolymorphicProcedure *poly = nullptr;
+		auto polyInstances = g_context->polymorphicProcedures.GetForWrite();
+		poly = &polyInstances[polyIdx];
+		PolymorphicProcedureInstance *instance = &poly->instances[polyInstIdx];
+
+		instance->procedureIdx = newProcIdx;
+
+		// Wake up any jobs that were waiting for this instance to generate a new procedure
+		{
+			auto jobsWaiting = g_context->waitingJobsByReason[YIELDREASON_POLYMORPHIC_PROC_NOT_CREATED].Get();
+			for (int i = 0; i < jobsWaiting->size; ) {
+				u32 jobIdx = jobsWaiting[i];
+				const Job *job = &g_context->jobs.unsafe[jobIdx];
+				if (job->yieldContext.polyInstance.procedureIdx == procedureIdx &&
+					job->yieldContext.polyInstance.instanceIdx == polyInstIdx) {
+					EnqueueReadyJob(jobIdx);
+					// Remove
+					DynamicArraySwapRemove(&jobsWaiting, i);
+				}
+				else
+					++i;
+			}
+		}
+	}
 
 	// Parameters
 	ArrayView<ASTProcedureParameter> astParameters = proc.astPrototype.astParameters;
@@ -4312,27 +4403,6 @@ void TypeCheckExpression(TCContext *tcContext, ASTExpression *expression)
 
 				procedureIdx = staticDefinition.procedureIdx;
 				Procedure proc = GetProcedureRead(procedureIdx);
-
-				if ((proc.isInline || astProcCall->inlineType == CALLINLINETYPE_ALWAYS_INLINE) &&
-						astProcCall->inlineType != CALLINLINETYPE_NEVER_INLINE) {
-
-					TCCheckForCyclicInlineCalls(astProcExp->any.loc,
-							tcContext->currentProcedureIdx, procedureIdx);
-
-					// We need the whole body type checked
-					if (!proc.isBodyTypeChecked) {
-						auto procedures = g_context->procedures.GetForRead();
-						proc = procedures[procedureIdx];
-						if (!proc.isBodyTypeChecked) {
-							SwitchJob(YIELDREASON_PROC_BODY_NOT_READY, { .index = procedureIdx });
-							// Lock again!
-							SYSLockForRead(&g_context->procedures.rwLock);
-							proc = procedures[procedureIdx];
-							if (!proc.isBodyTypeChecked)
-								LogCompilerError(expression->any.loc, "Bad job resume"_s);
-						}
-					}
-				}
 				procedureTypeIdx = proc.typeTableIdx;
 			}
 		}
@@ -4443,6 +4513,28 @@ void TypeCheckExpression(TCContext *tcContext, ASTExpression *expression)
 									procName, procTypeStr));
 
 						PANIC;
+					}
+				}
+			}
+			else {
+				if ((proc.isInline || astProcCall->inlineType == CALLINLINETYPE_ALWAYS_INLINE) &&
+						astProcCall->inlineType != CALLINLINETYPE_NEVER_INLINE) {
+
+					TCCheckForCyclicInlineCalls(astProcExp->any.loc,
+							tcContext->currentProcedureIdx, procedureIdx);
+
+					// We need the whole body type checked
+					if (!proc.isBodyTypeChecked) {
+						auto procedures = g_context->procedures.GetForRead();
+						proc = procedures[procedureIdx];
+						if (!proc.isBodyTypeChecked) {
+							SwitchJob(YIELDREASON_PROC_BODY_NOT_READY, { .index = procedureIdx });
+							// Lock again!
+							SYSLockForRead(&g_context->procedures.rwLock);
+							proc = procedures[procedureIdx];
+							if (!proc.isBodyTypeChecked)
+								LogCompilerError(expression->any.loc, "Bad job resume"_s);
+						}
 					}
 				}
 			}
@@ -5641,6 +5733,11 @@ void TypeCheckMain()
 		auto externalProcedures = g_context->externalProcedures.GetForWrite();
 		BucketArrayInit(&externalProcedures);
 		*BucketArrayAdd(&externalProcedures) = {};
+	}
+
+	{
+		auto polymorphicProcedures = g_context->polymorphicProcedures.GetForWrite();
+		DynamicArrayInit(&polymorphicProcedures, 128);
 	}
 
 	{

@@ -121,6 +121,13 @@ void SchedulerProc(void *args)
 			*DynamicArrayAdd(&jobs) = previousJobIdx;
 			SYSUnlockForRead(&g_context->procedures.rwLock);
 		} break;
+		case YIELDREASON_POLYMORPHIC_PROC_NOT_CREATED:
+		{
+			// IMPORTANT! polymorphicProcedures should be locked before calling SwitchJob!
+			auto jobs = g_context->waitingJobsByReason[yieldReason].Get();
+			*DynamicArrayAdd(&jobs) = previousJobIdx;
+			SYSUnlockForWrite(&g_context->polymorphicProcedures.rwLock);
+		} break;
 		case YIELDREASON_UNKNOWN_OVERLOAD:
 		{
 			// IMPORTANT! operatorOverloads should be locked before calling SwitchJob!

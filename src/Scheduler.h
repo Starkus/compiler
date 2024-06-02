@@ -24,6 +24,7 @@ enum YieldReason : u32
 	YIELDREASON_STATIC_DEF_NOT_READY,
 	YIELDREASON_PROC_BODY_NOT_READY,
 	YIELDREASON_PROC_IR_NOT_READY,
+	YIELDREASON_POLYMORPHIC_PROC_NOT_CREATED,
 	YIELDREASON_TYPE_NOT_READY,
 	YIELDREASON_GLOBAL_VALUE_NOT_ALLOCATED,
 	YIELDREASON_NEED_DYNAMIC_LIBRARY,
@@ -46,6 +47,10 @@ struct YieldContext
 			u32 leftTypeIdx;
 			u32 rightTypeIdx;
 		} overload;
+		struct {
+			u32 procedureIdx;
+			u32 instanceIdx;
+		} polyInstance;
 	};
 };
 

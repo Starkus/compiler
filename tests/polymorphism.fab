@@ -24,6 +24,11 @@ Main :: (args: [] String) -> s64
 
 	// Reuse proc instance
 	sizeOfFoo = GetSize(foo);
+	PrintF("Size of foo is %\n", sizeOfFoo);
+
+	// Inline
+	sizeOfFoo = GetSize(foo) #inline;
+	PrintF("Size of foo is %\n", sizeOfFoo);
 
 	bar: s16;
 	sizeOfBar := GetSize(bar);

@@ -255,6 +255,7 @@ struct Context
 	RWContainer<BucketArray<Value, HeapAllocator, 1024>> globalValues;
 	RWContainer<BucketArray<Procedure, HeapAllocator, 512>> procedures;
 	RWContainer<BucketArray<Procedure, HeapAllocator, 128>> externalProcedures;
+	RWContainer<DynamicArray<PolymorphicProcedure, HeapAllocator>> polymorphicProcedures;
 	RWContainer<DynamicArray<OperatorOverload, HeapAllocator>> operatorOverloads;
 	RWContainer<BucketArray<StaticDefinition, HeapAllocator, 512>> staticDefinitions;
 
@@ -613,6 +614,20 @@ int main(int argc, char **argv)
 			Procedure proc = GetProcedureRead(yieldContext.index);
 			LogErrorNoCrash(yieldContext.loc, TPrintF("Code of procedure '%S' never "
 						"generated", proc.name));
+#if DEBUG_BUILD
+			LogNote(job->loc, TPrintF("On job: \"%S\"", job->description));
+#endif
+			errorsFound = true;
+		}
+		waitingJobs->size = 0;
+	}
+	{
+		auto waitingJobs = context->waitingJobsByReason[YIELDREASON_POLYMORPHIC_PROC_NOT_CREATED].Get();
+		for (int i = 0; i < waitingJobs->size; ++i) {
+			u32 jobIdx = waitingJobs[i];
+			const Job *job = &context->jobs.unsafe[jobIdx];
+			YieldContext yieldContext = job->yieldContext;
+			LogCompilerErrorNoCrash(yieldContext.loc, "Polymorphic instance never created a procedure"_s);
 #if DEBUG_BUILD
 			LogNote(job->loc, TPrintF("On job: \"%S\"", job->description));
 #endif
